@@ -1,0 +1,122 @@
+{
+ "binary_allow": [
+  "apps/web/public/assets/fonts/Geist-Variable.woff2#a369fcf5628ea2aa4e1b9e2ec6a5b3624e365bda588e1f0f2f12b564f728fbb8",
+  "apps/web/public/assets/fonts/GeistMono-Variable.woff2#fba8f577f38a2bbcbe818efa6348dd58f36303a10b8737c42fefad275be563ab",
+  "apps/web/public/assets/brand/emblem.png#1990db2564023d30a50720c87f4afe78148745f32661183fb8d87a46fc096c3f"
+ ],
+ "empty": [
+  "README.md"
+ ],
+ "exclude": [
+  "tests/public_denylist.json"
+ ],
+ "forbid_paths": [
+  {
+   "except": [
+    "README.md",
+    "SECURITY.md"
+   ],
+   "glob": "**/*.md",
+   "id": "F01"
+  },
+  {
+   "except": [],
+   "glob": "**/*.rst",
+   "id": "F02"
+  },
+  {
+   "except": [],
+   "glob": "**/*.adoc",
+   "id": "F03"
+  },
+  {
+   "except": [],
+   "glob": "docs/**",
+   "id": "F04"
+  },
+  {
+   "except": [],
+   "glob": "**/.run/**",
+   "id": "F06"
+  },
+  {
+   "except": [],
+   "glob": "**/changelog.d/**",
+   "id": "F07"
+  },
+  {
+   "except": [],
+   "glob": "**/.env*",
+   "id": "F08"
+  },
+  {
+   "except": [],
+   "glob": ".env*",
+   "id": "F09"
+  },
+  {
+   "except": [],
+   "glob": "reference/**",
+   "id": "F10"
+  },
+  {
+   "except": [
+    "apps/web/public/assets/brand/emblem.png"
+   ],
+   "glob": "**/*.png",
+   "id": "F11"
+  }
+ ],
+ "regex": [
+  {
+   "allow_paths": [],
+   "case": "insensitive",
+   "class": "tailnet",
+   "id": "P01",
+   "pattern": "\\.ts\\.net\\b"
+  },
+  {
+   "allow_paths": [
+    "tests/test_score_check_provider.py",
+    "tests/test_signin_oidc_security.py"
+   ],
+   "case": "insensitive",
+   "class": "tailnet",
+   "id": "P02",
+   "pattern": "\\b100\\.(?:6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])\\.\\d{1,3}\\.\\d{1,3}\\b"
+  },
+  {
+   "allow_paths": [],
+   "case": "insensitive",
+   "class": "private-key",
+   "id": "P03",
+   "pattern": "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+  },
+  {
+   "allow_paths": [],
+   "case": "insensitive",
+   "class": "wording",
+   "id": "P04",
+   "pattern": "open[\\s-]?source"
+  },
+  {
+   "allow_paths": [],
+   "case": "insensitive",
+   "class": "provenance",
+   "id": "P06",
+   "pattern": "\\b(?:commit|sha|fixed in|since|rev)\\b[\\s:=#'\\\"(]{0,3}[0-9a-f]{7,40}\\b"
+  },
+  {
+   "allow_paths": [
+    "packages/contracts/schemas.py",
+    "packages/contracts/public-schemas.json",
+    "apps/web/src/generated.ts"
+   ],
+   "case": "insensitive",
+   "class": "product-name",
+   "id": "P05",
+   "pattern": "ShiftEZ\\s+Clinical"
+  }
+ ],
+ "version": 3
+}

@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.run/
+var/
+node_modules/
+apps/web/dist/
+test-results/
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.pem
+*.key
+.DS_Store
+dist/
+# Local scratch tests (never committed)
+tests/test_zz_*.py
+# CI/test artifacts
+playwright-report/
+junit*.xml
+coverage.json
+coverage.xml
+*.sbom.json

@@ -1,0 +1,338 @@
+{
+  "id": "A-COVER-01",
+  "revision": 2,
+  "title": "Cover (two distinct eligible people)",
+  "intent": "Hard scoped cover overcomes advisory pressure for one participant",
+  "pressure": "Three eligible people; type minimum 1 and advisory maximum 1 make under-cover attractive without the hard minimum 2.",
+  "covers": {
+    "kind.minimum_cover": [
+      "counterfactual"
+    ],
+    "kind.minimum_cover.minimum": [
+      "boundary"
+    ]
+  },
+  "commands": [
+    {
+      "key": "rank",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "categories",
+        "value": {
+          "name": "A-COVER-01 Clinician (eligible rank)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-COVER-01 Clinic (cover pressure)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location_kind",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "location_types",
+        "value": {
+          "name": "A-COVER-01 Room (clinical space)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-COVER-01 Clinic (several eligible people)",
+          "starts_on": "2020-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 4
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "p0",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-COVER-01 Clinician 1 (eligible alternative)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "m0",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p0",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "e0",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p1",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-COVER-01 Clinician 2 (eligible alternative)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "m1",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p1",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "e1",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p2",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-COVER-01 Clinician 3 (eligible alternative)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "m2",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p2",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "e2",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p2",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "cover_type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "Night clinic (two required clinicians)",
+          "starts_on": "2027-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 3
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workspace",
+      "role": "coordinator",
+      "kind": "workspace.create",
+      "payload": {
+        "name": "A-COVER-01 (golden intent)",
+        "starts_on": "2027-01-03",
+        "ends_on": "2027-01-06"
+      }
+    },
+    {
+      "key": "cover",
+      "role": "coordinator",
+      "kind": "policy.create",
+      "payload": {
+        "name": "Cover (golden binding pressure)",
+        "owner": "Golden scenario reviewer",
+        "source": "Synthetic reviewed expectation; not hospital policy",
+        "starts_on": "2027-01-01",
+        "definition": {
+          "rule": {
+            "kind": "minimum_cover",
+            "minimum": 2,
+            "aggregation": "assignment"
+          },
+          "scope": {
+            "assignment_type_id": "$cover_type"
+          },
+          "severity": "mandatory",
+          "workspace_id": "$workspace"
+        }
+      }
+    },
+    {
+      "key": "cover_active",
+      "role": "approver",
+      "kind": "policy.activate",
+      "payload": {
+        "reason": "Independent synthetic scenario approval"
+      },
+      "target": "$cover",
+      "revision": "$cover.revision"
+    },
+    {
+      "key": "bait",
+      "role": "coordinator",
+      "kind": "policy.create",
+      "payload": {
+        "name": "Bait (golden binding pressure)",
+        "owner": "Golden scenario reviewer",
+        "source": "Synthetic reviewed expectation; not hospital policy",
+        "starts_on": "2027-01-01",
+        "definition": {
+          "rule": {
+            "kind": "maximum_participants",
+            "maximum": 1
+          },
+          "scope": {
+            "assignment_type_id": "$cover_type"
+          },
+          "severity": "advisory",
+          "workspace_id": "$workspace"
+        }
+      }
+    },
+    {
+      "key": "bait_active",
+      "role": "approver",
+      "kind": "policy.activate",
+      "payload": {
+        "reason": "Independent synthetic scenario approval"
+      },
+      "target": "$bait",
+      "revision": "$bait.revision"
+    },
+    {
+      "key": "cover_shift",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$cover_type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-03T20:00:00+03:00",
+        "end": "2027-01-04T08:00:00+03:00",
+        "participants": []
+      },
+      "revision": "$workspace.revision"
+    }
+  ],
+  "expect": {
+    "binding_rules": [
+      "cover"
+    ],
+    "counterfactual": {
+      "code": "SCOPED_COVERAGE_GAP",
+      "person": null,
+      "session": "cover_shift"
+    },
+    "boundary": {
+      "minimum": 2,
+      "at_people": [
+        "p0",
+        "p1"
+      ],
+      "one_over_people": [
+        "p0"
+      ],
+      "unit": "one uncovered required place"
+    },
+    "validator": {
+      "code": "SCOPED_COVERAGE_GAP",
+      "person": null,
+      "session": "cover_shift"
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 100,
+          "fairness": 0,
+          "preferences": 0,
+          "stability": 1
+        }
+      }
+    }
+  }
+}

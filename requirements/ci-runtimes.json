@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "platform": "linux-x86_64",
+  "python": {
+    "version": "3.13.5",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250612/cpython-3.13.5%2B20250612-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "f50dc28cfe99eccdadd4e74c2384607f7d5f50fc47447a39a4e24a793c07a9eb",
+    "root": "python",
+    "files": {
+      "bin/python3.13": "82eb8e3a696ec0a353230f82beaad4e3ec55c2f556a955c041a0d11f8b0d9486",
+      "lib/libpython3.13.so.1.0": "41827edc63eca02a75e0662e9f170d423f9b7f6d265c0b8a4dd4189bb489cf49"
+    },
+    "module_origins": {
+      "_ssl": "built-in",
+      "_sqlite3": "built-in"
+    }
+  },
+  "node": {
+    "version": "22.23.4",
+    "url": "https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-x64.tar.xz",
+    "sha256": "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce",
+    "root": "node-v22.23.4-linux-x64",
+    "files": {
+      "bin/node": "94efd062ed066c1a0b332e18249859c905e920eeada5df55d24c99b919629a90"
+    }
+  },
+  "gh": {
+    "version": "2.83.2",
+    "url": "https://github.com/cli/cli/releases/download/v2.83.2/gh_2.83.2_linux_amd64.tar.gz",
+    "sha256": "ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e",
+    "root": "gh_2.83.2_linux_amd64",
+    "files": {
+      "bin/gh": "acfb606678483e6bff6f7de4598036351d907ba088a72903b69bff57268d596c"
+    }
+  }
+}

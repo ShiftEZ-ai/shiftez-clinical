@@ -1,0 +1,10 @@
+{
+    servers {
+        trusted_proxies static {$APP_TRUSTED_PROXIES}
+    }
+}
+:8080 {
+    reverse_proxy localhost:8000 {
+        header_up X-Forwarded-For {client_ip}
+    }
+}

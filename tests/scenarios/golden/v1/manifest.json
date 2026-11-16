@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "revision": 3,
+  "timezone": "Asia/Riyadh",
+  "seeds": [
+    11,
+    29,
+    47
+  ],
+  "scenarios": [
+    "atlas/A-REST-01.json",
+    "atlas/A-COVER-01.json",
+    "atlas/A-LEAD-01.json",
+    "atlas/A-PREF-01.json",
+    "interactions/I-LOCK-REST-COVER-01.json"
+  ]
+}

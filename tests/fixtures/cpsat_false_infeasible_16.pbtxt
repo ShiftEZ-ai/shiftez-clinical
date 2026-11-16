@@ -1,0 +1,44 @@
+variables { name: "v0" domain: 1 domain: 1 }
+variables { name: "v1" domain: 0 domain: 1 }
+variables { name: "v2" domain: 0 domain: 1 }
+variables { name: "v3" domain: 0 domain: 1 }
+variables { name: "v4" domain: 0 domain: 1 }
+variables { name: "v5" domain: 0 domain: 1000000 }
+variables { name: "v6" domain: 0 domain: 1000000 }
+variables { name: "v7" domain: 0 domain: 1000000000000 }
+variables { name: "v8" domain: 0 domain: 1000000 }
+variables { name: "v9" domain: 6 domain: 7 }
+variables { name: "v10" domain: 6 domain: 7 }
+variables { name: "v11" domain: 0 domain: 0 }
+variables { name: "v12" domain: 0 domain: 3 }
+variables { name: "v13" domain: 0 domain: 3 }
+variables { name: "v14" domain: 0 domain: 6 }
+variables { name: "v15" domain: 0 domain: 6000000 }
+variables { name: "v16" domain: 0 domain: 1000000 }
+variables { name: "v17" domain: 0 domain: 3000000 }
+variables { name: "v18" domain: 0 domain: 1000000 }
+variables { name: "v19" domain: 0 domain: 3000000 }
+variables { name: "v20" domain: 0 domain: 1000000 }
+variables { name: "v21" domain: 0 domain: 1000000 }
+variables { name: "v22" domain: 0 domain: 1000000 }
+variables { name: "v23" domain: 0 domain: 1000000000000 }
+variables { name: "v24" domain: 0 domain: 1000000 }
+variables { name: "v25" domain: 0 domain: 1000000 }
+variables { name: "v26" domain: 0 domain: 1000000 }
+variables { name: "v27" domain: 0 domain: 1000000 }
+constraints { linear { vars: 1 vars: 2 vars: 3 coeffs: -1 coeffs: -1 coeffs: -1 domain: -9223372036854775808 domain: -2 } }
+constraints { linear { vars: 0 vars: 2 vars: 9 coeffs: -6 coeffs: -1 coeffs: 1 domain: 0 domain: 0 } }
+constraints { linear { vars: 0 vars: 3 vars: 10 coeffs: -6 coeffs: -1 coeffs: 1 domain: 0 domain: 0 } }
+constraints { lin_max { target { vars: 12 coeffs: 1 } exprs { } exprs { vars: 9 coeffs: 3 offset: -18 } } }
+constraints { lin_max { target { vars: 13 coeffs: 1 } exprs { } exprs { vars: 10 coeffs: 3 offset: -18 } } }
+constraints { linear { vars: 11 vars: 12 vars: 13 vars: 14 coeffs: -1 coeffs: -1 coeffs: -1 coeffs: 1 domain: 0 domain: 0 } }
+constraints { int_div { target { vars: 15 coeffs: 1 } exprs { vars: 14 coeffs: 1000000 } exprs { offset: 21 } } }
+constraints { lin_max { target { vars: 16 coeffs: -1 } exprs { offset: -1000000 } exprs { vars: 15 coeffs: -1 } } }
+constraints { int_div { target { vars: 17 coeffs: 1 } exprs { vars: 12 coeffs: 1000000 } exprs { offset: 7 } } }
+constraints { lin_max { target { vars: 18 coeffs: -1 } exprs { offset: -1000000 } exprs { vars: 17 coeffs: -1 } } }
+constraints { int_div { target { vars: 19 coeffs: 1 } exprs { vars: 13 coeffs: 1000000 } exprs { offset: 7 } } }
+constraints { lin_max { target { vars: 20 coeffs: -1 } exprs { offset: -1000000 } exprs { vars: 19 coeffs: -1 } } }
+constraints { lin_max { target { vars: 21 coeffs: 1 } exprs { } exprs { vars: 18 coeffs: 1 } exprs { vars: 20 coeffs: 1 } } }
+constraints { int_div { target { vars: 22 coeffs: 1 } exprs { vars: 21 coeffs: 1 } exprs { offset: 2 } } }
+constraints { int_prod { target { vars: 23 coeffs: 1 } exprs { vars: 16 coeffs: -1 offset: 1000000 } exprs { vars: 22 coeffs: -1 offset: 1000000 } } }
+constraints { int_div { target { vars: 24 coeffs: 1 } exprs { vars: 23 coeffs: 1 } exprs { offset: 1000000 } } }

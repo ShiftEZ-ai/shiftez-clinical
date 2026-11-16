@@ -1,0 +1,4 @@
+# RFC 8291 Appendix A auth secret: published test vector
+tests/test_pwa_push.py:generic-api-key:65
+# synthetic test data key, drawn at random for the test
+tests/test_browser_integrations.py:generic-api-key:27

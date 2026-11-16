@@ -1,0 +1,120 @@
+THIRD-PARTY NOTICES
+
+This product includes or links the following third-party components. Each remains under its own licence; nothing here
+grants any right to this product itself (see LICENSE).
+
+psycopg and psycopg-binary (3.3.6): GNU Lesser General Public License v3.0 only. Linked at runtime, unmodified.
+  You may replace or relink these libraries with a modified version; their source is available from the psycopg
+  project (https://www.psycopg.org/).
+
+certifi (2026.10.19): Mozilla Public License 2.0. Used unmodified; source at https://github.com/certifi/python-certifi.
+
+Geist and Geist Mono fonts: SIL Open Font License 1.1. The licence travels with the fonts in
+  apps/web/public/assets/fonts/OFL-Geist.txt.
+
+Icons: some icons in apps/web/src/dom.ts are derived from Lucide (ISC) / Feather (MIT). Their licence texts are in
+  apps/web/src/LICENSE-lucide.
+
+Test-only (not distributed with the product): hypothesis, Mozilla Public License 2.0.
+
+RUNTIME DEPENDENCY INVENTORY
+
+Derived from the audited runtime.lock and optional postgres.lock closure in licences.md.
+Versions refer to that audit, not to the host environment. Each dependency retains its
+own copyright and licence; its original licence and copyright notices must accompany
+redistributed copies, including binary distributions.
+
+absl-py 2.5.0 ? Apache-2.0.
+alembic 1.20.1 ? MIT.
+annotated-doc 0.0.4 ? MIT.
+annotated-types 0.7.0 ? MIT License.
+anyio 4.15.1 ? MIT.
+argon2-cffi 25.1.0 ? MIT.
+argon2-cffi-bindings 25.1.0 ? MIT.
+certifi 2026.10.19 ? Mozilla Public License 2.0 (MPL 2.0).
+cffi 2.0.0 ? MIT.
+charset-normalizer 3.5.2 ? MIT.
+click 8.3.3 ? BSD-3-Clause.
+colorama 0.4.6 ? BSD License.
+cryptography 50.0.2 ? Apache-2.0 OR BSD-3-Clause.
+fastapi 0.162.0 ? MIT.
+h11 0.16.0 ? MIT License.
+hijridate 2.6.0 ? MIT.
+httpcore 1.0.9 ? BSD-3-Clause.
+httpx 0.28.1 ? BSD License.
+idna 3.17 ? BSD-3-Clause.
+immutabledict 4.3.1 ? MIT.
+mako 1.4.2 ? MIT.
+markupsafe 3.0.3 ? BSD-3-Clause.
+numpy 2.5.3 ? BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0.
+opentelemetry-api 1.45.1 ? Apache-2.0.
+ortools 9.15.6755 ? Apache Software License.
+pandas 3.0.6 ? BSD License.
+pdfminer-six 20260107 ? MIT.
+pdfplumber 0.11.10 ? MIT License.
+pillow 13.0.0 ? MIT-CMU.
+protobuf 6.33.6 ? 3-Clause BSD License.
+psycopg 3.3.6 ? LGPL-3.0-only.
+psycopg-binary 3.3.6 ? LGPL-3.0-only.
+pycparser 3.0 ? BSD-3-Clause.
+pydantic 2.14.2 ? MIT.
+pydantic-core 2.50.2 ? MIT.
+pyjwt 2.15.1 ? MIT.
+pypdfium2 5.14.0 ? BSD-3-Clause, Apache-2.0, dependency licenses.
+python-dateutil 2.9.0.post0 ? Apache Software License; BSD License.
+python-multipart 0.0.32 ? Apache-2.0.
+six 1.17.0 ? MIT License.
+sqlalchemy 2.1.6 ? MIT.
+starlette 1.10.0 ? BSD-3-Clause.
+typing-extensions 4.16.0 ? PSF-2.0.
+typing-inspection 0.4.4 ? MIT.
+tzdata 2026.6 ? Apache-2.0.
+uvicorn 0.54.0 ? BSD-3-Clause.
+
+DISTRIBUTION REQUIREMENTS
+
+MIT / MIT-CMU / BSD / ISC: retain the upstream copyright, permission, conditions
+and disclaimer texts with distributed source or binaries, as applicable. This includes
+pdfplumber, pdfminer-six, Pillow (MIT-CMU), hijridate and their runtime dependencies.
+Apache-2.0: provide the licence, retain relevant copyright and attribution notices,
+include upstream NOTICE files where supplied, and identify modified upstream files.
+Python/PSF and other permissive components retain their upstream licence conditions.
+NumPy includes BSD-3-Clause, 0BSD, MIT, Zlib and CC0-1.0 component terms; retain its
+bundled third-party notices and any applicable bundled-library licence texts.
+
+pypdfium2 5.14.0: helper code and bindings carry BSD-3-Clause / Apache-2.0 terms.
+The bundled PDFium binary has its own BSD-style licence and third-party dependency
+licences. Distribute the PDFium and dependency licence/notice files supplied with the
+exact wheel/binary; the Python wrapper licence alone is insufficient.
+Project and source: https://github.com/pypdfium2-team/pypdfium2
+PDFium source: https://pdfium.googlesource.com/pdfium/
+
+Pillow 13.0.0: MIT-CMU (Historical Permission Notice and Disclaimer). Preserve the
+Pillow copyright and permission text, including the no-advertising/name-use condition.
+Bundled imaging libraries retain their own notices supplied with the distributed wheel.
+Source: https://github.com/python-pillow/Pillow
+pdfplumber 0.11.10: MIT; source https://github.com/jsvine/pdfplumber
+hijridate 2.6.0: MIT; source https://github.com/dralshehri/hijridate
+
+psycopg and psycopg-binary 3.3.6: LGPL-3.0-only. Distribute the LGPL and referenced
+GPL texts and retain notices. Provide corresponding library source, including changes,
+through a licence-compliant source delivery method for the exact distributed version.
+Permit replacement/relinking with a modified library and reverse engineering needed
+to debug those modifications. Preserve notices for bundled libpq/OpenSSL and any other
+binary dependencies. Source: https://github.com/psycopg/psycopg
+
+certifi 2026.10.19: MPL-2.0. Retain notices, provide the MPL text, and inform recipients
+how to obtain the source of the covered files, including any modifications, under MPL.
+Source: https://github.com/certifi/python-certifi
+
+Geist and Geist Mono: OFL-1.1; retain the font copyright notice and full OFL text in
+apps/web/public/assets/fonts/OFL-Geist.txt with every distributed font copy. Do not
+sell fonts by themselves; modified fonts must satisfy the reserved-name/OFL conditions.
+Lucide icons: ISC; Feather-derived portions: MIT. Retain both applicable copyright,
+permission and disclaimer texts from apps/web/src/LICENSE-lucide in web distributions.
+
+This inventory is not a substitute for upstream licence texts. Build/distribution
+packaging must include the exact installed components' copyright, LICENCE/LICENSE,
+NOTICE and bundled dependency notices. Container OS packages require a separate image
+SBOM/licence manifest; licences.md did not scan those packages. Icon provenance: the
+Lucide/Feather attribution above is the recorded one; it is being resolved icon by icon.

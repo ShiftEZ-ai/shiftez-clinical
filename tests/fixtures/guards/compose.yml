@@ -1,0 +1,4 @@
+services:
+  api:
+    environment:
+      FORWARDED_ALLOW_IPS: ${APP_EDGE_IP:?set the proxy address}

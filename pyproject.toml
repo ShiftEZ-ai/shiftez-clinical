@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rota"
+version = "0.0.0"
+description = ""
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi==0.162.0", "starlette==1.10.0", "pydantic==2.14.2",
+  "SQLAlchemy==2.1.6", "uvicorn==0.54.0", "alembic==1.20.1",
+  "httpx==0.28.1", "PyJWT==2.15.1", "cryptography==50.0.2",
+  "argon2-cffi==25.1.0", "tzdata==2026.6", "ortools==9.15.6755", "hijridate==2.6.0",
+  "pdfplumber==0.11.10", "pypdfium2==5.14.0", "Pillow==13.0.0",
+  "python-multipart==0.0.32",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]==3.3.6"]
+test = ["pytest==9.2.0", "pytest-cov==7.1.0", "pytest-timeout==2.4.0", "pytest-xdist==3.8.0", "playwright==1.64.1", "hypothesis==6.170.13"]
+
+
+
+[tool.setuptools.packages.find]
+include = ["apps*", "packages*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "cpu_budget: isolated CPU-time or wall-clock budgets; quiet cpu-budget lane only, never retry; core checks stay unmarked",
+  "wall_benchmark: elapsed-time and external-process benchmarks, reported nightly without gating qualification",
+  "postgres: requires a disposable PostgreSQL database via TEST_POSTGRES_URL",
+  "postgresql: alias of postgres for database-free local selection",
+  "browser: real browser and real running API/database",
+  "quarantine: legacy separate non-blocking selection; reviewed tests/quarantine.json entries execute as expected failures",
+]
+
+[tool.coverage.run]
+source = ["apps/api", "packages/domain"]
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
+
+

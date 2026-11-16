@@ -1,0 +1,516 @@
+{
+  "id": "A-PREF-01",
+  "revision": 2,
+  "title": "Preference (weight, boundaries and safety)",
+  "intent": "Positive allocation priority changes choices under pressure, while mandatory protection wins.",
+  "pressure": "Three editable backup assignments are uniquely preserved by stability when preference weight is zero; priority nine outweighs priority one when enabled.",
+  "covers": {
+    "kind.allocation_preference": [
+      "counterfactual",
+      "ablation",
+      "component_maths",
+      "soft_priority",
+      "oracle"
+    ],
+    "kind.allocation_preference.priority": [
+      "component_maths",
+      "soft_priority",
+      "oracle"
+    ],
+    "kind.restriction": [
+      "validator",
+      "soft_hard"
+    ],
+    "kind.restriction.weekdays": [
+      "oracle"
+    ],
+    "dimension.person_id": [
+      "oracle"
+    ]
+  },
+  "commands": [
+    {
+      "key": "rank",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "categories",
+        "value": {
+          "name": "A-PREF-01 Clinician (preference eligible)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-PREF-01 Continuity clinic (competing preferences)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location_kind",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "location_types",
+        "value": {
+          "name": "A-PREF-01 Clinic room (half-day work)",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-PREF-01 Preference room (one clinician)",
+          "starts_on": "2020-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 3
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "p0",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-PREF-01 Preference A (preferred continuity clinician)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member0",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p0",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible0",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p1",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-PREF-01 Preference B (stable backup clinician)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member1",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p1",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible1",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p2",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-PREF-01 Preference C (eligible alternative)",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member2",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p2",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible2",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p2",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "A-PREF-01 Half-day clinic (one seat)",
+          "starts_on": "2020-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 1
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workspace",
+      "role": "coordinator",
+      "kind": "workspace.create",
+      "payload": {
+        "name": "A-PREF-01 Preference (weight ablation and hard priority)",
+        "starts_on": "2027-01-03",
+        "ends_on": "2027-01-06"
+      }
+    },
+    {
+      "key": "pref",
+      "role": "coordinator",
+      "kind": "policy.create",
+      "payload": {
+        "name": "A-PREF-01 Continuity clinician (priority nine)",
+        "owner": "Golden scenario reviewers",
+        "source": "Synthetic expectations written by hand; not hospital policy",
+        "starts_on": "2020-01-01",
+        "definition": {
+          "rule": {
+            "kind": "allocation_preference",
+            "priority": 9
+          },
+          "scope": {
+            "person_id": "$p0",
+            "service_id": "$service",
+            "assignment_type_id": "$type"
+          },
+          "severity": "advisory",
+          "workspace_id": "$workspace"
+        }
+      }
+    },
+    {
+      "key": "pref_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "payload": {
+        "reason": "Independent synthetic scenario review"
+      },
+      "target": "$pref",
+      "revision": "$pref.revision"
+    },
+    {
+      "key": "prefer_backup",
+      "role": "coordinator",
+      "kind": "policy.create",
+      "payload": {
+        "name": "A-PREF-01 Backup clinician (priority one)",
+        "owner": "Golden scenario reviewers",
+        "source": "Synthetic expectations written by hand; not hospital policy",
+        "starts_on": "2020-01-01",
+        "definition": {
+          "rule": {
+            "kind": "allocation_preference",
+            "priority": 1
+          },
+          "scope": {
+            "person_id": "$p1",
+            "service_id": "$service",
+            "assignment_type_id": "$type"
+          },
+          "severity": "advisory",
+          "workspace_id": "$workspace"
+        }
+      }
+    },
+    {
+      "key": "prefer_backup_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "payload": {
+        "reason": "Independent synthetic scenario review"
+      },
+      "target": "$prefer_backup",
+      "revision": "$prefer_backup.revision"
+    },
+    {
+      "key": "safety",
+      "role": "coordinator",
+      "kind": "policy.create",
+      "payload": {
+        "name": "A-PREF-01 Sunday clinic (protected for preferred clinician)",
+        "owner": "Golden scenario reviewers",
+        "source": "Synthetic expectations written by hand; not hospital policy",
+        "starts_on": "2020-01-01",
+        "definition": {
+          "rule": {
+            "kind": "restriction",
+            "weekdays": [
+              6
+            ],
+            "start_time": "08:00",
+            "end_time": "12:00"
+          },
+          "scope": {
+            "person_id": "$p0"
+          },
+          "severity": "advisory",
+          "workspace_id": "$workspace"
+        }
+      }
+    },
+    {
+      "key": "safety_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "payload": {
+        "reason": "Independent synthetic scenario review"
+      },
+      "target": "$safety",
+      "revision": "$safety.revision"
+    },
+    {
+      "key": "s0",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-03T08:00:00+03:00",
+        "end": "2027-01-03T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p1",
+            "start": "2027-01-03T08:00:00+03:00",
+            "end": "2027-01-03T12:00:00+03:00",
+            "fixed": false
+          }
+        ]
+      },
+      "revision": "$workspace.revision"
+    },
+    {
+      "key": "s1",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-04T08:00:00+03:00",
+        "end": "2027-01-04T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p1",
+            "start": "2027-01-04T08:00:00+03:00",
+            "end": "2027-01-04T12:00:00+03:00",
+            "fixed": false
+          }
+        ]
+      },
+      "revision": "$workspace.revision"
+    },
+    {
+      "key": "s2",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-05T08:00:00+03:00",
+        "end": "2027-01-05T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p1",
+            "start": "2027-01-05T08:00:00+03:00",
+            "end": "2027-01-05T12:00:00+03:00",
+            "fixed": false
+          }
+        ]
+      },
+      "revision": "$workspace.revision"
+    }
+  ],
+  "expect": {
+    "boundary": {
+      "at_limit": {
+        "assignment": [
+          "p0",
+          "p0",
+          "p0"
+        ],
+        "preferences": 1.0
+      },
+      "one_over": {
+        "assignment": [
+          "p0",
+          "p0",
+          "p1"
+        ],
+        "preferences": 0.7111
+      },
+      "formula": "A satisfaction=1; B=(1+1/9)/2=5/9; one miss blends 7/10 mean and 3/10 worst: 32/45."
+    },
+    "validator": {
+      "code": "RESTRICTION",
+      "person": "p0",
+      "session": "s0",
+      "rule": "safety",
+      "variant": "mandatory"
+    },
+    "score_only_note": "allocation_preference has no validator finding; its broken witness is exact component loss, and mandatory restriction supplies the safety validator witness.",
+    "binding_rules": [
+      "pref",
+      "prefer_backup",
+      "safety"
+    ],
+    "pressure": "With preference weight zero and stability one, all three editable backup assignments must remain; all three must move to A with preference weight one hundred.",
+    "counterfactual": "Compare exactly the same input at preferences component weight zero and one hundred: at least three sessions switch to A; fail scenario not sensitive otherwise.",
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1,
+      "orders": "shuffle all input collections for each seed"
+    },
+    "component_maths": {
+      "all_preferred": 1.0,
+      "all_backup": 0.5556,
+      "all_alternative": 0.0,
+      "one_miss": 0.7111,
+      "one_miss_exact": "32/45"
+    },
+    "ablation": {
+      "off": 0,
+      "on": 100,
+      "fixed_stability_weight": 1,
+      "minimum_shift": 3
+    },
+    "soft_hard": {
+      "mandatory_sunday_protection_wins": true,
+      "preference_component": 0.7111,
+      "visible_penalty_above": 0
+    },
+    "soft_priority": {
+      "priorities": [
+        9,
+        1
+      ],
+      "swapped_priorities": [
+        1,
+        9
+      ],
+      "minimum_shift": 3
+    },
+    "oracle": {
+      "people": 3,
+      "sessions": 3,
+      "enumerated_rotas": 27,
+      "base_optimum": [
+        "p0",
+        "p0",
+        "p0"
+      ],
+      "weight_zero_optimum": [
+        "p1",
+        "p1",
+        "p1"
+      ],
+      "mandatory_optima": [
+        [
+          "p1",
+          "p1",
+          "p0"
+        ],
+        [
+          "p1",
+          "p0",
+          "p1"
+        ]
+      ],
+      "mandatory_reason": "One A and two B has the same person-level preference blend as two A and one B, with greater stability; A is forbidden on Sunday."
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 100,
+          "stability": 1
+        }
+      }
+    }
+  }
+}

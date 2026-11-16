@@ -1,0 +1,7 @@
+services:
+  api:
+    environment:
+      FORWARDED_ALLOW_IPS: ${APP_EDGE_IP:-}
+  proxy:
+    environment:
+      APP_TRUSTED_PROXIES: ${APP_TRUSTED_PROXIES:-127.0.0.1/32}

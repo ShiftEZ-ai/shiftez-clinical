@@ -1,0 +1,420 @@
+{
+  "description": "Shared evaluator cases. Context defaults are shallow-merged with each case's context. Held fields are already projected for one candidate; row defaults to held. Lists represent sets. Text and tags use locale-independent Unicode lower(), without casefolding, accent stripping or Unicode normalization. These test matching semantics, not API admission or storage projections.",
+  "context": {"timezone": "Asia/Riyadh", "week_start": 0, "today": "2026-10-18", "context": "filter"},
+  "cases": [
+    {
+      "id": "unicode-text-is-keeps-sharp-s-distinct-from-ss",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "strasse"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-normalizes-capital-sharp-s",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": {"kind": "absolute", "value": "STRA\u1e9eE"}}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-does-not-fold-operand",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "Stra\u00dfe"}]},
+      "held": {"name": "strasse"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-not-keeps-sharp-s-distinct",
+      "tree": {"conditions": [{"field": "name", "op": "is_not", "value": "STRASSE"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-not-lowers-both-sides",
+      "tree": {"conditions": [{"field": "name", "op": "is_not", "value": "STRA\u1e9eE"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-contains-does-not-fold",
+      "tree": {"conditions": [{"field": "name", "op": "contains", "value": "STRASSE"}]},
+      "held": {"name": "An der Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-contains-lowers-both-sides",
+      "tree": {"conditions": [{"field": "name", "op": "contains", "value": "STRA\u1e9eE"}]},
+      "held": {"name": "An der Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-not-contains-does-not-fold",
+      "tree": {"conditions": [{"field": "name", "op": "not_contains", "value": "strasse"}]},
+      "held": {"name": "An der Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-not-contains-lowers-both-sides",
+      "tree": {"conditions": [{"field": "name", "op": "not_contains", "value": "STRA\u1e9eE"}]},
+      "held": {"name": "An der Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-starts-with-does-not-fold",
+      "tree": {"conditions": [{"field": "name", "op": "starts_with", "value": "STRASS"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-starts-with-lowers-both-sides",
+      "tree": {"conditions": [{"field": "name", "op": "starts_with", "value": "STRA\u1e9e"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-ends-with-does-not-fold",
+      "tree": {"conditions": [{"field": "name", "op": "ends_with", "value": "SSE"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-ends-with-lowers-both-sides",
+      "tree": {"conditions": [{"field": "name", "op": "ends_with", "value": "\u1e9eE"}]},
+      "held": {"name": "Stra\u00dfe"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-keeps-ligature-distinct",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "ffi"}]},
+      "held": {"name": "\ufb03"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-lowers-accented-uppercase",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "CAF\u00c9"}]},
+      "held": {"name": "caf\u00e9"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-keeps-accents",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "cafe"}]},
+      "held": {"name": "caf\u00e9"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-does-not-normalize-combining-accents",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "cafe\u0301"}]},
+      "held": {"name": "caf\u00e9"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-dotted-i-expands-to-i-dot",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "i\u0307"}]},
+      "held": {"name": "\u0130"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-dotted-i-keeps-dot",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "i"}]},
+      "held": {"name": "\u0130"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-lowers-final-sigma-in-context",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "\u03bf\u03c2"}]},
+      "held": {"name": "\u039f\u03a3"},
+      "expected": true
+    },
+    {
+      "id": "unicode-text-is-keeps-final-sigma-distinct",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "\u03bf\u03c3"}]},
+      "held": {"name": "\u039f\u03a3"},
+      "expected": false
+    },
+    {
+      "id": "unicode-text-is-single-sigma-is-not-final",
+      "tree": {"conditions": [{"field": "name", "op": "is", "value": "\u03c3"}]},
+      "held": {"name": "\u03a3"},
+      "expected": true
+    },
+    {
+      "id": "unicode-tags-absolute-lowers-held-and-operand",
+      "tree": {"conditions": [{"field": "tags", "op": "any", "value": {"kind": "absolute", "value": "STRA\u1e9eE"}}]},
+      "held": {"tags": ["Stra\u00dfe"]},
+      "expected": true
+    },
+    {
+      "id": "unicode-tags-negative-keeps-sharp-s-distinct",
+      "tree": {"conditions": [{"field": "tags", "op": "is_not", "value": "strasse"}]},
+      "held": {"tags": ["STRA\u1e9eE"]},
+      "expected": true
+    },
+    {
+      "id": "legacy-tags-all",
+      "tree": {"conditions": [{"field": "tags", "op": "all", "values": ["NIGHT", "qualified"]}]},
+      "held": {"tags": ["night", "qualified", "senior"]},
+      "expected": true
+    },
+    {
+      "id": "absolute-choice-any",
+      "tree": {"conditions": [{"field": "category_ids", "op": "any", "value": {"kind": "absolute", "value": ["rank-a", "rank-b"]}}]},
+      "held": {"category_ids": ["rank-b"]},
+      "expected": true
+    },
+    {
+      "id": "absolute-tags-keep-legacy-unicode-normalization",
+      "tree": {"conditions": [{"field": "tags", "op": "any", "value": {"kind": "absolute", "value": "Stra\u00dfe"}}]},
+      "held": {"tags": ["strasse"]},
+      "expected": false
+    },
+    {
+      "id": "absolute-choice-none-excludes-match",
+      "tree": {"conditions": [{"field": "category_ids", "op": "none", "value": {"kind": "absolute", "value": ["rank-a", "rank-b"]}}]},
+      "held": {"category_ids": ["rank-b"]},
+      "expected": false
+    },
+    {
+      "id": "absolute-choice-is-not-disjoint",
+      "tree": {"conditions": [{"field": "service_ids", "op": "is_not", "value": {"kind": "absolute", "value": "clinic-a"}}]},
+      "held": {"service_ids": ["clinic-b"]},
+      "expected": true
+    },
+    {
+      "id": "empty-null-blank-and-list",
+      "tree": {"match": "all", "conditions": [
+        {"field": "category_ids", "op": "empty"},
+        {"field": "service_ids", "op": "empty"},
+        {"field": "tags", "op": "empty"},
+        {"field": "note", "op": "empty"},
+        {"field": "ends_on", "op": "empty"}
+      ]},
+      "held": {"category_ids": null, "service_ids": "", "tags": [], "note": "", "ends_on": null},
+      "expected": true
+    },
+    {
+      "id": "empty-choice-is-not-nonempty",
+      "tree": {"conditions": [{"field": "person_ids", "op": "not_empty"}]},
+      "held": {"person_ids": []},
+      "expected": false
+    },
+    {
+      "id": "zero-and-whitespace-are-not-empty",
+      "tree": {"match": "all", "conditions": [{"field": "number", "op": "not_empty"}, {"field": "note", "op": "not_empty"}]},
+      "held": {"number": 0, "note": " "},
+      "expected": true
+    },
+    {
+      "id": "text-contains-ignores-case",
+      "tree": {"conditions": [{"field": "name", "op": "contains", "value": {"kind": "absolute", "value": "MEDICINE"}}]},
+      "held": {"name": "Family Medicine"},
+      "expected": true
+    },
+    {
+      "id": "text-not-contains-excludes-match",
+      "tree": {"conditions": [{"field": "name", "op": "not_contains", "value": "medicine"}]},
+      "held": {"name": "Family Medicine"},
+      "expected": false
+    },
+    {
+      "id": "text-is-not",
+      "tree": {"conditions": [{"field": "name", "op": "is_not", "value": "Clinical Services"}]},
+      "held": {"name": "Family Medicine"},
+      "expected": true
+    },
+    {
+      "id": "number-zero-literal",
+      "tree": {"conditions": [{"field": "number", "op": "is", "value": 0}]},
+      "held": {"number": 0},
+      "expected": true
+    },
+    {
+      "id": "number-strict-comparison-boundary",
+      "tree": {"conditions": [{"field": "number", "op": "gt", "value": {"kind": "absolute", "value": 10}}]},
+      "held": {"number": 10},
+      "expected": false
+    },
+    {
+      "id": "number-between-reversed-inclusive",
+      "tree": {"conditions": [{"field": "number", "op": "between", "value": [{"kind": "absolute", "value": 10}, {"kind": "absolute", "value": 0}]}]},
+      "held": {"number": 0},
+      "expected": true
+    },
+    {
+      "id": "table-scoped-numeric-column",
+      "context": {"table_key": "rule-line-rows"},
+      "tree": {"conditions": [{"field": "c2", "op": "between", "value": [1, 3]}]},
+      "held": {"c2": 2},
+      "expected": true
+    },
+    {
+      "id": "relative-number-target",
+      "context": {"allowed_tokens": ["its_target"]},
+      "tree": {"conditions": [{"field": "number", "op": "is", "value": {"kind": "relative", "token": "its_target"}}]},
+      "held": {"number": 12, "target": 12},
+      "expected": true
+    },
+    {
+      "id": "relative-number-average",
+      "context": {"allowed_tokens": ["department_average"], "metrics": {"number": {"average": 7.5}}},
+      "tree": {"conditions": [{"field": "number", "op": "lt", "value": {"kind": "relative", "token": "department_average"}}]},
+      "held": {"number": 8},
+      "expected": false
+    },
+    {
+      "id": "absolute-date-before-excludes-boundary",
+      "tree": {"conditions": [{"field": "last_day", "op": "before", "value": {"kind": "absolute", "value": "2026-10-18"}}]},
+      "held": {"last_day": "2026-10-18"},
+      "expected": false
+    },
+    {
+      "id": "date-between-mixed-inclusive",
+      "context": {"allowed_tokens": ["today"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "between", "value": [{"kind": "absolute", "value": "2026-10-01"}, {"kind": "relative", "token": "today"}]}]},
+      "held": {"last_day": "2026-10-18"},
+      "expected": true
+    },
+    {
+      "id": "date-between-reversed-range-endpoint",
+      "context": {"allowed_tokens": ["this_month"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "between", "value": [{"kind": "absolute", "value": "2026-10-10"}, {"kind": "relative", "token": "this_month"}]}]},
+      "held": {"last_day": "2026-10-31"},
+      "expected": true
+    },
+    {
+      "id": "date-last-n-includes-today",
+      "context": {"allowed_tokens": ["last_n"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "last_n", "n": 7, "unit": "days"}}]},
+      "held": {"last_day": "2026-10-18"},
+      "expected": true
+    },
+    {
+      "id": "date-next-n-final-day",
+      "context": {"allowed_tokens": ["next_n"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "next_n", "n": 2, "unit": "weeks"}}]},
+      "held": {"last_day": "2026-10-31"},
+      "expected": true
+    },
+    {
+      "id": "date-next-n-outside-range",
+      "context": {"allowed_tokens": ["next_n"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "next_n", "n": 2, "unit": "weeks"}}]},
+      "held": {"last_day": "2026-11-01"},
+      "expected": false
+    },
+    {
+      "id": "date-week-start-monday",
+      "context": {"allowed_tokens": ["this_week"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "this_week"}}]},
+      "held": {"last_day": "2026-10-12"},
+      "expected": true
+    },
+    {
+      "id": "date-week-start-sunday",
+      "context": {"week_start": 6, "allowed_tokens": ["this_week"]},
+      "tree": {"conditions": [{"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "this_week"}}]},
+      "held": {"last_day": "2026-10-12"},
+      "expected": false
+    },
+    {
+      "id": "date-local-day-riyadh",
+      "context": {"allowed_tokens": ["today"]},
+      "tree": {"conditions": [{"field": "date", "op": "is", "value": {"kind": "relative", "token": "today"}}]},
+      "held": {"date": "2026-10-17T21:00:00+00:00"},
+      "expected": true
+    },
+    {
+      "id": "date-local-day-dst-zone",
+      "context": {"timezone": "America/New_York", "today": "2026-03-08", "allowed_tokens": ["today"]},
+      "tree": {"conditions": [{"field": "date", "op": "is", "value": {"kind": "relative", "token": "today"}}]},
+      "held": {"date": "2026-03-09T03:30:00+00:00"},
+      "expected": true
+    },
+    {
+      "id": "duty-relative-is-independent-of-today",
+      "context": {"context": "rule", "duty_day": "2026-12-31", "allowed_tokens": ["days_after_duty"]},
+      "tree": {"conditions": [{"field": "date", "op": "within", "value": {"kind": "relative", "token": "days_after_duty", "n": 2}}]},
+      "held": {"date": "2027-01-02"},
+      "expected": true
+    },
+    {
+      "id": "relative-person-me",
+      "context": {"allowed_tokens": ["me"], "values": {"me": ["person-a"]}},
+      "tree": {"conditions": [{"field": "person_ids", "op": "any", "value": {"kind": "relative", "token": "me"}}]},
+      "held": {"person_ids": ["person-a"]},
+      "expected": true
+    },
+    {
+      "id": "relative-person-differs-per-viewer",
+      "context": {"allowed_tokens": ["me"], "values": {"me": ["person-b"]}},
+      "tree": {"conditions": [{"field": "person_ids", "op": "any", "value": {"kind": "relative", "token": "me"}}]},
+      "held": {"person_ids": ["person-a"]},
+      "expected": false
+    },
+    {
+      "id": "relative-clinics-all-requires-every-id",
+      "context": {"allowed_tokens": ["my_clinics"], "values": {"my_clinics": {"service_ids": ["clinic-a", "clinic-b"]}}},
+      "tree": {"conditions": [{"field": "service_ids", "op": "all", "value": {"kind": "relative", "token": "my_clinics"}}]},
+      "held": {"service_ids": ["clinic-a", "clinic-b", "clinic-c"]},
+      "expected": true
+    },
+    {
+      "id": "relative-clinics-all-rejects-one-missing-id",
+      "context": {"allowed_tokens": ["my_clinics"], "values": {"my_clinics": {"service_ids": ["clinic-a", "clinic-b"]}}},
+      "tree": {"conditions": [{"field": "service_ids", "op": "all", "value": {"kind": "relative", "token": "my_clinics"}}]},
+      "held": {"service_ids": ["clinic-a"]},
+      "expected": false
+    },
+    {
+      "id": "relative-team-all-requires-every-person",
+      "context": {"allowed_tokens": ["my_team"], "values": {"my_team": ["person-a", "person-b"]}},
+      "tree": {"conditions": [{"field": "usual_assignee_ids", "op": "all", "value": {"kind": "relative", "token": "my_team"}}]},
+      "held": {"usual_assignee_ids": ["person-a", "person-b", "person-c"]},
+      "expected": true
+    },
+    {
+      "id": "relative-team-all-rejects-one-missing-person",
+      "context": {"allowed_tokens": ["my_team"], "values": {"my_team": ["person-a", "person-b"]}},
+      "tree": {"conditions": [{"field": "usual_assignee_ids", "op": "all", "value": {"kind": "relative", "token": "my_team"}}]},
+      "held": {"usual_assignee_ids": ["person-a"]},
+      "expected": false
+    },
+    {
+      "id": "relative-team-all-is-not-vacuously-true",
+      "context": {"allowed_tokens": ["my_team"], "values": {"my_team": []}},
+      "tree": {"conditions": [{"field": "usual_assignee_ids", "op": "all", "value": {"kind": "relative", "token": "my_team"}}]},
+      "held": {"usual_assignee_ids": ["person-a"]},
+      "expected": false
+    },
+    {
+      "id": "relative-programme-choice-all",
+      "context": {"allowed_tokens": ["my_programme"], "values": {"my_programme": {"programme_ids": ["programme-a", "programme-b"]}}},
+      "tree": {"conditions": [{"field": "programme_ids", "op": "all", "value": {"kind": "relative", "token": "my_programme"}}]},
+      "held": {"programme_ids": ["programme-a"]},
+      "expected": false
+    },
+    {
+      "id": "relative-approvals-negation",
+      "context": {"allowed_tokens": ["people_i_approve"], "values": {"people_i_approve": ["person-a", "person-b"]}},
+      "tree": {"conditions": [{"field": "person_ids", "op": "none", "value": {"kind": "relative", "token": "people_i_approve"}}]},
+      "held": {"person_ids": ["person-c"]},
+      "expected": true
+    },
+    {
+      "id": "nested-any-keeps-all-branch-requirements",
+      "context": {"allowed_tokens": ["me", "this_month"], "values": {"me": ["person-a"]}},
+      "tree": {"match": "any", "conditions": [
+        {"match": "all", "conditions": [{"field": "name", "op": "contains", "value": "ucc"}, {"field": "roles", "op": "any", "values": ["staff"]}]},
+        {"match": "all", "conditions": [{"field": "person_ids", "op": "any", "value": {"kind": "relative", "token": "me"}}, {"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "this_month"}}]}
+      ]},
+      "held": {"name": "UCC", "roles": ["auditor"], "person_ids": ["person-a"], "last_day": "2026-11-01"},
+      "expected": false
+    },
+    {
+      "id": "nested-any-accepts-one-complete-branch",
+      "context": {"allowed_tokens": ["me", "this_month"], "values": {"me": ["person-a"]}},
+      "tree": {"match": "any", "conditions": [
+        {"match": "all", "conditions": [{"field": "name", "op": "contains", "value": "ucc"}, {"field": "roles", "op": "any", "values": ["staff"]}]},
+        {"match": "all", "conditions": [{"field": "person_ids", "op": "any", "value": {"kind": "relative", "token": "me"}}, {"field": "last_day", "op": "within", "value": {"kind": "relative", "token": "this_month"}}]}
+      ]},
+      "held": {"name": "UCC", "roles": ["staff"], "person_ids": ["person-b"], "last_day": "2026-11-01"},
+      "expected": true
+    }
+  ]
+}

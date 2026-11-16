@@ -1,0 +1,668 @@
+{
+  "0001_core": {
+    "class": "destructive",
+    "sha256": "584b4d3ff96aa8f277e390ae47dc57bca171b9fc5eef987c45c90b47824a6830",
+    "review": "Static source review: line 703: unproved schema operation drop_table; line 704: unproved schema operation drop_index. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0002_guards": {
+    "class": "destructive",
+    "sha256": "4794fad45f36a487c4a02f4a05865534f4854b8646d7e5d8093eab959be82c15",
+    "review": "Static source review: Installs immutable audit/history/approval/receipt and publication/duty guards without migration-time DML; PostgreSQL trigger targets and conditional function bodies are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0003_integrity": {
+    "class": "destructive",
+    "sha256": "aa75dce7750034dbd500ecdac9deaef0b99c31fec31ddb0247160f890bad30a1",
+    "review": "Static source review: Replaces the PostgreSQL duty guard to check OLD and NEW ownership and installs workspace/publication identity protections; inherited guard replacement is not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0004_governance": {
+    "class": "destructive",
+    "sha256": "26790347f2a5d0a92e51119f0d00f1a6ee4f3239e26141349e65994912217135",
+    "review": "Static source review: Adds governance and swap schema and immutable review-decision/swap-event guards; PostgreSQL trigger targets are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0005_governance_guards": {
+    "class": "destructive",
+    "sha256": "374f3f9cf50f1236718425fb3f52c599407954c664a596098c1c27e1aa6868b6",
+    "review": "Static source review: line 32: unknown SQL execution; line 34: unknown SQL execution. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0006_planner_views": {
+    "class": "additive",
+    "sha256": "0f34f48665bef68490f6d57d5c4400b1591067ae198f82797bb0c5cd3dae47b2"
+  },
+  "0007_operational_resources": {
+    "class": "destructive",
+    "sha256": "f159266fe1575dca33174835143867aadd045cfc36ef9ac30cd187e16da17699",
+    "review": "Static source review: Creates operating_calendars/resource_pools and indexes; adds nullable locations.calendar_id with inline REFERENCES on SQLite. Calls schema helpers and uses control flow; helper calls are outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0008_series_lineage": {
+    "class": "destructive",
+    "sha256": "f93c4e292ad979472fe0a388f1f8655db723e31bcf639b84ea0cf48e56fca59b",
+    "review": "Static source review: Adds nullable series provenance, a false series_modified default, an occurrence index and lineage guards without rewriting retained rows; conditional PostgreSQL guard bodies are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0009_participation_segments": {
+    "class": "additive",
+    "sha256": "9645e3b5914bfa4d641d568811d11ba3d318376cc708abdb840d05936ef76641"
+  },
+  "0010_validation_contract": {
+    "class": "destructive",
+    "sha256": "4f8c45c684e08a61a3333d9c9e207fbb00d8bd19ac51e14d32538dd8dd97b5f2",
+    "review": "Static source review: Installs a publication INSERT guard requiring the block-quota-v1 contract without rewriting issued publications; the PostgreSQL function/trigger body is not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0011_alpha_programmes": {
+    "class": "destructive",
+    "sha256": "124bf3e32025151c118414c7287f1c99542c2a0c9de69f1829258cc78dbce214",
+    "review": "Static source review: line 13: unproved schema operation batch_alter_table; line 14: unknown call batch.drop_constraint. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0012_directory": {
+    "class": "destructive",
+    "sha256": "489a99e9889ccf37d04db4e53b39b676c33c1a9e76cb2a1b33535a9d3958fb3a",
+    "review": "Static source review: Adds defaulted directory columns; creates reference_imports/source_mappings. Calls schema helpers and uses control flow; helper calls are outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0013_department_content": {
+    "class": "additive",
+    "sha256": "e5be20deb52339ab73a1d26dd5ba4e381a1f6fcbc1d442e5bbad40a4762cbc1e"
+  },
+  "0014_supervision_pairing": {
+    "class": "destructive",
+    "sha256": "d0ec5968c77eb73f1c6a05beb1b247fa5ff4aea236673c885724284761adc1fb",
+    "review": "Static source review: Adds nullable supervisor FK and defaulted team_lead in place. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0015_recorded_leave": {
+    "class": "destructive",
+    "sha256": "ac3044bfb95eae5c134acf32794788a27abc1a88efdeba6f9f2fa4f9854c661d",
+    "review": "Static source review: line 15: unproved schema operation batch_alter_table; line 16: unknown call batch.drop_constraint. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0016_service_calendars": {
+    "class": "destructive",
+    "sha256": "8298d2ee7b3c8bb84fef44bc2e0eb8acc91f40f33d8e9064e9ddee3c09ac9766",
+    "review": "Static source review: Adds defaulted services.mode and nullable calendar FK. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0017_mentorships": {
+    "class": "additive",
+    "sha256": "3fad5a5c5063d065e0b407258d36e90837892bce140b2aa9fbf734a55366a6ee"
+  },
+  "0018_request_rota": {
+    "class": "destructive",
+    "sha256": "955abb663d97a53173bfd48e029c01f0cb408bbaab0ead7b11e146f6018773ba",
+    "review": "Static source review: Adds nullable requests.workspace_id FK. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0019_source_evidence": {
+    "class": "destructive",
+    "sha256": "c7e507ae26c7580d2fa4bb6d1f6eb73f48fb0e44bd045af91e07fe4184681079",
+    "review": "Static source review: Installs UPDATE/DELETE guards on reference imports and source mappings without migration-time DML; PostgreSQL trigger targets are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0020_programme_calendar": {
+    "class": "additive",
+    "sha256": "7fbff525c8c608bfc0990017948a82e8d5f7417fe9b88b54ef4a8ba059194cb3"
+  },
+  "0021_session_units": {
+    "class": "destructive",
+    "sha256": "ffbc7a5d5be78fbd44064be751adf5d5891fdae469f90b9e01b11457383678a2",
+    "review": "Static source review: line 11: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_VALIDATION_CONTRACT; line 12: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_ALPHA_CONTRACT. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0022_session_unit_basis": {
+    "class": "destructive",
+    "sha256": "cdb5c72c1781ae84c872331bf899805b8d9af257cf2db0aee0a96b07d079afa3",
+    "review": "Static source review: line 11: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_VALIDATION_CONTRACT; line 12: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_ALPHA_CONTRACT. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0023_rolling_quotas": {
+    "class": "destructive",
+    "sha256": "30eab941b53390ad513db94a90121c3a97979e8a78cee72a6d66281edca6ef71",
+    "review": "Static source review: line 11: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_VALIDATION_CONTRACT; line 12: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_ALPHA_CONTRACT. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0024_prorated_targets": {
+    "class": "destructive",
+    "sha256": "b754eb6c8056d9c7b2a7369aee705a619c1a5109785483e20975f5872ff1115b",
+    "review": "Static source review: line 11: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_VALIDATION_CONTRACT; line 12: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_ALPHA_CONTRACT. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0025_target_overrides": {
+    "class": "additive",
+    "sha256": "6268410fe580e41ba206df1b009b541326f6c3ed4f93c326f075a33be072a198"
+  },
+  "0026_rotation_types": {
+    "class": "destructive",
+    "sha256": "c6a5f918f77ae9b833276c67e31715b17295aa4aa2e93bf82f6cc0d6721e7c86",
+    "review": "Static source review: line 25: unproved schema operation batch_alter_table; line 26: unknown call batch.alter_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0027_fixed_assignments": {
+    "class": "destructive",
+    "sha256": "a864b92d0e56ce37fc12a7bad1abef1f9497cfc8eee9f894efe95cd3707da839",
+    "review": "Static source review: line 12: SQL is destructive or not statically proven safe: UPDATE ASSIGNMENTS SET FIXED = TRUE; line 16: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0028_job_progress": {
+    "class": "destructive",
+    "sha256": "881d6212e8f55bbfd32fb313f393513c15293cf5fba22a21d33c1fca759aa7eb",
+    "review": "Static source review: line 13: SQL is destructive or not statically proven safe: UPDATE JOBS SET HEARTBEAT_AT = STARTED_AT; line 17: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0029_generation_defaults": {
+    "class": "destructive",
+    "sha256": "3adb99674544d6eb021526446100fd05191168a09d638bb74095eba733808c3c",
+    "review": "Static source review: line 16: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0030_clinic_closure": {
+    "class": "destructive",
+    "sha256": "215020c502e42b599f8027e64a658a1c7d4101c41c7375464713ad7075799ffc",
+    "review": "Static source review: line 15: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0031_person_codes_tags": {
+    "class": "destructive",
+    "sha256": "b98df8018fb93834e371c32c3b1bd018e4767919c89ad7a4e1f11c30a6946489",
+    "review": "Static source review: line 16: unproved schema operation drop_column; line 17: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0032_department_display": {
+    "class": "destructive",
+    "sha256": "0c29c1e62601bdb879e9376e19571cf4b9e914293c0fa6792d6d87227e538b6c",
+    "review": "Static source review: line 15: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0033_catalogue_colours": {
+    "class": "destructive",
+    "sha256": "a281edbcaed483cc9fce41703ff4730a2ed996b9674c3584a4c8c9d4ee9f61ca",
+    "review": "Static source review: line 17: unproved schema operation drop_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0034_duty_colour_automatic": {
+    "class": "destructive",
+    "sha256": "1488cc4e2d3818298b29803970b77084704857c78a9d70952c37eed873b2821a",
+    "review": "Static source review: line 19: unproved attribute or item assignment; line 20: unknown call .bindparams. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0035_table_views": {
+    "class": "additive",
+    "sha256": "e185621b36236e135ee5f44ac7193bd74f79adef30419a55d0d8156d500d5f85"
+  },
+  "0036_planner_saved_views": {
+    "class": "destructive",
+    "sha256": "1daabf8c7d81ed90a0649860d6f0a423371ccf5c595e10774a38c41efb655e20",
+    "review": "Static source review: line 18: unknown call .bindparams; line 23: SQL is destructive or not statically proven safe: INSERT INTO TABLE_VIEWS ( ID ,. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0037_availability_patterns": {
+    "class": "additive",
+    "sha256": "d6358f7c9508d47b40cc58c539d1124cf0d7509cf66cc6e9d0a9abb35e398df1"
+  },
+  "0038_rota_rule_adjustments": {
+    "class": "additive",
+    "sha256": "c171413c4b5c65b9262fcdf7fe19bde3c40bc2d301f7b395d8cdf21f2d318340"
+  },
+  "0039_calendar_feeds": {
+    "class": "additive",
+    "sha256": "533e7ebc31103fbd64cb5677f62d848f81be0604470fa3c3645e7b07e056ee97"
+  },
+  "0040_workspace_archive": {
+    "class": "additive",
+    "sha256": "5fd2622d6448993efb165e4d662ca977c80eb4598cc87e31827c6bb8198fc645"
+  },
+  "0041_self_approval_permissions": {
+    "class": "destructive",
+    "sha256": "f46ac8d965dcfbc0d0c53a024b71756b0a2788baf7a779a727160e0b1d344274",
+    "review": "Static source review: Creates self_approval_permissions/indexes and nullable review_decisions.self_approval_id FK. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0042_rate_limits": {
+    "class": "destructive",
+    "sha256": "b4af46cc73d2ef4d9ac8d42801e74ad4d41185e710f76ec5fe66ae3fa2b2c2e6",
+    "review": "Static source review: line 24: unproved schema operation drop_table. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0043_announcements_workers": {
+    "class": "destructive",
+    "sha256": "9a07235cbf7414d6f4a53bf3471248c86425f4d60a912d53b32f11cf9e82764e",
+    "review": "Static source review: line 38: unproved schema operation bulk_insert. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0044_accounts": {
+    "class": "destructive",
+    "sha256": "76a23c9cd7354a0b754984214395fb3b7fb90ce9a66dbfbb8364c040e6287e27",
+    "review": "Static source review: Adds nullable columns plus checks and creates accounts/account_links/indexes. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0045_staff_imports": {
+    "class": "additive",
+    "sha256": "de76135281070b832dfe5b8289e6352263a7aaff2f417ff4c6b3c3e098444ec7"
+  },
+  "0046_staff_wishes": {
+    "class": "additive",
+    "sha256": "d6c61f17fd80bd514f3fb12f29234727db0fb5606abf2d9dcec9e04854efd282"
+  },
+  "0047_fairness_ledger": {
+    "class": "additive",
+    "sha256": "577330288b8c40a176475e0559e27efe44dd338afa779dce424612809b129761"
+  },
+  "0048_fairness_location_keys": {
+    "class": "additive",
+    "sha256": "4dc3b267f209f786df3e454a0d6f2b4d2a1f10e54d1f736aef83c6bc1443abbe"
+  },
+  "0049_workspace_return_note": {
+    "class": "additive",
+    "sha256": "d982b7643c0494851a9abe4485996e23535a30560aa3c20c36e5212710e637c7"
+  },
+  "0050_publication_effective_range": {
+    "class": "destructive",
+    "sha256": "1898b9f300997db1a87ed542ace29c10e51ca477c51c8bb45bde7f1c49d2f18b",
+    "review": "Static source review: Adds effective-range metadata and replaces the PostgreSQL publication guard to allow only earlier effective ends, with overlap/bounds guards; inherited guard replacement is not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0051_swap_reopened_from": {
+    "class": "destructive",
+    "sha256": "ebbf69d0fe69dc96337b679355b5d1bb38f10b36eb6000c894964e9e7fdfd33c",
+    "review": "Static source review: Adds nullable self-FK to swap_requests in place. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0052_attachments": {
+    "class": "destructive",
+    "sha256": "b0c0778bf7666c9d1bb6ec59daaaa13230ecb9ac1a7c7a88366fb8b96ad57d9b",
+    "review": "Static source review: line 36: SQL is destructive or not statically proven safe: INSERT INTO MENTORSHIPS ( ID ,. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0053_person_pager": {
+    "class": "additive",
+    "sha256": "d8ca1ac6df38f478564dbf59a24cc4d0d9f7e2ac885ca73a5d6ce98d398fce8c"
+  },
+  "0054_tags": {
+    "class": "destructive",
+    "sha256": "ef0646bda12b0f3e802c519d3ba1c766c313e4da4947259efc1b188f8a63a981",
+    "review": "Static source review: line 78: unproved attribute or item assignment; line 79: SQL is destructive or not statically proven safe: INSERT INTO TAGS ( ID ,. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0055_catalogue_rule_unique": {
+    "class": "destructive",
+    "sha256": "1ace22391e6beaf6fb173bd548fc15fadc27f34b87dfc00ef758d0269e653374",
+    "review": "Static source review: Creates raw-SQL partial unique index; dialect-specific JSON expression, no mutation. Chooses and assembles index SQL in Python; SQLite index expressions also call json_extract(). Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0056_department_weekend": {
+    "class": "additive",
+    "sha256": "c2ec7f2a53dbb71a21d2d28157327dc0d79b620b5d0fb1b63a8a5abb39cee8b2"
+  },
+  "0057_leave_reason_display": {
+    "class": "destructive",
+    "sha256": "293c63c9a916891a3ca2c9436a525c2c188e2f0c81b29539afaff739dfcfc3cd",
+    "review": "Static source review: Adds defaulted leave_reason_display plus PostgreSQL check. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0058_workspace_accepted_issues": {
+    "class": "additive",
+    "sha256": "4f17415775879a97d5c1c01e8044a0df5bf304506a3c165860fcc6c68d192956"
+  },
+  "0059_rule_acknowledgements": {
+    "class": "additive",
+    "sha256": "c11c30f4016202fabfe823f4c9aa24ec8534e246aac89e8c8a858d165f5c4f05"
+  },
+  "0060_quota_line_contract": {
+    "class": "destructive",
+    "sha256": "2664dbf567606e74f37678e96d32e047a6144fc2d0e833d509e6dff888e564ae",
+    "review": "Static source review: line 27: SQL is destructive or not statically proven safe: BEGIN; line 28: SQL is destructive or not statically proven safe: DROP TRIGGER PUBLICATIONS_VALIDATION_CONTRACT. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0061_keep_assignments_default": {
+    "class": "destructive",
+    "sha256": "a44279a35894c256767c286ed2babb9ee52297c6374e79e7dd5ebbb8c7809302",
+    "review": "Static source review: line 30: INSERT is not proven bounded and idempotent into a new table; line 37: INSERT is not proven bounded and idempotent into a new table. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0062_session_devices": {
+    "class": "additive",
+    "sha256": "002733c343792ca02481575d11fc13fadf81bf52d023303752a7e5d426ecf74d"
+  },
+  "0063_catalogue_v2_facts": {
+    "class": "destructive",
+    "sha256": "7d750f25e3654fe2e071c4ed9b356b024b7c0422210cff2a4ba3f308f672771b",
+    "review": "Static source review: Creates catalogue_conversions, scheduling_facts, rule_source_bindings and indexes. Helpers construct columns only. Calls a column helper and embeds sa.text in partial-index predicates. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0064_worker_release": {
+    "class": "additive",
+    "sha256": "68d2443a72f1209ced41650c8b44c3c57a4eaf890478b5415ef90141f4b07f93"
+  },
+  "0065_leave_types": {
+    "class": "destructive",
+    "sha256": "664bf2e0911867b1dcdc88f40e9f7a3fdda572e7188b6e1742cf4b8ff0c26e85",
+    "review": "Static source review: Unguarded updates of existing availability rows and non-idempotent catalogue seeding. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0066_ux_audit_b1": {
+    "class": "additive",
+    "sha256": "1504a1d560235ec2a55dccb664d7e17617ff707d01be1d7d74090f75100bcec3"
+  },
+  "0067_feedback_reports": {
+    "class": "destructive",
+    "sha256": "eaaedd614d6ee6c404d3489144702c870503a81b4ec02c828499c806cec7df1d",
+    "review": "Static source review: Creates feedback_reports and indexes. CheckConstraint executes SQL length(), so the SQL function call is unproved. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0068_oidc_logout": {
+    "class": "additive",
+    "sha256": "540327897d2ade5a41b334fe66124322d94ee2d9a68bd0a1c023df1c06a6a70e"
+  },
+  "0069_schedule_view_scope": {
+    "class": "destructive",
+    "sha256": "b53f706724e1e0fb6042d62b32055aecfbe97dca57f9c2d7dd4e8c9af64a9318",
+    "review": "Static source review: Adds defaulted scope and indexes to table_views/planner_views. Loops over SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0070_assignment_source": {
+    "class": "destructive",
+    "sha256": "c2dd382cd45ea33afbc97360d614eae899f5092acaa5f2c0e3c9efc3bd8660e0",
+    "review": "Static source review: Adds four nullable provenance columns and PostgreSQL foreign keys. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0070_open_ended_attachments": {
+    "class": "destructive",
+    "sha256": "f38acc1ca2551ce1a49a986816149666cb561f20316d76bef00adcd8c07b3713",
+    "review": "Static source review: line 13: unproved schema operation batch_alter_table; line 16: unknown call batch.alter_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0071_overtime_volunteer": {
+    "class": "destructive",
+    "sha256": "20f463a5c8cba7572e189203ebcb067a66d5f63c4767d9644f3d9a03bf0b1b10",
+    "review": "Static source review: Adds nullable JSON/request FK and index; raw SQLite SQL only ADD COLUMN. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0073_integration_credentials": {
+    "class": "additive",
+    "sha256": "fa23c4dc010ed04c8dd8e575c8961891f611617ad6de9b39f56dd7141b84edf7"
+  },
+  "0074_source_rota_configuration": {
+    "class": "additive",
+    "sha256": "8ea07414752e010b7132bf6482bcfa79f24dd47d68f3b717676991a1ad406958"
+  },
+  "0076_monitor_events": {
+    "class": "additive",
+    "sha256": "f4b7d8cfb29c0ab395bed0632804813cdac909ebc8819e5c5d25c20aaa005309"
+  },
+  "0077_session_limits": {
+    "class": "destructive",
+    "sha256": "4cc62491690abba42d5d9a5967a38511d84372c057648b33e06d3f2377c88ffe",
+    "review": "Static source review: line 20: unproved schema operation drop_constraint; line 21: unproved schema operation drop_constraint. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0080_announcement_receipts": {
+    "class": "destructive",
+    "sha256": "73aed4e2bf759cab7f64ca1aead7ac7c0615008cd27bcac4db3d1deb5bf032b8",
+    "review": "Static source review: Null-guarded but unbounded announcement UPDATE; also drops an old check constraint. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0082_events": {
+    "class": "destructive",
+    "sha256": "9d3321e785460355437bd040b932587caff4992f3756b5941468266101d88b47",
+    "review": "Static source review: line 84: unproved schema operation batch_alter_table; line 85: unknown call batch.alter_column. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0083_swap_approval_settings": {
+    "class": "destructive",
+    "sha256": "cc5aa63938977bd0c49186f21152700b1d857ff94752d183bfdfcda0d2a32b9f",
+    "review": "Static source review: Adds swap configuration, route purpose and event detail and guards purpose changes on non-proposed routes; conditional PostgreSQL guard bodies are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0084_swap_give": {
+    "class": "destructive",
+    "sha256": "01f9857a3df18a3cf64f1bdb4c72111fdac860db9c49f3bb2ffa10858b8b1642",
+    "review": "Static source review: Drops and replaces an existing SQLite consent guard; dynamically generated SQL is not fully proved. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0086_swap_open": {
+    "class": "destructive",
+    "sha256": "bc7ad6d00ed5319592e9b25ff1505941519afdbb0aedbf2377998bfda3799556",
+    "review": "Static source review: Rewrites sqlite_schema and replaces a consent guard; not a fill-only data update. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0087_email_delivery": {
+    "class": "destructive",
+    "sha256": "8ddec5329ccc6af9e160cb61c6c8d0a9d7a7d5c8c48af3ee91f35103abfbe298",
+    "review": "Static source review: Creates mailbox/email tables and adds nullable/defaulted columns/FKs in place. Calls schema helpers and uses control flow; helper calls are outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0088_date_sets": {
+    "class": "additive",
+    "sha256": "8aeb78503ec1ab51dc84a0fe62ba0af834b9726cba6481adbcc6661de0c2b3aa"
+  },
+  "0090_residency": {
+    "class": "destructive",
+    "sha256": "8c8c69c3bb3c1b94aa68b729ff29fe65553313149ceaecd01df3c17ffc142ead",
+    "review": "Static source review: Creates rotation_templates/trainee_notes and adds nullable/defaulted columns/index. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0091_programme_ownership": {
+    "class": "destructive",
+    "sha256": "79e16d28b2a55c157ad0fc194485492ba172bbde8daf7fe9a783bc68d08636ed",
+    "review": "Static source review: Adds nullable owner FK in place plus index. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0093_bulk_changes": {
+    "class": "additive",
+    "sha256": "bb4ecc18fe8f8dc3275bb7970f20d9d8d736217791e15cd6d11bc5e11fd83e62"
+  },
+  "0094_announcement_empty_checks": {
+    "class": "additive",
+    "sha256": "ef307fff56c92b8ef73d1803cf64aa8381013284513d805f8c3da6c60f0f677a"
+  },
+  "0095_meetings_reminder_merge": {
+    "class": "additive",
+    "sha256": "81b79e9fe3e1cfc16bea38013a7020ee62945134136230f9c9e4447b9674f1fe"
+  },
+  "0096_meetings_email_merge": {
+    "class": "additive",
+    "sha256": "d9fbc2730d3f40aca7e2e7bde6fead81aa7ff7d8e7c251a56d96e3a7f40c8ddc"
+  },
+  "0097_wish_type_settings": {
+    "class": "destructive",
+    "sha256": "498b107df34c89221fa355a7ba9669893f247008004d22ded991e65ba3e72e38",
+    "review": "Static source review: line 18: unproved attribute or item assignment; line 22: unproved schema operation batch_alter_table. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0098_bulk_privacy": {
+    "class": "destructive",
+    "sha256": "f4a6a26aae868c0b791dc37a9da8994d26b19e1a11ec70f6175bee7ee23dfd99",
+    "review": "Static source review: Rewrites retained history snapshots to remove private_reason and replaces history guards. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0099_swap_settings": {
+    "class": "destructive",
+    "sha256": "1bc6d9d8f62bee03ec09e83641b94c2c1101fbc9f6e87d50b2ad91a4f33010fa",
+    "review": "Static source review: Adds two integer columns with defaults and inline checks. Loops over SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0100_rotation_attachments": {
+    "class": "destructive",
+    "sha256": "ddec22c07510e0837867bc3733c3eb6b91a65fca06ec0e2e7a82e2436f13aed2",
+    "review": "Static source review: line 50: unproved attribute or item assignment; line 58: unproved attribute or item assignment. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0101_pattern_wishes": {
+    "class": "destructive",
+    "sha256": "6ad511a965fb6618d6de3f9d13a57c42ebaab3a1bb823f7ee675a88d8ba947cb",
+    "review": "Static source review: line 14: unproved attribute or item assignment; line 20: unproved schema operation batch_alter_table. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0102_wish_outcome_reasons": {
+    "class": "additive",
+    "sha256": "f07f68768b8613796bc2359fb65d8fe2f85baee494cd016d0b3b9663b7f0f19d"
+  },
+  "0106_feedback_recent_routes": {
+    "class": "additive",
+    "sha256": "d09c4762573b16cc04b4f1c08aa7b3dd4bcf0d6127cf214ee1c5203b73a04a31"
+  },
+  "0107_standing_wishes": {
+    "class": "additive",
+    "sha256": "2bc930315190e5667178dbaf0216204b8bf4364baa51d03f2e65f04e507ce3fe"
+  },
+  "0108_password_login": {
+    "class": "destructive",
+    "sha256": "fbca461d8f954b84d910c195caab9250be6b407318a5093f625f52b55ee5cfa1",
+    "review": "Static source review: Adds authentication metadata/event storage, immutable-event guards and a restricted retention function with future age/batch-bounded DELETE; deferred destructive bodies are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0109_fair_share_dials": {
+    "class": "destructive",
+    "sha256": "481c21783d98ce8440a1c86dc386e58cce3adec1e6367d7ef28747a5d50991f3",
+    "review": "Static source review: line 34: unproved data operation receiver; line 138: unsupported SQL execution construct. Requires the owner to confirm this exact revision after a verified backup; recover with that backup and its compatible image, never an automatic downgrade."
+  },
+  "0110_feedback_github_reservation": {
+    "class": "additive",
+    "sha256": "3b7819eff2132da234a87686f62f7be8551789dfaf41803c220915d764f10b4c"
+  },
+  "0111_autoschedule_resume": {
+    "class": "additive",
+    "sha256": "af79dd41b0f51949cbea7239bb464093d593b733cd5c9551a16a66c947bf2015"
+  },
+  "0112_timeline_leave_policy": {
+    "class": "additive",
+    "sha256": "2314b0d1c0ed699a9ae85b52e1e50fc3044d5306cf3d9955d3dd0c7120840b99"
+  },
+  "0113_department_quota_calendar": {
+    "class": "destructive",
+    "sha256": "22b8772521dd39ff9d3b535e3157582fd90e911d3bfd9f365ecbdb059c008a65",
+    "review": "Static source review: Adds nullable operating_calendar_id FK in place. Branches over dialect-specific SQL/schema operations; control flow is outside the allowlist. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0114_request_decision_times": {
+    "class": "destructive",
+    "sha256": "22d716aaf911b185f32f793d126277e2e905911ec31a08ff38669b9815ddab93",
+    "review": "Static source review: backfill writes only NULL decision times with a primary-key predicate, preserving retained requests, decisions and audit evidence. However, mutable reflected metadata in an ancestor prevents a static proof that its DML preserves the inherited key facts; unknown executable SQL must invalidate those facts. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0115_worker_poll_indexes": {
+    "class": "destructive",
+    "sha256": "fb7b574d45c62f1888696528ab0e1c335aa5b2985b8737b84dfda84f93f3e5a5",
+    "review": "Static source review: Five create_index calls only, including expressions/partial predicates; no data write. Embeds sa.text in index expressions and partial predicates, including coalesce(). Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by automatic downgrade."
+  },
+  "0116_password_login_hardening": {
+    "class": "destructive",
+    "sha256": "f139da49da21fdcba740ec5856144bc151cc275844ee5bd414c102ed4f59b029",
+    "review": "Static source review: installs stricter authentication-event retention guards, replaces the inherited pruning function and changes execution grants without migration-time deletion. The replacement and deferred DELETE are not statically proven additive. Requires the owner to confirm this exact pending revision after a verified backup; recover by reviewed forward repair or restoring that backup with its compatible image, never by disabling evidence guards or automatic downgrade."
+  },
+  "0117_backend_read_indexes": {
+    "class": "destructive",
+    "sha256": "17ad72f853acf74a326e4e559cae0612fbec7868cadc98c42b3de0370cc38098",
+    "review": "Static source review: adds indexes and nullable job projection columns, then fills each SQL NULL projection with a primary-key predicate; retained inputs/results and existing projections are unchanged. Dynamic Python projection functions and UPDATE execution remain outside the additive/fill-only proof allowlist. Production requires owner confirmation of this exact pending revision after a verified backup; recover by reviewed forward repair or restore the compatible database/image pair."
+  },
+  "0118_shift_occurrence_index": {
+    "class": "additive",
+    "sha256": "37e77ff07ec54a43695bdcb14ff404d7d87bf52e108bf3d220481857f818df73"
+  },
+  "0119_backend_hotpath_indexes": {
+    "class": "additive",
+    "sha256": "90889e678fee43cc0ce1e51967316598c5ca87dabe2b65e0acf3519fe8ba8d98"
+  },
+  "0122_policy_transition_approvals": {
+    "class": "additive",
+    "sha256": "1b4eb36f3f4ed5ba5e9854e7352c254f839251698ab02e2ac585280db8d3e09a"
+  },
+  "0120_auth_configuration": {
+    "class": "additive",
+    "sha256": "58ed41b43d5cc4b98af319cbd1676d0565935b1d75fc9afb6e450f25f70aa38f"
+  },
+  "0121_identifier_lookup": {
+    "class": "destructive",
+    "sha256": "94334fa1544eb76cc69ebfacfe16bf36fb1a7379b3bdcb0fa55ae8bb1d8cd8a3",
+    "review": "Static source review: add nullable derived lookup columns and indexes, then fill only NULL values from the same row using Unicode casefold. Original identifiers, passwords, identity bindings, sessions and retained evidence are unchanged. Python loops and row-derived updates remain outside the fill-only proof allowlist. Production requires owner confirmation of this exact pending revision after a verified backup; recover forward or restore the compatible image/database pair."
+  },
+  "0120_record_insertion_order": {
+    "class": "fill_only",
+    "sha256": "6222b0fda24ee0c2957707dd4d63207617e2b07aaa748611b1201d7bfd77aef9"
+  },
+  "0120_table_view_defaults": {
+    "class": "additive",
+    "sha256": "ae6b8c893b7371e1152ba41ea5b765e81a17f41aefa2d0c3832e330e3677fb54"
+  },
+  "0120_score_check": {
+    "class": "additive",
+    "sha256": "36e557d4b7589ead3d1c7ad4df70428cacbd09d6b5d89ab0143169f1caf07d29"
+  },
+  "0121_score_check_period": {
+    "class": "additive",
+    "sha256": "a43ee49b6b0f5af39d73ae2466e70e3191f22bf85cad38ae312b2a646c6a1e60"
+  },
+  "0122_score_check_gate": {
+    "class": "additive",
+    "sha256": "56de0f5fd458425c288a958fbc2d50e252587fbf7b38082ce262be82a15cb4da"
+  },
+  "0123_oidc_department_choice": {
+    "class": "additive",
+    "sha256": "b9dceef8caf6eb17365aa8c5da4dd820e9049c3bab657fe87e53add86fa0828e"
+  },
+  "0124_type_lead_ownership": {
+    "class": "additive",
+    "sha256": "b98c77e74b3b60c178d3c3eb5c2771fe84dcaf5b463eb265d902ac4112aedf40"
+  },
+  "0125_application_branding": {
+    "class": "additive",
+    "sha256": "dc3ee634a8fec29a925b81a6bdc09a78be6602777f6a74d91fcdba2b1eb5d5ad"
+  },
+  "0126_planning_groups_drafts": {
+    "class": "additive",
+    "sha256": "a50994667363dcb1b15f0ca04e47c8cbbf499184ba98b1962142e663c2968ee6"
+  },
+  "0126_published_changes": {
+    "class": "additive",
+    "sha256": "970ad2a2f46b88c4a43828c3dc7b9e63cdd352ab039d2cc0f5d53803618df074"
+  },
+  "0127_integration_wave1": {
+    "class": "additive",
+    "sha256": "84eabac615ccfc077a8e5df37b35c614bcb9b2853bae7c119f7f71dde79157ed"
+  },
+  "0128_job_supersessions": {
+    "class": "additive",
+    "sha256": "f4c2a138a950c2f1de897808af72d3b947afe0466f3e4aabb417b8180f2fe366",
+    "review": "Adds nullable job supersession metadata; existing jobs and retained evidence are unchanged."
+  },
+  "0128_workspace_read_projections": {
+    "class": "additive",
+    "sha256": "ab3a3ca19a17d336581fdeae386c2fa81f2b61077c6c1a11c1e611adb0da4396"
+  },
+  "0129_job_worker_owner": {
+    "class": "additive",
+    "sha256": "8c09ad983e6511eacd70a6500d063dde5762ad7cd86dcec274dd8c9c71537ecd"
+  },
+  "0130_session_lineage": {
+    "class": "additive",
+    "sha256": "6631623b39cf92c0a1147cc852ae646ba03a4a3faa68ab6bad0ae934ab9e31f5"
+  },
+  "0131_read_projection_cursor": {
+    "class": "additive",
+    "sha256": "6f7361cf17265ffcfb46854b1cdcafdecfad87ebe0e2b8b92061b827234523be"
+  },
+  "0132_pwa_push": {
+    "class": "additive",
+    "sha256": "d161a59041850007d005cc481d1e953f07c77993bff51c6b6e185ebacf37581a"
+  },
+  "0133_workspace_merge": {
+    "class": "additive",
+    "sha256": "05d9cf8e7b9c4d1d8c62548842f34da4ca08bc613516a7b427c89e267f498bf7"
+  },
+  "0134_wie_labels": {
+    "class": "additive",
+    "sha256": "1c02f4824797644d29bd1dfb58567ad34b7370c1a6bb092cfb962dacb077dfc8",
+    "review": "Adds defaulted optional labels and rank sort order; no retained data is rewritten."
+  },
+  "0135_applied_population_index": {
+    "class": "additive",
+    "sha256": "a00236723dd5785161e35c51b7cdc992eb4aedf20c6f269ab19d13c5d489c79e",
+    "review": "Adds an index on jobs (workspace_id, kind, status) for bounded applied-population reads; no data is changed."
+  },
+  "0136_person_contacts": {
+    "class": "fill_only",
+    "sha256": "d68913411f87d2c9ecdbe539010cf164f15c00f094b64421b75325237a368068",
+    "review": "Creates contact tables and inserts default department configuration only. Existing person columns, leavers, history and publications remain unchanged; values use the authorized lazy legacy fallback."
+  },
+  "0137_display_settings": {
+    "class": "fill_only",
+    "sha256": "df24f60d7f3ec6151ecfff9cb4c7b237c1935feb33a6c1dab16fdf07a0fd6349",
+    "review": "Adds optional name columns and append-only display versions, seeding only new history rows. Retains all existing person, department, publication and audit values."
+  },
+  "0138_contact_action_off": {
+    "class": "additive",
+    "sha256": "371801c519da01ded676a7729f768081c16114cf0d454a1f732ab18bd3c58260",
+    "review": "Adds a defaulted contact-type action override without rewriting existing contact configuration, values, history or audit evidence."
+  },
+  "0139_duty_short_code": {
+    "class": "fill_only",
+    "sha256": "acc295c85c5990d926889c88599f4fcde86c1757942b1e77ae18fc0611e05e6b",
+    "review": "Adds a nullable duty short-code column and fills only NULL rows with deterministic derived initials; reruns retain existing values."
+  },
+  "0140_score_settings_versions": {
+    "class": "fill_only",
+    "sha256": "5276e70c92bb8d892cf6b32be8dcf44fe4ce0cdbd18886dfa091ea2f376f3484",
+    "review": "Reviewed statements: creates only score_settings_versions and its index; inserts each department's current generation settings into that new table with the department/revision conflict guard; creates SQLite score_settings_no_update, score_settings_no_delete and score_settings_version_guard triggers on score_settings_versions only; creates the PostgreSQL score_settings_immutable_guard function and score_settings_guard trigger only for score_settings_versions; downgrade is forward-only and raises. Justification: no retained row is updated or deleted, and the fresh-table insert and guard SQL match the analyzer's proven fill-only/new-table patterns."
+  },
+  "0141_workspace_archive_lifecycle": {
+    "class": "additive",
+    "sha256": "92bff3cb312e1b3dee5c2c6b0b15b921375c64e03425e3ae7568f5833b4e199d",
+    "review": "Adds nullable archive provenance and pre-archive lifecycle state columns only; existing workspaces, publications and audit evidence remain unchanged."
+  },
+  "0142_workspace_baselines": {
+    "class": "additive",
+    "sha256": "4cb40c790afa7540198e9e131410d383000ae72d0582fb591cc4b47617873693",
+    "review": "Adds immutable workspace-baseline storage and guards; existing workspaces, publications and audit evidence remain unchanged."
+  },
+  "0142_person_window_indexes": {
+    "class": "additive",
+    "sha256": "e08c83dfbe6a0b6cf23f032a4dc462e8d7c7796db6cb9c1a49c9143e33ef6608",
+    "review": "Adds read indexes for bounded person-window queries; existing rows, evidence and scheduling decisions remain unchanged."
+  },
+  "0144_tag_member_dates": {
+    "class": "additive",
+    "sha256": "1338a56e5d81f86112432ed6b93e956ea48090187f9f5e0461506b4d8ea47a3a",
+    "review": "Adds nullable person tag membership dates with an exclusive-end check that also refuses dates on non-person members; existing tag rows remain open-ended and unchanged."
+  },
+  "0143_merge_heads": {
+    "class": "additive",
+    "sha256": "ddfef77e5ade75f23973b70cb9bebf9da9cbf8f09d141788634228f74d752ce0",
+    "review": "Joins the existing job-supersession and workspace-baseline branches without schema or data operations."
+  },
+  "0145_draft_config": {
+    "class": "additive",
+    "sha256": "94ef9956d6268a106aeba73d14457f2a71b54cfcdffa31de92e9113be17346f5",
+    "review": "Adds nullable workspace baseline evidence and new append-only keep/settings history tables with governed metadata and compatible defaults; preserves all legacy rows and custom scopes without backfill."
+  },
+  "0146_can_take_duty": {
+    "class": "additive",
+    "sha256": "650082a9553e37a4635efab2edbf80d03de38fe5f7330ce275d4cbf738b24a66",
+    "review": "Adds only duty-taking Boolean columns: existing memberships default true and the new-membership department setting defaults false; no rule derivation or existing-data updates."
+  },
+  "0147_relationship_withdrawal": {
+    "class": "additive",
+    "sha256": "131a32ed15cdb7a0272ee89803c27fc6b4287607ce52a64f252dd0b450ef11ec",
+    "review": "Adds default-false withdrawal flags to four dated relationship tables; preserves every identity, date, reference and history row without data rewriting."
+  }
+}
