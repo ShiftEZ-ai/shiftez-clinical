@@ -464,11 +464,11 @@ def test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions(bac
     assert checks == [True]
     assert len(evaluated) == 1
     assert not any(row.name == 'rota.api' and row.getMessage() == 'unhandled_error' for row in caplog.records)
-    # One read for drift detection, then writer admission and fresh final validation.
+    # One preliminary read, then one post-flush writer snapshot for fresh validation and admission.
     assert acquisitions.count(('_snapshot_inputs', False)) == 1
-    assert acquisitions.count(('_snapshot_inputs', True)) == 2
+    assert acquisitions.count(('_snapshot_inputs', True)) == 1
     assert acquisitions.count(('_domain_snapshot', False)) == 1
-    assert acquisitions.count(('_domain_snapshot', True)) == 2
+    assert acquisitions.count(('_domain_snapshot', True)) == 1
     with transaction(h.app.state.engine) as db:
         published = db.get(m.Publication, result.json()['publication_id'])
         assert published.fingerprint == published.validation['fingerprint'] == evaluated[0]

@@ -1037,21 +1037,19 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if workspace_check is not None:
             require_workspace_command(db, actor, command)
             workspace = scoped(db, m.Workspace, command.target_id, actor)
-            publish_inputs = (planning.snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
-                              if command.kind == 'workspace.publish' else None)
             if command.kind == 'workspace.publish':
-                current_data = planning.domain_snapshot(db, workspace, shared_inputs=publish_inputs)
+                # The final check acquires current inputs after flush under the writer lock.
+                reply = planning.lifecycle(db, actor, command,
+                    publish_check=lambda data: check_context(db, actor, workspace, data))
             else:
                 if planning.validation_stamp(db, workspace) != workspace_check[4]:
                     raise CheckInputsChanged()
                 # This request acquired canonical inputs under REPEATABLE READ. Every input
                 # revision is still identical under the writer; never rebuild history here.
                 expected(workspace, command.expected_revision)
-                current_data = workspace_check[2]
-            check_context(db, actor, workspace, current_data)
-            reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1] if command.kind == 'workspace.validate'
-                else (workspace_check[1], current_data if command.kind == 'workspace.publish' else workspace_check[2])),
-                shared_inputs=publish_inputs)
+                check_context(db, actor, workspace, workspace_check[2])
+                reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
+                    if command.kind == 'workspace.validate' else (workspace_check[1], workspace_check[2])))
         else:
             reply = dispatch(db, actor, command, settings, github_check=github_check, github_export=github_export)
         if planning_plan is not None:
