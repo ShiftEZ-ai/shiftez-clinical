@@ -563,7 +563,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       await clashes?.ready();
       const n=await save().catch(e=>{throw clashes?.stale(e)?new Error('The double bookings changed meanwhile. Review them below and tick again.'):e;});
       const saved={...row,...value()} as Row;
-      notify(n>1?`${n} records saved, one for each person. Published rotas stay as they were.`:`${saved.name||saved.display_name?isolate(labelOf(saved))+' '+(row?'saved':'created'):row?'Saved':'Created'}. Published rotas stay as they were.`);
+      if(kind==='people'&&row)notify(`${isolate(fullNameOf(saved))} saved and is live.`);else notify(n>1?`${n} records saved, one for each person. Published rotas stay as they were.`:`${saved.name||saved.display_name?isolate(labelOf(saved))+' '+(row?'saved':'created'):row?'Saved':'Created'}. Published rotas stay as they were.`);
       await ctx.refresh();
       // The entry's protected-time rule keeps the old dates until it is updated too: offer that now.
       const linked=kind==='programme_calendar_entries'&&row?protectedTimeRule(ctx,row.id):undefined;
