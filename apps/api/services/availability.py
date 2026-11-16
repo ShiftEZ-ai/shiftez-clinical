@@ -1199,8 +1199,7 @@ def _impact(db, actor, items):
 
 
 def not_own(cls, actor):
-    """Independent decisions (SSOT for the Requests dot and Home): a request or weekly availability this person neither
-    made nor is about. Deciding one's own takes a self-approval permission, which these counts do not offer."""
+    """Ownership exclusions for request and weekly availability decisions without self-approval."""
     peer_scope = ()
     if cls is m.RequestRecord and actor.person_id:
         peer = cls.details["swap"]["person_id"].as_string()
@@ -1211,10 +1210,10 @@ def not_own(cls, actor):
 
 
 def pending_request_decisions(db, actor):
-    """Independent request decisions for both Home and Requests; self-approval stays an explicit command."""
+    """Requests this actor may decide, shared by Home and the Requests queue."""
     R = m.RequestRecord
     return select(R).where(R.department_id == actor.department_id, R.status == "submitted",
-        decision_scope(db, actor, R, include_independence=False), *not_own(R, actor))
+        decision_scope(db, actor, R))
 
 
 def _pending_queries(db, actor, open_swap_ids=None):

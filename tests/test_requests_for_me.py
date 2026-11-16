@@ -6,6 +6,7 @@ import pytest
 from apps.api import models as m
 from apps.api.db import transaction
 
+from .governance_support import identity
 from .test_scheduling_facts_api import workload
 from .test_staff_swaps import accepted, ordered_clock
 
@@ -30,6 +31,30 @@ def submit(h, role, person, day, kind="leave"):
         "private_reason": "Synthetic request for QA-039",
         "kind": kind,
     })["record"]
+
+
+@pytest.mark.parametrize("database", ["h", pytest.param("pg", marks=pytest.mark.postgres)])
+def test_self_approval_request_is_in_waiting_queue_badge_and_home(request, database):
+    h = request.getfixturevalue(database)
+    reviewer = identity(h, "self_request_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+    other = submit(h, "coordinator", h.seed["people"][1], 10)
+    own = submit(h, "self_request_reviewer", h.seed["people"][0], 11)
+
+    def waiting():
+        page = read(h, "self_request_reviewer", for_me=1, limit=100)
+        home = {item["key"]: item for item in h.get("self_request_reviewer", "/api/home")["attention"]}
+        return page, home["requests"]["count"]
+
+    page, home_count = waiting()
+    assert {item["id"] for item in page["items"]} == {other["id"]}
+    assert page["counts"]["to_decide"] == home_count == 1
+
+    h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["request.decide"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit synthetic request permission"})
+    page, home_count = waiting()
+    assert {item["id"] for item in page["items"]} == {own["id"], other["id"]}
+    assert page["counts"]["to_decide"] == home_count == 2
+    assert next(item for item in read(h, "self_request_reviewer")["items"] if item["id"] == own["id"])["can_decide"]
 
 
 def test_for_me_is_the_count_queue_with_paging_stage_counts_and_exclusions(h):
