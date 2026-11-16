@@ -4,6 +4,7 @@ import json
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import load_only
 
 from . import models as m
 from .errors import require
@@ -614,10 +615,41 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     return saved
 
 
+def _latest_filter(workspace_ids):
+    """One eligibility predicate shared by scalar and batch baseline reads."""
+    return m.WorkspaceBaseline.workspace_id.in_(tuple(workspace_ids))
+
+
+def _latest_ordering():
+    return (m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
+            m.WorkspaceBaseline.id.desc())
+
+
 def latest(db, workspace_id):
-    return db.scalar(select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
-                    .order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
-                              m.WorkspaceBaseline.id.desc()).limit(1))
+    return db.scalar(select(m.WorkspaceBaseline).where(_latest_filter((workspace_id,)))
+                    .order_by(*_latest_ordering()).limit(1))
+
+
+def latest_many(db, workspace_ids, *, load_payload=True):
+    """Return each workspace's latest eligible baseline in one bounded query."""
+    workspace_ids = tuple(workspace_ids)
+    if not workspace_ids:
+        return {}
+    ranked = select(
+        m.WorkspaceBaseline.id,
+        func.row_number().over(
+            partition_by=m.WorkspaceBaseline.workspace_id,
+            order_by=_latest_ordering(),
+        ).label("baseline_rank"),
+    ).where(_latest_filter(workspace_ids)).subquery()
+    query = select(m.WorkspaceBaseline).join(
+        ranked, ranked.c.id == m.WorkspaceBaseline.id).where(ranked.c.baseline_rank == 1)
+    if not load_payload:
+        query = query.options(load_only(m.WorkspaceBaseline.id,
+                                        m.WorkspaceBaseline.workspace_id,
+                                        m.WorkspaceBaseline.payload_hash))
+    rows = db.scalars(query)
+    return {row.workspace_id: row for row in rows}
 
 
 def verify(row):
