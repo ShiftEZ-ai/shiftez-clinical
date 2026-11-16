@@ -220,6 +220,7 @@ def test_real_advisory_findings_already_allow_single_and_bulk_activation(h, mode
         assert evidence['check_job_id'] == checked['id'] and evidence['no_new_problems']
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references(h):
     from copy import deepcopy
     from .test_bulk import preview
@@ -238,8 +239,14 @@ def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_
     assert issue["code"] == "RULE_CHECK_UNRESOLVED" and issue["details"]["severity"] == "advisory"
     assert issue["details"]["findings"][0]["rule_id"] == policy["id"]
     payload = activation_payload(policy, checked)
+    with transaction(h.app.state.engine) as db:
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        revisions = (organisation.input_revision, organisation.availability_revision)
     check = preview(h, "approver", payload)
     assert [r["id"] for r in check["items"][0]["issues"][0]["resolutions"]] == ["apply_anyway", "skip"]
+    with transaction(h.app.state.engine) as db:
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        assert (organisation.input_revision, organisation.availability_revision) == revisions
     reply = h.command("approver", "bulk.apply", {**payload, "resolutions": {"0": "apply_anyway"}})
     assert reply["count"] == 1
     with transaction(h.app.state.engine) as db:
