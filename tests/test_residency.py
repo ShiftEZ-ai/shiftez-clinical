@@ -947,6 +947,7 @@ def test_external_rotators_use_canonical_rank_eligibility_protection_and_fairnes
     assert member_days(data, pid, date(2026, 10, 4), date(2026, 10, 5)) == []
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_plan_and_notes_batch_reads_at_department_scale(r):
     from datetime import date
     from sqlalchemy import event, select, func
@@ -999,6 +1000,7 @@ def test_plan_and_notes_batch_reads_at_department_scale(r):
     finally:
         event.remove(h.app.state.engine, "before_cursor_execute", count_select)
     assert len(copied["created"]) == 300 and copy_reads < 40, copy_reads
+    print('rotation reads', {'plan': plan_reads, 'notes': note_reads, 'copy': copy_reads, 'remove': remove_reads})
     assert removed["removed"] == 300 and remove_reads < 40, remove_reads
     with transaction(h.app.state.engine) as db:
         assert db.scalar(select(func.count()).select_from(m.DefinitionHistory).where(m.DefinitionHistory.kind == "rotations")) == 900

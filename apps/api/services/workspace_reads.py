@@ -1,7 +1,7 @@
 """Compact stored-check metadata; one owner for write-time and legacy streaming projection."""
 from types import SimpleNamespace
 
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, literal, select, union_all
 from sqlalchemy.orm import object_session
 from apps.api import models as m
 from packages.domain.input_manifest import digest
@@ -36,21 +36,23 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
     if include_job_state:
         from .job_reads import job_stamp
         stamp.append(job_stamp(db, workspace_id=workspace.id))
-    for cls, column in ((m.Approval, m.Approval.workspace_id),
-                        (m.ReviewDecision, m.ReviewDecision.workspace_id),
-                        (m.ChangeSet, m.ChangeSet.workspace_id),
-                        (m.WorkspaceForkBase, m.WorkspaceForkBase.workspace_id),
-                        (m.WorkspaceAccessVersion, m.WorkspaceAccessVersion.workspace_id),
-                        (m.SwapRequest, m.SwapRequest.workspace_id),
-                        (m.PublicationChangeList, m.PublicationChangeList.workspace_id)):
-        stamp.append(tuple(db.execute(select(func.max(cls.revision), func.max(cls.created_at)).where(
-            column == workspace.id)).one()))
+    metadata_queries = []
+    for index, (cls, column) in enumerate(((m.Approval, m.Approval.workspace_id),
+                                          (m.ReviewDecision, m.ReviewDecision.workspace_id),
+                                          (m.ChangeSet, m.ChangeSet.workspace_id),
+                                          (m.WorkspaceForkBase, m.WorkspaceForkBase.workspace_id),
+                                          (m.WorkspaceAccessVersion, m.WorkspaceAccessVersion.workspace_id),
+                                          (m.SwapRequest, m.SwapRequest.workspace_id),
+                                          (m.PublicationChangeList, m.PublicationChangeList.workspace_id))):
+        metadata_queries.append(select(literal(index).label('kind'), func.max(cls.revision).label('revision'),
+                                       func.max(cls.created_at).label('created_at')).where(column == workspace.id))
     for cls in (m.AuditEvent, m.ReviewRoute, m.ReviewDelegation, m.Publication):
-        query = select(func.max(cls.revision), func.max(cls.created_at)).where(
-            cls.department_id == actor.department_id)
+        query = select(literal(len(metadata_queries)).label('kind'), func.max(cls.revision).label('revision'),
+                       func.max(cls.created_at).label('created_at')).where(cls.department_id == actor.department_id)
         if cls is m.AuditEvent:
             query = query.where(cls.target_id == workspace.id)
-        stamp.append(tuple(db.execute(query).one()))
+        metadata_queries.append(query)
+    stamp.extend((revision, created_at) for _, revision, created_at in sorted(db.execute(union_all(*metadata_queries))))
     parent = db.execute(select(m.Workspace.revision, m.Workspace.content_revision).join(
         m.WorkspaceForkBase, m.Workspace.id == m.WorkspaceForkBase.source_workspace_id).where(
             m.WorkspaceForkBase.workspace_id == workspace.id)).first()

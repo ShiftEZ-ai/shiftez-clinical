@@ -800,14 +800,14 @@ def _goal_workspace(db, actor, workspace_id=None):
     return db.get(m.Workspace, latest, options=(defer(m.Workspace.validation), defer(m.Workspace.review_snapshot))) if latest else None
 
 
-def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
+def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None, stamp=None):
     """Read goals through the durable scoped projection; a miss uses the canonical full calculation once."""
     viewer(actor)
     workspace = _goal_workspace(db, actor, workspace_id)
     if workspace is None:
         return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
     from .read_projections import cached
-    stamp = goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+    stamp = stamp or goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
     return cached(db, [workspace.id], 'fairness_goals', {workspace.id: stamp},
                   lambda _: _goals_uncached(db, actor, workspace_id, who, starts_on, ends_on))[workspace.id]
 

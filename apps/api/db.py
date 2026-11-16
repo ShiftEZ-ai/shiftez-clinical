@@ -44,6 +44,14 @@ def filter_withdrawn_relationships(state):
             m.Mentorship, live_mentorship_clause(), include_aliases=True))
 
 
+@event.listens_for(Session, 'loaded_as_persistent')
+def pin_snapshot_parents(session, instance):
+    """Keep department and organisation parents alive for the transaction."""
+    from . import models as m
+    if isinstance(instance, (m.Department, m.Organisation)):
+        session.info.setdefault('_pinned_parents', {})[(type(instance), instance.id)] = instance
+
+
 def live_mentorship_clause():
     """Owned attachments follow live rotations; adopted or independently edited mentorships stay live."""
     from . import models as m
@@ -578,6 +586,7 @@ def discard_rolled_back_snapshot_inputs(session):
 def discard_finished_snapshot_input_state(session, transaction):
     if transaction.parent is None:
         session.info.pop('_snapshot_input_revisions', None)
+        session.info.pop('_pinned_parents', None)
 
 
 def allow_long_idle(db, minutes: int):
