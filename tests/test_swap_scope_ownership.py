@@ -2,10 +2,13 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from apps.api.services import published_changes as changes
 
 
-def test_swap_workspace_does_not_scope_against_another_publication(monkeypatch):
+@pytest.mark.parametrize('status', ['draft', 'moved'])
+def test_swap_workspace_does_not_scope_against_another_publication(monkeypatch, status):
     workspace = SimpleNamespace(id='swap-workspace', base_publication_id='publication-a', department_id='d', status='draft')
     publication_a = SimpleNamespace(id='publication-a', department_id='d')
     publication_b = SimpleNamespace(id='publication-b', department_id='d')
@@ -14,10 +17,11 @@ def test_swap_workspace_does_not_scope_against_another_publication(monkeypatch):
              'type_revision': 1, 'type_snapshot': {}, 'participants': [], 'cancelled': False,
              'locked': False, 'attributes': {}, 'series_id': None, 'workspace_id': workspace.id}
     own = [{**shift, 'id': 'copy'}]
-    row = SimpleNamespace(workspace_id='other-workspace', changes=[])
+    row = SimpleNamespace(workspace_id='other-workspace',
+                          changes=[{'workspace_id': 'other-workspace', 'status': status}])
     def scalar(statement):
         return 'swap-id' if statement.compile().params['publication_id_1'] == publication_a.id else None
-    db = SimpleNamespace(get=Mock(side_effect=[publication_a, publication_b]),
+    db = SimpleNamespace(get=Mock(side_effect=[publication_a, publication_b, publication_b]),
                          scalar=scalar)
     monkeypatch.setattr(changes, 'change_list', lambda *args: row)
     monkeypatch.setattr(changes.schedule, 'in_force_snapshot', lambda *args: {'shifts': [shift]})
@@ -28,3 +32,7 @@ def test_swap_workspace_does_not_scope_against_another_publication(monkeypatch):
     data = {'shifts': own, 'focus_ids': ['copy'], 'organisation': {'timezone': 'UTC'}}
     assert not changes.validation_scope(db, workspace, data)
     assert data['_issued_type_versions'] == {'copy'}
+
+    row.changes = []
+    data = {'shifts': own, 'focus_ids': ['copy'], 'organisation': {'timezone': 'UTC'}}
+    assert changes.validation_scope(db, workspace, data)
