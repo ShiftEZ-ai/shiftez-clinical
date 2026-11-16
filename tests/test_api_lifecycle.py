@@ -100,7 +100,10 @@ def test_changed_inputs_invalidate_approval(h):
     h.command('coordinator','availability.record',{'person_id':h.seed['people'][0],
         'start':'2026-10-04T08:00:00+03:00','end':'2026-10-04T12:00:00+03:00',
         'kind':'actual_absence','private_reason':'Cannot attend the assigned duty'})
-    assert h.lifecycle(w,"publish",status=409)["error"]["code"]=="STALE_APPROVAL"
+    # Mandatory findings now refuse before stale approval; both refusals remain visible.
+    failed = h.lifecycle(w, "publish", status=422)["error"]
+    assert failed["code"] == "VALIDATION_FAILED"
+    assert failed["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
     assert not h.get("coordinator","/api/publications")["publications"]
 
 
@@ -117,8 +120,10 @@ def test_publish_rejects_leave_approved_after_rota_approval(h):
     h.command("approver", "request.decide", {
         "decision": "approve", "reason": "Approve leave before publication",
     }, target=request["id"], revision=request["revision"])
-    failed = h.lifecycle(w, "publish", status=409)
-    assert failed["error"]["code"] == "STALE_APPROVAL"
+    # Publication validates approved leave before reporting stale rota approval.
+    failed = h.lifecycle(w, "publish", status=422)
+    assert failed["error"]["code"] == "VALIDATION_FAILED"
+    assert failed["error"]["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
     assert not h.get("coordinator", "/api/publications")["publications"]
 
 

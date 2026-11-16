@@ -800,8 +800,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                    workspace.status, workspace.archived_at, current_data['fingerprint'])
         if current != workspace_check[0]:
             # Publication deliberately rechecks the live snapshot in the writer;
-            # a changed input fingerprint must reach the review gate as
-            # STALE_APPROVAL rather than being collapsed into a preflight race.
+            # a changed input fingerprint must reach validation and review
+            # rather than being collapsed into a preflight race.
             if command.kind == 'workspace.publish' and current[:-1] == workspace_check[0][:-1]:
                 return
             raise Problem(409, 'STALE_INPUTS',
@@ -1286,7 +1286,8 @@ def execute(engine, settings, token, csrf, idempotency_key, command, correlation
                     or command.kind in {'draft.swap', 'draft.move', 'issues.resolve', 'bulk.apply'}):
                 error.details['stale'] = True
         if actor is not None and (error.status == 403 or error.code in {
-                'SAFETY_RULE', 'SAFETY_EXCEPTION', 'ACCEPT_ADVISORY_ONLY', 'PUBLISH_TEST_PEOPLE_ONLY'}):
+                'SAFETY_RULE', 'SAFETY_EXCEPTION', 'ACCEPT_ADVISORY_ONLY', 'PUBLISH_TEST_PEOPLE_ONLY'}
+                or command.kind == 'workspace.publish' and error.code == 'VALIDATION_FAILED'):
             from .services.command_refusals import record_refusal
             record_refusal(engine, actor, command, error, idempotency_key, correlation_id)
         raise
