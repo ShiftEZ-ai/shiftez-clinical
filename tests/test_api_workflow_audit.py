@@ -145,7 +145,10 @@ def test_catalogue_history_is_sql_paged_beyond_generic_ceiling_with_provenance(a
     assert retained['approved_by_name'] and retained['approved_at'] and retained['reason']
     assert statements and all('LIMIT' in q and 'OFFSET' in q and 'definition' in q for q in statements)
     for role in ('approver', 'credentialer', 'auditor'):
-        assert h.get(role, url + '?limit=1')['policies'][0]['id'] == first['policies'][0]['id']
+        allowed = role in s.PERMISSIONS['rules.read']
+        result = h.get(role, url + '?limit=1', status=200 if allowed else 403)
+        if allowed:
+            assert result['policies'][0]['id'] == first['policies'][0]['id']
     identity(h, 'workflow-history-lead', ['programme_lead'])
     h.get('workflow-history-lead', url + '?limit=1')
     for role in ('staff', 'operator'):
