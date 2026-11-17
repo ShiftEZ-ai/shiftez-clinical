@@ -304,11 +304,12 @@ def test_production_passwords_require_store_and_legacy_oidc_values_do_not_config
     path.write_text('{"users": {}}', encoding="utf-8")
     settings = production(Settings(database_url="postgresql+psycopg://synthetic@localhost/disposable",
                                    identity_users_file=str(path), password_login_enabled=True), monkeypatch)
+    settings = replace(settings, oidc_issuer=settings.public_origin + "/authelia")
     settings.check()  # Managed-password-only production is valid.
     with pytest.raises(RuntimeError):
         replace(settings, identity_users_file="").check()
     # Provider validation belongs to the database-backed AuthSettings contract.
-    replace(settings, oidc_issuer="https://idp.test", oidc_redirect_uri="https://another.test/auth/callback").check()
+    replace(settings, oidc_redirect_uri="https://another.test/auth/callback").check()
 
 
 def test_authentication_method_migration_is_additive(h):
