@@ -53,7 +53,9 @@ def _audit_refs(db, actor, source_ids):
 def _preview_plan(candidate):
     """Navigation and review summary; immutable definitions stay in the full receipt."""
     return {**{key: value for key, value in candidate.items()
-               if key not in {'source_manifest', 'targets', 'scheduling_facts', 'bindings', 'proof'}},
+               if key not in {'source_manifest', 'targets', 'scheduling_facts', 'bindings', 'proof', 'census'}},
+        **({'census': {key: candidate['census'][key] for key in ('counts', 'hash') if key in candidate['census']}}
+           if 'census' in candidate else {}),
         'targets': [{'catalogue_id': target['catalogue_id'], 'row': {'id': target['row']['id']}}
                     for target in candidate['targets']],
         'scheduling_facts': [{key: fact.get(key) for key in ('id', 'kind', 'person_id', 'calendar_entry_id')}
@@ -64,8 +66,17 @@ def _preview_plan(candidate):
            if 'proof' in candidate else {})}
 
 
+def _require_census_evidence(plan):
+    if 'census_hash' in plan:
+        census = plan.get('census')
+        require(isinstance(census, dict) and census.get('hash') == plan['census_hash'] ==
+                migration._digest({key: value for key, value in census.items() if key != 'hash'}),
+                'EVIDENCE_MISMATCH', 'Stored conversion evidence does not match its recorded hash', 409)
+
+
 def _conversion_record(row, *, details=False):
     if details:
+        _require_census_evidence(row.plan)
         return record(row)
     return {**record(row, exclude=('plan', 'proof')),
             'plan': _preview_plan(row.plan), 'proof': _preview_proof(row.proof)}
@@ -289,6 +300,7 @@ def propose(db, actor, command):
     require(candidate["proof"] and candidate["proof"]["identical"], "EQUIVALENCE_FAILED", "Conversion must preserve every result and objective", 409,
             candidate["proof"])
     frozen = {k: v for k, v in candidate.items() if k not in {"manifest", "proof", "plan_hash"}}
+    frozen['census_hash'] = candidate['census']['hash']
     row = m.CatalogueConversion(department_id=actor.department_id, proposed_by=actor.identity_id,
         status="proposed", reason=value.reason, input_revision=candidate["manifest"]["input_revision"],
         manifest=candidate["manifest"], plan=frozen, proof=candidate["proof"], plan_hash=candidate["plan_hash"])
@@ -308,6 +320,7 @@ def transition(db, actor, command):
         row.status = "declined"
     elif action == "activate":
         require(row.status == "proposed", "WORKFLOW_STATE", "Only a pending conversion can be activated", 409)
+        _require_census_evidence(row.plan)
         independence.ensure(db, actor, "rule.activate", independence.person_key(db, row.proposed_by) !=
             independence.person_key(db, actor.identity_id), "Another authorised person must approve this conversion", value.reason, row.id)
         fresh = plan(db, actor, proof=True, expected_manifest=row.manifest)
