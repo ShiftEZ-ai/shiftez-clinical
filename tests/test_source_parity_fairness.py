@@ -62,7 +62,7 @@ def test_greedy_history_does_not_recount_nonfocus_publication_context():
 
 def test_week_spread_and_pair_limit_use_department_calendar_and_shared_marginal_cost():
     data = world([duty(1, 5, [A]), duty(2, 6, [A])], '2026-10-05', '2026-10-19')
-    goal = configured(data, 'period_spread')
+    goal = configured(data, 'period_spread', period='rota')
     [row] = f.goal_report(data, goal)['people'][:1]
     assert row['actual'] == row['expected'] == 2 and row['cost'] == pytest.approx(1 / 7)
     later = duty(3, 12)
@@ -81,7 +81,7 @@ def test_week_spread_and_pair_limit_use_department_calendar_and_shared_marginal_
 
 def test_distribution_solver_compiles_the_evaluators_exact_deviations():
     data = world([duty(1, 5), duty(2, 6)], '2026-10-05', '2026-10-19')
-    goal = configured(data, 'period_spread')
+    goal = configured(data, 'period_spread', period='rota')
     model = cp_model.CpModel()
     choices, participants = {}, {}
     for shift in data['shifts']:
@@ -239,7 +239,7 @@ def department_distribution_plan(request):
     data['memberships'] = [{'person_id': pid, 'department_id': DEPT, 'starts_on': '2020-01-01'} for pid in people]
     settings = ({'within': tree('person_ids', people[:10])} if distribution == 'share' else
                 {'metric': 'pair_exposure', 'aim': 'target', 'amount': 1, 'partners': tree('person_ids', people[140:])}
-                if distribution == 'pair_limit' else {})
+                if distribution == 'pair_limit' else {'period': 'rota'})
     goal = configured(data, distribution, **settings)
     if distribution == 'pair_limit':
         goal['definition']['scope']['person_ids'] = people[:140]
