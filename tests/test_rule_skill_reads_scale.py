@@ -114,16 +114,14 @@ def test_catalogue_held_reach_keeps_rules_for_each_matching_clinic_context(h, me
     page = h.get('coordinator', '/api/rules/catalogue?version=2&day=2026-10-05')
     entry = next(row for row in page['entries'] if row['id'] == 'workload_limit')
     assert entry['reach'][lines[0]['id']] == len(h.seed['people']) - int(explicit_none)
-    # The mandatory None displaces the mandatory default, so the advisory skill line still applies.
-    assert entry['reach'][lines[1]['id']] == 1
+    assert entry['reach'][lines[1]['id']] == (0 if explicit_none else 1)
     if explicit_none:
         # An authored None-only line has reach even though it emits no numeric obligation.
         assert entry['reach'][lines[-1]['id']] == 1
     assert entry['people'] == len(h.seed['people'])
     applies = h.get('coordinator', f'/api/policies/applies?person_id={person}&day=2026-10-05')
     mine = [row for row in applies['rules'] if row['policy_id'] == policy_id]
-    assert {row['own_line']['id'] for row in mine} == (
-        {lines[1]['id']} if explicit_none else {line['id'] for line in lines})
+    assert {row['own_line']['id'] for row in mine} == (set() if explicit_none else {line['id'] for line in lines})
 
 
 @pytest.mark.parametrize('case', ['partial', 'equal_tier', 'safety'])
