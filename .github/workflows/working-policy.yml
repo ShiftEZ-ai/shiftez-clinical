@@ -5,6 +5,8 @@ jobs:
   policy:
     name: Working policy
     runs-on: ubuntu-24.04
+    outputs:
+      bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
     steps:
     - name: Require GitHub-hosted execution
       env:
@@ -14,6 +16,29 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: refs/heads/dev
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Detect bootstrap controls
+      id: bootstrap
+      working-directory: .
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        if test -f .github/scripts/working_policy.py; then
+          echo 'bootstrap=false' >> "$GITHUB_OUTPUT"
+        else
+          test "$EVENT_NAME" = pull_request || { echo 'Bootstrap requires a pull request'; exit 1; }
+          echo 'bootstrap=true' >> "$GITHUB_OUTPUT"
+          echo 'TRUSTED_BOOTSTRAP=true' >> "$GITHUB_ENV"
+          echo 'BOOTSTRAP: protected dev controls are absent; using the exact PR head'
+        fi
+    - name: Load initial controls from the exact PR head
+      if: steps.bootstrap.outputs.bootstrap == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
         fetch-depth: 0
         persist-credentials: false
         submodules: false

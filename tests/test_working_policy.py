@@ -451,6 +451,98 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
 
 
+
+class BootstrapControlTests(unittest.TestCase):
+    def test_workflow_fallback_is_only_for_missing_controls(self):
+        import shutil
+        import yaml
+        workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
+        bash = shutil.which('bash')
+        if os.name == 'nt':
+            bash = 'C:/Program Files/Git/bin/bash.exe'
+        count = 0
+        for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml'):
+            doc = yaml.load((workflows / name).read_text(), Loader=yaml.BaseLoader)
+            self.assertNotIn('pull_request_target', (workflows / name).read_text())
+            for job in doc['jobs'].values():
+                steps = job.get('steps', [])
+                for index, step in enumerate(steps):
+                    if step.get('id') != 'bootstrap': continue
+                    count += 1
+                    fallback = steps[index + 1]
+                    self.assertEqual(fallback['if'], "steps.bootstrap.outputs.bootstrap == 'true'")
+                    self.assertEqual(fallback['with']['ref'], '${{ github.event.pull_request.head.sha }}')
+                    self.assertEqual(fallback['with'].get('path'), steps[index - 1]['with'].get('path'))
+                    self.assertEqual(fallback['with']['persist-credentials'], 'false')
+                    script = ('.trusted-controls/' if fallback['with'].get('path') else '') + '.github/scripts/'
+                    script += 'working_policy.py' if name == 'working-policy.yml' else 'trusted_ci.py'
+                    for present in (False, True):
+                        with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temporary:
+                            folder = Path(temporary)
+                            if present:
+                                target = folder / script; target.parent.mkdir(parents=True); target.write_text('trusted')
+                            env = {**os.environ, 'GITHUB_OUTPUT': str(folder / 'output'),
+                                   'GITHUB_ENV': str(folder / 'env'), 'EVENT_NAME': 'pull_request'}
+                            result = subprocess.run([bash, '-e', '-c', step['run']], cwd=folder, env=env,
+                                                    capture_output=True, text=True, timeout=20)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertEqual((folder / 'output').read_text().strip(), 'bootstrap=' + str(not present).lower())
+                            self.assertEqual('BOOTSTRAP:' in result.stdout, not present)
+                            self.assertEqual((folder / 'env').exists(), not present)
+                    with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temporary:
+                        folder = Path(temporary)
+                        result = subprocess.run([bash, '-e', '-c', step['run']], cwd=folder,
+                            env={**os.environ,'GITHUB_OUTPUT':str(folder/'output'),'GITHUB_ENV':str(folder/'env'),
+                                 'EVENT_NAME':'merge_group'}, capture_output=True, text=True, timeout=20)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse((folder / 'env').exists())
+        self.assertEqual(count, 4)
+
+    def test_bootstrap_binding_refuses_noninitial_events_and_sources(self):
+        base, head = 'a' * 40, 'b' * 40
+        data = {'pull_request': {'base': {'ref':'dev','repo':{'id':policy.REPOSITORY}},
+                                'head': {'sha':head,'repo':{'id':policy.REPOSITORY}}}}
+        for change in ('valid', 'unflagged', 'merge_group', 'attempt', 'parents', 'controls', 'known', 'head', 'fork', 'target'):
+            event = copy.deepcopy(data)
+            if change == 'fork': event['pull_request']['head']['repo']['id'] = 1
+            if change == 'target': event['pull_request']['base']['ref'] = 'main'
+            def git(*args):
+                if args[0] == 'rev-list': return (base + (' ' + head if change == 'parents' else '')).encode()
+                return ('c' * 40 if change == 'head' else head).encode()
+            def read(revision, path):
+                return b'present' if (change == 'controls' and path.endswith('trusted_ci.py') or change == 'known' and path == policy.KNOWN) else None
+            with patch.dict(os.environ, {'TRUSTED_BOOTSTRAP':'false' if change == 'unflagged' else 'true',
+                                        'GITHUB_RUN_ATTEMPT':'2' if change == 'attempt' else '1'}), \
+                 patch.object(policy, 'git', side_effect=git), patch.object(policy, 'read_file', side_effect=read):
+                if change in {'valid','unflagged'}:
+                    self.assertEqual(policy.bootstrap(event, 'pull_request', base), change == 'valid')
+                else:
+                    with self.assertRaises(ValueError): policy.bootstrap(event, 'merge_group' if change == 'merge_group' else 'pull_request', base)
+
+    def test_bootstrap_verdict_never_reads_missing_baseline(self):
+        maker = types.SimpleNamespace(collect_reports=lambda *a:[{'tests/test_a.py::test_a':'failed'}] * 2)
+        with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temporary:
+            folder = Path(temporary)
+            def read(revision, path):
+                self.assertEqual(path, policy.KNOWN)
+                return None
+            with patch.dict(os.environ, {'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':'1'}), \
+                 patch.object(policy, 'read_file', side_effect=read):
+                verifier.bootstrap_verdict({'replicas':[1,2],'tree':'c'*40}, folder, folder/'out', 'b'*40,
+                                           'a'*40, 'a'*40, maker, {'canaries':False,'node_census':False})
+            self.assertTrue(json.loads((folder/'out/verdict.json').read_text())['passed'])
+            self.assertTrue(json.loads((folder/'out/bootstrap-measurement.json').read_text())['bootstrap'])
+
+    def test_bootstrap_verdict_refuses_single_replica_errors_and_skips(self):
+        for replicas, outcome in (([1],'passed'),([1,2],'error'),([1,2],'skipped')):
+            maker = types.SimpleNamespace(collect_reports=lambda *a:[{'n':outcome}] * len(replicas))
+            with patch.dict(os.environ, {'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':'1'}), \
+                 patch.object(policy, 'read_file', return_value=None):
+                with self.assertRaises(ValueError):
+                    verifier.bootstrap_verdict({'replicas':replicas}, Path('.'), Path('.'), 'b'*40,
+                                               'a'*40, 'a'*40, maker, {'canaries':False,'node_census':False})
+
+
 from hardening_profiles import apply_profile
 apply_profile(globals(),{'test_auditor_quarantine_hook_attack_is_tier1': ['content_classifier'], 'test_tier2_lock_dependency_and_imported_product': ['content_classifier'], 'test_all_named_hooks_are_content_protected': ['content_classifier'], 'test_plugins_conftest_and_registration': ['content_classifier'], 'test_config_sections_and_scripts': ['content_classifier'], 'test_computed_conftest_attack_refused': ['content_classifier'], 'test_plugin_mechanisms_and_aliases': ['content_classifier'], 'test_conftest_reporter_assignment_refused_other_support_flagged': ['content_classifier'], 'test_canaries_exact_outcomes_and_node_set': ['canaries'], 'test_same_pr_node_ledger_structural_addition_is_flagged_tier2': ['node_census']})
 

@@ -7,6 +7,7 @@ jobs:
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
     env:
+      TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
       ROTA_ALLOW_TEST_ROLES: 'yes'
       PW_TRACE_DIR: .run/traces
@@ -40,6 +41,30 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ inputs.trusted_sha }}
+        path: .trusted-controls
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Detect bootstrap controls
+      id: bootstrap
+      working-directory: .
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        if test -f .trusted-controls/.github/scripts/trusted_ci.py; then
+          echo 'bootstrap=false' >> "$GITHUB_OUTPUT"
+        else
+          test "$EVENT_NAME" = pull_request || { echo 'Bootstrap requires a pull request'; exit 1; }
+          echo 'bootstrap=true' >> "$GITHUB_OUTPUT"
+          echo 'TRUSTED_BOOTSTRAP=true' >> "$GITHUB_ENV"
+          echo 'BOOTSTRAP: protected dev controls are absent; using the exact PR head'
+        fi
+    - name: Load initial controls from the exact PR head
+      if: steps.bootstrap.outputs.bootstrap == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
         path: .trusted-controls
         fetch-depth: 0
         persist-credentials: false
@@ -131,6 +156,9 @@ jobs:
 'on':
   workflow_call:
     inputs:
+      bootstrap:
+        type: string
+        required: true
       suite:
         type: string
         required: true

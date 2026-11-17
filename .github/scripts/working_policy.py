@@ -437,6 +437,22 @@ def merge_tree(base, head):
     return commit(output[0])
 
 
+def bootstrap(data, kind, base):
+    if os.getenv("TRUSTED_BOOTSTRAP") != "true":
+        return False
+    pr = data.get("pull_request", {})
+    if (kind != "pull_request" or pr.get("base", {}).get("ref") != "dev"
+            or pr["base"]["repo"]["id"] != REPOSITORY or pr["head"]["repo"]["id"] != REPOSITORY
+            or os.environ["GITHUB_RUN_ATTEMPT"] != "1"
+            or git("rev-list", "--parents", "-n", "1", base).decode().split() != [base]
+            or read_file(base, ".github/scripts/trusted_ci.py") is not None
+            or read_file(base, KNOWN) is not None
+            or git("rev-parse", "HEAD").decode().strip() != commit(pr["head"]["sha"])):
+        raise ValueError("Bootstrap is restricted to the initial same-repository dev PR")
+    print("BOOTSTRAP: initial controls; hosted evidence is the measured base")
+    return True
+
+
 def guard():
     data = event()
     kind = os.environ["GITHUB_EVENT_NAME"]
@@ -470,6 +486,7 @@ def guard():
         raise ValueError("Unsupported policy event")
     assert_public_tree(candidate)
     migration_floor(migrations(base), migrations(candidate))
+    initial = bootstrap(data, kind, base)
     if branch == "main":
         dev_tip = fetch("refs/heads/dev")
         source = accepted_dev_commit(candidate, dev_tip)
@@ -504,13 +521,15 @@ def guard():
                 level, reason = tier(path, old, new, inventory)
             rows.append({"path": path, "tier": level, "reason": reason})
         report = findings_report(branch, base, head, candidate, rows, source, candidate_sha)
-        if report["tier1"]:
+        if report["tier1"] and not initial:
             raise ValueError("Tier 1 control changes require the audited maintenance route")
         preview = fetch("refs/heads/preview")
         preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
         incoming = set(git("rev-list", head, "--not", base).splitlines())
         if preview_merges & incoming:
             raise ValueError("Preview merge history may not enter dev")
+    if initial:
+        policy_base = head
     receipts = {}
     for path, required in LISTS.items():
         raw = read_file(policy_base, path)

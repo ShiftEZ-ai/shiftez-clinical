@@ -56,6 +56,33 @@ def required_producers(raw):
         raise ValueError("Every producer must run and succeed")
 
 
+def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags):
+    if plan["replicas"] != [1, 2] or policy.read_file(candidate, policy.KNOWN) is not None:
+        raise ValueError("Bootstrap measurement requires two replicas and no allowance list")
+    if flags['canaries']:
+        canary_evidence.verify_directory(reports, allow_product_errors=False)
+    runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+    known_skips.comparison_runs(runs, set(), release=False)
+    if flags['node_census']:
+        raw_files = policy.paths(git("ls-tree", "-r", "--name-only", "-z", census_base, "--", "tests"))
+        expected = {p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py", p)}
+        before = node_census.base_nodes(plan, reports, census_base, os.environ["GITHUB_RUN_ID"],
+            os.environ["GITHUB_RUN_ATTEMPT"], maker.canonical_node, expected)
+        ledger = policy.read_file(candidate, "ci/removed-tests.json")
+        if ledger is None:
+            raise ValueError("Bootstrap node-removal ledger is missing")
+        allowed = node_census.removed_nodes(ledger, maker.SAFE_NODE.fullmatch)
+        node_census.emit(node_census.compare(before, set(runs[0]), allowed), output)
+    output.mkdir(parents=True, exist_ok=True)
+    evidence = {"schema": 1, "bootstrap": True, "sha": candidate, "tree": plan["tree"],
+        "base_sha": base, "run_id": os.environ["GITHUB_RUN_ID"],
+        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "replicas": plan["replicas"], "runs": runs}
+    (output / "bootstrap-measurement.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    (output / "verdict.json").write_text(json.dumps({"passed": True, "bootstrap": True,
+        "reason": "Complete bootstrap measurement; list-cut admission remains required"}) + "\n", encoding="utf-8")
+    print("BOOTSTRAP: complete measurement; no existing failure allowance was assumed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
@@ -86,6 +113,11 @@ def main():
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
     assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
                      {"unit": int(os.environ["UNIT_COUNT"]), "browser": int(os.environ["BROWSER_COUNT"])})
+    if policy.bootstrap(data, kind, base):
+        sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
+        import make_known_failures as maker
+        bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags)
+        return
     old, current = policy.read_file(base, policy.KNOWN), policy.read_file(candidate, policy.KNOWN)
     if old is not None and current != old and not (policy.removal_only(old,current)
             or branch=='dev' and policy.renewal_only(old,current)):
