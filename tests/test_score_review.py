@@ -1,5 +1,7 @@
 """Versioned score settings and the complete advisory-line score review read."""
 
+import pytest
+
 
 def test_score_settings_are_versioned_projected_and_undoable(h):
     current = h.get('admin', '/api/score-settings')
@@ -28,6 +30,63 @@ def test_score_review_lists_zero_and_nonzero_advisory_lines(h):
     assert result['total_lost_points'] == round(100 - result['score']['score'], 1)
     assert all({'rule_id', 'level', 'weight', 'lost_points', 'lost_share', 'session_count', 'people_count'} <= set(row)
                for row in result['lines'])
+
+
+def test_score_review_reuses_current_validation_without_changing_payload(h, monkeypatch):
+    from apps.api.services import score_review as service
+    from packages.contracts import schemas as s
+    from packages.domain.score import score_review_lines, schedule_score
+    from packages.domain.validation import evaluate
+
+    workspace = h.shift(h.workspace('Score review reuse'), people=[h.seed['people'][0]])['workspace']
+    workspace = h.command('coordinator', 'workspace.validate', {'reason': 'Build reusable score review evidence'},
+                          workspace['id'], workspace['revision'])['workspace']
+    data = h.snapshot(workspace)
+    validation = evaluate(data, explain_findings=False)
+    scored = schedule_score(data, validation, data.get('generation_options'))
+    expected_lines = score_review_lines(data, validation, data.get('generation_options'), scored)
+    expected = s.ScoreReview(workspace_id=workspace['id'], workspace_revision=workspace['revision'],
+                             fingerprint=data['fingerprint'], score=expected_lines['score'],
+                             total_lost_points=expected_lines['total_lost_points'], lines=expected_lines['lines'])
+
+    monkeypatch.setattr(service, 'evaluate', lambda *args, **kwargs: pytest.fail('reused current validation must not evaluate'))
+    monkeypatch.setattr(service, 'schedule_score', lambda *args, **kwargs: pytest.fail('reused current validation must not rescore'))
+    assert h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review") == expected.model_dump(mode='json')
+
+
+@pytest.mark.parametrize('invalid', ['fingerprint', 'score', 'scope'])
+def test_score_review_recomputes_unusable_validation(h, monkeypatch, invalid):
+    from copy import deepcopy
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.services import score_review as service
+
+    workspace = h.shift(h.workspace('Score review fallback'), people=[h.seed['people'][0]])['workspace']
+    workspace = h.command('coordinator', 'workspace.validate', {'reason': 'Build score review evidence'},
+                          workspace['id'], workspace['revision'])['workspace']
+    url = f"/api/workspaces/{workspace['id']}/score-review"
+    expected = h.get('coordinator', url)
+    with transaction(h.app.state.engine, write=True) as db:
+        stored = db.get(m.Workspace, workspace['id'])
+        check = deepcopy(stored.validation)
+        if invalid == 'fingerprint':
+            check['fingerprint'] = 'stale'
+        elif invalid == 'score':
+            check['score'].pop('rule_weights')
+        else:
+            check['scope'] = 'command_changes'
+        stored.validation = check
+    calls = []
+    for name in ('evaluate', 'schedule_score'):
+        original = getattr(service, name)
+
+        def counted(*args, _name=name, _original=original, **kwargs):
+            calls.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(service, name, counted)
+    assert h.get('coordinator', url) == expected
+    assert calls == ['evaluate', 'schedule_score']
 
 
 def test_score_review_attributes_grouped_fair_share_loss_to_the_source_line(monkeypatch):
