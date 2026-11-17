@@ -3715,6 +3715,38 @@
   ],
   "unstable": [
     {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_input_change_during_preparation_refuses_without_saving",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_preparation_reuse_still_reacquires_under_final_writer_lock",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
       "class": "unstable",
       "node": "tests/test_browser_audit_collection_scroll.py::test_request_panel_approval_and_undo_keep_position_but_link_filter_resets_it",
       "owner": "maintainer",
@@ -3971,5 +4003,5 @@
       "expires_on": "2026-12-17"
     }
   ],
-  "classifications_sha256": "50d58f94bd0450182412db5127ec4448b4e2cbc12e01fabbaf82eed2f2ee7acf"
+  "classifications_sha256": "1d4ec30562e5e6c89958f9229957b29c9ab787bcddb62c92a6137a6f3c07d6d5"
 }

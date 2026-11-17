@@ -10,7 +10,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "ci"), str(ROOT / ".github/scripts")]
+sys.path[:0] = [str(ROOT / "ci"), str(ROOT / ".github/scripts"), str(ROOT / "tests")]
 import make_known_failures as maker
 import known_skips
 

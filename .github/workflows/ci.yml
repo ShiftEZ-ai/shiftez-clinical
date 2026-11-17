@@ -234,7 +234,9 @@ jobs:
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}
         UNIT_COUNT: ${{ needs.checks.outputs.unit_count }}
         BROWSER_COUNT: ${{ needs.checks.outputs.browser_count }}
-      run: python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
+      run: |
+        python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
+        python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
     - name: Keep raw measurement or qualification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

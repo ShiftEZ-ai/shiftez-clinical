@@ -379,6 +379,30 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_input_change_during_preparation_refuses_without_saving",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_preparation_reuse_still_reacquires_under_final_writer_lock",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353"
+    },
+    {
       "class": "baseline",
       "node": "tests/test_be20_sweep.py::test_return_resubmit_approve_is_not_contribution_and_home_uses_step_authority[case-coaegggeopibebnejadikbagdloakcfnlcdbpghdnjffcphfcikcgkldopgbldli]",
       "owner": "maintainer",
