@@ -12,6 +12,7 @@ jobs:
     name: Checks
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
@@ -81,7 +82,6 @@ jobs:
     - name: README must remain empty, including the first root run
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/tests/test_readme_empty.py"
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'pull_request'
       with:
         path: |-
           ~/.cache/pip
@@ -125,16 +125,6 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
-    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'merge_group' || github.event_name == 'push'
-      with:
-        path: |-
-          ~/.cache/pip
-          ~/.npm
-          ${{ runner.temp }}/runtime-archives
-
-          ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
   unit:
     name: Unit (${{ matrix.shard }}/${{ needs.checks.outputs.unit_count }}, run ${{ matrix.replica }})
     needs: checks
@@ -192,6 +182,7 @@ jobs:
     - browser
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: .
@@ -250,6 +241,7 @@ jobs:
     name: Static checks
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
     - name: Require GitHub-hosted execution
       env:
@@ -301,7 +293,6 @@ jobs:
         submodules: false
         lfs: false
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'pull_request'
       with:
         path: |-
           ~/.cache/pip
@@ -339,16 +330,6 @@ jobs:
             raise SystemExit('Exactly one migration head is required')
         print(heads[0])
         PY
-    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'merge_group' || github.event_name == 'push'
-      with:
-        path: |-
-          ~/.cache/pip
-          ~/.npm
-          ${{ runner.temp }}/runtime-archives
-
-          ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
 'on':
   pull_request:
     types:
