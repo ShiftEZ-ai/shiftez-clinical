@@ -775,8 +775,7 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
     return {'workspace': {'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                           'starts_on': workspace.starts_on.isoformat(), 'ends_on': workspace.ends_on.isoformat()},
             'goals': result if planner else personal_goals(result, actor.person_id),
-            'schedule': schedule(db, workspace, current_fingerprint=data['fingerprint']
-                                 if workspace.status != 'published' else None) if planner else None,
+            'schedule': schedule(db, workspace) if planner else None,
             'score_trend': score_trend(db, actor.department_id, first, last) if planner else []}
 
 
@@ -812,14 +811,14 @@ def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
                   lambda _: _goals_uncached(db, actor, workspace_id, who, starts_on, ends_on))[workspace.id]
 
 
-def schedule(db, workspace, *, current_fingerprint=None):
+def schedule(db, workspace):
     """The rota's schedule score from its last check (None when never checked); `fresh`: nothing changed since."""
     from apps.api.snapshots import fingerprints
     score = (normalized_check(workspace.validation) or {}).get('score')
     if not score or score['score'] is None:
         return None
     return {**{k: score.get(k) for k in ('score', 'publishable', 'gate', 'components', 'why')},
-            'fresh': workspace.validation.get('fingerprint') == (current_fingerprint or fingerprints(db, [workspace])[workspace.id])}
+            'fresh': workspace.validation.get('fingerprint') == fingerprints(db, [workspace])[workspace.id]}
 
 
 def score_trend(db, department_id, first, last):
