@@ -209,7 +209,8 @@ def test_toggle_preserves_ordinary_fingerprints_scores_and_optimizer_inputs(depa
                 assert not checked.get('scope')
                 defaults = db.get(m.Department, workspace.department_id).generation_defaults
                 assert checked['score'] == schedule_score(snapshot, checked, defaults)
-            return snapshots.fingerprint(db, workspace), str(prepared['model'].proto), checked.get('score')
+            return (snapshots.fingerprint(db, workspace), str(prepared['model'].proto),
+                    checked.get('score'), checked['findings'])
     job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
                     revision=draft['revision'])['job']
     before = evidence()

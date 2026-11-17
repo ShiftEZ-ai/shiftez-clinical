@@ -287,6 +287,8 @@ def test_request_workflow_rows_are_not_acquired_by_scheduling_snapshots(backend)
     h = backend
     row = request_row(h)
     workspace = h.workspace()
+    published = h.publish(h.shift(h.workspace())['workspace'])
+    amendment = h.workspace(base=published['publication_id'])
     tables = set()
 
     def acquire(_connection, _cursor, _statement, _parameters, context, _many):
@@ -297,6 +299,9 @@ def test_request_workflow_rows_are_not_acquired_by_scheduling_snapshots(backend)
     sql_event.listen(h.app.state.engine, 'before_cursor_execute', acquire)
     try:
         h.snapshot(workspace)
+        assert m.RequestRecord.__tablename__ not in tables
+        tables.clear()
+        h.snapshot(amendment)
     finally:
         sql_event.remove(h.app.state.engine, 'before_cursor_execute', acquire)
     assert m.RequestRecord.__tablename__ not in tables
