@@ -56,6 +56,7 @@ def test_run_progress_keeps_moving_while_a_redraw_waits_for_the_rota(browser, cp
 def test_a_run_with_nothing_to_apply_says_why(browser, live_server, h):
     """H-01: a finished run with no change says why and what to do next, not only "Nothing to apply"."""
     w, _ = rota(h, [(4, 8, [h.seed['people'][0]])], name='Nothing to apply')
+    fingerprint = h.detail(w)['current_fingerprint']
     h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'}, revision=w['revision'])
     failed = {'status': 'translation_error', 'change_count': 0, 'additions': [], 'removals': [],
               'validation': {'valid': False, 'error_count': 120, 'warning_count': 0}, 'message': 'Solver and validation disagree'}
@@ -66,7 +67,7 @@ def test_a_run_with_nothing_to_apply_says_why(browser, live_server, h):
         for job in body['jobs'] if 'jobs' in body else [body['job']] if body.get('job') else []:
             if job.get('kind') == 'generation':
                 job.update(status='succeeded', outcome='failed', result={**(job.get('result') or {}), **failed},
-                           completed_at=job['created_at'], currency='current', result_stale=False)
+                           completed_at=job['created_at'], input_fingerprint=fingerprint, currency='current', result_stale=False)
         route.fulfill(response=response, json=body)
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
     try:
