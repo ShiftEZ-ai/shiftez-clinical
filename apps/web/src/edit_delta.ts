@@ -42,7 +42,7 @@ export function applyCheckDelta(held:WorkspaceData|undefined,reply:Row|null|unde
   if(!held||held.partial||!d||d.kind!=='complete_check'||d.stale||d.partial||!d.validation
     ||String(d.workspace_id)!==String(held.workspace.id)||Number(d.revision)!==Number(held.workspace.revision)
     ||!Array.isArray(d.validation.findings)||!Array.isArray(d.validation.coverage))return null;
-  return {...held,workspace:{...held.workspace,validation:d.validation},
+  return {...held,workspace:{...held.workspace,validation:d.validation,validation_current:true},
     current_fingerprint:d.current_fingerprint||d.validation.fingerprint||held.current_fingerprint};
 }
 

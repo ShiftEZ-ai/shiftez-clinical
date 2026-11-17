@@ -18,6 +18,19 @@ def node(script):
     return json.loads(out.stdout)
 
 
+def test_check_again_explicitly_starts_a_check_without_reopening_the_page(client_modules):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    retry = cut(source, r'\n(const checkAgain = \(data\) => \{.*?\};)\n')
+    got = node("let checkStop={rota:'w'},checkCancelled='w:old',checkUnstarted='w:old',autoCheckKey='w:old';"
+               "const data={workspace:{id:'w',revision:4},current_fingerprint:'new'},started=[];"
+               "const autoCheck=value=>started.push(value);"
+               "const refresh=()=>{throw new Error('Retry must start a check explicitly');};"
+               + retry + "checkAgain(data);"
+               "console.log(JSON.stringify({started,checkStop,checkCancelled,checkUnstarted,autoCheckKey}));")
+    assert got == {'started': [{'workspace': {'id': 'w', 'revision': 4}, 'current_fingerprint': 'new'}],
+                   'checkStop': None, 'checkCancelled': '', 'checkUnstarted': '', 'autoCheckKey': ''}
+
+
 def test_your_own_stop_or_add_time_on_a_queued_run_is_read_back_within_3_s(client_modules):
     """Restore ee3c5da9f (schedulingPanel): a queued run is read back 3 → 10 → 30 s apart. Your own Stop and keep best
     or Add time restarts that back-off, so its outcome is read 3 s later, not after a 30 s wait. The poll step (the

@@ -1,6 +1,8 @@
 """Cycle 4: checking a rota is not saving it; optional approval notes stay optional."""
 import pytest
 from playwright.sync_api import Page, expect
+from apps.api import models as m
+from apps.api.db import transaction
 from .test_browser import browser, live_server, sign_in, open_rota, wait_held  # noqa: F401
 
 pytestmark = [pytest.mark.browser, pytest.mark.postgres,
@@ -15,8 +17,10 @@ def no_save_state(page: Page):
     assert state.get_attribute('aria-label') is None
 
 
-def test_open_current_rota_does_not_check_and_background_check_never_claims_save(browser, live_server, h):
+def test_open_unchecked_rota_does_not_check_and_background_check_never_claims_save(browser, live_server, h):
     w = h.shift(h.workspace())['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Workspace, w['id']).validation = None
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         commands = []
