@@ -456,14 +456,20 @@ def test_board_change_permissions_match_requests_and_decision_commands(r):
         assert all(row["can_decide"] is requests[row["id"]] for row in board["changes"])
     board = h.get("coordinator_lead", path)
     assert {row["id"] for row in board["changes"]} == {row["id"] for row in changes}
-    assert {row["id"] for row in board["changes"] if row["can_decide"]} == {changes[0]["id"]}
-    for row in changes[1:]:
+    assert {row["id"] for row in board["changes"] if row["can_decide"]} == {row["id"] for row in changes[:3]}
+    for row in changes[3:]:
         h.command("coordinator_lead", "request.decide", {"decision": "reject", "reason": REASON},
                   row["id"], row["revision"], status=403)
+    for row in changes[1:3]:
+        h.command("coordinator_lead", "request.decide", {"decision": "reject", "reason": REASON},
+                  row["id"], row["revision"])
     h.command("admin", "self_approval.grant", {"identity_id": lead_id, "actions": ["request.decide"],
         "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Synthetic time-limited programme cover"})
     assert {row["id"] for row in h.get("coordinator_lead", path)["changes"] if row["can_decide"]} == {
-        row["id"] for row in changes[:4]}
+        changes[0]["id"], changes[3]["id"]}
+    row = changes[4]
+    h.command("coordinator_lead", "request.decide", {"decision": "reject", "reason": REASON},
+              row["id"], row["revision"], status=403)
     row = changes[0]
     h.command("coordinator_lead", "request.decide", {"decision": "reject", "reason": REASON}, row["id"], row["revision"])
     assert row["id"] not in {item["id"] for item in h.get("coordinator_lead", path)["changes"]}
