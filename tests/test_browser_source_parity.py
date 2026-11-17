@@ -111,7 +111,11 @@ def test_line_settings_same_as_rule_none_or_own_round_trip(browser, live_server,
     context, page = themed(browser, live_server, 'coordinator', 1440, theme)
 
     def open_settings(while_open=False):
-        if while_open:  # proposing leaves the line's panel open: the link below is followed from it
+        if while_open:
+            # A proposal closes the editor. Open the line from the rule before following the same-rule link.
+            navigate(page, 'rules/people_per_session')
+            page.reload()
+            page.locator(f'#main tr[data-row="{line_id}"] [data-col="who"]').click()
             expect(page.locator('.rc-line-panel')).to_be_visible()
         navigate(page, f'rules/people_per_session/{line_id}')
         # The link keeps its line and opens it, also when followed from an open panel of the same rule.

@@ -14,6 +14,8 @@ import os
 import pytest
 from playwright.sync_api import expect
 
+from packages.contracts.schemas import WEB_KEPT_READS
+
 from .test_backend_scale import scale_department
 from .test_browser import PAGE_LOAD_MS, browser, holding, live_server, navigate, sign_in  # noqa: F401
 from .test_browser import whole_list
@@ -28,18 +30,31 @@ PLANNER_FIRST_MS = 2000 * SLOWER
 # Opens an address in-app (as the sidebar does) and answers when its page is loaded and painted (two frames).
 # page.evaluate has no timeout of its own: a page that is never drawn must fail here, within `limit` ms, not hang the shard.
 OPEN = r"""([hash, view, selector, limit]) => {
-  const main = document.querySelector('#main'); main.removeAttribute('data-loaded-view');
-  const t0 = performance.now(), ready = () => main.getAttribute('data-loaded-view') === view && (!selector || main.querySelector(selector));
+  const main = () => document.querySelector('#main'); main().removeAttribute('data-loaded-view');
+  const t0 = performance.now(), ready = () => main()?.getAttribute('data-loaded-view') === view && (!selector || main()?.querySelector(selector));
   location.hash = hash;
+  let observer, timer;
   const drawn = (async () => {
-    await new Promise(done => { if (ready()) return done(); const o = new MutationObserver(() => { if (ready()) { o.disconnect(); done(); } });
-      o.observe(main, {subtree: true, childList: true, attributes: true}); });
+    await new Promise(done => {
+      if (ready()) return done();
+      observer = new MutationObserver(() => { if (ready()) { observer.disconnect(); done(); } });
+      // Navigation replaces main, so watch its stable ancestor.
+      observer.observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ['data-loaded-view']});
+    });
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     return performance.now() - t0;
   })();
-  return Promise.race([drawn, new Promise((_, fail) => setTimeout(() => fail(new Error(
-    `${hash} not drawn within ${limit} ms: data-loaded-view=${main.getAttribute('data-loaded-view')}, ` +
-    `${selector || 'no selector'} ${selector && main.querySelector(selector) ? 'found' : 'missing'}`)), limit))]);
+  const timeout = new Promise((_, fail) => {
+    timer = setTimeout(() => {
+      const loaded = main()?.getAttribute('data-loaded-view');
+      const found = selector && main()?.querySelector(selector) ? 'found' : 'missing';
+      fail(new Error(`${hash} not drawn within ${limit} ms: data-loaded-view=${loaded}, ${selector || 'no selector'} ${found}`));
+    }, limit);
+  });
+  return Promise.race([drawn, timeout]).finally(() => {
+    clearTimeout(timer);
+    observer?.disconnect();
+  });
 }"""
 
 
@@ -61,6 +76,8 @@ def reopened_while_held(browser, live_server, department):
     try:
         for address in ('people', planner, 'requests', 'home'):
             navigate(page, address)
+        # Fresh replies can be used without rechecking. Age them without firing app timers.
+        page.clock.set_system_time(page.evaluate('Date.now()') + WEB_KEPT_READS['fresh_ms'])
         with holding(page) as held:
             held.hold('**/api/**')  # nothing the server answers from here on reaches the page until released
             opens = []

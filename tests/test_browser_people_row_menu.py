@@ -6,7 +6,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, navigate, reconnect, wait_held, wait_until  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, wait_held, wait_until  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -42,9 +42,8 @@ def test_people_row_menu_lists_the_panel_sections_and_permitted_actions(browser,
 
 
 def test_an_open_row_menu_stays_on_its_row_when_a_refresh_redraws_the_list(browser, live_server, h):
-    """D-057: a background refresh already reading the list when a row's ⋯ menu opens used to close the menu as it
-    swapped the page in (its button was replaced). The menu stays open on the row's new button, the focus on the same
-    item, and the item chosen acts on that row."""
+    """A foreground refresh already reading the list when its row menu opens replaces the button.
+    The menu stays on the new button, focus stays on the same item, and that item acts on the same row."""
     context, page = sign_in(browser, live_server, "coordinator")
     try:
         navigate(page, "people")
@@ -58,7 +57,8 @@ def test_an_open_row_menu_stays_on_its_row_when_a_refresh_redraws_the_list(brows
         # directory once, at start); a role without lists reads the directory.
         directory = re.compile(r"/api/(catalogues|directory)(\?.*)?$")
         page.route(directory, lambda route: held.append(route))
-        reconnect(page)  # the page reads again in the background; its list read is on its way
+        # A background refresh waits for the menu to close. Use the foreground recheck to exercise menu adoption.
+        page.evaluate("dispatchEvent(new Event('rota-recheck'))")
         wait_held(page, held)
         more.click()
         menu = page.get_by_role("menu", name="Row actions")
