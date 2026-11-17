@@ -1,6 +1,8 @@
 """Undo inputs retain the same ownership, revision, scope and view-count boundaries as ordinary saves."""
 import uuid
 
+import pytest
+
 from packages.contracts.schemas import DisplaySettingsInput
 from .test_table_views import definition
 
@@ -18,6 +20,21 @@ def test_display_previous_values_restore_defaults_and_reject_stale_or_unauthoris
     restored = h.command('admin', 'department.display', undo, dept['id'], saved['department']['revision'])['department']
     assert restored['display_settings'] == original
     assert h.get('staff', '/api/me')['department']['display_settings'] == original
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_first_display_change_restores_effective_defaults(request, database):
+    h = request.getfixturevalue(database)
+    department = h.get('admin', '/api/me')['department']
+    assert not department['display_settings']
+    defaults = DisplaySettingsInput(reason='Read defaults').model_dump(mode='json', exclude={'reason'})
+    saved = h.command('admin', 'department.display', {'names_default': 'code', 'rule_catalogue': True,
+        'reason': 'First display change'}, department['id'], department['revision'])
+    assert saved['previous'] == defaults
+    undo = saved['undo']
+    restored = h.command('admin', undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'])['department']
+    assert restored['display_settings'] == defaults
+    assert h.get('staff', '/api/me')['department']['display_settings'] == defaults
 
 
 def test_saved_view_update_returns_checked_previous_definition_without_cross_owner_access(h):

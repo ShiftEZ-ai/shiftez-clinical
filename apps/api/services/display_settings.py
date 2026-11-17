@@ -38,7 +38,6 @@ def change(db, actor, command):
     department = db.scalar(select(m.Department).where(m.Department.id == actor.department_id).with_for_update())
     expected(department, command.expected_revision)
     current = dict(department.display_settings or {})
-    previous = {key: value for key, value in current.items() if key in s.DisplaySettingsInput.model_fields}
     if command.kind == 'department.display.restore':
         value = s.DisplaySettingsRestore.model_validate(command.payload)
         source = scoped(db, m.DisplaySettingsVersion, value.version_id, actor)
@@ -51,6 +50,9 @@ def change(db, actor, command):
         value = s.DisplaySettingsInput.model_validate(command.payload, context={'label_write': True})
         definition = {**current, **{key: val if key in value.model_fields_set or key not in current else current[key]
             for key, val in value.model_dump(mode='json', exclude={'reason'}).items()}}
+    previous = s.DisplaySettingsInput.model_validate({
+        **{key: val for key, val in current.items() if key in s.DisplaySettingsInput.model_fields},
+        'reason': value.reason}).model_dump(mode='json', exclude={'reason'})
     row = append(db, actor, department, definition, value.reason)
     department.revision += 1
     history(db, actor, 'department_display', department, value.reason)

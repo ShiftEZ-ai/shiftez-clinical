@@ -460,8 +460,8 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   // Application branding: the server keeps the version before the latest change and puts it back (revision-bound).
   ...Object.fromEntries(['branding.update','branding.undo'].map(k=>[k,(_:unknown,x:any)=>({said:k==='branding.update'?'Name and logo saved':'Name and logo restored',
     undo:x?.can_undo&&x.branding?[{kind:'branding.undo',payload:{reason:'Undo'},expected_revision:x.branding.revision}]:[]})])),
-  // The server's restore of the version before (department.display.restore): `previous` lists only the settings that
-  // were stored, so re-sending it left a setting still at its default (names_default, rule_catalogue) at the new value.
+  // Prefer the served restore so Undo keeps its version and revision checks.
+  // The complete previous settings remain available for the fallback save.
   'department.display':(_,x)=>({said:'Display settings saved',undo:served(x).length?served(x):x?.previous?back('department.display',{...x.previous,reason:'Undo'},x.department):[]}),
   'department.display.restore':(_,x)=>({said:'Display settings restored',undo:served(x)}),
   // Feedback triage: the previous status, link, version and note come back (refused once the report changed again).
