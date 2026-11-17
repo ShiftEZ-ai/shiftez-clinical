@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def asset(client_modules, name):
     """A default image as the module resolves it: its file URL's path (`/C:/...` on Windows)."""
-    return urlparse((client_modules / name).as_uri()).path
+    return urlparse((client_modules / name).as_uri()).path if name else ''
 
 
 def parse(client_modules, value):
@@ -92,6 +92,41 @@ def test_branding_never_waits_for_a_logo_and_a_late_answer_never_overwrites_newe
     assert out['race'] == {'name': 'App new', 'emblem': '/e/new', 'alt': 'new'}
     assert out['older'] == 'App new'
     assert out['failed'] == {'name': 'App bad', 'emblem': '/e/new'}
+
+
+def test_absent_optional_images_are_never_resolved_loaded_or_rendered_as_requests(client_modules):
+    script = r'''
+const images=[],requests=[];
+class Element {
+  constructor(tag){this.tag=tag;this.attrs={};this.classList={toggle(){}};}
+  setAttribute(k,v){this.attrs[k]=v;}
+  removeAttribute(k){delete this.attrs[k];}
+  set src(v){this.attrs.src=v;}
+  set hidden(v){if(v)this.attrs.hidden='';else delete this.attrs.hidden;}
+  append(){}
+}
+globalThis.Node=Element;
+globalThis.document={cookie:'',createElement:tag=>{const e=new Element(tag);if(tag==='img')images.push(e);return e;},
+  createTextNode:()=>new Element('text'),querySelectorAll:s=>images.filter(e=>s.startsWith('img.')&&e.className.split(' ').includes(s.slice(4)))};
+globalThis.Image=class{set src(v){requests.push(v);}async decode(){this.naturalWidth=1;this.naturalHeight=1;}};
+const b=await import(process.argv[1]),d=await import(process.argv[2]);
+d.brandRow();d.brandEmblem();d.bootEmblem();
+const wordmark=images[0],snapshot=()=>({...wordmark.attrs});
+const out={defaultUrl:b.BRANDING_DEFAULTS.wordmark_url,initial:snapshot(),size:b.brandSize('')??null};
+await b.applyBranding({...b.brand(),revision:1});out.applied=snapshot();out.defaultRequests=[...requests];
+await b.applyBranding({...b.brand(),revision:2,wordmark_url:'/api/branding/images/synthetic'});out.supplied=snapshot();
+await b.applyBranding({...b.brand(),revision:3,wordmark_url:''});out.cleared=snapshot();out.requests=requests;
+console.log(JSON.stringify(out));
+'''
+    out = json.loads(subprocess.run(['node', '--input-type=module', '-e', script,
+                                    (client_modules / 'brand.js').as_uri(), (client_modules / 'dom.js').as_uri()],
+                                   capture_output=True, text=True, check=True, timeout=15).stdout)
+    assert out['defaultUrl'] == '' and out['size'] is None
+    for state in ('initial', 'applied', 'cleared'):
+        assert 'src' not in out[state] and 'hidden' in out[state]
+    assert out['defaultRequests'] == []
+    assert out['supplied']['src'] == '/api/branding/images/synthetic' and 'hidden' not in out['supplied']
+    assert out['requests'] == ['/api/branding/images/synthetic']
 
 
 def test_start_up_and_sign_in_never_wait_for_the_branding_read():

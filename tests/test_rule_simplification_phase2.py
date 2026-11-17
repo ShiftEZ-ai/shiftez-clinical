@@ -55,17 +55,17 @@ def test_an_allocation_order_becomes_one_ordered_rule():
 def test_rules_under_different_names_that_are_one_rule_become_one():
     clinics = list(SERVICE.values())
     ucc = clinics[:2]
-    # Weekly ZZ ceilings for two programmes: one a weekly series grouped before, one with dated lines.
-    residents = rule('Residents weekly ZZ ceiling', quota('2026-08-23', '2027-01-03', 1, 'maximum', 'duties', window_alignment='calendar_week'),
+    # Weekly ZZZ ceilings for two programmes: one a weekly series grouped before, one with dated lines.
+    residents = rule("Residents weekly ZZZ ceiling", quota('2026-08-23', '2027-01-03', 1, 'maximum', 'duties', window_alignment='calendar_week'),
                      {'programme_id': PROGRAMME['Residency'], 'service_ids': ucc}, merged_ids=[next(ids)])
-    rotators = grouped('Rotators weekly ZZ ceiling', quota('2026-08-23', '2027-01-03', 1, 'maximum', 'duties', window_alignment='calendar_week'),
+    rotators = grouped("Rotators weekly ZZZ ceiling", quota('2026-08-23', '2027-01-03', 1, 'maximum', 'duties', window_alignment='calendar_week'),
                        [{'programme_id': PROGRAMME['Visiting rotation'], 'ends_on': '2026-10-04'},
                         {'programme_id': PROGRAMME['Visiting rotation'], 'starts_on': '2026-11-01'}], {'service_ids': ucc})
     # Staffing floors for two ranks, one already with session lines.
-    seniors = grouped('ZZ senior floor', {'kind': 'minimum_cover', 'minimum': 2}, [
+    seniors = grouped("ZZZ senior floor", {'kind': 'minimum_cover', 'minimum': 2}, [
         {'service_ids': ucc[:1], 'weekdays': [0, 1, 2, 3, 6], 'assignment_type_ids': [TYPE['Day shift']], 'amount': 3},
         {'service_ids': ucc[:1], 'weekdays': [4, 5]}], {'category_ids': [RANK['Consultant']]}, starts_on='2026-10-01', ends_on='2027-01-01')
-    trainees = rule('ZZ weekday morning physical trainee floor', {'kind': 'minimum_cover', 'minimum': 1},
+    trainees = rule("ZZZ weekday morning physical trainee floor", {'kind': 'minimum_cover', 'minimum': 1},
                     {'category_ids': [RANK['Fellow'], RANK['Resident']], 'service_ids': ucc[:1], 'assignment_type_id': TYPE['Day shift'],
                      'weekdays': [0, 1, 2, 3, 6]}, '2026-10-01', '2027-01-01')
     # One person's clinic placement per rule: person lines on an attendance level.
@@ -73,9 +73,9 @@ def test_rules_under_different_names_that_are_one_rule_become_one():
                        {'person_id': PERSON[who], 'service_id': clinics[3], 'programme_id': PROGRAMME['Residency']}, severity='advisory')
                   for n, who in enumerate(('Kopofiku', 'Badr'), 1)]
     # Personal preferences: a grouped rule and single rules for other people, priorities up and down.
-    preferences = [grouped('Preferred ZZ session', {'kind': 'allocation_preference', 'priority': 1},
+    preferences = [grouped("Preferred ZZZ session", {'kind': 'allocation_preference', 'priority': 1},
                            [{'person_id': PERSON['Carla'], 'assignment_type_ids': [TYPE['Evening shift']]}], {'service_ids': ucc}, severity='advisory'),
-                   rule('Quartz · Lower ZZ allocation priority', {'kind': 'allocation_preference', 'priority': -1},
+                   rule("Quartz · Lower ZZZ allocation priority", {'kind': 'allocation_preference', 'priority': -1},
                         {'person_id': PERSON['Quartz'], 'service_ids': ucc}, severity='advisory'),
                    rule('Emad · Prefer weekend mornings', {'kind': 'allocation_preference', 'priority': 1},
                         {'person_id': PERSON['Emad'], 'service_ids': ucc, 'assignment_type_id': TYPE['Day shift'], 'weekdays': [4, 5]}, severity='advisory')]
@@ -83,7 +83,7 @@ def test_rules_under_different_names_that_are_one_rule_become_one():
     places = [rule(f'Trainee places per supervisor - {kind} clinics', {'kind': 'supervision_limit', 'mode': 'capacity',
                    'trainee_category_ids': [RANK['Resident']], 'maximum': maximum}, {'service_ids': chosen}, ends_on=None)
               for kind, chosen, maximum in (('procedure', clinics[2:3], 2), ('standard', clinics[3:], 1))]
-    families = {'Weekly ZZ ceiling': [residents, rotators], 'ZZ floor': [seniors, trainees],
+    families = {"Weekly ZZZ ceiling": [residents, rotators], "ZZZ floor": [seniors, trainees],
                 'Sport Medicine longitudinal clinic placement': placements, 'Personal preferences': preferences,
                 'Trainee places per supervisor': places}
     everything = [r for f in families.values() for r in f]
@@ -93,15 +93,15 @@ def test_rules_under_different_names_that_are_one_rule_become_one():
         assert sorted(made[name]['rule_ids']) == sorted(m['id'] for m in members), name
         assert same(members, made[name]), name
         PolicyInput.model_validate(made[name]['payload'])
-    floor = made['ZZ floor']['payload']['definition']
+    floor = made["ZZZ floor"]['payload']['definition']
     assert floor['scope']['category_ids'] == [] and {tuple(r['category_ids']) for r in floor['per_person']} == {
         (RANK['Consultant'],), (RANK['Fellow'], RANK['Resident'])}
     placement = made['Sport Medicine longitudinal clinic placement']['payload']['definition']
     assert {r['person_id'] for r in placement['per_person']} == {PERSON['Kopofiku'], PERSON['Badr']} and placement['listed_only']
-    ceiling = made['Weekly ZZ ceiling']['payload']['definition']
+    ceiling = made["Weekly ZZZ ceiling"]['payload']['definition']
     assert {r['programme_id'] for r in ceiling['per_person']} == {PROGRAMME['Residency'], PROGRAMME['Visiting rotation']}
     # Replacing a rule grouped before: its merged rules stay retired, it is the one retired now.
-    assert rotators['id'] in made['Weekly ZZ ceiling']['rule_ids']
+    assert rotators['id'] in made["Weekly ZZZ ceiling"]['rule_ids']
 
 
 def test_exclusions_become_one_table_and_protected_time_stays_apart():
@@ -149,7 +149,7 @@ def test_line_contract_for_people_ranks_and_numbers():
 
 
 def test_balance_preferences_become_balance_goals_with_what_changes():
-    physical, virtual = SERVICE['Physical ZZ'], SERVICE['Virtual ZZ']
+    physical, virtual = SERVICE["Physical UCC"], SERVICE["Virtual UCC"]
     services = {physical: {'mode': 'physical'}, virtual: {'mode': 'virtual'}}
     ucc = {'service_ids': [physical, virtual]}
     pref = lambda name, scope=ucc, **r: rule(name, {'kind': 'allocation_preference', 'priority': 0, **r}, scope, severity='advisory')  # noqa: E731
@@ -213,7 +213,7 @@ def test_overtime_switched_off_by_retired_limits_points_at_the_limits_in_force()
 
 def test_can_work_at_is_a_dated_person_condition():
     from datetime import datetime
-    clinic = SERVICE['Physical ZZ']
+    clinic = SERVICE["Physical UCC"]
     data = {'organisation': {'timezone': 'Asia/Riyadh'}, 'people': {PERSON['Kopofiku']: {}},
             'eligibilities': [{'id': 'e', 'person_id': PERSON['Kopofiku'], 'service_id': clinic, 'starts_on': '2026-10-01', 'ends_on': '2026-11-01'}]}
     tree = {'match': 'all', 'conditions': [{'field': 'eligible_service_ids', 'op': 'any', 'values': [clinic]}]}

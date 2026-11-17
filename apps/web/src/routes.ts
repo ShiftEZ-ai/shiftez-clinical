@@ -63,7 +63,8 @@ export interface Route {page:string;parts:string[];query:URLSearchParams}
 export function parseRoute(hash:string,c:AliasContext={today:'',planner:false,publication:''}):Route{
   let address=hash.replace(/^#/,'');
   for(let hop=0;hop<4;hop++){
-    const [path,search='']=splitQuery(address),[head,...rest]=path.split('/'),alias=ROUTE_ALIASES[decodeURIComponent(head)];
+    const [path,search='']=splitQuery(address),[head,...rest]=path.split('/'),key=decodeURIComponent(head),
+      alias=Object.hasOwn(ROUTE_ALIASES,key)?ROUTE_ALIASES[key]:undefined;
     if(!alias)break;
     // A string alias keeps the old address's remaining parts; a function alias decides what they mean on the new page.
     const target=typeof alias==='string'?alias:alias(rest.map(decodeURIComponent),c),keep=typeof alias==='string'?rest:[];

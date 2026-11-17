@@ -1616,16 +1616,16 @@ def test_runtime_image_copies_every_module_and_operator_script_the_app_needs():
 
 def test_deploy_script_gates_backs_up_then_migrates_once():
     script = '\n'.join(l for l in (ROOT / 'tests/fixtures/guards/deploy.sh').read_text().splitlines() if not l.lstrip().startswith('#'))
-    order = ['manage.py check-migrations', 'dc stop api worker', 'if ! $ROTA_BACKUP_CMD;', 'manage.py migrate', '\ndc up -d api worker']
+    order = ['manage.py check-migrations', 'dc stop api worker', 'if ! $APP_BACKUP_CMD;', 'manage.py migrate', '\ndc up -d api worker']
     positions = [script.index(step) for step in order]
     assert positions == sorted(positions)
     assert script.count('manage.py migrate') == 1 and 'downgrade' not in script
-    assert '"${ROTA_SKIP_BACKUP:-no}" = yes ] && [ "$pending" = 0 ]' in script  # never skip a backup before a migration
+    assert '"${APP_SKIP_BACKUP:-no}" = yes ] && [ "$pending" = 0 ]' in script  # never skip a backup before a migration
     # Even the first installation takes a verified backup before its initial migrations.
     assert "backup skipped: new installation" not in script
     # Both host layouts back up through a verified backup_job.py run.
-    assert 'ROTA_BACKUP_CMD:=sudo systemctl start rota-backup.service' in script
-    assert 'ROTA_BACKUP_CMD:-infra/production/ops.sh backup' in script
+    assert 'APP_BACKUP_CMD:=sudo systemctl start rota-backup.service' in script
+    assert 'APP_BACKUP_CMD:-infra/production/ops.sh backup' in script
     # Automatic rollback to the previous image only when no migration ran.
     assert 'if [ "$pending" = 0 ] && [ -n "$previous" ]; then' in script
 

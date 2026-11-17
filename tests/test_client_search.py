@@ -18,8 +18,8 @@ def test_partial_is_the_default_and_exact_compares_one_whole_field(client_module
     fields = ['Dr Olivia Quinn', 'Urgent Cover', ' Urgent Cover']
     assert run(client_modules, f"[{json.dumps(fields)}.map(m.fieldMatcher(' quinn ')),"
                                f"{json.dumps(fields)}.map(m.fieldMatcher('quinn',{{match:'exact'}})),"
-                               f"{json.dumps(fields)}.map(m.fieldMatcher(' urgent care ',{{match:'exact'}})),"
-                               f"{json.dumps(fields)}.map(m.fieldMatcher('urgent care',{{case_sensitive:true}})),"
+                               f"{json.dumps(fields)}.map(m.fieldMatcher(' urgent cover ',{{match:'exact'}})),"
+                               f"{json.dumps(fields)}.map(m.fieldMatcher('urgent cover',{{case_sensitive:true}})),"
                                "m.fieldMatcher('  ')]") == [
         # Only the query's ends are trimmed (as the server's text_matches): a field's own spaces are part of it.
         [True, False, False], [False, False, False], [False, True, False], [False, False, False], None]
@@ -56,7 +56,7 @@ def test_record_matcher_compares_each_name_on_its_own_and_picked_records_by_id(c
     out = run(client_modules, f"(()=>{{const r={record};const t=(q,o)=>{{const f=m.recordMatcher(q,o);return f?f(r):null;}};return ["
               "t('quinn'),t('quinn',{scope:'related'}),t('urgent',{scope:'self'}),t('urgent',{scope:'related'}),"
               # Exact never matches a joined multi-name text.
-              "t('Urgent Cover Field Medicine',{match:'exact'}),t('urgent care',{match:'exact',scope:'related'}),"
+              "t('Urgent Cover Field Medicine',{match:'exact'}),t('urgent cover',{match:'exact',scope:'related'}),"
               # A picked person is the record itself (self); a picked programme finds who references it (related).
               "t('anything',{reference:{kind:'people',id:'person-1'}}),t('',{reference:{kind:'people',id:'person-1'},scope:'related'}),"
               "t('',{reference:{kind:'programmes',id:'programme-uc'}}),t('',{reference:{kind:'programmes',id:'programme-uc'},scope:'self'}),"

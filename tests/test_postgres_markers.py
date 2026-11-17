@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COLLECTION_AUDIT = """
@@ -90,7 +92,7 @@ def test_postgres_fixture_dependencies_have_selectable_marker(tmp_path):
     result = json.loads(report.read_text())
     assert result['dependent'] > 0, 'The audit must collect the real PostgreSQL-dependent tests'
     assert result['dynamic'] > 0, 'The audit must include request.getfixturevalue backend selections'
-    oracle = 'tests/test_ci_changes.py::test_pin_consistency_rejects_stale_tag_only_copies[postgres]'
+    oracle = 'tests/test_postgres_markers.py::test_postgres_configuration_value_needs_no_database[postgres]'
     assert result['config_only'].get(oracle) is False, 'A configuration-only PostgreSQL value stays selectable without a database'
     assert result['missing'] == [], 'Tests requiring PostgreSQL need postgres and postgresql markers:\n' + '\n'.join(result['missing'])
 
@@ -165,6 +167,18 @@ def test_dialect_only(dialect): pass
     assert set(deselected) == {'test_h[postgresql]', 'test_backend[postgresql]', 'test_pg', 'test_transitive',
                                'test_worker', 'test_template', 'test_legacy', 'test_alias', 'test_custom_id[remote]'}
     assert all({'postgres', 'postgresql'} <= set(markers) for markers in deselected.values())
+
+
+@pytest.mark.parametrize('image', ['postgres'])
+def test_postgres_configuration_value_needs_no_database(image):
+    from types import SimpleNamespace
+    namespace = {}
+    exec(COLLECTION_AUDIT.split('class Audit:', 1)[0], namespace)
+    item = SimpleNamespace(fixturenames=[], callspec=SimpleNamespace(params={'image': image}, id=image),
+                           obj=test_postgres_configuration_value_needs_no_database,
+                           _fixtureinfo=SimpleNamespace(name2fixturedefs={}))
+    assert namespace['postgres_parameter'](item)
+    assert not namespace['needs_postgres'](item)
 
 
 def test_core_collection_guard_detects_missing_quarantined_and_wrong_suite_cases():

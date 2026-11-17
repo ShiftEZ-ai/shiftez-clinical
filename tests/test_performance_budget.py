@@ -22,7 +22,7 @@ def python_budget(seconds):
     ('test_quota_repeating_validity.py', 'test_far_away_fixed_anchor_expands_only_workspace_windows_within_cpu_budget', 'len(policies) <= 150 * 6'),
     ('test_requests_unified.py', 'test_department_scale_page_is_fast_and_small', 'size < 200_000'),
     ('test_rule_catalogue_payload_performance.py', 'test_department_preview_and_proposal_are_summaries_with_full_evidence_on_demand', 'len(response.content) <= 300_000'),
-    ('test_qualification_preflight.py', 'test_timeout_terminates_owned_descendant_and_preserves_unowned_process', 'descendant_dead'),
+    ('test_command_write_timeouts.py', 'test_retry_budget_stops_transient_failures_without_real_delays', '1 < len(calls) < 100 and 0.05 <= clock[0] < 0.1'),
 ])
 def test_mixed_work_and_execution_bounds_stay_in_core_tests(filename, function, condition):
     tree = ast.parse(Path(__file__).with_name(filename).read_text(encoding='utf-8'))
@@ -33,13 +33,13 @@ def test_mixed_work_and_execution_bounds_stay_in_core_tests(filename, function, 
     assert ast.dump(ast.parse(condition, mode='eval').body) in remaining
 
 
-def test_owned_descendant_timeout_budget_stays_in_marked_test():
-    tree = ast.parse(Path(__file__).with_name('test_qualification_preflight.py').read_text(encoding='utf-8'))
+def test_sqlite_writer_timeout_budget_stays_in_marked_test():
+    tree = ast.parse(Path(__file__).with_name('test_command_write_timeouts.py').read_text(encoding='utf-8'))
     target = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                  and node.name == 'test_owned_descendant_timeout_cpu_budget')
+                  and node.name == 'test_sqlite_held_writer_timeout_cpu_budget')
     assert any(ast.unparse(decorator) == 'pytest.mark.wall_benchmark' for decorator in target.decorator_list)
     assert any(isinstance(node, ast.Assert) and ast.dump(node.test) ==
-               ast.dump(ast.parse('terminated_probe[-1] < 4', mode='eval').body) for node in ast.walk(target))
+               ast.dump(ast.parse('sqlite_held_writer_timeout[-1] < 1', mode='eval').body) for node in ast.walk(target))
 
 
 def test_nightly_greedy_keeps_180_second_traced_ceiling(monkeypatch):

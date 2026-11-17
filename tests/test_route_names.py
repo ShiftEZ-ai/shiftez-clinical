@@ -3,8 +3,11 @@ import json
 from pathlib import Path
 import re
 
+import pytest
+
 from apps.api.services import feedback
 from packages.contracts.schemas import APP_ROUTE_PARTS
+from .test_client_codes_and_credentials import run
 
 
 SRC = Path(__file__).resolve().parents[1] / "apps/web/src"
@@ -47,3 +50,18 @@ def test_generated_route_names_match_contract():
     names = re.search(r"^export const APP_ROUTE_PARTS = (.+) as const;$", generated, re.M)
     assert names, "Regenerate the route vocabulary with scripts/generate_contracts.py"
     assert json.loads(names[1]) == list(APP_ROUTE_PARTS)
+
+
+@pytest.mark.parametrize('page', ['constructor', '__proto__', 'toString'])
+def test_prototype_members_stay_unknown_routes(client_modules, page):
+    for address in (f'#{page}', '#' + ''.join(f'%{ord(c):02x}' for c in page)):
+        got = run(client_modules, 'routes.js',
+                  '(()=>{const r=m.parseRoute(input);return [r.page,r.parts,[...r.query]];})()', address)
+        assert got == [page, [], []]
+        assert got[0] not in APP_ROUTE_PARTS
+
+
+def test_owned_string_and_function_route_aliases_keep_parts_and_queries(client_modules):
+    assert run(client_modules, 'routes.js',
+               "['#overview?x=1','#planner/draft/list.month?x=1'].map(address=>{const r=m.parseRoute(address);return [r.page,r.parts,[...r.query]];})") == [
+                   ['home', [], [['x', '1']]], ['schedule', ['list'], [['edit', 'draft'], ['x', '1']]]]

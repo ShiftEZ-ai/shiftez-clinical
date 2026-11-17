@@ -1,5 +1,6 @@
 """Idle session timeout, pruning of expired security state, fail-safe ROTA_ENV, no echoed values in errors, proxy trust."""
 from .clock_support import freeze_clock
+from .conftest import TEST_PASSWORD
 from datetime import date, timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -202,7 +203,7 @@ def test_only_login_and_refresh_set_cookies_for_absolute_deadline_and_unlimited_
     set_session_policy(h, idle_minutes=5, max_hours=1, idle_unlimited=unlimited, max_unlimited=unlimited)
     with TestClient(h.app, base_url=h.settings.public_origin) as client:
         client.headers["origin"] = h.settings.public_origin
-        response = client.post("/auth/login", json={"username": "staff", "password": "test-password-not-a-secret-0001"})
+        response = client.post("/auth/login", json={"username": "staff", "password": TEST_PASSWORD})
         assert response.status_code == 200
         ages = cookie_ages(response)
         assert len(ages) == 2
@@ -326,7 +327,7 @@ def test_policy_transitions_and_undo_never_revive_an_ended_session(request, data
     # A fresh session is genuinely unlimited, and the API has no fabricated expiry date.
     with TestClient(h.app, base_url=h.settings.public_origin) as fresh:
         fresh.headers["origin"] = h.settings.public_origin
-        response = fresh.post("/auth/login", json={"username": "staff", "password": "test-password-not-a-secret-0001"})
+        response = fresh.post("/auth/login", json={"username": "staff", "password": TEST_PASSWORD})
         assert response.status_code == 200 and response.json()["expires_at"] is None
         fresh.headers["x-csrf-token"] = fresh.cookies["rota_csrf"]
         fresh_token = digest(fresh.cookies["rota_session"])
@@ -516,16 +517,16 @@ def test_errors_carry_field_and_message_but_never_input_values(h):
 
 def test_only_the_proxy_hop_is_trusted_for_client_addresses():
     compose = (ROOT / "tests/fixtures/guards/compose.yml").read_text(encoding="utf-8")
-    assert "FORWARDED_ALLOW_IPS: ${ROTA_EDGE_IP:?" in compose
+    assert "FORWARDED_ALLOW_IPS: ${APP_EDGE_IP:?" in compose
     caddy = (ROOT / "tests/fixtures/guards/Caddyfile").read_text(encoding="utf-8")
-    assert "trusted_proxies static {$ROTA_TRUSTED_PROXIES}" in caddy
+    assert "trusted_proxies static {$APP_TRUSTED_PROXIES}" in caddy
     assert "private_ranges" not in caddy
     # Production server: clients reach Caddy directly (hospital LANs are private ranges too), so only an explicitly
     # configured load balancer is trusted; startup resolves Caddy's actual peer without changing existing networks.
     production = (ROOT / "tests/fixtures/guards/compose.production.yml").read_text(encoding="utf-8")
-    assert "FORWARDED_ALLOW_IPS: ${ROTA_EDGE_IP:-}" in production
+    assert "FORWARDED_ALLOW_IPS: ${APP_EDGE_IP:-}" in production
     assert "ipv4_address:" not in production and "ipam:" not in production
-    assert "ROTA_TRUSTED_PROXIES: ${ROTA_TRUSTED_PROXIES:-127.0.0.1/32}" in production
+    assert "APP_TRUSTED_PROXIES: ${APP_TRUSTED_PROXIES:-127.0.0.1/32}" in production
     edge = (ROOT / "tests/fixtures/guards/Caddyfile").read_text(encoding="utf-8")
-    assert "trusted_proxies static {$ROTA_TRUSTED_PROXIES}" in edge and "private_ranges" not in edge
+    assert "trusted_proxies static {$APP_TRUSTED_PROXIES}" in edge and "private_ranges" not in edge
     assert "header_up X-Forwarded-For {client_ip}" in edge and "header_up X-Forwarded-For {client_ip}" in caddy

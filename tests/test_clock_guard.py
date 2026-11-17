@@ -14,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 MACHINE_CLOCK = re.compile(r"\bdatetime\.(now|utcnow|today)\(|\bdate\.today\(")
 SEAM = ROOT / "packages" / "domain" / "time.py"
 
+# Real clock: the frozen hosted-CI fixture creates an operational expiry for the external ratchet script.
+OPERATIONAL_CLOCK_EXCEPTIONS = {
+    ('tests/test_known_failures.py',
+     '"--unstable-expires-on", (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()]'): 1,
+}
+
 # Unauthenticated readiness age and worker retry dates only. Remove allowances with their patches;
 # exact counts make the baseline shrink rather than leave permission to reintroduce a removed patch.
 MODEL_CLOCK_EXCEPTIONS = {
@@ -96,6 +102,7 @@ def test_model_clock_allowlist_is_a_shrinking_ratchet(tmp_path, monkeypatch, cha
 
 def test_everything_reads_the_one_clock():
     found = []
+    exceptions = Counter()
     # Operational scripts (backups, releases, evidence) stamp the machine time on purpose; the seed script does not.
     paths = [p for folder in ("apps", "packages", "tests") for p in (ROOT / folder).rglob("*.py")] + [ROOT / "scripts" / "manage.py"]
     for path in paths:
@@ -103,5 +110,30 @@ def test_everything_reads_the_one_clock():
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if MACHINE_CLOCK.search(line) and "real clock" not in line:
-                found.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+                key = (path.relative_to(ROOT).as_posix(), line.strip())
+                if key in OPERATIONAL_CLOCK_EXCEPTIONS:
+                    exceptions[key] += 1
+                else:
+                    found.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
     assert not found, "Read packages.domain.time.now() (apps.api.models.now) instead of the machine clock:\n" + "\n".join(found)
+    assert dict(exceptions) == OPERATIONAL_CLOCK_EXCEPTIONS, 'Remove stale or duplicated operational clock exceptions'
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'another_file', 'another_call', 'removed', 'duplicated'])
+def test_operational_clock_exception_is_exact_and_counted(tmp_path, monkeypatch, change):
+    for folder in ('apps', 'packages', 'tests', 'scripts'):
+        (tmp_path / folder).mkdir()
+    (tmp_path / 'scripts/manage.py').write_text('', encoding='utf-8')
+    (filename, line), = OPERATIONAL_CLOCK_EXCEPTIONS
+    if change == 'another_file':
+        filename = 'tests/test_other.py'
+    if change == 'another_call':
+        line = line.replace('days=30', 'days=31')
+    (tmp_path / filename).write_text('' if change == 'removed' else (line + '\n') * (2 if change == 'duplicated' else 1),
+                                     encoding='utf-8')
+    monkeypatch.setitem(globals(), 'ROOT', tmp_path)
+    if change == 'unchanged':
+        test_everything_reads_the_one_clock()
+    else:
+        with pytest.raises(AssertionError):
+            test_everything_reads_the_one_clock()

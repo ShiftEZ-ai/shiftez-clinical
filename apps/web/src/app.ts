@@ -1294,7 +1294,7 @@ let unknownLink=false;
 let routeNotice='';
 function setRoute(target:string){
   routeShift='';shiftLink=null;  // a new address: no earlier link's session carries over
-  const r=parseRoute(target,{today:toLocal(new Date().toISOString(),zone()).slice(0,10),planner:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.AUDITOR),publication:publicationId}),known=r.page in paths;
+  const r=parseRoute(target,{today:toLocal(new Date().toISOString(),zone()).slice(0,10),planner:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.AUDITOR),publication:publicationId}),known=Object.hasOwn(paths,r.page);
   if(!known&&r.page)unknownLink=true;
   view=known?r.page:'home';routeParts=known?r.parts:[];routeQuery=known?r.query:new URLSearchParams();
 }
@@ -8620,8 +8620,8 @@ enhanceTooltips();
 // One-time invitation and password-reset links open their own page, without signing in.
 const accountLink=/^\/(?:invite|reset)\/([A-Za-z0-9_-]{20,100})$/.exec(location.pathname);
 // Send feedback from anywhere: the reporter on error messages, Ctrl Shift F, and what a report calls a page.
-installFeedback({me:()=>me,navigate,zone:()=>me?zone():'UTC',pageLabel:route=>{const r=parseRoute(route.replace(/^#?\/?/,'#'));const tab=PAGE_TABS[r.page]?.find(t=>t.key===r.parts[0]);
-  return paths[r.page]?[paths[r.page].title,tab?.label].filter(Boolean).join(' › '):r.page||'Home';}});
+installFeedback({me:()=>me,navigate,zone:()=>me?zone():'UTC',pageLabel:route=>{const r=parseRoute(route.replace(/^#?\/?/,'#'));const tab=Object.hasOwn(PAGE_TABS,r.page)?PAGE_TABS[r.page].find(t=>t.key===r.parts[0]):undefined;
+  return Object.hasOwn(paths,r.page)?[paths[r.page].title,tab?.label].filter(Boolean).join(' › '):r.page||'Home';}});
 // Start-up waits like any page (N-26): the moving line alone, then "Still loading · 0:15" after 15 s; a read that never
 // answers ends (READ_TIMEOUT) in the start-up failure screen with Retry.
 readBranding();if(accountLink)void accountLinkPage(root,accountLink[1]);else{

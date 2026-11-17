@@ -197,9 +197,9 @@ def test_xlsx_1904_epoch_and_multi_sheet_file_summary():
 
 def test_fuzzy_matching_normalizes_aliases_but_never_confidently_accepts_typoes():
     ident = str(uuid4())
-    candidates = [{'id': ident, 'display_name': 'Maple Example', 'rota_aliases': ['S Ex']}]
+    candidates = [{'id': ident, 'display_name': 'Maple Example', 'rota_aliases': ["M Ex"]}]
     assert parser.match_score_check_label(' Mújapoju  EXAMPLE ', candidates)['confidence'] == 1
-    assert parser.match_score_check_label('S Ex', candidates)['suggested_id'] == ident
+    assert parser.match_score_check_label("M Ex", candidates)['suggested_id'] == ident
     fuzzy = parser.match_score_check_label('Maple Exampl', candidates)
     assert fuzzy['suggested_id'] == ident and 0 < fuzzy['confidence'] < .9
     assert 'confirm' in fuzzy['reason']

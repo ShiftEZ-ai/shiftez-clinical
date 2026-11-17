@@ -5,11 +5,13 @@
  *  assets and names), so nothing is ever blank or a broken image. */
 import {BRANDING_DEFAULTS as defaults,type BrandingPublic} from './generated.js';
 
-export const BRANDING_DEFAULTS={...defaults,emblem_url:new URL(defaults.emblem_url,import.meta.url).pathname,
-  wordmark_url:new URL(defaults.wordmark_url,import.meta.url).pathname};
+export const BRANDING_DEFAULTS={...defaults,emblem_url:defaults.emblem_url?new URL(defaults.emblem_url,import.meta.url).pathname:'',
+  wordmark_url:defaults.wordmark_url?new URL(defaults.wordmark_url,import.meta.url).pathname:''};
 
 // The bundled assets' pixel sizes (apps/web/public/assets/brand), reserving their space before they load.
-const SIZES:Record<string,[number,number]>={[BRANDING_DEFAULTS.emblem_url]:[160,160],[BRANDING_DEFAULTS.wordmark_url]:[342,116]};
+const SIZES:Record<string,[number,number]>={};
+if(BRANDING_DEFAULTS.emblem_url)SIZES[BRANDING_DEFAULTS.emblem_url]=[160,160];
+if(BRANDING_DEFAULTS.wordmark_url)SIZES[BRANDING_DEFAULTS.wordmark_url]=[342,116];
 let current:BrandingPublic={...BRANDING_DEFAULTS,revision:0};
 let titleStem='';
 
@@ -38,19 +40,22 @@ export function documentTitle(stem:string){titleStem=stem;document.title=stem?`$
 
 /** Loads a logo before it is shown; one that fails keeps the logo already shown. */
 async function loaded(url:string){
+  if(!url)return true;
   if(SIZES[url])return true;
   const img=new Image();img.src=url;
   try{await img.decode();SIZES[url]=[img.naturalWidth,img.naturalHeight];return true;}catch{return false;}
 }
 function paintImage(img:HTMLImageElement,url:string,alt:string){
-  img.src=url;img.alt=alt;img.classList.toggle('brand-supplied',suppliedLogo(url));
+  img.hidden=!url;if(url)img.src=url;else img.removeAttribute('src');
+  img.alt=alt;img.classList.toggle('brand-supplied',suppliedLogo(url));
   const size=SIZES[url];if(size){img.width=size[0];img.height=size[1];}
 }
 function paint(){
   for(const img of document.querySelectorAll<HTMLImageElement>('img.brand-emblem'))paintImage(img,current.emblem_url,current.emblem_alt);
   // The browser tab's icon is the same emblem (SW3-C-11): a static file, never a server read per page load.
   // The import is also used by the small Node word/branding checks, whose DOM only exposes querySelectorAll.
-  document.querySelector?.<HTMLLinkElement>('link[rel=icon]')?.setAttribute('href',current.emblem_url);
+  const icon=document.querySelector?.<HTMLLinkElement>('link[rel=icon]');
+  if(current.emblem_url)icon?.setAttribute('href',current.emblem_url);else icon?.removeAttribute('href');
   for(const img of document.querySelectorAll<HTMLImageElement>('img.brand-wordmark'))paintImage(img,current.wordmark_url,current.wordmark_alt);
   for(const n of document.querySelectorAll('[data-brand-name]'))n.textContent=current.app_name;
   for(const n of document.querySelectorAll('[data-brand-short]'))n.textContent=current.short_name;

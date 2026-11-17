@@ -687,7 +687,7 @@ export function iconButton(label: string, name: IconName, action: (event: MouseE
 /** The app's and institution's brand as currently applied (brand.ts: the deployment's branding, else the generated
  *  defaults): the emblem (compact: the navigation) and the wordmark (sign-in). New branding repaints these in place. */
 const brandImage=(cls:string,url:string,alt:string)=>{const size=brandSize(url);
-  return el('img',{class:cls+(suppliedLogo(url)?' brand-supplied':''),src:url,alt,...(size?{width:size[0],height:size[1]}:{}),decoding:'async'});};
+  return el('img',{class:cls+(suppliedLogo(url)?' brand-supplied':''),src:url||undefined,hidden:!url,alt,...(size?{width:size[0],height:size[1]}:{}),decoding:'async'});};
 /** Decorative beside the app's name (the link or heading it sits in names it). */
 export const brandEmblem=()=>brandImage('brand-mark brand-emblem',brand().emblem_url,brand().emblem_alt);
 /** The product's short name in a heading drawn before the branding may have answered: it follows the branding. */
