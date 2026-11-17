@@ -136,7 +136,16 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
             reading.pop()
         reading.append('fresh')
         try:
-            fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items() if k != 'shared_inputs'})
+            if kwargs.get('detached_inputs'):
+                from apps.api import models as m
+                org = db.get(m.Organisation, shared_before['organisation']['id'])
+                fresh_inputs = real_inputs(db, org)
+                # Reacquire the base, then apply only the immutable trial delta: the checked write has rolled back.
+                fresh_inputs.update({key: value for key, value in shared_before.items()
+                                     if value != phase_inputs[0].get(key)})
+                fresh = real_snapshot(db, workspace, **{**kwargs, 'shared_inputs': fresh_inputs})
+            else:
+                fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items() if k != 'shared_inputs'})
         finally:
             reading.pop()
         assert result == fresh and kwargs['shared_inputs'] == shared_before

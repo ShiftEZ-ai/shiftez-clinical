@@ -132,6 +132,7 @@ def prepare_preview(db, actor, command):
     rows, totals = (([], {"workspace_count": 0, "session_count": 0, "partial": False})
                     if payload.catalogue == "recurring_series" else scope(db, actor))
     metadata_only = False
+    shared_before = shared_after = None
     if contact_update(command, payload, before_record):
         original = contact_inputs(db, actor, before_record)
         savepoint = db.begin_nested()
@@ -140,23 +141,15 @@ def prepare_preview(db, actor, command):
             metadata_only = original == contact_inputs(db, actor, result["record"])
         finally:
             savepoint.rollback()
-    captured = []
     if not metadata_only:
-        # Tag reconciliation may change clinical inputs. The trial has rolled back, so these are the true before
-        # snapshots; run the same checked writer again rather than reconstructing any scheduling inputs.
+        # Reconciliation may change scheduling inputs; capture both phases from the checked writer.
         org = db.get(m.Organisation, actor.organisation_id)
-        shared = snapshot_inputs(db, org) if rows else None
-        before = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in rows}
+        shared_before = snapshot_inputs(db, org) if rows else None
         savepoint = db.begin_nested()
         try:
             result = write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True)
             # The checked writer can reconcile tags and advance inputs: capture a fresh, separate phase.
-            shared = snapshot_inputs(db, org) if rows else None
-            after = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in rows}
-            # No ORM rows or session escape: validation needs only these bounded, plain snapshots.
-            captured = [{"workspace_id": w.id, "name": w.name, "status": w.status,
-                         "before": before[w.id], "after": after[w.id],
-                         "saved": domain_snapshot(db, w, shared_inputs=shared) if w.status in LIVE else None} for w in rows]
+            shared_after = snapshot_inputs(db, org) if rows else None
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",
@@ -172,7 +165,30 @@ def prepare_preview(db, actor, command):
              "Nothing saved or approved. Current-compliance comparison uses the proposed definitions; frozen sessions/publications are not rewritten. Draft type changes still require explicit refresh.")}
     from .leave_disclosure import overlap_labels
     from .contacts import redact_reply
-    return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)), "workspaces": captured}
+    return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)), "actor": actor,
+            "workspaces": [] if metadata_only else [{"workspace_id": w.id, "name": w.name, "status": w.status} for w in rows],
+            "shared_before": shared_before, "shared_after": shared_after}
+
+
+def build_preview(db, actor, command, prepared):
+    """The reader fence binds relational content to the captured before/after catalogue phases."""
+    require(actor == prepared['actor'] and source_fingerprint(db, actor, command) == prepared['response']['source_fingerprint'],
+            'STALE_PREVIEW', 'The preview context changed during capture. Recalculate configuration impact.', 409)
+    captured = []
+    items = {item['workspace_id']: item for item in prepared['workspaces']}
+    rows = list(db.scalars(select(m.Workspace).where(m.Workspace.id.in_(items)).order_by(m.Workspace.id))) if items else []
+    require(len(rows) == len(items), 'STALE_PREVIEW', 'The active rotas changed during capture. Recalculate configuration impact.', 409)
+    for row in rows:
+        item = items[row.id]
+        workspace = scoped(db, m.Workspace, row.id, actor)
+        options = {'shared_inputs': prepared['shared_before'], 'detached_inputs': True}
+        before_snapshot = domain_snapshot(db, workspace, operational=True, **options)
+        options['shared_inputs'] = prepared['shared_after']
+        after_snapshot = domain_snapshot(db, workspace, operational=True, **options)
+        captured.append({**{key: item[key] for key in ('workspace_id', 'name', 'status')},
+            'before': before_snapshot, 'after': after_snapshot,
+            'saved': domain_snapshot(db, workspace, **options) if item['status'] in LIVE else None})
+    return {**prepared, 'workspaces': captured}
 
 
 def evaluate_preview(prepared):

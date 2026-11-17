@@ -147,7 +147,7 @@ def test_contact_preview_at_department_scale_and_checked_undo(contact_preview_sc
     checked = preview(h, undo)
     assert checked['impacts'] == [] and checked['workspace_count'] == 8
     restored = apply(h, undo, checked['source_fingerprint'])['record']
-    assert {k: restored[k] for k in PersonInput.model_fields} == {k: row[k] for k in PersonInput.model_fields}
+    assert {k: restored[k] for k in PersonInput.model_fields} == {k: original['before'][k] for k in PersonInput.model_fields}
     assert restored['revision'] == row['revision'] + 2
     assert state(h)[-2] == before[-2] + 2
     assert apply(h, cmd, result['source_fingerprint'], status=409)['error']['code'] == 'STALE_PREVIEW'

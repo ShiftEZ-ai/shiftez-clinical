@@ -417,7 +417,7 @@ def _canonical(payload, included):
 
 
 def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
-                       validity_baseline=None):
+                       validity_baseline=None, detached=False):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
     def rows(value):
         return value.values() if isinstance(value, dict) else value or []
@@ -430,8 +430,11 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         return frozen
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
-            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
+    if detached and (current is None or not {'policies', 'exceptions'} <= set(current)):
+        raise ValueError('Detached safety inputs require a complete captured catalogue')
+    if (current is None or not detached and (
+            current.get("organisation", {}).get("input_revision") != organisation.input_revision
+            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision)
             or not {"policies", "exceptions"} <= set(current)):
         current = _live_safety_snapshot(db, workspace)
     result = dict(frozen)

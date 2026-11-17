@@ -1700,8 +1700,11 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/catalogue/preview")
     def catalogue_preview(command: s.Command, request: Request):
-        from .services.catalogue_preview import prepare_preview, evaluate_preview
+        from .services.catalogue_preview import prepare_preview, build_preview, evaluate_preview
+        from .services.preview_capture import rollback_reader
         prepared = retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command))
+        with rollback_reader(engine) as db:
+            prepared = build_preview(db, actor_for(request, db, write=True), command, prepared)
         return evaluate_preview(prepared)
 
     @app.get("/api/catalogues/{kind}/{object_id}/history")

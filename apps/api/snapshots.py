@@ -955,7 +955,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
-                    include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
+                    include_objectives: bool = True, include_fairness_history: bool = True,
+                    detached_inputs: bool = False) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     baseline = None
@@ -986,7 +987,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 current_people = (live_inputs or {}).get('people') or {}
                 people_ids = set(current_people)
                 catalogue_inputs = {
-                    key: {row.id: record(row) for row in db.scalars(select(cls).where(cls.id.in_(ids)))}
+                    key: ({ident: live_inputs[key][ident] for ident in ids if ident in live_inputs[key]}
+                          if detached_inputs else {row.id: record(row) for row in db.scalars(select(cls).where(cls.id.in_(ids)))})
                     for key, cls, ids in (("types", m.AssignmentType, type_ids), ("locations", m.Location, location_ids),
                                           ("services", m.Service, service_ids)) if ids
                 }
@@ -1002,7 +1004,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=mandatory_rules, validity_baseline=validity_baseline)
+                                              include_mandatory=mandatory_rules, validity_baseline=validity_baseline,
+                                              detached=detached_inputs)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
