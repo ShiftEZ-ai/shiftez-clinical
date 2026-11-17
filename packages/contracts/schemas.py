@@ -1936,6 +1936,7 @@ class PersonInput(Schema):
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     active: bool = Field(default=True, json_schema_extra={"bulk": True})
+    inactive_from: date | None = Field(default=None, json_schema_extra={"bulk": True})
     title: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     work_email: Email | Literal[""] = ""
     work_phone: str = Field(default="", max_length=80, json_schema_extra={"bulk": True})

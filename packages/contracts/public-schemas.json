@@ -26779,6 +26779,20 @@
         "title": "Active",
         "type": "boolean"
       },
+      "inactive_from": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "bulk": true,
+        "default": null,
+        "title": "Inactive From"
+      },
       "title": {
         "bulk": true,
         "default": "",

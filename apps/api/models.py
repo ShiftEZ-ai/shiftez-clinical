@@ -511,6 +511,7 @@ class Person(Record, Base):
     given_name: Mapped[str] = mapped_column(String(160), server_default="")
     family_name: Mapped[str] = mapped_column(String(160), server_default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    inactive_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     title: Mapped[str] = mapped_column(String(160), default="", server_default="")
     work_email: Mapped[str] = mapped_column(String(254), default="", server_default="")
     work_phone: Mapped[str] = mapped_column(String(80), default="", server_default="")
