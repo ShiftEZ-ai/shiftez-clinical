@@ -174,8 +174,9 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
   const end=page.offset+page.limit;
   if(page.has_more&&end<state.shown){const rest=await load(state.shown-end,firstQuery,end);page={...rest,items:[...page.items,...rest.items]};}
   let kinds=person?[]:creatable(ctx,page,false);
-  if(!person)void offered.then(yes=>{if(yes)kinds=creatable(ctx,page,true);});
-  const open=(preset?:string,duty?:string)=>newRequest(ctx,kinds,preset,duty);
+  // A New request opened before that answer is handed the kinds it leads to (newRequest adds them in place).
+  const landed=person?null:offered.then(yes=>yes?kinds=creatable(ctx,page,true):kinds);
+  const open=(preset?:string,duty?:string)=>newRequest(ctx,kinds,preset,duty,landed);
   // A phone: the primary is one icon in the title row (as on Home), not a row of its own.
   if(!person)target.append(sectionHead('Requests','',!kinds.length?null:phoneQuery.matches?iconButton(TERMS.newRequest,'plus',()=>open(),{class:'primary phone-primary'})
     :withIcon(button(TERMS.newRequest,()=>open(),'primary'),'plus')));
@@ -346,7 +347,7 @@ function creatable(ctx:Context,page:Page,overtime:boolean):KindChoice[]{
 }
 
 /** New request: choose the kind first; its own fields (the same forms used everywhere) appear below. */
-function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string){
+function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string,landed?:Promise<KindChoice[]>|null){
   // A send waits for its command only: the dialog closes, then the page refreshes (never inside the save).
   const ctx:Context=Object.assign(Object.create(base),{refresh:()=>{window.setTimeout(()=>void base.refresh());return Promise.resolve();}});
   const coordinator=ctx.permits(CAPABILITY.COORDINATOR);
@@ -357,9 +358,12 @@ function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string)
     // Once a kind is chosen, a phone keeps only it (and Change) above the fields, so they start at the top. The other
     // kinds are hidden then, so arrow keys reach them only after Change (acceptable on a phone).
     const change=button('Change',()=>{group.classList.add('choosing');group.querySelector<HTMLInputElement>('input:checked')?.focus();},'link-button request-kind-change',{'aria-label':'Change kind'});
-    const group=el('fieldset',{class:'request-kinds'},el('legend',{},'What do you need?'),...kinds.map(([k,label,glyph])=>
-      el('label',{class:'request-kind'},el('input',{type:'radio',name:'request-kind',value:k,required:true}),el('span',{class:'request-icon','aria-hidden':'true'},icon(glyph)),
-        el('span',{class:'request-kind-text'},el('strong',{},label)))),change);
+    const option=([k,label,glyph]:KindChoice)=>el('label',{class:'request-kind'},el('input',{type:'radio',name:'request-kind',value:k,required:true}),
+      el('span',{class:'request-icon','aria-hidden':'true'},icon(glyph)),el('span',{class:'request-kind-text'},el('strong',{},label)));
+    const group=el('fieldset',{class:'request-kinds'},el('legend',{},'What do you need?'),...kinds.map(option),change);
+    // A kind whose answer lands after the dialog opened (overtime eligibility) joins in its place; a choice made stays.
+    const shown=(k:Kind)=>group.querySelector(`input[value="${k}"]`)?.closest('.request-kind');
+    void landed?.then(all=>all.forEach((choice,i)=>{if(!shown(choice[0]))(all.slice(i+1).map(c=>shown(c[0])).find(Boolean)||change).before(option(choice));}),()=>{});
     void swaps?.then(o=>{if(o.assignments.length)return;
       const input=group.querySelector<HTMLInputElement>('input[value=swap]'),why=el('small',{class:'muted',id:'request-kind-swap-why'},'No upcoming published duty to offer');
       if(!input||input.checked)return;input.disabled=true;input.setAttribute('aria-describedby',why.id);input.closest('.request-kind')!.classList.add('disabled');input.closest('.request-kind')!.querySelector('.request-kind-text')!.append(why);},()=>{});
