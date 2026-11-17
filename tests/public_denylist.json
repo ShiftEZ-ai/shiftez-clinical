@@ -116,6 +116,38 @@
    "class": "product-name",
    "id": "P05",
    "pattern": "ShiftEZ\\s+Clinical"
+  },
+  {
+   "allow_paths": [],
+   "case": "insensitive",
+   "class": "wildcard-dns",
+   "id": "P07",
+   "pattern": "(?<![\\w-])(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])([.-])(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\1(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\1(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(?:sslip|nip)\\.io\\b"
+  },
+  {
+   "allow_paths": [
+    "tests/conftest.py",
+    "tests/test_be_wave4_security.py",
+    "tests/test_person_accounts.py",
+    "tests/test_score_check_provider.py",
+    "tests/test_signin_oidc_security.py"
+   ],
+   "case": "insensitive",
+   "class": "external-ipv4",
+   "id": "P08",
+   "pattern": "(?<![\\w.])(?<!==)(?<!Chrome/)(?!(?:10|127)\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|192\\.(?:168\\.|0\\.2\\.)|198\\.51\\.100\\.|203\\.0\\.113\\.|169\\.254\\.|0\\.0\\.0\\.0(?![0-9.]))(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?![\\w.])"
+  },
+  {
+   "allow_paths": [
+    "tests/test_be_wave4_security.py",
+    "tests/test_pwa_push.py",
+    "tests/test_score_check_provider.py",
+    "tests/test_signin_oidc_security.py"
+   ],
+   "case": "insensitive",
+   "class": "link-local-ipv4",
+   "id": "P09",
+   "pattern": "(?<![\\w.])(?<!==)(?<!Chrome/)169\\.254\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?![\\w.])"
   }
  ],
  "version": 3

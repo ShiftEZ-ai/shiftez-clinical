@@ -167,3 +167,44 @@ def test_no_forbidden_token_or_path():
             found.append(("EMPTY", "low-profile", "body", path))
     # ids, classes and paths only: never the token
     assert not found, "deny-list hits:\n" + "\n".join(" ".join(x) for x in sorted(set(found)))
+
+
+def test_public_host_patterns():
+    rules = {rule["id"]: re.compile(rule["pattern"], re.IGNORECASE) for rule in _load()["regex"]}
+    for service in ("sslip", "nip"):
+        suffix = "." + service + ".io"
+        for separator in (".", "-"):
+            host = separator.join(("192", "0", "2", "1")) + suffix
+            assert rules["P07"].search("https://app." + host.upper() + "/")
+        for host in ("192.0.2.256", "256-0-2-1", "192-0.2-1", "192.0.2", "v192.0.2.1"):
+            assert not rules["P07"].search(host + suffix)
+
+    for octets in (
+        (1, 2, 3, 4), (8, 8, 8, 8), (0, 0, 0, 1),
+        (100, 64, 1, 1), (100, 127, 255, 255),
+        (172, 15, 255, 255), (172, 32, 0, 0),
+        (192, 0, 1, 255), (192, 0, 3, 0),
+        (198, 51, 99, 255), (198, 51, 101, 0),
+        (203, 0, 112, 255), (203, 0, 114, 0),
+        (224, 0, 0, 1), (255, 255, 255, 255),
+    ):
+        address = ".".join(map(str, octets))
+        assert rules["P08"].search("https://" + address + ":443/")
+        for text in ("v" + address, "==" + address, "Chrome/" + address,
+                     "9." + address, address + ".9", "x" + address, address + "x"):
+            assert not rules["P08"].search(text)
+
+    for address in (
+        "0.0.0.0", "127.0.0.0", "127.255.255.255", "10.0.0.0", "10.255.255.255",
+        "172.16.0.0", "172.31.255.255", "192.168.0.0", "192.168.255.255",
+        "192.0.2.0", "192.0.2.255", "198.51.100.0", "198.51.100.255",
+        "203.0.113.0", "203.0.113.255", "256.1.2.3", "1.2.3.256", "1.2.3.4.5",
+        "v1.2.3.4", "==1.2.3.4", "Chrome/130.0.0.0",
+    ):
+        assert not rules["P08"].search(address)
+        assert not rules["P09"].search(address)
+
+    for octets in ((169, 254, 0, 0), (169, 254, 255, 255)):
+        address = ".".join(map(str, octets))
+        assert rules["P09"].search(address)
+        assert not rules["P08"].search(address)
