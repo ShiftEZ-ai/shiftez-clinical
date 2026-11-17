@@ -2146,9 +2146,14 @@ const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>(
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
 const baselinePreview=(w:Row)=>background<BaselineRefreshPreview>(`/api/workspaces/${encodeURIComponent(String(w.id))}/baseline/refresh-preview`);
 /** The planner bar's drift control: one maker for the bar and for an answer that lands after the bar was drawn. */
-const baselineDriftButton=(w:Row,changes:number)=>iconButton(`${changes} department change${changes===1?'':'s'} · review`,
-  'history',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError),
-  {class:'bare baseline-drift','data-tip':'Department changes since this draft was created'});
+/** "N department changes": the one wording for the planner bar and the Rules page. */
+const departmentChanges=(n:number)=>plural(n,'department change');
+const driftName=(n:number)=>`${departmentChanges(n)} since this draft was created`;
+// Visible text, never icon-only: it changes what the draft is built on. A tight bar keeps icon + count (the count pills' step).
+const baselineDriftButton=(w:Row,changes:number)=>{
+  const b=el('button',{type:'button',class:'health-pill baseline-drift','aria-label':driftName(changes)},
+    icon('history'),el('span',{class:'num'},String(changes)),el('span',{class:'label'},`department change${changes===1?'':'s'}`));
+  b.addEventListener('click',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError));return b;};
 /** D-053: a failed drift check says so with Retry (never nothing on the bar, which reads as "no department changes"). */
 const baselineDriftFailed=(e:unknown,retry:()=>void)=>{const n=failedNote('Couldn’t check department changes.',e,retry);
   n.classList.add('baseline-drift');n.querySelector('button')?.setAttribute('aria-label','Retry checking department changes');return n;};
@@ -5591,10 +5596,8 @@ function draftHealth(policy:Row):HTMLElement{
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
-    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(
-      `${drift.changes.length} department change${drift.changes.length===1?'':'s'}`,
-      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',
-      {'aria-label':`${drift.changes.length} department change${drift.changes.length===1?'':'s'} since this draft was created`}):'';
+    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
+      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
     if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
