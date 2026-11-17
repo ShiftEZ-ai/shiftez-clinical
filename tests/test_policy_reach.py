@@ -10,7 +10,7 @@ import pytest
 from apps.api import models as m
 from apps.api.auth import Actor
 from apps.api.services import policies as service
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 
 from packages.domain.rule_map import reach
 from packages.domain.time import local_midnight
@@ -47,9 +47,11 @@ def test_reach_counts_people_per_rule_with_lines_overrides_and_proposals(h):
     people = total['people_now']
     assert reached[everyone['id']] == people - 1   # the narrower rule replaces it for a
     assert (reached[pair['id']], reached[narrow['id']], reached[lines['id']], reached[waiting['id']]) == (2, 1, 2, 1)
-    for role in ('admin', 'approver', 'auditor', 'credentialer'):
+    for role in PERMISSIONS['rules.read']:
+        if role not in h.seed['identities']:
+            identity(h, role, [role])
         assert counts(h, role)[pair['id']] == 2
-    for role in ('staff', 'operator'):
+    for role in ('staff', 'operator', 'credentialer'):
         h.get(role, f'/api/policies/reach?day={DAY}', status=403)
 
 
