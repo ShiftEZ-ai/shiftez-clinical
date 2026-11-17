@@ -1950,7 +1950,7 @@ function applyPlannerView(p:Partial<PlannerSettings>|undefined,conditions?:Condi
   personDisplay=v.person_display||PLANNER_PERSON_DISPLAY_DEFAULT;
   selected.clear();
 }
-// Drafts are re-checked automatically after any change (once per content version); no button needed.
+// Draft checks are explicit; a job already started elsewhere is joined by the run panel below.
 let autoCheckKey='',autoChecking=false;
 /** The rota checks this page just waited for (their lean status row with the complete-check delta, by job id): the
  *  Auto-schedule panel shows a finished check from it instead of reading the whole job again (142 KB, P0 capture). */
@@ -2074,7 +2074,7 @@ async function checkEnded(last:Row,w:Row,key:string):Promise<Row>{
   const details=last.error_code==='STALE_INPUTS'?await get<Row>(`/api/jobs/${last.id}/input-changes?offset=0&limit=1`).then(r=>({changed_facts:r.changes}),()=>undefined):undefined;
   throw new CheckJobStopped(last,details);
 }
-const checkAgain=()=>{checkStop=null;checkCancelled='';checkUnstarted='';autoCheckKey='';void refresh();};
+const checkAgain=(data:WorkspaceData)=>{checkStop=null;checkCancelled='';checkUnstarted='';autoCheckKey='';autoCheck(data);};
 /** `existing`: a check already queued or running (Check the whole rota, another tab, a reload): D76 makes it this same
  *  footer item, with its elapsed time and Cancel, instead of the Auto-schedule panel's. */
 function autoCheck(data:WorkspaceData,existing?:Row){
@@ -2348,8 +2348,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
   const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
-  // The server says a check job exists (a provisional check): join it, so the status shown is that job's own.
-  if(draft&&whole&&(!fresh||serverChecking(w!.validation)))autoCheck(whole);
+  // Opening a draft is read-only. Explicit checks are queued by the footer or run panel;
+  // an already-running job is joined when that panel loads.
   plannerRota=w;
   const period=periodNow(planDay,ws) as Period&ReturnType<typeof calendarPeriod>;
   // Add session starts on the first day in view that is in the rota, not the rota's first day (LIVE-37).
@@ -2439,8 +2439,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const autoOpen=draft&&schedulingSettings.open;
   if(w){const data=whole;
     const drift=baselineDriftFor(w);driftButton=draft&&drift?.changes.length?baselineDriftButton(w,drift.changes.length):null;
-    // Drafts check themselves after every change (autoCheck). When that could not run or is outdated, the footer's
-    // "Needs a check" pill runs it; no separate Check rota button.
+    // The footer keeps the stored result visible; when it is outdated,
+    // its "Needs a check" pill runs it.
     const validate=el('button',{type:'button',class:'health-pill warn','data-tip':'The rota or its rules changed since the last check · select to check now'},icon('clock'),el('span',{class:'label'},TERMS.needsCheck));
     footerAct(validate,'needs-check',async()=>{
       // A check that hasn't started is set aside as Cancel does (its queued job stopped, audited), then checked here and now.
@@ -2665,7 +2665,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // Also a failed job of a provisional check (its stored partial check still counts as current): never a silent stop.
   if(w&&draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id){const line=note('','error');line.classList.add('stale-banner','check-stopped');line.setAttribute('role','status');line.id=CHECK_STOPPED_WHY;
     line.querySelector(':scope>span')?.replaceChildren(el('strong',{},checkStop.lead),checkStop.cause?' '+checkStop.cause:'');
-    line.prepend(icon('alert'));if(!checkStop.refused)line.append(button(CHECK_AGAIN,checkAgain,'secondary small'));target.append(line);}
+    line.prepend(icon('alert'));if(!checkStop.refused)line.append(button(CHECK_AGAIN,withDraft(checkAgain),'secondary small'));target.append(line);}
   if(Object.entries({location_ids:'locations',assignment_type_ids:'assignment_types',person_ids:'people',category_ids:'categories',programme_ids:'programmes',service_ids:'services'}).some(([k,kind])=>(schedFilters[k]||[]).some(id=>!find(kind,id))))target.append(note('A saved filter refers to a record no longer available to this account. Clear or replace that filter; it has not been silently dropped.','warning'));
   const sel=selectionBar({id:'selection-bar',label:'Actions for selected sessions'}),selectionBarRoot=sel.root;
   // Only the actions that change something for the sessions picked (e.g. Unlock only when one is locked).

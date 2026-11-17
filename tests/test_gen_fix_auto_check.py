@@ -30,6 +30,27 @@ def test_current_check_is_reused_and_evaluator_drift_queues_one_job(pg):
         assert len(list(db.scalars(select(m.Job).where(m.Job.workspace_id == w['id'])))) == 1
 
 
+def test_validation_result_keeps_input_currency_and_old_revision_editable(pg):
+    w = pg.shift(pg.workspace())['workspace']
+    with transaction(pg.app.state.engine, write=True) as db:
+        db.get(m.Workspace, w['id']).validation = None
+    before_detail = pg.detail(w)
+    before = before_detail['workspace']
+    before_fingerprint = before_detail['current_fingerprint']
+    job = automatic(pg, before)['job']
+    assert job['status'] == 'queued'
+    assert process_one(pg.app.state.engine)
+    after_detail = pg.detail(w)
+    after = after_detail['workspace']
+    assert after['revision'] == before['revision']
+    assert after_detail['current_fingerprint'] == before_fingerprint
+    assert after['validation']['fingerprint'] == before_fingerprint
+    assert automatic(pg, after)['job'] is None
+    edited = pg.shift({**w, 'revision': before['revision']}, start='2026-10-05T08:00:00+03:00',
+                       end='2026-10-05T12:00:00+03:00')
+    assert edited['workspace']['revision'] > before['revision']
+
+
 def test_missing_check_and_changed_fingerprint_are_stale(pg):
     w = pg.workspace()
     with transaction(pg.app.state.engine, write=True) as db:
