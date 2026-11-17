@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from .recurrence import inactive
 from .patterns import SHAPE_KINDS, day_of, weekend_of, wish_days, wish_shape
-from .validation import policy_applies
+from .validation import counting_policy, policy_applies
 from .cp_sat_score import ScoreModel
 
 ONE = timedelta(days=1)
@@ -26,12 +26,16 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
     fixed = {}
     flags = {}
     score = ScoreModel(model)
+    # Direct pattern callers predate rota snapshots and omit focus_ids; without a focal list every duty is focal.
+    focus_ids = set(data['focus_ids']) if 'focus_ids' in data else None
     if shape_breaches is not None:
         from .score import rule_copy_key
         focus_days = {day_of(s['start'], zone) for s in data['shifts']
-                      if s['id'] in data['focus_ids'] and not inactive(s)}
+                      if (focus_ids is None or s['id'] in focus_ids) and not inactive(s)}
 
     def constant(x):
+        if isinstance(x, int):
+            return x == 1
         if x.index not in fixed:
             fixed[x.index] = list(model.proto.variables[x.index].domain) == [1, 1]
         return fixed[x.index]
@@ -51,7 +55,20 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
             score.record(flags[key], 'max', xs)
         return flags[key]
 
-    def breach(cost, *rows, include_fixed=False, person=None, span=None):
+    def literal_key(x):
+        return ('constant', x) if isinstance(x, int) else ('variable', x.index)
+
+    def gated_any(xs, active):
+        """Return any(xs) only when active, with one output literal for the conjunction."""
+        if not xs:
+            return 0
+        if active is None:
+            return score.any(xs)
+        if isinstance(active, int):
+            return score.any(xs) if active else 0
+        return score.positive(active + sum(xs) - 1)
+
+    def breach(cost, *rows, include_fixed=False, person=None, span=None, active=None):
         """One 0/1 breach from rows (plus, minus, k): sum(plus) - sum(minus) - k."""
         if shape_breaches is not None or include_fixed and wish_breaches is not None:
             if shape_breaches is not None and span is not None and not any(span[0] <= day <= span[1] for day in focus_days):
@@ -65,7 +82,7 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
                     broken.append(score.minimum([*plus, *(1 - t for t in minus)], 1))
                 else:
                     broken.append(score.positive(sum(plus) - sum(minus) - k))
-            flag = score.any(broken)
+            flag = gated_any(broken, active)
             if shape_breaches is not None:
                 shape_breaches.setdefault((rule_copy_key(policy), person), []).append(flag)
                 terms.append(cost * flag)
@@ -96,10 +113,12 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
         terms.append((cost, [v]))
         worst[0] += cost
 
-    def shape(rule, by_day, by_type, cost, *, combine=False, person=None):
+    def shape(rule, by_day, by_type, cost, *, combine=False, person=None, focal=None):
         if not by_day:
             return
         rows = []
+        focal_day = ({day: any_of(xs) for day, xs in focal.items()}
+                     if focal is not None else None)
 
         def emit(*instance, span):
             if check:
@@ -107,7 +126,11 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
             if combine:
                 rows.extend(instance)
             else:
-                breach(cost, *instance, person=person, span=span)
+                active = None
+                if focal_day is not None:
+                    active = any_of([flag for day, flag in focal_day.items()
+                                     if span[0] <= day <= span[1]])
+                breach(cost, *instance, person=person, span=span, active=active)
 
         W = lambda d: any_of(by_day.get(d, []))  # noqa: E731
 
@@ -199,7 +222,9 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
         for pid in people:
             if check:
                 check()
-            mine = [(day_of(a, zone), s, x) for s, _, a, b, x in by_person.get(pid, []) if policy_applies(data, policy, pid, s, a, b)]
+            counted = counting_policy(policy)
+            mine = [(day_of(a, zone), s, x) for s, _, a, b, x in by_person.get(pid, [])
+                    if policy_applies(data, counted, pid, s, a, b)]
             if mine:
                 rows[pid] = mine
         if rule['kind'] == 'together_apart':
@@ -228,10 +253,18 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
             continue
         for pid, mine in sorted(rows.items()):
             by_day, by_type = defaultdict(list), defaultdict(lambda: defaultdict(list))
+            focal = defaultdict(list)
+            for s, _, a, b, x in by_person.get(pid, []):
+                if (focus_ids is None or s['id'] in focus_ids) and policy_applies(data, policy, pid, s, a, b):
+                    focal[day_of(a, zone)].append(x)
             for d, s, x in mine:
                 by_day[d].append(x)
                 by_type[s['assignment_type_id']][d].append(x)
-            shape(rule, by_day, by_type, cost, person=pid)
+            # A pattern breach already contains work, so a fully focal counted set needs no extra gate.
+            all_focal = (set(focal) == set(by_day)
+                         and all({literal_key(x) for x in focal[day]} == {literal_key(x) for x in xs}
+                                 for day, xs in by_day.items()))
+            shape(rule, by_day, by_type, cost, person=pid, focal=None if all_focal else focal)
 
     # Staff wishes: any duty counts, whatever the rules' scopes.
     if shape_breaches is not None:
