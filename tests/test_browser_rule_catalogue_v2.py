@@ -1,5 +1,6 @@
 """Catalogue v2 uses the existing Rules/People surfaces and independent decision workflow."""
 from .browser_seed import seeded
+from copy import deepcopy
 import os
 import re
 import uuid
@@ -19,6 +20,7 @@ from .test_browser_rule_filter_builder import pick, rota_this_week
 from .test_browser_shared_controls import panel_has_handle
 from .test_browser_cp_sat import cp_server  # noqa: F401
 from .test_rule_catalogue_api import propose as propose_rule
+from .test_rule_catalogue_v2_api import proposed as propose_conversion
 from .test_scheduling_facts_api import decide, workload
 
 pytestmark = pytest.mark.browser
@@ -390,6 +392,56 @@ def test_simplify_propose_reload_independent_activate_reload_undo(browser, live_
     finally:
         context.close()
         approver.close()
+
+
+@pytest.mark.parametrize('evidence_state', ['current', 'tampered', 'legacy'])
+def test_simplify_full_evidence_reads_the_stored_proposal(browser, live_server, h, evidence_state):
+    simple_legacy(h)
+    proposal = propose_conversion(h)
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.CatalogueConversion, proposal['id'])
+        plan = deepcopy(row.plan)
+        if evidence_state == 'tampered':
+            plan['census']['counts']['sources'] += 1
+            row.plan = plan
+        elif evidence_state == 'legacy':
+            plan.pop('census_hash')
+            row.plan = plan
+        census = deepcopy(plan['census'])
+    assert census['sources'] and census['hash']
+    details_path = '/api/rules/catalogue/conversions/' + proposal['id'] + '?details=true'
+    context, page = themed(browser, live_server, 'approver')
+    try:
+        navigate(page, 'rules')
+        rules_action(page, re.compile(r'^Simplify rules(?: · waiting for approval)?$'))
+        proposal_panel = page.get_by_role('region', name='Simplify rules', exact=True)
+        expect(proposal_panel.locator('.rs-state')).to_contain_text('Proposed')
+        expect(proposal_panel.get_by_role('button', name='Activate', exact=True)).to_be_enabled()
+        with page.expect_response(lambda r: r.url.endswith(details_path) and r.request.method == 'GET') as details:
+            proposal_panel.get_by_role('button', name='Full evidence', exact=True).click()
+        evidence = page.get_by_role('region', name='Full evidence', exact=True)
+        if evidence_state == 'tampered':
+            assert details.value.status == 409
+            assert details.value.json()['error']['code'] == 'EVIDENCE_MISMATCH'
+            expect(evidence).to_contain_text('Stored conversion evidence does not match its recorded hash')
+            expect(evidence.get_by_role('button', name='Retry', exact=True)).to_be_visible()
+            expect(evidence.get_by_role('table')).to_have_count(0)
+            expect(evidence.locator('.rule-facts')).to_have_count(0)
+        else:
+            assert details.value.status == 200
+            full = details.value.json()['record']
+            assert full['id'] == proposal['id'] and full['plan']['census'] == census
+            if evidence_state == 'legacy':
+                assert 'census_hash' not in full['plan']
+            expect(evidence.locator('.rule-facts dt')).to_have_text(['Rules', 'Lines', 'Kept for history', 'Evidence hash'])
+            expect(evidence.locator('.rule-facts dd')).to_have_text([
+                str(census['counts']['sources']), str(census['counts']['lines']),
+                str(census['counts']['history_sources']), census['hash']])
+            table = evidence.get_by_role('table')
+            expect(table).to_be_visible()
+            expect(table.locator('tbody tr')).to_have_count(len(census['sources']))
+    finally:
+        context.close()
 
 
 @pytest.mark.parametrize('role', [role for role in ROLE_NAMES if role in {'approver', 'auditor'}])
