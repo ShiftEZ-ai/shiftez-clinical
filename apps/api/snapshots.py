@@ -4,6 +4,7 @@ import json
 import uuid
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,6 +17,7 @@ from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.validation import ENGINE_VERSION
+from packages.domain.input_manifest import DEPARTMENT_INPUT_FIELDS, department_input
 from .settings import Settings, quota_policy_limit
 
 
@@ -26,9 +28,24 @@ class DomainSnapshot(dict):
         self.read_quality = read_quality if read_quality is not None else {}
 
 
+@dataclass(frozen=True)
+class SnapshotInputRead:
+    """Fields, row predicate and source dependency consumed by a live reader."""
+    columns: frozenset[str]
+    where: tuple[str, str] | None = None
+    requires: str | None = None
+    projection: object = None
+    inserted_scope: object = None
+
+
+def _input_read(name, cls, category, scope, columns, *, where=None, requires=None, projection=None, inserted_scope=None, exclude=()):
+    shape = SnapshotInputRead(frozenset(columns), where, requires, projection, inserted_scope)
+    return name, cls, category, scope, shape, (frozenset(cls.__table__.columns.keys()) - shape.columns) | frozenset(exclude)
+
+
 # One registry owns the tables that can change a prepared snapshot's inputs.
 # ``shape`` describes how the row is projected by ``_snapshot_inputs``; rows
-# with ``shape=None`` are read by the live domain-snapshot stages below.
+# with ``shape=None`` or ``SnapshotInputRead`` are read by live snapshot stages.
 # ``scope`` is used to build the bounded source predicates for the shared
 # projection.  The revision listener and its structural guard consume this
 # same registry, so a new source cannot silently escape invalidation.
@@ -63,13 +80,13 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('tags', m.Tag, 'general', 'department', 'tag', frozenset()),
     ('tag_members', m.TagMember, 'general', 'department', 'tag_member', frozenset()),
     ('people', m.Person, 'general', 'organisation', 'people', frozenset()),
-    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on',
-        *(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)})),
+    _input_read('departments', m.Department, 'general', 'organisation', DEPARTMENT_INPUT_FIELDS,
+        projection=department_input, exclude=(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)),
     ('programme_calendar_entries', m.ProgrammeCalendarEntry, 'general', 'department', None, frozenset()),
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
-    ('workspaces', m.Workspace, 'general', 'department', None, frozenset({
+    ('workspaces', m.Workspace, 'general', 'department', SnapshotInputRead(frozenset(), inserted_scope='external_workspace'), frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
         'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
         'urgency_reason', 'target_overrides', 'rule_adjustments', 'accepted_issues', 'archived_by',
@@ -87,12 +104,14 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     # Leave/absence and protected-time inputs use the separate availability
     # revision so consumers can invalidate the narrower availability layer.
     ('availability', m.Availability, 'availability', 'department', None, frozenset()),
-    ('requests', m.RequestRecord, 'availability', 'department', None, frozenset()),
     ('publication_changes', m.PublicationChangeList, 'availability', 'department', None, frozenset()),
-    ('role_bindings', m.RoleBinding, 'availability', 'department', None, frozenset()),
-    ('identities', m.Identity, 'availability', 'person', None, frozenset({
-        'revision', 'created_at', 'issuer', 'subject', 'subject_normalized', 'display_name', 'password_hash', 'last_sign_in_at'})),
-    ('availability_patterns', m.AvailabilityPattern, 'availability', 'department', None, frozenset()),
+    _input_read('role_bindings', m.RoleBinding, 'availability', 'department',
+        {'identity_id', 'department_id', 'role', 'revoked', 'starts_on', 'ends_on'}, requires='blocking_events'),
+    _input_read('identities', m.Identity, 'availability', 'person',
+        {'id', 'person_id', 'disabled'}, requires='blocking_events'),
+    _input_read('availability_patterns', m.AvailabilityPattern, 'availability', 'department',
+        {'id', 'department_id', 'person_id', 'status', 'weekdays', 'start_time', 'end_time', 'starts_on', 'ends_on'},
+        where=('status', 'active')),
     ('events', m.Event, 'availability', 'department', None, frozenset()),
     ('event_occurrences', m.EventOccurrence, 'availability', 'department', None, frozenset()),
     ('announcement_receipts', m.AnnouncementReceipt, 'availability', None, None, frozenset({'revision', 'delivered_at', 'read_at', 'acknowledged_at'})),
@@ -104,8 +123,43 @@ def snapshot_input_specs():
     return SNAPSHOT_INPUT_SOURCE_SPECS
 
 
+def snapshot_input_row_predicate(cls):
+    shape = next(spec[4] for spec in snapshot_input_specs() if spec[1] is cls)
+    column, value = shape.where
+    return getattr(cls, column) == value
+
+
+def snapshot_input_organisations(db, shape, organisation_ids, memo=None):
+    """Conditional readers participate only while their source exists, including history."""
+    if not isinstance(shape, SnapshotInputRead) or shape.requires != 'blocking_events':
+        return organisation_ids
+    from .services.events import blocking_input_sources
+    memo = {} if memo is None else memo
+    affected = set()
+    for organisation_id in organisation_ids:
+        key = shape.requires, organisation_id
+        if key not in memo:
+            memo[key] = any(db.scalar(select(select(cls.id).where(where).exists()))
+                for cls, where in blocking_input_sources(select(m.Department.id).where(
+                    m.Department.organisation_id == organisation_id)).values())
+        if memo[key]:
+            affected.add(organisation_id)
+    return affected
+
+
 def snapshot_input_classes():
     return {cls for _, cls, *_ in SNAPSHOT_INPUT_SOURCE_SPECS}
+
+
+def snapshot_inserted_row_is_read(db, shape, row):
+    if not isinstance(shape, SnapshotInputRead) or shape.inserted_scope != 'external_workspace':
+        return True
+    from .services.wishes import reservation_input
+    from sqlalchemy.sql.elements import ClauseElement
+    if any(isinstance(getattr(row, name), ClauseElement) for name in ('status', 'validation', 'archived_at')):
+        return True
+    # Publications and wish overrides stamp through their own registered source rows.
+    return reservation_input(row) is not None
 
 
 def snapshot_hash(value: dict) -> str:

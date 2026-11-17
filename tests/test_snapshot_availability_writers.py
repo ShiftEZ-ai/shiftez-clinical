@@ -1,4 +1,4 @@
-"""Every real availability writer stamps once and invalidates a bound bulk preview."""
+"""Scheduling writes invalidate bound previews; workflow-only writes preserve them."""
 from datetime import datetime
 import pytest
 from sqlalchemy import select
@@ -19,18 +19,24 @@ REASON = 'Synthetic stamp acceptance'
 WRITERS = [
     'availability.record', 'availability.update', 'availability.undo_update', 'availability.retract',
     'availability.restore', 'availability.undo_create',
-    'request.leave.create', 'request.leave.approve', 'request.leave.withdraw', 'request.leave.undo',
-    'request.absence_report.create', 'request.absence_report.approve', 'request.absence_report.undo',
-    'request.decide_many', 'request.undo_batch', 'request.link_rota',
-    'pattern.propose_active', 'pattern.propose_pending', 'pattern.approve', 'pattern.decline',
+    pytest.param('request.leave.create', False, id='request.leave.create'), 'request.leave.approve',
+    pytest.param('request.leave.withdraw', False, id='request.leave.withdraw'), 'request.leave.undo',
+    pytest.param('request.absence_report.create', False, id='request.absence_report.create'),
+    'request.absence_report.approve', 'request.absence_report.undo',
+    'request.decide_many', 'request.undo_batch', pytest.param('request.link_rota', False, id='request.link_rota'),
+    'pattern.propose_active', pytest.param('pattern.propose_pending', False, id='pattern.propose_pending'),
+    'pattern.approve', pytest.param('pattern.decline', False, id='pattern.decline'),
     'pattern.undo', 'pattern.end', 'pattern.restore',
     'publication.stage_absence', 'publication.undo_absence', 'publication.publish_absence',
     'import.recorded_leave',
     'event.create', 'event.update', 'event.occurrence_update', 'event.rsvp', 'event.reconcile', 'event.receipts',
     'event.tag_members',
-    'request.overtime_create', 'request.rotation_change', 'request.rotation_swap', 'person.anonymise',
-    'availability.route_request', 'request.restore_absence_inverse',
+    pytest.param('request.overtime_create', False, id='request.overtime_create'),
+    pytest.param('request.rotation_change', False, id='request.rotation_change'),
+    pytest.param('request.rotation_swap', False, id='request.rotation_swap'), 'person.anonymise',
+    pytest.param('availability.route_request', False, id='availability.route_request'), 'request.restore_absence_inverse',
 ]
+WRITERS = [pytest.param(writer, True, id=writer) if isinstance(writer, str) else writer for writer in WRITERS]
 
 
 def command(h, kind, payload, row, role='coordinator'):
@@ -205,19 +211,22 @@ def revisions(h):
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize('writer', WRITERS)
-def test_availability_writer_stamps_once_and_apply_refuses_stale_preview(pg, monkeypatch, writer):
+@pytest.mark.parametrize('writer,changes_inputs', WRITERS)
+def test_availability_writer_stamps_once_and_apply_refuses_stale_preview(pg, monkeypatch, writer, changes_inputs):
     h = pg
     write = operation(h, writer, monkeypatch)
     payload = people_change(h)
     check = preview(h, 'coordinator', payload)
     before = revisions(h)
     write()
-    assert revisions(h) == (before[0] + 1, before[1] + 1), writer
+    assert revisions(h) == tuple(value + changes_inputs for value in before), writer
     fresh = preview(h, 'coordinator', payload)
-    assert fresh['fingerprint'] != check['fingerprint'], writer
-    error = h.command('coordinator', 'bulk.apply', payload, expected_fingerprint=check['fingerprint'], status=409)['error']
-    assert error['code'] == 'STALE_PREVIEW', writer
+    assert (fresh['fingerprint'] != check['fingerprint']) == changes_inputs, writer
+    if changes_inputs:
+        error = h.command('coordinator', 'bulk.apply', payload, expected_fingerprint=check['fingerprint'], status=409)['error']
+        assert error['code'] == 'STALE_PREVIEW', writer
+    else:
+        assert h.command('coordinator', 'bulk.apply', payload, expected_fingerprint=check['fingerprint'])['counts']['changed'] == len(payload['items'])
 
 
 @pytest.mark.postgres

@@ -113,12 +113,19 @@ def window_times(value, timezone, horizon, type_end=None, *, starts_on=None):
     return times
 
 
+def blocking_input_sources(department_ids):
+    """Sources that can make attendance part of scheduling inputs, without a rota window."""
+    return {'event_occurrences': (m.EventOccurrence, m.EventOccurrence.department_id.in_(department_ids)
+        & m.EventOccurrence.cancelled.is_(False) & m.EventOccurrence.data['type']['blocks_duties'].as_boolean().is_(True)),
+        'events': (m.Event, m.Event.department_id.in_(department_ids) & m.Event.cancelled.is_(False)
+            & m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True))}
+
+
 def blocking_sources(department_ids, lo, hi):
     return {'event_occurrences': (m.EventOccurrence, m.EventOccurrence.department_id.in_(department_ids) &
         or_((m.EventOccurrence.start < hi) & (m.EventOccurrence.end > lo),
             (m.EventOccurrence.original_start >= lo - timedelta(days=2)) & (m.EventOccurrence.original_start < hi))),
-        'events': (m.Event, m.Event.department_id.in_(department_ids) & m.Event.cancelled.is_(False) &
-            (m.Event.start < hi) & m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True))}
+        'events': (m.Event, blocking_input_sources(department_ids)['events'][1] & (m.Event.start < hi))}
 
 
 def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):

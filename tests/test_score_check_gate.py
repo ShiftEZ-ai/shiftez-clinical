@@ -188,6 +188,9 @@ def test_off_preserves_ordinary_amendment_fingerprint_scoring_and_publication(de
 def test_toggle_preserves_ordinary_fingerprints_scores_and_optimizer_inputs(department, amendment):
     from apps.api.services import planning
     from packages.domain.score import schedule_score
+    from packages.domain import cp_sat
+    from packages.domain.solver_control import SolverControl
+    from packages.contracts.schemas import GenerationOptions
     h = department
     base = h.publish(h.shift(h.workspace('Baseline'))['workspace'])['publication_id'] if amendment else None
     draft = h.shift(h.workspace('Ordinary draft', base=base))['workspace']
@@ -195,9 +198,10 @@ def test_toggle_preserves_ordinary_fingerprints_scores_and_optimizer_inputs(depa
         with transaction(h.app.state.engine) as db:
             workspace = db.get(m.Workspace, draft['id'])
             snapshot = snapshots.domain_snapshot(db, workspace)
-            # Saving the toggle changes its audited metadata, not scheduling inputs.
-            for key in ('revision', 'catalogue_revision', 'score_check_enabled'):
-                snapshot['department'].pop(key)
+            # Compare the actual compiled optimizer input; snapshots also retain changing audit metadata.
+            options = GenerationOptions.model_validate(snapshot.get('generation_options') or {})
+            prepared = cp_sat._prepare(copy.deepcopy(snapshot), 1, 1, SolverControl(), options, False, False)
+            assert 'model' in prepared, prepared.get('status')
             checked = planning.revalidate(db, workspace, store=False)
             if amendment:
                 assert checked['scope'] == 'published_changes' and 'score' not in checked
@@ -205,7 +209,7 @@ def test_toggle_preserves_ordinary_fingerprints_scores_and_optimizer_inputs(depa
                 assert not checked.get('scope')
                 defaults = db.get(m.Department, workspace.department_id).generation_defaults
                 assert checked['score'] == schedule_score(snapshot, checked, defaults)
-            return snapshots.fingerprint(db, workspace), snapshot, checked.get('score')
+            return snapshots.fingerprint(db, workspace), str(prepared['model'].proto), checked.get('score')
     job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
                     revision=draft['revision'])['job']
     before = evidence()
