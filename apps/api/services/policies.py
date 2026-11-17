@@ -1328,11 +1328,6 @@ def exception_approval(db, actor, exception_id):
                      'Count windows retain the rule’s exact dates. Missing counts are unknown; published rotas are unchanged.'}
 
 
-def exception_is_independent(db, actor, created_by, person_id):
-    """The proposer and beneficiary both need a different person to approve, including linked sign-ins."""
-    return person_key(db, created_by) != person_key(db, actor.identity_id) and person_id != actor.person_id
-
-
 def policy_exception(db, actor, command):
     if command.kind == "exception.create":
         return {"record": create_exception(db, actor, s.ExceptionInput.model_validate(command.payload))}
@@ -1369,7 +1364,7 @@ def policy_exception(db, actor, command):
         require(not s.safety_rule(policy['definition']), 'SAFETY_RULE', 'Safety rules cannot have person exceptions', 409)
         require(policy['status'] == "active" and policy['revision'] == row.policy_revision and policy['definition']["exception_allowed"],
                 "STALE_POLICY", "Exception no longer matches an active exception-permitting rule", 409)
-        independence.ensure(db, actor, "exception.approve", exception_is_independent(db, actor, row.created_by, row.person_id),
+        independence.ensure_subject(db, actor, "exception.approve", (row.person_id,), row.created_by,
                             "Exception needs an independent approver", value.reason, row.id)
         row.status = "approved"
         if not restoring:

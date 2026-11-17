@@ -1,8 +1,15 @@
 """Decision independence follows the subject, while authorship remains in the audit trail."""
 import uuid
+from datetime import date
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import literal, select
 
+from apps.api import models as m
+from apps.api.db import transaction
+from apps.api.serialization import record
+from apps.api.services import independence
 from .governance_support import identity
 from .test_request_decide_many import decide as decide_many, request_row
 from .test_requests_for_me import read
@@ -11,6 +18,8 @@ from .test_scheduling_fact_self_approval import assert_eligibility
 from .test_scheduling_fact_approvals import calendar_entry
 from .test_overtime_volunteer import offer, offer_rule
 from .test_scheduling_facts_api import workload
+from .test_availability_patterns import pattern
+from .test_exception_lifecycle import row as exception_row
 
 
 @pytest.fixture(params=["h", pytest.param("pg", marks=pytest.mark.postgres)])
@@ -42,6 +51,7 @@ def test_entering_for_someone_else_allows_decision_queue_badge_and_home(database
     assert detail["history"][0]["actor"] == detail["history"][-1]["actor"] == "Fictional request_reviewer"
     event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "request.decide")
     assert event["actor_id"] == reviewer and "self_approved" not in event["detail"]
+    assert event["detail"]["entered_on_behalf_by"] == [reviewer]
     assert_waiting(h, "request_reviewer", [])
 
 
@@ -80,6 +90,8 @@ def test_on_behalf_batch_needs_no_self_approval_or_note(database):
     assert result["count"] == 2
     assert all(row["status"] == "approved" and row["created_by"] == row["decided_by"] == reviewer
                for row in result["records"])
+    event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "request.decide_many")
+    assert event["detail"]["entered_on_behalf_by"] == [reviewer]
     assert not h.get("auditor", "/api/audit?self_approved=true")["events"]
     assert_waiting(h, "request_reviewer", [])
 
@@ -96,6 +108,8 @@ def test_person_fact_entered_for_another_subject_is_independent(database, linked
     assert waiting["counts"]["to_decide"] == 1
     activated = h.command("fact_reviewer", "person.workload.activate", {}, fact["id"], fact["revision"])["fact"]
     assert activated["status"] == "active" and activated["proposed_by"] == activated["approved_by"] == reviewer
+    event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "person.workload.activate")
+    assert event["detail"]["entered_on_behalf_by"] == [reviewer]
     assert not h.get("auditor", "/api/audit?self_approved=true")["events"]
     assert read(h, "fact_reviewer", for_me=1)["counts"]["to_decide"] == 0
 
@@ -135,18 +149,185 @@ def test_overtime_entered_for_another_subject_is_independent(database):
     assert_waiting(h, "offer_reviewer", [])
 
 
-def test_calendar_fact_without_a_person_is_independent_of_its_proposer(database):
-    h = database
-    reviewer = identity(h, "calendar_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+def calendar_protection(h):
     entry = calendar_entry(h)
-    fact = h.command("calendar_reviewer", "calendar.protection.propose", {
+    return h.command("calendar_reviewer", "calendar.protection.propose", {
         "kind": "protected_time", "catalogue_id": "protected_time", "calendar_entry_id": entry["id"],
         "line": {"id": str(uuid.uuid4()), "starts_on": entry["starts_on"], "ends_on": entry["ends_on"],
                  "numbers": {"apply": {"value": None, "level": "mandatory"}}},
         "reason": "Synthetic calendar protection"})["fact"]
+
+
+def activate_calendar(h, role, fact, *, bulk=False, reason="", status=200):
+    if bulk:
+        return h.command(role, "bulk.apply", {"reason": reason, "items": [{
+            "item_kind": "calendar.protection.activate", "target_id": fact["id"],
+            "expected_revision": fact["revision"], "payload": {}}]}, status=status)
+    return h.command(role, "calendar.protection.activate", {"reason": reason},
+                     fact["id"], fact["revision"], status=status)
+
+
+@pytest.mark.parametrize("identity_mode", ["unlinked", "linked", "alias"])
+@pytest.mark.parametrize("bulk", [False, True])
+def test_no_subject_calendar_protection_refuses_proposer_without_audited_permission(database, identity_mode, bulk):
+    h = database
+    person = h.seed["people"][0] if identity_mode != "unlinked" else None
+    proposer = identity(h, "calendar_reviewer", ["coordinator", "approver"], person=person)
+    role = "alternate_reviewer" if identity_mode == "alias" else "calendar_reviewer"
+    reviewer = identity(h, role, ["coordinator", "approver"], person=person) if role != "calendar_reviewer" else proposer
+    fact = calendar_protection(h)
     assert fact["person_id"] is None
-    assert_eligibility(h, fact, "calendar_reviewer", True)
-    assert {row["id"] for row in read(h, "calendar_reviewer", for_me=1)["items"]} == {fact["id"]}
-    activated = h.command("calendar_reviewer", "calendar.protection.activate", {}, fact["id"], fact["revision"])["fact"]
-    assert activated["status"] == "active" and activated["proposed_by"] == activated["approved_by"] == reviewer
+    assert_eligibility(h, fact, role, False)
+    assert read(h, role, for_me=1)["items"] == []
+    refused = activate_calendar(h, role, fact, bulk=bulk, reason="Review the calendar protection", status=403)
+    assert refused["error"]["code"] == "SELF_APPROVAL"
+    assert read(h, role, id=fact["id"])["fact"] == fact
     assert not h.get("auditor", "/api/audit?self_approved=true")["events"]
+    permission = h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["rule.activate"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit calendar approval permission"})["permission"]
+    assert_eligibility(h, fact, role, True)
+    assert {row["id"] for row in read(h, role, for_me=1)["items"]} == {fact["id"]}
+    refused = activate_calendar(h, role, fact, bulk=bulk, reason="Routine update", status=422)
+    assert refused["error"]["code"] == "SELF_APPROVAL_REASON"
+    activate_calendar(h, role, fact, bulk=bulk, reason="Reviewed with independent calendar cover")
+    activated = read(h, role, id=fact["id"])["fact"]
+    assert activated["status"] == "active" and activated["proposed_by"] == proposer and activated["approved_by"] == reviewer
+    action = "bulk.apply" if bulk else "calendar.protection.activate"
+    event = next(e for e in h.get("auditor", "/api/audit?self_approved=true")["events"] if e["action"] == action)
+    assert event["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]
+    assert "entered_on_behalf_by" not in event["detail"]
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+def test_no_subject_calendar_protection_allows_a_different_approver(database, bulk):
+    h = database
+    proposer = identity(h, "calendar_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+    fact = calendar_protection(h)
+    assert_eligibility(h, fact, "approver", True)
+    activate_calendar(h, "approver", fact, bulk=bulk, reason="Independent calendar review")
+    activated = read(h, "approver", id=fact["id"])["fact"]
+    assert activated["status"] == "active" and activated["proposed_by"] == proposer
+    assert activated["approved_by"] == h.seed["identities"]["approver"]
+    assert not h.get("auditor", "/api/audit?self_approved=true")["events"]
+
+
+def personal_entry(h, source, entered_by, person):
+    if source == "pattern":
+        # Retained proposals may have been entered by a coordinator or a login linked to another person.
+        with transaction(h.app.state.engine, write=True) as db:
+            row = m.AvailabilityPattern(department_id=h.seed["department_id"],
+                created_by=h.seed["identities"][entered_by], **pattern(person, starts_on=date(2026, 9, 1)))
+            db.add(row)
+            db.flush()
+            return record(row)
+    policy = h.policy({"kind": "max_duties", "maximum": 3}, exception=True)
+    return h.command(entered_by, "exception.create", {"policy_id": policy["id"], "person_id": person,
+        "starts_on": "2026-10-04", "ends_on": "2026-10-11", "reason": "Synthetic person exception"})["record"]
+
+
+def assert_personal_eligibility(h, source, row, allowed):
+    if source == "pattern":
+        item = read(h, "person_reviewer", id=row["id"])["item"]
+        assert item["can_decide"] is allowed
+        page = read(h, "person_reviewer", for_me=1)
+        assert {item["id"] for item in page["items"]} == ({row["id"]} if allowed else set())
+        assert page["counts"]["to_decide"] == int(allowed)
+    else:
+        assert exception_row(h, "person_reviewer", row)["can_approve"] is allowed
+    attention = {item["key"]: item for item in h.get("person_reviewer", "/api/home")["attention"]}
+    key = "patterns" if source == "pattern" else "exceptions"
+    assert attention.get(key, {}).get("count", 0) == int(allowed)
+
+
+@pytest.mark.parametrize("source", ["pattern", "exception"])
+@pytest.mark.parametrize("linked", [False, True])
+def test_on_behalf_person_entry_allows_enterer_and_marks_audit(database, source, linked):
+    h = database
+    reviewer = identity(h, "person_reviewer", ["coordinator", "approver"],
+                        person=h.seed["people"][1] if linked else None)
+    row = personal_entry(h, source, "person_reviewer", h.seed["people"][0])
+    assert_personal_eligibility(h, source, row, True)
+    command = "availability_pattern.decide" if source == "pattern" else "exception.approve"
+    payload = {"reason": "Independent person review", **({"decision": "approve"} if source == "pattern" else {})}
+    result = h.command("person_reviewer", command, payload, row["id"], row["revision"])
+    decided = result["pattern" if source == "pattern" else "record"]
+    assert decided["status"] == ("active" if source == "pattern" else "approved")
+    assert decided["created_by"] == reviewer == decided["decided_by" if source == "pattern" else "approved_by"]
+    event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == command)
+    assert event["detail"]["entered_on_behalf_by"] == [reviewer]
+    assert "self_approved" not in event["detail"]
+
+
+@pytest.mark.parametrize("source", ["pattern", "exception"])
+@pytest.mark.parametrize("entered_by", ["coordinator", "subject_alias"])
+def test_own_person_entry_requires_permission_reason_and_self_approved_mark(database, source, entered_by):
+    h = database
+    person = h.seed["people"][0]
+    reviewer = identity(h, "person_reviewer", ["coordinator", "approver"], person=person)
+    identity(h, "subject_alias", ["coordinator", "approver"], person=person)
+    row = personal_entry(h, source, entered_by, person)
+    assert_personal_eligibility(h, source, row, False)
+    command = "availability_pattern.decide" if source == "pattern" else "exception.approve"
+    payload = {"reason": "Reviewed my own matter with independent cover",
+               **({"decision": "approve"} if source == "pattern" else {})}
+    assert h.command("person_reviewer", command, payload, row["id"], row["revision"],
+                     status=403)["error"]["code"] == "SELF_APPROVAL"
+    action = "request.decide" if source == "pattern" else "exception.approve"
+    permission = h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": [action],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit person decision permission"})["permission"]
+    assert_personal_eligibility(h, source, row, True)
+    assert h.command("person_reviewer", command, {**payload, "reason": "Routine update"}, row["id"], row["revision"],
+                     status=422)["error"]["code"] == "SELF_APPROVAL_REASON"
+    result = h.command("person_reviewer", command, payload, row["id"], row["revision"])
+    decided = result["pattern" if source == "pattern" else "record"]
+    assert decided["status"] == ("active" if source == "pattern" else "approved")
+    event = next(e for e in h.get("auditor", "/api/audit?self_approved=true")["events"] if e["action"] == command)
+    assert event["detail"]["self_approved"] == [{"action": action, "permission_id": permission["id"]}]
+    assert event["detail"].get("entered_on_behalf_by", []) == ([h.seed["identities"][entered_by]] if entered_by == "coordinator" else [])
+
+
+def test_null_swap_details_keep_request_subject_independence(database):
+    h = database
+    reviewer = identity(h, "request_reviewer", ["coordinator", "approver"], person=h.seed["people"][1])
+    row = request_row(h, "request_reviewer", h.seed["people"][0], kind="meeting")
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.RequestRecord, row["id"]).details = {"swap": None}
+    assert_waiting(h, "request_reviewer", [row])
+    decided = h.command("request_reviewer", "request.decide", {"decision": "approve"}, row["id"], row["revision"])["record"]
+    assert decided["status"] == "approved" and decided["decided_by"] == reviewer
+
+
+def test_direct_on_behalf_pattern_records_enterer_in_audit(database):
+    h = database
+    reviewer = identity(h, "pattern_reviewer", ["coordinator"], person=h.seed["people"][1])
+    row = h.command("pattern_reviewer", "availability_pattern.propose", pattern(h.seed["people"][0]))["pattern"]
+    assert row["status"] == "active" and row["created_by"] == row["decided_by"] == reviewer
+    event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "availability_pattern.propose")
+    assert event["detail"]["entered_on_behalf_by"] == [reviewer] and "self_approved" not in event["detail"]
+
+
+def test_shared_subject_independence_matches_python_and_sql(database):
+    h = database
+    first, second = h.seed["people"][:2]
+    people = {"reviewer": first, "alias": first, "other": second, "unlinked": None}
+    actors = {role: SimpleNamespace(identity_id=identity(h, role, ["coordinator", "approver"], person=person),
+                                  person_id=person) for role, person in people.items()}
+    cases = [
+        ((first,), "reviewer", "reviewer", False),
+        ((second,), "reviewer", "reviewer", True),
+        ((first,), "reviewer", "alias", False),
+        ((None,), "reviewer", "alias", False),
+        ((), "reviewer", "other", True),
+        ((None,), "unlinked", "unlinked", False),
+        ((first,), "unlinked", "unlinked", True),
+        ((first, second), "reviewer", "other", False),
+        ((None, second), "reviewer", "other", False),
+        ((None,), "reviewer", "unlinked", True),
+    ]
+    with transaction(h.app.state.engine) as db:
+        for subjects, entered_by, reviewer, allowed in cases:
+            actor, enterer = actors[reviewer], actors[entered_by].identity_id
+            assert independence.subject_independent(db, actor, subjects, enterer) is allowed
+            query = independence.subject_independent(db, actor, tuple(literal(person) for person in subjects), literal(enterer), sql=True)
+            assert db.scalar(select(query)) is allowed
+        assert "entered_on_behalf_by" not in db.info
