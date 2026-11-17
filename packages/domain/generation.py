@@ -38,7 +38,7 @@ MANIFEST = {
     "max_sessions": 1500, "max_people": 500, "max_period_days": 31,
     "preserves_locked_assignments": True,
     "automatic_unavailability_repair": True,
-    "redistribution": "One gap-first rebuild; repair may move unlocked draft assignments only when validated deficits decrease.",
+    "redistribution": "One gap-first rebuild, then a bounded CP-SAT required-cover repair. Mandatory constraints remain blocking.",
     "quota_support": "Mandatory minima and advisory targets guide additions; mandatory maxima and safety constraints remain blocking. No optimality guarantee.",
     "capacity_overflow": "Normal capacity is attempted first; only explicitly permitted ranks can consume extra places, with visible warnings.",
     "auto_publish": False, "optimality_claim": "none",
@@ -103,6 +103,11 @@ def coverage_findings(validation):
     for finding in finding_observations(validation):
         if finding['code'] in COVERAGE_CODES:
             yield finding
+
+
+def unmet_requirements(validation):
+    return [*coverage_findings(validation), *[f for f in finding_observations(validation)
+            if f['code'] in {'QUOTA_BELOW_MINIMUM', 'QUOTA_BELOW_TARGET'}]]
 
 
 def preference_window(data, policy, shift):
@@ -389,10 +394,58 @@ def _sweep_modes(baseline):
     return (True, False) if any(deficit_score(baseline)[:-1]) else (False,)
 
 
-def generate(snapshot: dict, time_budget_seconds: float = 90.0) -> dict:
-    result = _generate_with_redistribution(snapshot, time_budget_seconds)
+def generate(snapshot: dict, time_budget_seconds: float | None = None) -> dict:
+    if time_budget_seconds is None:
+        from packages.contracts.schemas import GenerationOptions
+        time_budget_seconds = GenerationOptions.model_validate(
+            snapshot.get('generation_options', snapshot.get('generation_defaults')) or {}).search_minutes * 60
+    started = time.monotonic()
+    deadline = started + time_budget_seconds
+    # Leave time for local validation and a joint repair if local choices strand required cover.
+    result = _generate_with_redistribution(snapshot, time_budget_seconds / 4)
+    remaining = deadline - time.monotonic()
+    if (result.get('status') in {'candidate_with_gaps', 'unknown_time_limit'}
+            and deficit_score(result['validation'])[0] and remaining > 0):
+        try:
+            from .cp_sat import generate as required_cover
+            from .solver_control import SolverControl
+            control = SolverControl(cancelled=lambda: time.monotonic() >= deadline)
+            repaired = required_cover({**snapshot, '_greedy_required_cover': True}, remaining, workers=1, feasibility_only=True,
+                                      _control=control)
+            repair_timed_out = repaired.get('status') in {'cancelled', 'unknown_time_limit', 'needs_more_time'}
+            if repair_timed_out and control.validated_result is not None:
+                repaired = {**control.validated_result, 'solver_status': 'FEASIBLE', 'score_completed': False}
+        except ImportError:
+            repaired = {'status': 'unavailable'}
+        if repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid'):
+            result = repaired
+            result['required_cover_repair'] = {'algorithm_version': repaired['algorithm_version'],
+                                               'solver_status': repaired['solver_status'],
+                                               **{key: result.pop(key) for key in (
+                                                   'phase_timings', 'first_solution_seconds', 'search_elapsed_seconds',
+                                                   'stop_reason', 'search_stop', 'score_completion_seconds',
+                                                   'live_score_metrics', 'improvements_found') if key in result}}
+            result['algorithm_version'] = ALGORITHM_VERSION
+            result['unmet_requirements'] = unmet_requirements(result['validation'])
+            if repair_timed_out:
+                result['status'] = 'unknown_time_limit'
+            result.setdefault('warnings', []).append(
+                'Required cover was repaired with CP-SAT. Advisory preferences were not optimized by the repair.')
+        else:
+            timed_out = repaired.get('status') in {'unknown_time_limit', 'needs_more_time', 'cancelled'}
+            if timed_out:
+                result['status'] = 'unknown_time_limit'
+            reason = ('ran out of time' if timed_out else 'is unavailable' if repaired.get('status') == 'unavailable'
+                      else 'found no valid complete rota')
+            result.setdefault('warnings', []).append(
+                f'Required-cover repair {reason}; the best partial proposal is retained.')
+    if result.get('status') == 'unknown_time_limit':
+        result['message'] = ('Search time expired. The best validated partial proposal is retained, with unfilled '
+                             'places listed in unmet requirements. This does not prove the requirements conflict.')
     result.update(scope_receipt(snapshot))
     result['not_applied'] = copy.deepcopy(GREEDY_NOT_APPLIED)
+    result['elapsed_seconds'] = time.monotonic() - started
+    result['time_limit_seconds'] = time_budget_seconds
     return result
 
 
@@ -993,6 +1046,5 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                        and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM'}],
             "summary": summary,
             "declined_wishes": declined_wishes(data, validation, preferences_applied=False),
-            "unmet_requirements": [*coverage_findings(validation), *[f for f in finding_observations(validation)
-                if f["code"] in {"QUOTA_BELOW_MINIMUM", "QUOTA_BELOW_TARGET"}]],
+            "unmet_requirements": unmet_requirements(validation),
             "message": "Draft candidate only. No optimality or infeasibility proof; acceptance requires current-input validation and ordinary review/publication."}

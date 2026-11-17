@@ -587,12 +587,14 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             if scope_matches_throughout(data, selector, None, shift, a, b):
                 restriction_policies.append(policy)
         candidate_data = {**data, 'policies': restriction_policies}
+        # A greedy repair is a generation candidate, so keep its edit and population boundaries.
+        generating = not feasibility_only or snapshot.get('_greedy_required_cover', False)
         fixed_people = {pid for pid, participant in original.items() if sid not in editable or (
-            assignment_fixed(shift, participant) if feasibility_only else keep_assignment(data, shift, participant))}
+            keep_assignment(data, shift, participant) if generating else assignment_fixed(shift, participant))}
         reports = {}
         for pid in focused_candidate_people(data, shift):
             control.check()
-            if not feasibility_only and (not population_allows(data, shift, pid)
+            if generating and (not population_allows(data, shift, pid)
                     or pid not in fixed_people and (sid not in editable
                         or pid not in original and not series_candidate_allowed(data, shift, pid))):
                 continue
