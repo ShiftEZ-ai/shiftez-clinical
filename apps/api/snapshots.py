@@ -1097,6 +1097,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         from .workspace_baselines import frozen_department_settings
         department_settings = {**department_settings, **frozen_department_settings(
             result, workspace.department_id, baseline.included_sources)}
+        result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
