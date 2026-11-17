@@ -140,6 +140,12 @@ def build_cut(runs, measurements, root, config, maker, baseline, baseline_sha, e
     return raw,failures,skips
 
 
+def validate_source(root):
+    if (policy.git("rev-parse", root["sha"] + "^{tree}").decode().strip() != root["tree"]
+            or policy.git("merge-base", root["base_sha"], root["sha"]).decode().strip() != root["base_sha"]):
+        raise ValueError("Audited PR1 tree/root-ancestor identity differs")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr1-head",required=True)
@@ -154,8 +160,7 @@ def main():
     capture = policy.decode(args.capture.read_bytes())
     validate_capture(capture,root)
     require_dispatch_expiry(capture,config)
-    if policy.git("show","-s","--format=%T:%P",root["sha"]).decode().strip() != root["tree"]+":"+root["base_sha"]:
-        raise ValueError("Audited PR1 tree/root-parent identity differs")
+    validate_source(root)
     sys.path.insert(0,str(trusted_ci.TRUSTED / "ci"))
     import make_known_failures as maker
     from trusted_verdict import assert_inventory
