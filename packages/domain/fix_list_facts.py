@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from packages.contracts.rule_catalogue import FIX_LIST_WORDS
 from packages.contracts.schemas import FIX_ACTION_GROUPS, FIX_GROUP_LABELS
+from .finding_causes import DUTIES_DURING_APPROVED_LEAVE
 from .time import aware
 
 
@@ -204,6 +205,8 @@ def ordered_fixes(action, scope, evidence, *, safety, session_locks):
         sid = unlocked[0]
         key = next((row['finding_key'] for row in evidence if sid in row['shift_ids']), None)
         add('assign_supervisor' if supervision else 'assign', chosen_scope={**scope, 'shift_id': sid, 'finding_key': key})
+    if scope.get('classification') == DUTIES_DURING_APPROVED_LEAVE:
+        add(action)
     if count == 0 and (cover or supervision):
         add('open_eligibility')
     if count != 0 or not (cover or supervision):

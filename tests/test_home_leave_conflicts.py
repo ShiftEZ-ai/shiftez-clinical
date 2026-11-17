@@ -59,6 +59,8 @@ def test_fix_list_uses_the_home_leave_classification_and_offers_cover(database):
     assert len(leave) == 1
     cause = leave[0]
     assert cause['checks'] >= 1 and cause['action']['kind'] == 'choose_cover'
+    assert cause['eligible_people'] == 0
+    assert [fix['kind'] for fix in cause['fixes']][:2] == ['choose_cover', 'open_eligibility']
     assert cause['action']['scope']['classification'] == DUTIES_DURING_APPROVED_LEAVE
     assert cause['action']['scope']['shift_ids'] == [h.detail(checked['id'])['shifts'][0]['id']]
     item = next(i for i in h.get('coordinator', '/api/home')['attention'] if i['key'] == 'leave_conflicts')
