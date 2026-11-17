@@ -8,7 +8,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, navigate, route_fetch  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, route_fetch, pick_view  # noqa: F401
+from .test_browser_schedule import show
 
 pytestmark = pytest.mark.browser
 
@@ -102,3 +103,68 @@ def test_out_of_date_review_is_needs_resubmitting_only(browser, live_server, h, 
         expect(help).to_have_attribute('data-tip', re.compile('can’t be approved'))
     finally:
         context.close()
+
+
+def approved_rota(h, name):
+    w = h.shift(h.workspace(name, '2026-10-04', '2026-10-11'))['workspace']
+    w = h.lifecycle(w, 'submit')['workspace']
+    return h.lifecycle(w, 'approve', 'approver')['workspace']
+
+
+def planner_verdict(page, text, publish):
+    bar = page.locator('.topbar .planner-bar')
+    expect(bar.locator('.rota-status')).to_have_text(text)
+    expect(bar.get_by_role('button', name='Publish…', exact=True)).to_have_count(1 if publish else 0)
+
+
+def test_approved_stale_rota_keeps_one_verdict_while_switching_week_month_day_and_list(browser, live_server, h):
+    w = approved_rota(h, 'Golden-like approved rota')
+    h.policy({'kind': 'max_hours', 'hours': 100, 'window': 'week'})  # inputs change after approval
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        show(page, f'schedule/week/2026-10-04?edit={w["id"]}')
+        for i, view in enumerate(('Week', 'Month', 'Day', 'List')):
+            if i:
+                pick_view(page, view)
+            planner_verdict(page, 'Needs resubmitting', False)
+        pick_view(page, 'Week')
+        planner_verdict(page, 'Needs resubmitting', False)
+    finally:
+        context.close()
+
+
+def test_approved_current_rota_offers_publish_in_every_planner_view(browser, live_server, h):
+    w = approved_rota(h, 'Golden-like current rota')
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        show(page, f'schedule/week/2026-10-04?edit={w["id"]}')
+        for i, view in enumerate(('Week', 'Month', 'Day', 'List')):
+            if i:
+                pick_view(page, view)
+            planner_verdict(page, 'Approved', True)
+    finally:
+        context.close()
+
+
+def test_approved_stale_rota_note_and_reopen_follow_the_actor(browser, live_server, h):
+    w = approved_rota(h, 'Golden-like approved actor states')
+    h.policy({'kind': 'max_hours', 'hours': 100, 'window': 'week'})  # inputs change after approval
+    approver_context, approver = sign_in(browser, live_server, 'approver', viewport={'width': 1440, 'height': 900})
+    coordinator_context, coordinator = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        show(approver, f'schedule/week/2026-10-04?edit={w["id"]}')
+        approver_bar = approver.locator('.topbar .planner-bar')
+        expect(approver_bar.locator('.rota-status')).to_have_text('Needs resubmitting')
+        expect(approver_bar.get_by_role('button', name='Reopen as draft', exact=True)).to_have_count(0)
+        note = approver_bar.locator('.health-pill.info').filter(has_text='Waiting for the coordinator')
+        expect(note).to_be_visible()
+        expect(note).to_have_attribute('data-tip', re.compile(r'the coordinator reopens it'))
+
+        show(coordinator, f'schedule/week/2026-10-04?edit={w["id"]}')
+        coordinator_bar = coordinator.locator('.topbar .planner-bar')
+        expect(coordinator_bar.locator('.rota-status')).to_have_text('Needs resubmitting')
+        expect(coordinator_bar.get_by_role('button', name='Reopen as draft', exact=True)).to_be_visible()
+        expect(coordinator_bar.locator('.health-pill.info').filter(has_text='Waiting for the coordinator')).to_have_count(0)
+    finally:
+        approver_context.close()
+        coordinator_context.close()

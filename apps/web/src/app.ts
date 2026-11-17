@@ -137,6 +137,7 @@ import {tabs as sharedTabs} from './dom.js';  // the one tab set (UX › control
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
+import {rotaOutdated} from './dom.js';  // one rota verdict
 
 applyTheme();
 const root=document.querySelector('#app')!;
@@ -2451,7 +2452,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Whoever created or last edited the rota cannot approve it; say so instead of offering a button that fails.
     const ownWork=!mayDecide(me!,'rota.approve',data?.reviewer_involved??[w.created_by,w.last_edited_by].includes(me!.identity_id));  // the server's contributor test
     // Submitted, but rules, people or availability changed since: approving or publishing would be refused.
-    const outdated=['submitted','approved'].includes(w.status)&&(data?!!data.review_progress?.stale_inputs:!!w.outdated);
+    // the window carries the compact detail's review_progress, so Week reads the same server field as the whole rota.
+    const outdated=rotaOutdated(w,draftData);
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
@@ -2476,10 +2478,14 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
-    if(['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR))workflow.append(outdated
+    // One predicate for Reopen: the note below shows exactly when the button does not.
+    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
+    // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
+    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children])compact(b);
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
@@ -3984,7 +3990,8 @@ function rotaStatusPill(w:Row,outdated=false){
   // resubmitting", never also "Waiting for approval".
   const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
-  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'');
+  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
+    +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
 }
 /** The Fix list's top bar (A1): the rota switcher (another rota's Fix list, or this rota's schedule), its stage, and the
