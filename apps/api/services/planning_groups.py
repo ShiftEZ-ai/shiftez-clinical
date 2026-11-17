@@ -400,29 +400,52 @@ def _generation_group_context(db, actor, workspace, value):
     scope = value.generation_scope or s.GenerationScope(conditions=definition['membership'])
     lookahead = value.lookahead or settings_definition(db, actor.department_id)['group_lookahead']
     value.lookahead = lookahead
-    selected = value.session_ids or list(db.scalars(select(m.Shift.id).where(
-        m.Shift.workspace_id == workspace.id).order_by(m.Shift.start, m.Shift.id)))
     return selected_group, versions, {
         'planning_group_version_id': selected_group['id'],
         'planning_group_id': selected_group['group_id'],
         'lookahead': lookahead,
         'planning_context': {'group_version_id': selected_group['id'], 'group_id': selected_group['group_id'],
-            'protection': scope.protection, 'selected_session_ids': sorted(selected)},
+            'protection': scope.protection},
     }, default_scope
 
 
-def guard_generation(db, actor, workspace, snapshot, value, *, enqueue=False):
+def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
+    from packages.domain.generation_scope import has_population, selected_session_ids
+
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
-    if enqueue:
+    enqueue = snapshot is None
+    check_nonempty = enqueue and value.generation_scope is not None
+    if versions is None and not check_nonempty:
         return metadata
-    if versions is None:
-        return
-    from packages.domain.generation_scope import population_allows
-    resolver = GroupResolver(snapshot, versions)
+    if enqueue:
+        from apps.api.snapshots import domain_snapshot
+        snapshot = domain_snapshot(db, workspace, include_fairness=False,
+                                   include_objectives=False, include_fairness_history=False)
     scope = (s.GenerationScope(conditions=selected_group['definition']['membership'])
              if default_scope else value.generation_scope)
     requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None}
-    selected = set(value.session_ids or snapshot['focus_ids'])
+    selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
+    if versions is not None:
+        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope)
+    if check_nonempty:
+        requested['generation_session_ids'] = selected
+        require(has_population(requested), 'INVALID_SCOPE',
+                'No people match this group during the selected duties; change the population or duty selection', 422)
+    if selected_group:
+        metadata['planning_context']['selected_session_ids'] = sorted(selected)
+        if not enqueue and not frozen:
+            snapshot.update({**metadata,
+                'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
+                'planning_group_versions': versions})
+            if default_scope:
+                snapshot['generation_scope'] = requested['generation_scope']
+    return metadata
+
+
+def _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope):
+    from packages.domain.generation_scope import population_allows
+
+    resolver = GroupResolver(snapshot, versions)
     population = {}
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
@@ -438,13 +461,15 @@ def guard_generation(db, actor, workspace, snapshot, value, *, enqueue=False):
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
-    if selected_group:
-        snapshot.update({**metadata,
-            'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
-            'planning_group_versions': versions,
-            'planning_context': {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}})
-        if default_scope:
-            snapshot['generation_scope'] = scope.model_dump(mode='json')
+    return population
+
+
+def guard_frozen_generation(db, actor, workspace, snapshot):
+    value = s.JobInput(workspace_id=workspace.id, kind='generation',
+                       generation_scope=snapshot.get('generation_scope'),
+                       planning_group_version_id=snapshot.get('planning_group_version_id'),
+                       lookahead=snapshot.get('lookahead'))
+    guard_generation(db, actor, workspace, snapshot, value, frozen=True)
 
 
 def guard_job_control(db, actor, job):

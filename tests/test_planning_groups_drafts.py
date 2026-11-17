@@ -391,14 +391,56 @@ def test_private_limits_archive_restore_and_age_settings_preserve_evidence(h):
     h.command('coordinator', 'workspace.restore', {'reason': REASON}, workspace['id'], archived['revision'])
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_generation_rejects_broader_populations_and_accepts_owned_conditions(h):
-    workspace, shift, _ = integrated(h)
-    refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation'},
-        revision=workspace['revision'], status=403)
+    workspace, _, group_row = integrated(h)
+    payload = {'workspace_id': workspace['id'], 'kind': 'generation'}
+    owned, other = h.seed['people'][:2]
+    broad = {'generation_scope': {'conditions': tree(owned, other)}}
+    for extra in ({}, broad, {**broad, 'planning_group_version_id': group_row['id']}):
+        refused = h.command('coordinator', 'job.create', {**payload, **extra},
+            revision=workspace['revision'], status=403)
+        assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+        assert refused['error']['message'] == 'Choose only your scheduling group population'
+    with transaction(h.app.state.engine) as db:
+        assert not db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'], m.Job.kind == 'generation'))
+
+    accepted = h.command('coordinator', 'job.create', {**payload,
+        'generation_scope': {'conditions': tree(owned)}}, revision=workspace['revision'])['job']
+    assert accepted['status'] == 'queued'
+    h.command('coordinator', 'job.cancel', {'reason': REASON}, accepted['id'])
+    unrestricted = h.command('admin', 'job.create', payload, revision=workspace['revision'])['job']
+    assert unrestricted['status'] == 'queued'
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_generation_continuation_rechecks_group_authority(h):
+    from dataclasses import replace
+
+    from apps.api.main import create_app
+    from apps.worker.main import process_one
+
+    h.app.state.engine.dispose()
+    h.settings = replace(h.settings, generation_engine='cp_sat')
+    h.app = create_app(h.settings)
+    workspace, _, _ = integrated(h)
+    configured = {'coordinator_identity_ids': [h.seed['identities']['coordinator']]}
+    settings(h, **configured)
+    job = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation'},
+        revision=workspace['revision'])['job']
+    assert process_one(h.app.state.engine, scheduler=lambda *_args, **_kwargs: {'status': 'needs_more_time'})
+
+    settings(h)
+    refused = h.command('coordinator', 'job.continue', {'reason': REASON}, job['id'], status=403)
     assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
-    accepted = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
-        'generation_scope': {'conditions': tree(h.seed['people'][0])}}, revision=workspace['revision'])
-    assert accepted['job']['status'] == 'queued'
+
+    settings(h, **configured)
+    continued = h.command('coordinator', 'job.continue', {'reason': REASON}, job['id'])['job']
+    assert continued['status'] == 'queued'
+    settings(h)
+    assert process_one(h.app.state.engine, scheduler=lambda *_args, **_kwargs: pytest.fail('Ran without group authority'))
+    failed = h.get('coordinator', '/api/jobs/' + continued['id'])['job']
+    assert failed['status'] == 'failed' and failed['error_code'] == 'GROUP_GENERATION_SCOPE'
 
 
 def test_generation_apply_and_bulk_cannot_bypass_current_slice_authority(h):

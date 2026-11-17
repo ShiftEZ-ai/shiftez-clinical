@@ -145,7 +145,7 @@ def test_deferred_group_worker_rechecks_changed_authority(h):
     h.command('admin', 'planning_group.update', {'definition': {**first['definition'],
         'owner_identity_ids': [h.seed['identities']['admin']]}, 'reason': REASON}, first['group_id'], first['revision'])
     from apps.worker.main import process_one
-    assert process_one(h.app.state.engine)
+    assert process_one(h.app.state.engine, scheduler=lambda *_args, **_kwargs: pytest.fail('Ran without group authority'))
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job['id'])
         assert row.status == 'failed' and row.error_code == 'GROUP_VERSION_SCOPE'

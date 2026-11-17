@@ -1120,14 +1120,15 @@ def prune_generation_state(engine, *, settings=None):
 
 
 def prepare_deferred_generation(engine, claim, settings):
-    """Freeze a queued auto-schedule request only after the worker leases it."""
-    if claim['kind'] != 'generation' or not claim['input'].get('_deferred_generation'):
+    """Recheck generation authority and freeze new requests after leasing them."""
+    if claim['kind'] != 'generation':
         return
+    deferred = claim['input'].get('_deferred_generation')
     from apps.api.errors import require
     from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
-    from apps.api.services.planning_groups import guard_generation
+    from apps.api.services.planning_groups import guard_frozen_generation, guard_generation
     from apps.api.snapshots import domain_snapshot
     from packages.contracts import schemas as s
     from packages.domain.generation_scope import has_population
@@ -1137,11 +1138,9 @@ def prepare_deferred_generation(engine, claim, settings):
         require(job is not None and job.status == 'running' and job.attempts == claim['attempt'],
                 'STALE_INPUTS', 'The auto-schedule request is no longer current', 409)
         workspace = db.get(m.Workspace, job.workspace_id)
-        requested = claim['input'].get('generation_request') or {}
-        value = s.JobInput.model_validate(requested)
-        expected_revision = claim['input'].get('workspace', {}).get('revision')
-        require(workspace is not None and workspace.revision == expected_revision and workspace.status == 'draft'
-                and workspace.archived_at is None, 'STALE_INPUTS',
+        require(workspace is not None and workspace.status == 'draft' and workspace.archived_at is None
+                and (not deferred or workspace.revision == claim['input'].get('workspace', {}).get('revision')),
+                'STALE_INPUTS',
                 'The rota changed before auto-scheduling started', 409)
         identity = db.get(m.Identity, job.requested_by)
         require(identity is not None and not identity.disabled, 'ACCESS_REVOKED', 'The requester no longer has access', 403)
@@ -1150,6 +1149,10 @@ def prepare_deferred_generation(engine, claim, settings):
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
+        if not deferred:
+            guard_frozen_generation(db, actor, workspace, claim['input'])
+            return
+        value = s.JobInput.model_validate(claim['input'].get('generation_request') or {})
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
         options = s.GenerationOptions.model_validate(claim['input'].get('generation_options') or {})
@@ -1422,7 +1425,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         monitor = threading.Thread(target=maintain_lease, daemon=True)
         monitor.start()
         try:
-            if claim["kind"] == "generation":
+            if error is not None:
+                pass  # A preparation refusal must reach the job receipt without running the solver.
+            elif claim["kind"] == "generation":
                 if claim['input'].get('generation_scope') is not None:
                     identity = proof_identity.identity()
                     if identity is None or identity['source_digest'] != claim['input'].get('generation_scope_source'):
