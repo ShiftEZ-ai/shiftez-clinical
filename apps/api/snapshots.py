@@ -32,15 +32,24 @@ class DomainSnapshot(dict):
 class SnapshotInputRead:
     """Fields, row predicate and source dependency consumed by a live reader."""
     columns: frozenset[str]
-    where: tuple[str, str] | None = None
+    where: tuple[str, str | frozenset[str]] | None = None
     requires: str | None = None
     projection: object = None
     inserted_scope: object = None
+    insert_only: bool = False
 
 
 def _input_read(name, cls, category, scope, columns, *, where=None, requires=None, projection=None, inserted_scope=None, exclude=()):
     shape = SnapshotInputRead(frozenset(columns), where, requires, projection, inserted_scope)
     return name, cls, category, scope, shape, (frozenset(cls.__table__.columns.keys()) - shape.columns) | frozenset(exclude)
+
+
+# These are the kind predicates used by the historical snapshot readers.
+POLICY_HISTORY_KIND = 'policy'
+EXCEPTION_HISTORY_KIND = 'exception'
+SCHEDULING_FACT_HISTORY_KIND = 'scheduling_fact'
+SCHEDULING_HISTORY_KINDS = (SCHEDULING_FACT_HISTORY_KIND, 'catalogue_conversion')
+DATE_SET_HISTORY_KIND = 'date_sets'
 
 
 # One registry owns the tables that can change a prepared snapshot's inputs.
@@ -96,6 +105,10 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     # copied into the shared catalogue projection above.
     ('organisation', m.Organisation, 'general', 'organisation', None, frozenset({'revision', 'input_revision', 'availability_revision'})),
     ('publications', m.Publication, 'general', 'department', None, frozenset()),
+    ('definition_history', m.DefinitionHistory, 'general', 'department',
+        SnapshotInputRead(frozenset(), where=('kind', frozenset({
+            POLICY_HISTORY_KIND, EXCEPTION_HISTORY_KIND, *SCHEDULING_HISTORY_KINDS, DATE_SET_HISTORY_KIND,
+        })), insert_only=True), frozenset()),
     ('staff_wishes', m.StaffWish, 'general', 'department', None, frozenset()),
     ('wish_overrides', m.WishOverride, 'general', 'department', None, frozenset()),
     ('rotation_attachments', m.RotationAttachment, 'general', None, None, frozenset()),
@@ -652,7 +665,7 @@ def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False):
     # never every historical definition. The ordering matches the former chronological overwrite.
     latest = select(H.id, func.row_number().over(partition_by=H.object_id,
         order_by=(H.created_at.desc(), H.object_revision.desc())).label('position')).where(
-            H.kind == 'policy', H.object_id.in_(ids), H.created_at <= when).subquery()
+        H.kind == POLICY_HISTORY_KIND, H.object_id.in_(ids), H.created_at <= when).subquery()
     then = {ident: snapshot for ident, snapshot in db.execute(select(H.object_id, H.snapshot)
         .join(latest, H.id == latest.c.id).where(latest.c.position == 1))}
     out = []
@@ -669,7 +682,7 @@ def exceptions_as_of(db, exceptions, publication):
     used = {(f.get('detail') or {}).get('exception_id') for f in (publication.validation or {}).get('findings', [])
             if f.get('code') == 'RULE_EXCEPTION'} - {None}
     versions, retained = {}, {}
-    for row in db.scalars(select(m.DefinitionHistory).where(m.DefinitionHistory.kind == 'exception',
+    for row in db.scalars(select(m.DefinitionHistory).where(m.DefinitionHistory.kind == EXCEPTION_HISTORY_KIND,
             m.DefinitionHistory.object_id.in_([e['id'] for e in exceptions])).order_by(
                 m.DefinitionHistory.created_at, m.DefinitionHistory.object_revision)):
         if aware(row.created_at) <= aware(publication.created_at):
@@ -716,7 +729,7 @@ def scheduling_inputs(db, department_ids, when=None, *, include_offer_history=Fa
         versions = {}
         for row in db.scalars(select(m.DefinitionHistory).where(
                 m.DefinitionHistory.department_id.in_(department_ids),
-                m.DefinitionHistory.kind.in_(("scheduling_fact", "catalogue_conversion")),
+                m.DefinitionHistory.kind.in_(SCHEDULING_HISTORY_KINDS),
                 m.DefinitionHistory.created_at <= when).order_by(
                     m.DefinitionHistory.created_at, m.DefinitionHistory.object_revision)):
             versions[row.object_id] = row.snapshot
@@ -744,7 +757,7 @@ def _offer_history(db, facts, when=None):
     """Retirement cutoffs are needed only for fairness's historical offered windows."""
     retired_ids = [r['id'] for r in facts if r['kind'] == 'overtime_offer' and r['status'] == 'retired' and r.get('approved_by')]
     if retired_ids:
-        query = select(m.DefinitionHistory).where(m.DefinitionHistory.kind == 'scheduling_fact',
+        query = select(m.DefinitionHistory).where(m.DefinitionHistory.kind == SCHEDULING_FACT_HISTORY_KIND,
                                                  m.DefinitionHistory.object_id.in_(retired_ids))
         if when is not None:
             query = query.where(m.DefinitionHistory.created_at <= when)
@@ -1091,7 +1104,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             from .errors import require
             H = m.DefinitionHistory
             snapshots = [snapshot for snapshot in db.scalars(select(H.snapshot).where(
-                H.department_id == workspace.department_id, H.kind == 'policy',
+                H.department_id == workspace.department_id, H.kind == POLICY_HISTORY_KIND,
                 tuple_(H.object_id, H.object_revision).in_(list(admitted.items()))).order_by(H.object_id))
                 if snapshot.get('status') == 'active' and snapshot.get('approved_by')]
             require({snapshot['id'] for snapshot in snapshots} == set(admitted), 'BOUND_PREVIEW_CONTEXT',

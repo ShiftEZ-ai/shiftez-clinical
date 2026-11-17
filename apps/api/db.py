@@ -211,7 +211,9 @@ def _snapshot_input_row_is_read(session, shape, row, changes=None):
             cls = type(row)
             previous = session.scalar(select(getattr(cls, name)).where(
                 *(column == value for column, value in zip(inspect(cls).primary_key, state.identity))))
-    return any(value is NO_VALUE or isinstance(value, ClauseElement) or value == expected for value in (previous, current))
+    return any(value is NO_VALUE or isinstance(value, ClauseElement)
+               or (value in expected if isinstance(expected, frozenset) else value == expected)
+               for value in (previous, current))
 
 
 def _snapshot_projected_change(session, shape, row, changes=None):
@@ -256,6 +258,8 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         if isinstance(row, m.CatalogueConversion) and row in session.new and row.status == 'proposed':
             continue
         category, shape, exclusions = spec
+        if getattr(shape, 'insert_only', False) and row not in session.new:
+            continue
         if row in session.new and not snapshot_inserted_row_is_read(session, shape, row):
             continue
         if not _snapshot_input_row_is_read(session, shape, row):
@@ -297,6 +301,8 @@ def stamp_snapshot_input_statement(execution):
     if spec is None:
         return
     _name, cls, category, _scope, shape, exclusions = spec
+    if getattr(shape, 'insert_only', False) and not execution.is_insert:
+        return
     scope_columns = _snapshot_input_scope_columns(cls)
     if getattr(shape, 'where', None) is not None:
         scope_columns = scope_columns | {shape.where[0]}

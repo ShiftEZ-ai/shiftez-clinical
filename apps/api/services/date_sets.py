@@ -104,8 +104,9 @@ def data(db, department_ids, when=None, *, acquired=None):
         return {row.id: record(row) for row in db.scalars(select(m.DateSet).where(
             m.DateSet.department_id.in_(department_ids)).order_by(m.DateSet.name, m.DateSet.id))}
     versions = {}
+    from apps.api.snapshots import DATE_SET_HISTORY_KIND
     for row in db.scalars(select(m.DefinitionHistory).where(
-            m.DefinitionHistory.department_id.in_(department_ids), m.DefinitionHistory.kind == 'date_sets',
+            m.DefinitionHistory.department_id.in_(department_ids), m.DefinitionHistory.kind == DATE_SET_HISTORY_KIND,
             m.DefinitionHistory.created_at <= when).order_by(
                 m.DefinitionHistory.created_at, m.DefinitionHistory.object_revision)):
         versions[row.object_id] = row.snapshot

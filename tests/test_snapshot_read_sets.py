@@ -6,7 +6,7 @@ from sqlalchemy import delete, event as sql_event, insert, literal, select, upda
 from sqlalchemy.sql import visitors
 
 from apps.api import models as m, snapshots
-from apps.api.db import transaction
+from apps.api.db import snapshot_input_listener_classes, transaction
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from apps.api.services import audiences, availability_patterns
 from tests.test_events import event, event_type, input_revisions
@@ -75,6 +75,57 @@ def test_declared_snapshot_read_sets_match_consumed_attributes():
     assert specs[cls][4].columns == pattern.read | predicate_columns
     for cls in (m.Identity, m.RoleBinding, m.AvailabilityPattern):
         assert specs[cls][-1] == set(cls.__table__.columns.keys()) - specs[cls][4].columns
+
+
+def test_historical_acquisition_has_the_expected_revision_owners():
+    owned = {m.Workspace.__table__}
+    while linked := {table for table in m.Base.metadata.tables.values() if table not in owned
+                     and any(key.column.table in owned for key in table.foreign_keys)}:
+        owned.update(linked)
+    workspace_tables = {m.Assignment, m.ShiftService, m.Shift, m.Job, m.WorkspaceAccessVersion, m.WorkspaceBaseline}
+    assert {cls.__table__ for cls in workspace_tables} <= owned
+
+    listeners = snapshot_input_listener_classes()
+    ordinal_sources = {node.name for cls in listeners if issubclass(cls, m.InsertionOrdered)
+                       for node in visitors.iterate(cls.seq.__clause_element__())
+                       if node is m.Base.metadata.tables['record_insertions']}
+    assert m.Base.metadata.tables['record_insertions'] not in owned
+    assert ordinal_sources == {'record_insertions'}
+    assert m.DefinitionHistory.__table__ not in owned
+    assert listeners[m.DefinitionHistory] == 'general'
+    _, _, _, scope, shape, _ = next(spec for spec in snapshots.snapshot_input_specs() if spec[1] is m.DefinitionHistory)
+    assert scope == 'department' and shape.insert_only
+
+
+@pytest.mark.parametrize('kind', ['policy', 'bulk_staged'])
+def test_history_insert_stamps_only_historical_snapshot_inputs(backend, kind):
+    from copy import deepcopy
+
+    h = backend
+    policy = h.policy({'kind': 'min_rest', 'hours': 1})
+    published = h.publish(h.shift(h.workspace())['workspace'])
+    workspace = published['workspace']
+    with transaction(h.app.state.engine) as db:
+        publication = db.get(m.Publication, published['publication_id'])
+        created_at = publication.created_at
+        source = db.get(m.Policy, policy['id'])
+        definition = deepcopy(source.definition)
+
+    before = h.snapshot(workspace)['fingerprint']
+    revisions = input_revisions(h)
+    for index, hours in enumerate((2, 3), start=1):
+        definition['rule']['hours'] = hours
+        changed = {**policy, 'revision': policy['revision'] + index, 'definition': definition}
+        with transaction(h.app.state.engine, write=True) as db:
+            db.execute(insert(m.DefinitionHistory.__table__).values(
+                department_id=h.seed['department_id'], kind=kind, object_id=policy['id'],
+                object_revision=changed['revision'], snapshot=changed, actor_id=h.seed['identities']['approver'],
+                reason='Synthetic history append', created_at=created_at - timedelta(microseconds=3-index)))
+        after = h.snapshot(workspace)['fingerprint']
+        current = input_revisions(h)
+        assert (after != before) == (kind == 'policy')
+        assert current == (revisions[0] + (kind == 'policy'), revisions[1])
+        before, revisions = after, current
 
 
 @pytest.mark.parametrize('writer', ['flush', 'update', 'core', 'bulk', 'delete', 'insert', 'insert_select'])

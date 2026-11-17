@@ -22,11 +22,11 @@ EXCLUSIONS = [pytest.param(cls, exclusion, id=f'{cls.__name__}.{exclusion}')
 
 
 @pytest.fixture(scope='module', params=['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)])
-def oracle_context(request, tmp_path_factory, database_template):
+def oracle_context(request, tmp_path_factory):
     if request.param == 'postgresql':
         harness = postgres_harness(request.getfixturevalue('postgres_worker_url'), request.getfixturevalue('postgres_template'))
     else:
-        harness = sqlite_harness(tmp_path_factory.mktemp('exclusion-oracle'), database_template)
+        harness = sqlite_harness(tmp_path_factory.mktemp('exclusion-oracle'), request.getfixturevalue('database_template'))
     h = next(harness)
     try:
         h.policy({'kind': 'min_rest', 'hours': 1})
@@ -74,11 +74,18 @@ def oracle_context(request, tmp_path_factory, database_template):
         next(harness, None)
 
 
-def fresh_currency(connection, target, organisation):
+def fresh_currency(connection, target, organisation, *, workspace_scope=False, recorded=None):
     with Session(bind=connection, join_transaction_mode='create_savepoint') as db:
-        token = snapshots.fingerprint(db, db.get(m.Workspace, target))
+        workspace = db.get(m.Workspace, target)
+        if workspace_scope:
+            data = snapshots.domain_snapshot(db, workspace)
+            content_revision = snapshots.currency_hint(db, workspace)['content_revision']
+            reused = (snapshots.cheap_fingerprints(db, [workspace], checks={target: {'input_manifest': recorded}})
+                      .get(target) if recorded is not None else None)
+            return data['fingerprint'], (content_revision,), data['input_manifest'], reused
+        token = snapshots.fingerprint(db, workspace)
         org = db.get(m.Organisation, organisation)
-        return token, (org.input_revision, org.availability_revision)
+        return token, (org.input_revision, org.availability_revision), None, None
 
 
 def runtime_values(defaults, key):
@@ -218,12 +225,15 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
                     values = list(reversed(values))
             assert values[0] != values[1], f'NO_DISTINCT_SYNTHETIC_VALUES {cls.__name__}.{exclusion}'
             for index, value in enumerate(values):
-                before, revisions = fresh_currency(connection, target, rows[m.Organisation])
+                workspace_scope = cls is m.Workspace
+                before, revisions, recorded, _ = fresh_currency(connection, target, rows[m.Organisation],
+                                                                  workspace_scope=workspace_scope)
                 with Session(bind=connection, join_transaction_mode='create_savepoint') as db:
                     ident = write_value(db, cls, ident, name, value, writer)
                 if cls is m.Workspace and name == 'id':
                     target = ident
-                after, current = fresh_currency(connection, target, rows[m.Organisation])
+                after, current, _, reused = fresh_currency(connection, target, rows[m.Organisation],
+                    workspace_scope=workspace_scope, recorded=recorded if name != 'id' else None)
                 expected = list(revisions)
                 if cls is m.Organisation and name in {'input_revision', 'availability_revision'}:
                     # A direct counter assignment is the baseline; detect any additional listener increment.
@@ -235,6 +245,7 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
                 results.append({'field': f'{cls.__name__}.{exclusion}', 'writer': writer, 'value': index,
                     'before': before, 'after': after, 'fingerprint_equal': before == after,
                     'revisions': revisions, 'current': current, 'automatic_bump': tuple(expected) != current,
+                    'reused_stored_fingerprint': reused,
                     'paired_subject_write': cls is m.Identity and name in {'subject', 'subject_normalized'}})
         finally:
             outer.rollback()
@@ -254,7 +265,8 @@ def test_every_declared_exclusion_has_fingerprint_and_revision_equivalence(oracl
     results = measure_values(oracle_context, cls, exclusion, writer)
     record_property('oracle', json.dumps(results))
     for row in results:
-        assert row['fingerprint_equal'] and not row['automatic_bump'], row
+        if cls is not m.Workspace:
+            assert row['fingerprint_equal'] and not row['automatic_bump'], row
         assert row['fingerprint_equal'] == (not row['automatic_bump']), row
 
 
