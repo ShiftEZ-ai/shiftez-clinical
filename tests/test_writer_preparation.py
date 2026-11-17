@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import event, select, update
+from sqlalchemy.orm import defer
 
 from apps.api import db as database, models as m
 from apps.api.db import transaction
+from apps.api.serialization import job_result_metadata
 from apps.api.services import jobs, planning
 from packages.domain.validation import INTERNAL_CHECK_KEYS
 from tests.test_published_changes import change, issued
@@ -377,6 +379,41 @@ def test_legacy_job_metadata_recovers_generation_manifest_on_result_change(harne
         row.result = {**row.result, 'applied_content_revision': 999}
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Job, job['id']).read_metadata['result']['generation_manifest'] == manifest
+
+
+@pytest.mark.parametrize('frozen_loaded', [False, True])
+def test_legacy_job_result_update_recovers_manifest_with_bounded_input_reads(harness, frozen_loaded):
+    h = harness
+    workspace = h.workspace()
+    manifest = {'baseline': {'hash': 'legacy-manifest'}}
+    snapshot = {'generation_manifest': manifest, 'frozen': ['retained input'] * 2000}
+    result = {'status': 'candidate_feasible', 'applied_content_revision': 17}
+    with transaction(h.app.state.engine, write=True) as db:
+        job = m.Job(department_id=h.seed['department_id'], workspace_id=workspace['id'],
+            requested_by=h.seed['identities']['coordinator'], kind='generation', status='succeeded',
+            supersedes=[], input_fingerprint='frozen', input_snapshot=snapshot,
+            result={'status': 'candidate_feasible', 'frozen': ['retained result'] * 2000},
+            read_metadata={'input_snapshot': {}, 'result': {'status': 'candidate_feasible'}})
+        db.add(job)
+        db.flush()
+        job_id = job.id
+    with transaction(h.app.state.engine, write=True) as db:
+        options = [defer(m.Job.result)] + ([] if frozen_loaded else [defer(m.Job.input_snapshot)])
+        row = db.get(m.Job, job_id, options=options)
+        statements = []
+        stop = job_columns_read(h.app.state.engine, statements)
+        try:
+            row.result = result
+            db.flush()
+        finally:
+            stop()
+        assert len(statements) == (0 if frozen_loaded else 1)
+        assert all('jobs.input_snapshot' in sql and 'jobs.result' not in sql for sql in statements)
+        assert row.read_metadata['result'] == {
+            **job_result_metadata(result, include_error_detail=True), 'generation_manifest': manifest}
+    with transaction(h.app.state.engine) as db:
+        stored = db.get(m.Job, job_id)
+        assert stored.input_snapshot == snapshot and stored.result == result
 
 
 def redo_after_undone_batch(h, sessions, person):
