@@ -91,8 +91,12 @@ def test_on_behalf_batch_needs_no_self_approval_or_note(database):
     assert result["count"] == 2
     assert all(row["status"] == "approved" and row["created_by"] == row["decided_by"] == reviewer
                for row in result["records"])
-    event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "request.decide_many")
-    assert event["detail"]["entered_on_behalf_by"] == [reviewer]
+    events = h.get("auditor", "/api/audit")["events"]
+    decisions = [e for e in events if e["action"] == "request.decide"]
+    assert {e["target_id"] for e in decisions} == {row["id"] for row in rows}
+    assert all(e["detail"]["entered_on_behalf_by"] == [reviewer] for e in decisions)
+    event = next(e for e in events if e["action"] == "request.decide_many")
+    assert "entered_on_behalf_by" not in event["detail"]
     assert not h.get("auditor", "/api/audit?self_approved=true")["events"]
     assert_waiting(h, "request_reviewer", [])
 
@@ -332,6 +336,30 @@ def test_shared_subject_independence_matches_python_and_sql(database):
             query = independence.subject_independent(db, actor, tuple(literal(person, type_=String) for person in subjects), literal(enterer), sql=True)
             assert db.scalar(select(query)) is allowed
         assert "entered_on_behalf_by" not in db.info
+
+
+@pytest.mark.parametrize("source", ["request", "pattern"])
+def test_request_batch_decisions_keep_on_behalf_and_self_approval_audits_separate(database, source):
+    h = database
+    reviewer = identity(h, "request_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+    rows = [{**(request_row(h, "request_reviewer", person, kind="meeting") if source == "request" else
+                personal_entry(h, source, "request_reviewer", person)), "source": source}
+            for person in (h.seed["people"][1], h.seed["people"][0])]
+    permission = h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["request.decide"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit personal decision permission"})["permission"]
+    result = decide_many(h, rows, role="request_reviewer", reason="Reviewed both matters with independent cover")
+    assert result["count"] == 2 and all(row["stage"] == "approved" for row in result["records"])
+    events = h.get("auditor", "/api/audit")["events"]
+    action = "request.decide" if source == "request" else "availability_pattern.decide"
+    decisions = {e["target_id"]: e for e in events if e["action"] == action}
+    assert set(decisions) == {row["id"] for row in rows}
+    assert decisions[rows[0]["id"]]["detail"]["entered_on_behalf_by"] == [reviewer]
+    assert "self_approved" not in decisions[rows[0]["id"]]["detail"]
+    assert decisions[rows[1]["id"]]["detail"]["self_approved"] == [
+        {"action": "request.decide", "permission_id": permission["id"]}]
+    assert "entered_on_behalf_by" not in decisions[rows[1]["id"]]["detail"]
+    parent = next(e for e in events if e["action"] == "request.decide_many")
+    assert "entered_on_behalf_by" not in parent["detail"] and "self_approved" not in parent["detail"]
 
 
 def test_bulk_person_fact_decisions_keep_on_behalf_and_self_approval_audits_separate(database):
