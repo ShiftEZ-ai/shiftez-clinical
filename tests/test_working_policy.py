@@ -15,6 +15,7 @@ from unittest.mock import patch
 HELPERS = Path(__file__).resolve().parents[1] / ".github/scripts"
 if not HELPERS.is_dir():
     HELPERS = Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(HELPERS))
 import working_policy as policy
 import trusted_verdict as verifier

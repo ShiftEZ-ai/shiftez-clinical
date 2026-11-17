@@ -13,6 +13,7 @@ import zipfile
 
 HERE=Path(__file__).resolve().parents[1]/".github/scripts"
 if not HERE.is_dir(): HERE=Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0,str(HERE))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"ci"))
 if not (HERE/"hosted_ci.py").is_file(): sys.path.insert(0,str(HERE.parents[1]/"workflows-next/.github/scripts"))

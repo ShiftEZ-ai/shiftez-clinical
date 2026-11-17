@@ -11,6 +11,7 @@ from unittest.mock import patch
 import yaml
 HELPERS=Path(__file__).resolve().parents[1]/'.github/scripts'
 if not HELPERS.is_dir():HELPERS=Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0,str(HELPERS))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'ci'))
 if not (HELPERS/'hosted_ci.py').is_file():sys.path.insert(0,str(HELPERS.parents[1]/'workflows-next/.github/scripts'))
