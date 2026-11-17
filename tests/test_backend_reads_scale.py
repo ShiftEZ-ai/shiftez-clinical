@@ -29,7 +29,8 @@ def test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation(h, m
         workspace = db.get(m.Workspace, w['id'])
         current = workspace.validation['fingerprint']
         captured = []
-        assert snapshots.read_fingerprint(db, workspace, data_out=captured) == current
+        assert snapshots.cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}) == {
+            workspace.id: current}
         assert snapshots.fingerprints(db, [workspace]) == {workspace.id: current}
         assert calls == captured == []
         if changed == 'toolchain':
@@ -38,7 +39,9 @@ def test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation(h, m
         else:
             row = workspace if changed == 'content_revision' else db.get(m.Organisation, h.seed['organisation_id'])
             setattr(row, changed, getattr(row, changed) + 1)
-        rebuilt = snapshots.read_fingerprint(db, workspace, data_out=captured)
+        assert snapshots.cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}) == {}
+        rebuilt = snapshots.fingerprints(db, [workspace])[workspace.id]
+        captured.append(db.info['read_snapshots'][workspace.id])
         assert calls == [1] and len(captured) == 1
         assert rebuilt == captured[0]['input_manifest']['token']
         assert (rebuilt != current) == (changed in ('content_revision', 'toolchain'))

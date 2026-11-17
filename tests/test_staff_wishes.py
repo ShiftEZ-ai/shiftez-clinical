@@ -442,8 +442,10 @@ def test_run_catch_up_is_snapshotted_without_changing_staff_budgets_or_history(h
     h.command('admin', 'department.settings', {**department_settings(h),
         'generation_defaults': {'scoring': {'wish_budget_points': 0}}}, h.seed['department_id'],
         h.get('admin', '/api/me')['organisation']['revision'])
-    off = h.command('coordinator', 'job.create', {'workspace_id': nxt['id'], 'kind': 'generation',
-        'generation_options': {'scoring': {'wish_debt_cap': 3}}}, revision=nxt['revision'])['job']
+    disabled = h.shift(h.workspace(start='2026-10-11', end='2026-10-18'),
+        start='2026-10-12T08:00:00+03:00', end='2026-10-12T12:00:00+03:00', people=[])['workspace']
+    off = h.command('coordinator', 'job.create', {'workspace_id': disabled['id'], 'kind': 'generation',
+        'generation_options': {'scoring': {'wish_debt_cap': 3}}}, revision=disabled['revision'])['job']
     with transaction(h.app.state.engine, write=True) as db:
         claim = claim_job(db)
     assert claim and claim['id'] == off['id']

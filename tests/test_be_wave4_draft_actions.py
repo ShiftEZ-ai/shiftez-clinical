@@ -188,9 +188,31 @@ def test_move_cannot_leave_a_new_missing_team_lead(h):
     w = second['workspace']
     rows = {row['id']: row for row in h.detail(w)['shifts']}
     before = state(h, w)
-    error = post(h, command(w, rows[first['shift_id']], rows[second['shift_id']]), status=422)
-    assert error['error']['code'] == 'MOVE_INVALID'
-    assert state(h, w) == before
+    moved = post(h, command(w, rows[first['shift_id']], rows[second['shift_id']]))
+    assert any(f['code'] == 'LEAD_GAP' and f['severity'] == 'error' and f['shift_id'] == first['shift_id']
+               for f in moved['issues']['added'])
+    cause = next(c for c in moved['fix_list']['causes'] if any(
+        f['code'] == 'LEAD_GAP' and f['shift_id'] == first['shift_id'] for f in c['evidence']))
+    assert cause['level'] == 'must' and cause['safety'] is True and cause['acknowledgeable'] is False
+    assert moved['fix_list']['summary']['submit_blocked'] is True
+    after_move = state(h, w)
+    changed = {row['id']: row for row in after_move[0]['shifts']}
+    assert not changed[first['shift_id']]['participants']
+    assert changed[second['shift_id']]['participants'][0]['id'] == rows[first['shift_id']]['participants'][0]['id']
+    assert changed[second['shift_id']]['participants'][0]['team_lead'] is True
+    submit = {'kind': 'workspace.submit', 'target_id': w['id'],
+              'expected_revision': moved['workspace']['revision'], 'payload': {'reason': 'Review the missing team lead'}}
+    assert post(h, submit, status=422)['error']['code'] == 'VALIDATION_FAILED'
+    assert state(h, w) == after_move
+    assert after_move[0]['workspace']['status'] == 'draft'
+    submit['payload']['acknowledgements'] = [{'cause_id': cause['id'], 'reason': 'Try to acknowledge the safety gap'}]
+    assert post(h, submit, status=409)['error']['code'] == 'SAFETY_RULE'
+    detail, counts = state(h, w)
+    assert detail == after_move[0]
+    assert counts == (after_move[1][0], after_move[1][1] + 1, after_move[1][2], after_move[1][3])
+    restored = h.command('coordinator', 'workspace.undo', {'reason': 'Restore the original team lead'},
+                         w['id'], moved['workspace']['revision'])
+    assert h.detail(restored['workspace'])['shifts'] == before[0]['shifts']
 
 
 def test_move_refuses_full_lead_gap_target_as_no_open_place(h):
