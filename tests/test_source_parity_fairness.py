@@ -2,6 +2,7 @@
 import copy
 import math
 from datetime import date, timedelta
+from fractions import Fraction
 import time
 from unittest.mock import patch
 
@@ -58,6 +59,42 @@ def test_greedy_history_does_not_recount_nonfocus_publication_context():
     participant = {'person_id': A, 'start': current['start'], 'end': current['end'], 'overtime': False}
     assert marginal_cost(data, goal, current, participant, [(old, old['participants'][0])]) == marginal_cost(
         data, goal, current, participant, [])
+
+
+@pytest.mark.parametrize(('week_start', 'buckets'), [
+    (0, {'2026-10-05': 7, '2026-10-12': 7}),
+    (2, {'2026-09-30': 7, '2026-10-07': 7, '2026-10-14': 5}),
+])
+def test_period_spread_ignores_fixed_weeks_before_rota(week_start, buckets):
+    data = world([duty(1, 5, [A]), duty(2, 12, [A])], '2026-10-05', '2026-10-19')
+    data['organisation']['week_start'] = week_start
+    goal = configured(data, 'period_spread')
+    assert goal['definition']['rule']['period'] == 'rolling'
+    assert goal['definition']['rule']['period_months'] == 12
+    retained = {'person_id': A, 'bucket': min(buckets), 'total': 1}
+    data['fairness_history'] = {f.goal_identity(goal): {'distribution': [
+        {'person_id': A, 'bucket': '2026-09-21', 'total': 100}, retained]}}
+    plans = distribution_plan(data, goal)
+    person = [plan for plan in plans if plan['person_id'] == A]
+    assert {plan['bucket'] for plan in person} == set(buckets)
+    assert sum(value(plan['actual']) for plan in person) == 3
+    assert {plan['bucket']: value(plan['expected']) for plan in person} == {
+        bucket: Fraction(3 * days, sum(buckets.values())) for bucket, days in buckets.items()}
+    assert {value(plan['denominator']) for plan in person} == {sum(buckets.values())}
+    row = next(row for row in f.goal_report(data, goal)['people'] if row['person_id'] == A)
+    assert (row['prior'], row['planned'], row['actual']) == (1, 2, 3)
+    data['fairness_history'][f.goal_identity(goal)]['distribution'] = [retained]
+    assert distribution_plan(data, goal) == plans
+
+
+def test_period_spread_keeps_a_single_week_bucket():
+    data = world([duty(1, 5, [A]), duty(2, 6, [A])], '2026-10-05', '2026-10-12')
+    goal = configured(data, 'period_spread')
+    [plan] = [plan for plan in distribution_plan(data, goal) if plan['person_id'] == A]
+    assert plan['bucket'] == '2026-10-05'
+    assert value(plan['actual']) == value(plan['expected']) == 2
+    assert value(plan['denominator']) == 7
+    assert loss(plan) == 0
 
 
 def test_week_spread_and_pair_limit_use_department_calendar_and_shared_marginal_cost():
