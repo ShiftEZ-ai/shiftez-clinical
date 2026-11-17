@@ -614,6 +614,42 @@ def test_personal_pattern_department_month_cpu_budget(personal_pattern_departmen
     assert validation_elapsed < _budget(5)
 
 
+@pytest.mark.cpu_budget
+def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h, monkeypatch, request):
+    from packages.domain import generation
+
+    data, _ = department(h, 11, people=80, days=14, rules='full', leave_rate=0.05, clinics=4)
+    # This regression measures required cover, without advisory target seats.
+    for typ in [*data['types'].values(), *(s['type_snapshot'] for s in data['shifts'])]:
+        for requirement in typ['definition']['requirements']:
+            requirement['target'] = None
+    original = copy.deepcopy(data)
+    placements = []
+    place = generation._generate_with_redistribution
+    def record_placement(*args, **kwargs):
+        partial = place(*args, **kwargs)
+        placements.append(partial)
+        return partial
+    monkeypatch.setattr(generation, '_generate_with_redistribution', record_placement)
+    allowance = _budget(20)
+    began = time.monotonic()
+    result = generation.generate(data, allowance)
+    elapsed = time.monotonic() - began
+    validation = evaluate(apply(data, result))
+    measurement = {'people': len(data['people']), 'sessions': len(data['shifts']),
+        'required_seats': sum(r['minimum'] for s in data['shifts'] for r in s['type_snapshot']['definition']['requirements']),
+        'placed_before_repair': len(placements[0]['additions']), 'additions': len(result['additions']),
+        'allowance_seconds': allowance, 'elapsed_seconds': elapsed, 'status': result['status']}
+    request.node.user_properties.append(('greedy_required_cover_scale', json.dumps(measurement)))
+    assert placements[0]['status'] == 'unknown_time_limit', measurement
+    assert generation.deficit_score(placements[0]['validation'])[0] > 0, measurement
+    assert result['status'] == 'candidate_feasible', measurement
+    assert result['unmet_requirements'] == [] and validation['valid'], measurement
+    assert result['required_cover_repair']['solver_status'] == 'FEASIBLE'
+    assert elapsed <= allowance + _budget(5), measurement
+    assert data == original
+
+
 @pytest.fixture(scope='module')
 def greedy_department_fortnight(scale_harness):
     """Bounded greedy (packages/domain/generation.py), 40 people, two weeks, two parallel clinics (154 additions): about

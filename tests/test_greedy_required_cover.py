@@ -1,5 +1,6 @@
 """Required cover must survive choices that need more than a different sweep order."""
 import copy
+import threading
 import uuid
 
 import pytest
@@ -50,13 +51,15 @@ def test_greedy_repairs_required_cover_when_both_existing_orders_strand_a_seat(h
                         data['fingerprint'], None, input_fingerprint=data['fingerprint']) is False
     assert [s['participants'][0]['person_id'] for s in draft['shifts']] == [people[0], people[2], people[1]]
     assert data == original
+    repeated = generation.generate(data, 10)
+    assert (repeated['additions'], repeated['removals']) == (result['additions'], result['removals'])
 
 
 def test_greedy_uses_frozen_search_time_unless_an_explicit_budget_is_supplied(monkeypatch):
     from packages.contracts.schemas import GenerationOptions
 
     allowances = []
-    def local(_snapshot, budget):
+    def local(_snapshot, budget, **kwargs):
         allowances.append(budget)
         return {'status': 'candidate_feasible'}
     monkeypatch.setattr(generation, '_generate_with_redistribution', local)
@@ -81,7 +84,7 @@ def test_failed_required_cover_repair_retains_the_validated_partial_and_its_gaps
     data, _ = stranding_world(h)
     original = generation._generate_with_redistribution(data, 5)
     assert original['status'] == 'candidate_with_gaps'
-    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_: copy.deepcopy(original))
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_, **kwargs: copy.deepcopy(original))
     def repair(_snapshot, budget, **options):
         assert _snapshot == {**data, '_greedy_required_cover': True} and 0 < budget <= 10
         assert options['workers'] == 1 and options['feasibility_only'] is True
@@ -140,7 +143,7 @@ def test_required_cover_timeout_keeps_an_already_validated_repair(h, monkeypatch
     complete = cp_sat.generate(data, 10, workers=1, feasibility_only=True)
     assert complete['validation']['valid']
     partial = generation._generate_with_redistribution(data, 5)
-    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_: copy.deepcopy(partial))
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_, **kwargs: copy.deepcopy(partial))
     def stopped(*_args, **kwargs):
         if kwargs.get('_control') is not None:
             kwargs['_control'].validated_result = copy.deepcopy(complete)
@@ -151,3 +154,45 @@ def test_required_cover_timeout_keeps_an_already_validated_repair(h, monkeypatch
     assert result['validation']['valid']
     assert len(result['additions']) == 3
     assert result['unmet_requirements'] == []
+    assert result['message'] == 'Search time expired. The complete validated rota is retained; score optimization is unfinished.'
+
+
+@pytest.mark.parametrize('phase', ['placement', 'repair'])
+def test_cancel_keeps_validated_partial_and_lists_gaps(h, monkeypatch, phase):
+    from packages.domain import cp_sat
+    from packages.domain.validation import evaluate
+
+    data, _ = stranding_world(h)
+    original = copy.deepcopy(data)
+    stopped = threading.Event()
+    trials = []
+    trial = generation.Recheck.trial
+
+    def cancel_after_trial(self, *args, **kwargs):
+        checked = trial(self, *args, **kwargs)
+        trials.append(checked)
+        if phase == 'placement':
+            stopped.set()
+        return checked
+
+    def cancel_repair(*args, **kwargs):
+        from packages.domain.solver_control import Cancelled
+        assert phase == 'repair', 'Cancellation during placement must skip the repair'
+        assert trials and not stopped.is_set()
+        stopped.set()
+        with pytest.raises(Cancelled):
+            kwargs['_control'].check()
+        return {'status': 'cancelled'}
+
+    monkeypatch.setattr(generation.Recheck, 'trial', cancel_after_trial)
+    monkeypatch.setattr(cp_sat, 'generate', cancel_repair)
+    result = generation.generate(data, 10, cancelled=stopped.is_set)
+    assert trials and stopped.is_set()
+    assert result['status'] == 'cancelled'
+    assert result['message'].startswith('Search cancelled.')
+    assert result['additions'] and result['unmet_requirements']
+    assert result['validation'] == evaluate(apply(data, result))
+    assert all(f['code'] in generation.COVERAGE_CODES for f in result['validation']['findings']
+               if f['severity'] == 'error')
+    assert result['unmet_requirements'] == generation.unmet_requirements(result['validation'])
+    assert data == original

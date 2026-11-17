@@ -135,7 +135,7 @@ def same_full_model(before, after):
             'before': before, 'after': after}
 
 
-def _solve(before, after, seconds):
+def _solve(before, after, seconds, *, cancelled=None):
     from . import cp_sat, generation
 
     def result(value):
@@ -146,8 +146,8 @@ def _solve(before, after, seconds):
         return comparable
 
     solvers = {
-        'cp_sat': lambda d: cp_sat.generate(copy.deepcopy(d), seconds, 1, deterministic=True),
-        'greedy': lambda d: generation.generate(copy.deepcopy(d), seconds),
+        'cp_sat': lambda d: cp_sat.generate(copy.deepcopy(d), seconds, 1, deterministic=True, cancelled=cancelled),
+        'greedy': lambda d: generation.generate(copy.deepcopy(d), seconds, cancelled=cancelled),
     }
     out = {}
     for name, run in solvers.items():
@@ -208,7 +208,7 @@ def strict_proof(before, after, *, model=True, solve=False, seconds=5, cancelled
                                    canonical_full_model(after, cancelled=cancelled)) if model else {'equal': None, 'skipped': True}
     control.check()
     if solve:
-        out['solve'] = _solve(before, after, seconds)
+        out['solve'] = _solve(before, after, seconds, cancelled=cancelled)
         control.check()
     out['identical'] = all(out[key]['equal'] is True for key in ('expanded', 'findings', 'quota', 'fairness', 'coverage', 'validation', 'score', 'model'))
     if solve:

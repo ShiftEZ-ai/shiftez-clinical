@@ -256,6 +256,21 @@ def test_unknown_search_is_inconclusive_and_model_skip_is_not_a_pass(h, monkeypa
     assert not proof['identical']
 
 
+def test_strict_solve_passes_cancellation_and_budget_to_both_engines(monkeypatch):
+    from packages.domain import generation, rule_migration_proof
+
+    calls = []
+    cancelled = lambda: False
+    def run(snapshot, seconds, *args, **kwargs):
+        calls.append(seconds)
+        assert kwargs.get('cancelled') is cancelled
+        return {'status': 'candidate_feasible', 'not_applied': []}
+    monkeypatch.setattr(cp_sat, 'generate', run)
+    monkeypatch.setattr(generation, 'generate', run)
+    assert all(row['equal'] for row in rule_migration_proof._solve({}, {}, 2, cancelled=cancelled).values())
+    assert calls == [2] * 4
+
+
 def test_bounded_deterministic_cp_sat_and_greedy_candidates_remain_equal(h, monkeypatch):
     data = fixture(h, people=22, sessions=3)
     after, _ = converted(data)

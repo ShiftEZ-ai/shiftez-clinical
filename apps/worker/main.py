@@ -1450,7 +1450,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                         'checkpoint': checkpoint, 'search_control': search_control,
                                         '_diagnostic_continuation': diagnostic_continuation,
                                         '_candidate_evidence': candidate_evidence} if native_cp_sat else {}), **diagnostic)
-                          if scheduler else generate(claim["input"]))
+                          if scheduler else generate(claim["input"], cancelled=stopped.is_set))
                 continuation = claim['input'].get('continuation')
                 if isinstance(result, dict) and isinstance(continuation, dict):
                     previous_seconds = continuation.get('previous_search_seconds', 0)

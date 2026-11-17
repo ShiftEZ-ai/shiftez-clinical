@@ -394,7 +394,7 @@ def _sweep_modes(baseline):
     return (True, False) if any(deficit_score(baseline)[:-1]) else (False,)
 
 
-def generate(snapshot: dict, time_budget_seconds: float | None = None) -> dict:
+def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None) -> dict:
     if time_budget_seconds is None:
         from packages.contracts.schemas import GenerationOptions
         time_budget_seconds = GenerationOptions.model_validate(
@@ -402,14 +402,14 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None) -> dict:
     started = time.monotonic()
     deadline = started + time_budget_seconds
     # Leave time for local validation and a joint repair if local choices strand required cover.
-    result = _generate_with_redistribution(snapshot, time_budget_seconds / 4)
+    result = _generate_with_redistribution(snapshot, time_budget_seconds / 4, cancelled=cancelled)
     remaining = deadline - time.monotonic()
     if (result.get('status') in {'candidate_with_gaps', 'unknown_time_limit'}
-            and deficit_score(result['validation'])[0] and remaining > 0):
+            and deficit_score(result['validation'])[0] and remaining > 0 and not (cancelled and cancelled())):
         try:
             from .cp_sat import generate as required_cover
             from .solver_control import SolverControl
-            control = SolverControl(cancelled=lambda: time.monotonic() >= deadline)
+            control = SolverControl(cancelled=lambda: time.monotonic() >= deadline or bool(cancelled and cancelled()))
             repaired = required_cover({**snapshot, '_greedy_required_cover': True}, remaining, workers=1, feasibility_only=True,
                                       _control=control)
             repair_timed_out = repaired.get('status') in {'cancelled', 'unknown_time_limit', 'needs_more_time'}
@@ -435,13 +435,19 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None) -> dict:
             timed_out = repaired.get('status') in {'unknown_time_limit', 'needs_more_time', 'cancelled'}
             if timed_out:
                 result['status'] = 'unknown_time_limit'
-            reason = ('ran out of time' if timed_out else 'is unavailable' if repaired.get('status') == 'unavailable'
+            reason = ('was cancelled' if cancelled and cancelled() else 'ran out of time' if timed_out
+                      else 'is unavailable' if repaired.get('status') == 'unavailable'
                       else 'found no valid complete rota')
             result.setdefault('warnings', []).append(
                 f'Required-cover repair {reason}; the best partial proposal is retained.')
-    if result.get('status') == 'unknown_time_limit':
-        result['message'] = ('Search time expired. The best validated partial proposal is retained, with unfilled '
-                             'places listed in unmet requirements. This does not prove the requirements conflict.')
+    if cancelled and cancelled():
+        result['status'] = 'cancelled'
+    if result.get('status') in {'cancelled', 'unknown_time_limit'}:
+        reason = 'Search cancelled.' if result['status'] == 'cancelled' else 'Search time expired.'
+        result['message'] = (reason + ' The complete validated rota is retained; score optimization is unfinished.'
+            if result.get('validation', {}).get('valid') else
+            reason + ' The best validated partial proposal is retained, with unfilled places listed in unmet '
+            'requirements. This does not prove the requirements conflict.')
     result.update(scope_receipt(snapshot))
     result['not_applied'] = copy.deepcopy(GREEDY_NOT_APPLIED)
     result['elapsed_seconds'] = time.monotonic() - started
@@ -449,18 +455,18 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None) -> dict:
     return result
 
 
-def _generate_with_redistribution(snapshot: dict, time_budget_seconds: float) -> dict:
+def _generate_with_redistribution(snapshot: dict, time_budget_seconds: float, *, cancelled=None) -> dict:
     deadline = time.monotonic() + time_budget_seconds
-    first = _generate(snapshot, time_budget_seconds)
+    first = _generate(snapshot, time_budget_seconds, cancelled=cancelled)
     if first.get('status') not in {'candidate_with_gaps', 'unknown_time_limit'} or not first.get('additions'):
         return first
     gaps = {f['shift_id'] for f in first['unmet_requirements'] if f.get('shift_id')}
     remaining = deadline - time.monotonic()
-    if not gaps or remaining <= 0:
+    if not gaps or remaining <= 0 or cancelled and cancelled():
         return first
     # shortcut: one alternative order, not an optimizer; extend only if measured gaps justify it.
     # Rebuild from the immutable input so only this run's suggestions can be redistributed.
-    second = _generate(snapshot, remaining, gaps)
+    second = _generate(snapshot, remaining, gaps, cancelled=cancelled)
     better = (second.get('validation') and
               deficit_score(second['validation']) < deficit_score(first['validation']))
     chosen = second if better else first
@@ -578,8 +584,11 @@ def pair_attached(data, shifts, added, removals, period):
                 added.append({'shift_id': shift['id'], 'participant': paired, **duty_labels(data, shift)})
 
 
-def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) -> dict:
+def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *, cancelled=None) -> dict:
     deadline = time.monotonic() + time_budget_seconds
+    def interrupted():
+        return time.monotonic() >= deadline or bool(cancelled and cancelled())
+
     data = copy.deepcopy(snapshot)
     from .date_sets import prepare_date_sets
     data['_date_set_cache'] = prepare_date_sets(data)
@@ -674,7 +683,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             # Rest/travel findings describe the gap between two duties; the editable duty touches its boundary.
             return overlaps(a, b, lo, hi) or finding['code'] in {'MIN_REST', 'TRAVEL_BUFFER'} and (b == lo or a == hi)
 
-        while time.monotonic() < deadline:
+        while not interrupted():
             # Independent people can be repaired together; re-evaluate before
             # removing another duty for the same person (rest chains can change).
             conflicts = {}
@@ -711,7 +720,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         return {"status": "invalid_inputs", "validation": initial, "algorithm_version": ALGORITHM_VERSION,
                 "removals": [], "message": "Resolve configuration conflicts before scheduling; no changes proposed."}
     tolerated = {citation_finding_key(f) for f in initial_noncoverage}
-    timed_out, added = time.monotonic() >= deadline, []
+    timed_out, added = interrupted(), []
     hours = {pid: sum(duration_hours(aware(p["start"]), aware(p["end"])) for s in data["shifts"] if not inactive(s)
                       for p in s["participants"] if p["person_id"] == pid) for pid in data["people"]}
     history = {pid: [] for pid in data['people']}
@@ -757,7 +766,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         for shift in shifts:
             scores = []
             for pid, person in data['people'].items():
-                if time.monotonic() >= deadline:
+                if interrupted():
                     timed_out = True
                     break
                 if person['active'] and population_allows(data, shift, pid):
@@ -810,7 +819,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                               and lead_qualified(data, p['person_id'], shift, lead, a, b)),
                              key=lambda p: lead_rank(shift, p['person_id']))
             for p in options:
-                if time.monotonic() >= deadline or not needs_leads(shift):
+                if interrupted() or not needs_leads(shift):
                     break
                 promoted = {**p, 'team_lead': True} if id(p) in mine else {
                     **p, 'id': str(uuid.uuid5(uuid.NAMESPACE_URL, data['fingerprint'] + shift['id'] + p['person_id'] + ':lead')),
@@ -846,6 +855,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             for phase in passes
             for stage in stages
             for shift in ordered_shifts if stage is None or (stage, shift['id']) in stage_people):
+        if interrupted():
+            timed_out = True
+            break
         if shift["locked"]:
             continue
         # Who could take this session at all (active, qualified, not away, on leave or restricted) never changes during
@@ -857,7 +869,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                 and not rotation_blocks(data, pid, a, b) and not restriction_blocks(data, pid, shift, a, b)
                 and not any(overlaps(a, b, aware(r['start']), aware(r['end'])) for r in person_rows(data, 'availability', pid))]
         for _seat in range(100):
-            if time.monotonic() >= deadline:
+            if interrupted():
                 timed_out = True
                 break
             before_score = deficit_score(baseline)
@@ -885,7 +897,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             current_ids = {p["person_id"] for p in shift["participants"]}
             settings = {}
             for pid in pool:
-                if time.monotonic() >= deadline:
+                if interrupted():
                     timed_out = True
                     break
                 settings[pid] = allocation_settings(data, shift, pid, history=history[pid])
@@ -917,7 +929,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                         pid not in cover_policy(f)['definition']['rule'].get('when_person_ids', [])
                         and scope_matches_throughout(data, cover_policy(f)['definition']['scope'], pid, shift, aware(f['start']), aware(f['end']))) for f in coverage_needed):
                     continue
-                if time.monotonic() >= deadline:
+                if interrupted():
                     timed_out = True
                     break
                 definition = shift["type_snapshot"]["definition"]
@@ -963,7 +975,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                 if own_duty_blocked(data, shift, participant, [s for s, _ in history[pid]], own_errors):
                     pairings = []  # the whole-rota check below would refuse every pairing
                 for supervisor_id in pairings:
-                    if time.monotonic() >= deadline:
+                    if interrupted():
                         timed_out = True
                         break
                     if supervisor_id:
