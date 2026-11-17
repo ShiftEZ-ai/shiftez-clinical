@@ -228,33 +228,29 @@ def test_account_invite_requires_an_audit_reason(h):
     assert refused["error"]["code"] == "SCHEMA_INVALID"
 
 
-def test_server_invite_admin_prints_a_one_time_link(acc, monkeypatch, capsys, maintenance_connections):
-    """infra/production/ops.sh invite-admin runs scripts/local-deploy/bootstrap_admin.py --on-server in an API container."""
-    import importlib.util
-    from pathlib import Path
-    scripts = Path(__file__).resolve().parents[1] / "scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    spec = importlib.util.spec_from_file_location("bootstrap_admin", scripts / "local-deploy/bootstrap_admin.py")
-    bootstrap = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(bootstrap)
+def test_server_invite_admin_prints_a_one_time_link(acc, monkeypatch, maintenance_connections):
+    """The public maintenance helper returns an audited, one-time admin invitation."""
+    from apps.api.errors import Problem
+    from scripts import system_command
+
     for key, value in {"ROTA_ENV": "test", "DATABASE_URL": acc.settings.database_url, "PUBLIC_ORIGIN": acc.settings.public_origin,
                        "ROTA_IDENTITY_USERS_FILE": str(acc.users)}.items():
         monkeypatch.setenv(key, value)
-    args = ["bootstrap_admin.py", "--on-server", "--username", "first.admin", "--display-name", "First Admin (test)",
-            "--email", "first.admin@example.test"]
-    monkeypatch.setattr("sys.argv", list(args))
-    with pytest.raises(SystemExit, match="already exists"):  # the harness has an admin
-        bootstrap.main()
+    payload = {"username": "first.admin", "display_name": "First Admin (test)", "email": "first.admin@example.test",
+               "roles": ["admin"], "reason": "Second admin for the go-live (test)"}
+    with pytest.raises(Problem, match="already taken") as refused:  # the harness has this sign-in
+        system_command.run([{"kind": "account.invite", "payload": {**payload, "username": "admin"}}],
+                           "test-maintenance-admin-refused")
+    assert refused.value.code == "USERNAME_TAKEN"
     opened, closed = maintenance_connections
-    assert opened and closed == opened, "A refused bootstrap must close its owned database connections"
-    monkeypatch.setattr("sys.argv", args + ["--force-reason", "Second admin for the go-live (test)"])
-    bootstrap.main()
-    assert closed == opened, "A successful bootstrap must close its owned database connections"
-    out = capsys.readouterr().out
-    assert "Invitation created for 'first.admin' (admin) in production" in out
-    assert acc.settings.public_origin + "/invite/" in out
+    assert opened and closed == opened, "A refused invitation must close its owned database connections"
+    [result] = system_command.run([{"kind": "account.invite", "payload": payload}], "test-maintenance-admin")
+    assert closed == opened, "A successful invitation must close its owned database connections"
+    assert result["account"]["username"] == "first.admin" and result["record"]["display_name"] == "First Admin (test)"
+    assert acc.settings.public_origin + "/invite/" in result["one_time_link"]
     assert users_file(acc)["first.admin"]["disabled"] is True
     with transaction(acc.app.state.engine) as db:
+        assert list(db.scalars(select(m.RoleBinding.role).where(m.RoleBinding.identity_id == result["record"]["id"]))) == ["admin"]
         event = db.scalars(select(m.AuditEvent).where(m.AuditEvent.action == "account.invite")).one()
         assert event.reason == "Second admin for the go-live (test)" and event.detail["maintenance"] is True
 

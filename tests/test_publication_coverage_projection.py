@@ -6,6 +6,7 @@ import pytest
 from apps.api import main as api, models as m
 from apps.api.db import transaction
 from packages.domain.validation import evaluate
+from .test_performance_budget import python_budget
 from .test_schedule_window import published_rota
 
 
@@ -52,7 +53,6 @@ def test_coverage_projection_reuses_across_apps_and_invalidates_inputs(pg, monke
     from fastapi.testclient import TestClient
     from sqlalchemy import select
     from tests.test_backend_scale import measure, scale_department
-    from tests.test_performance_budget import python_budget
     from tests.test_staff_swaps import ordered_clock
     from packages.domain.validation import check_contracts
     from packages.domain.time import aware
