@@ -1,7 +1,164 @@
 name: CI tests
-on:
+permissions:
+  contents: read
+jobs:
+  tests:
+    name: ${{ inputs.suite }}
+    if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    env:
+      TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
+      ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
+      ROTA_ALLOW_TEST_ROLES: 'yes'
+      PW_TRACE_DIR: .run/traces
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      SUITE: ${{ inputs.suite }}
+      SHARD_INDEX: ${{ inputs.shard }}
+      UNIT_COUNT: ${{ inputs.unit_count }}
+      BROWSER_COUNT: ${{ inputs.browser_count }}
+      PLAN_SHA256: ${{ inputs.plan_sha256 }}
+      REPLICA: ${{ inputs.replica }}
+      BASE_SHA: ${{ inputs.base_sha }}
+      CENSUS_BASE_DIR: ${{ github.workspace }}/.base-census
+      CENSUS_BASE_SHA: ${{ inputs.census_base_sha }}
+      MEASUREMENT: ${{ inputs.measurement }}
+    services:
+      postgres:
+        image: postgres@sha256:41687100ce9a867948d534c52252b4f3edaf3222fcbbc6b46b7bb5a3be4577bb
+        env:
+          POSTGRES_DB: rota_disposable_test
+          POSTGRES_USER: rota_test
+          POSTGRES_PASSWORD: ephemeral-ci-only-password
+        ports:
+        - 5432/tcp
+        options: --tmpfs /var/lib/postgresql/data --health-cmd "pg_isready -U rota_test -d rota_disposable_test" --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+    - name: Require GitHub-hosted execution
+      env:
+        HOSTED_KIND: ${{ runner.environment }}
+      working-directory: .
+      run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.trusted_sha }}
+        path: .trusted-controls
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Detect bootstrap controls
+      id: bootstrap
+      working-directory: .
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        if test -f .trusted-controls/.github/scripts/trusted_ci.py; then
+          echo 'bootstrap=false' >> "$GITHUB_OUTPUT"
+        else
+          test "$EVENT_NAME" = pull_request || { echo 'Bootstrap requires a pull request'; exit 1; }
+          echo 'bootstrap=true' >> "$GITHUB_OUTPUT"
+          echo 'TRUSTED_BOOTSTRAP=true' >> "$GITHUB_ENV"
+          echo 'BOOTSTRAP: protected dev controls are absent; using the exact PR head'
+        fi
+    - name: Load initial controls from the exact PR head
+      if: steps.bootstrap.outputs.bootstrap == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        path: .trusted-controls
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.candidate_sha }}
+        path: candidate
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.census_base_sha }}
+        path: .base-census
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |-
+          ~/.cache/pip
+          ~/.npm
+          ${{ runner.temp }}/runtime-archives
+
+          ${{ runner.temp }}/public-ci-playwright
+        key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
+    - name: Install the committed runtime pins
+      env:
+        PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+      run: |
+        python3 .github/scripts/hosted_ci.py runtime --tool python
+        python3 .github/scripts/hosted_ci.py runtime --tool node
+        echo "TEST_POSTGRES_URL=postgresql+psycopg://rota_test:ephemeral-ci-only-password@127.0.0.1:$PG_PORT/rota_disposable_test" >> "$GITHUB_ENV"
+        echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/public-ci-playwright" >> "$GITHUB_ENV"
+    - name: Install hash-locked dependencies
+      run: |
+        python3 -m venv "$RUNNER_TEMP/public-ci-venv"
+        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock"
+        echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
+        npm ci --ignore-scripts
+    - name: Install locked Chromium and its system dependencies
+      if: inputs.suite == 'browser'
+      run: python -m playwright install --with-deps --no-shell chromium
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: ci-web-${{ github.run_attempt }}
+        path: candidate/apps/web/dist/
+    - name: Check Postgres and retain runner/setup evidence
+      env:
+        PG_CONTAINER: ${{ job.services.postgres.id }}
+        HOSTED_KIND: ${{ runner.environment }}
+      run: |
+        mkdir -p .run/reports
+        python - <<'PY'
+        import json, os, platform, time
+        from pathlib import Path
+        import psycopg
+        started = time.monotonic()
+        dsn = os.environ['TEST_POSTGRES_URL'].replace('postgresql+psycopg://', 'postgresql://', 1)
+        with psycopg.connect(dsn, connect_timeout=15) as db:
+            connections = db.execute('SHOW max_connections').fetchone()[0]
+            if int(connections) < 100:
+                raise SystemExit('Postgres requires max_connections >= 100')
+        evidence = {'runner_environment': os.environ['HOSTED_KIND'], 'cpu': os.cpu_count(),
+                    'platform': platform.platform(), 'postgres_connect_seconds': time.monotonic() - started,
+                    'postgres_max_connections': int(connections), 'meminfo': Path('/proc/meminfo').read_text()}
+        Path('.run/reports/setup.json').write_text(json.dumps(evidence, indent=2) + '\n')
+        PY
+        echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
+        python scripts/compiled_client.py
+    - name: Run the exact full-suite shard once
+      run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
+    - name: Retain first-attempt reports and failure evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
+        path: |-
+          candidate/.run/reports/
+          candidate/.run/traces/
+          candidate/.run/api-logs/
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7
+'on':
   workflow_call:
     inputs:
+      bootstrap:
+        type: string
+        required: true
       suite:
         type: string
         required: true
@@ -17,124 +174,24 @@ on:
       plan_sha256:
         type: string
         required: true
-      smoke:
-        type: string
-        required: true
       replica:
         type: number
         required: true
       base_sha:
         type: string
         required: true
-
-permissions:
-  contents: read
-
-jobs:
-  tests:
-    name: ${{ inputs.suite }}
-    if: >-
-      vars.HOSTED_CI_ENABLED == 'true' &&
-      !github.event.repository.private
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
-      ROTA_ALLOW_TEST_ROLES: 'yes'
-      PW_TRACE_DIR: .run/traces
-      PIP_DISABLE_PIP_VERSION_CHECK: '1'
-      SUITE: ${{ inputs.suite }}
-      SHARD_INDEX: ${{ inputs.shard }}
-      UNIT_COUNT: ${{ inputs.unit_count }}
-      BROWSER_COUNT: ${{ inputs.browser_count }}
-      PLAN_SHA256: ${{ inputs.plan_sha256 }}
-      SMOKE: ${{ inputs.smoke }}
-      REPLICA: ${{ inputs.replica }}
-      BASE_SHA: ${{ inputs.base_sha }}
-    services:
-      postgres:
-        image: postgres@sha256:41687100ce9a867948d534c52252b4f3edaf3222fcbbc6b46b7bb5a3be4577bb
-        env:
-          POSTGRES_DB: rota_disposable_test
-          POSTGRES_USER: rota_test
-          POSTGRES_PASSWORD: ephemeral-ci-only-password
-        ports: ['5432/tcp']
-        options: >-
-          --tmpfs /var/lib/postgresql/data
-          --health-cmd "pg_isready -U rota_test -d rota_disposable_test"
-          --health-interval 5s --health-timeout 5s --health-retries 12
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-            ${{ runner.temp }}/runtime-archives
-          key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ github.event_name }}-${{ hashFiles('requirements/*.lock', 'requirements/ci-runtimes.json', 'package-lock.json') }}
-      - name: Install the committed runtime pins
-        env:
-          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
-        run: |
-          python3 .github/scripts/hosted_ci.py runtime --tool python
-          python3 .github/scripts/hosted_ci.py runtime --tool node
-          echo "TEST_POSTGRES_URL=postgresql+psycopg://rota_test:ephemeral-ci-only-password@127.0.0.1:$PG_PORT/rota_disposable_test" >> "$GITHUB_ENV"
-          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/public-ci-playwright" >> "$GITHUB_ENV"
-      - name: Install hash-locked dependencies
-        run: |
-          python3 -m venv "$RUNNER_TEMP/public-ci-venv"
-          "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock
-          echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
-          npm ci --ignore-scripts
-      - name: Install locked Chromium and its system dependencies
-        if: inputs.suite == 'browser'
-        run: python -m playwright install --with-deps --no-shell chromium
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ci-web-${{ github.run_attempt }}
-          path: apps/web/dist/
-      - name: Check Postgres and retain runner/setup evidence
-        env:
-          PG_CONTAINER: ${{ job.services.postgres.id }}
-          HOSTED_KIND: ${{ runner.environment }}
-        run: |
-          mkdir -p .run/reports
-          python - <<'PY'
-          import json, os, platform, time
-          from pathlib import Path
-          import psycopg
-          started = time.monotonic()
-          dsn = os.environ['TEST_POSTGRES_URL'].replace('postgresql+psycopg://', 'postgresql://', 1)
-          with psycopg.connect(dsn, connect_timeout=15) as db:
-              connections = db.execute('SHOW max_connections').fetchone()[0]
-              if int(connections) < 100:
-                  raise SystemExit('Postgres requires max_connections >= 100')
-          evidence = {'runner_environment': os.environ['HOSTED_KIND'], 'cpu': os.cpu_count(),
-                      'platform': platform.platform(), 'postgres_connect_seconds': time.monotonic() - started,
-                      'postgres_max_connections': int(connections), 'meminfo': Path('/proc/meminfo').read_text()}
-          Path('.run/reports/setup.json').write_text(json.dumps(evidence, indent=2) + '\n')
-          PY
-          echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
-          python scripts/compiled_client.py
-      - name: Run the exact full-suite shard once
-        run: |
-          /usr/bin/time -v -o .run/reports/test-resources.txt python .github/scripts/hosted_ci.py run \
-            --suite "$SUITE" --shard "$SHARD_INDEX" --unit-count "$UNIT_COUNT" \
-            --browser-count "$BROWSER_COUNT" --plan-sha256 "$PLAN_SHA256" --smoke "$SMOKE" \
-            --replica "$REPLICA" --base-sha "$BASE_SHA"
-      - name: Retain first-attempt reports and failure evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
-          path: |
-            .run/reports/
-            .run/traces/
-            .run/api-logs/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+      candidate_sha:
+        type: string
+        required: true
+      measurement:
+        type: string
+        required: true
+      trusted_sha:
+        type: string
+        required: true
+      census_base_sha:
+        type: string
+        required: true
+defaults:
+  run:
+    working-directory: candidate
