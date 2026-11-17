@@ -2,7 +2,7 @@
  *  in ONE reviewed proposal — before → after, the server's proof that behaviour is unchanged, its blockers, and what
  *  each rule becomes. A coordinator or admin proposes; another approver activates; Undo brings the previous rules back
  *  exactly. Nothing here decides equivalence: the page shows what the server previewed and recorded. */
-import {el,button,armed,compact,relabel,confirmAction,empty,formatDate,labelOf,note,notify,plural,ruleFacts,statusBadge,CAPABILITY} from './dom.js';
+import {el,button,armed,readFailed,alive,compact,relabel,confirmAction,empty,formatDate,labelOf,note,notify,plural,ruleFacts,statusBadge,CAPABILITY} from './dom.js';
 import {fullNameOf} from './person_label.js';
 import {get,command,sessionChanged,WITHDRAWN,awaitJob,keptRead,type KeptReadOptions} from './api.js';
 import {skeleton} from './loading.js';
@@ -194,12 +194,32 @@ function wasNow(plan:Row):HTMLElement{
     defaults:{sort:['order','asc']}}).root);
 }
 
+/** A stored proposal's complete census, read fresh (never a kept read) with details: the server serves it only when it
+ *  matches the hash recorded with the proposal, so what is shown is what is decided; a mismatch is its refusal. */
+function evidencePanel(record:Row){
+  dockPanel({key:'simplify-evidence',className:'rs-panel',title:'Full evidence',sub:`Proposal of ${day(record.created_at)}`,width:760,build:({body})=>{
+    body.append(skeleton('lines','Loading the full evidence…'));
+    void get<{record:Row}>(`/api/rules/catalogue/conversions/${encodeURIComponent(String(record.id))}?details=true`).then(({record:full})=>{
+      if(!alive(body))return;
+      const census=(full.plan?.census||{}) as Row,counts=(census.counts||{}) as Record<string,number>,sources=(census.sources||[]) as Row[];
+      const head=el('tr',{},...['Rule','Revision','Status','Becomes','Classification','Lines'].map(h=>el('th',{scope:'col'},h)));
+      const rows=sources.map(s=>el('tr',{},el('td',{},entryName(String(s.catalogue_id||s.kind||''))),el('td',{class:'num'},String(s.source_revision??'')),
+        el('td',{},String(s.status||'')),el('td',{},s.target_catalogue_id?entryName(String(s.target_catalogue_id)):'—'),el('td',{},String(s.classification||'')),
+        el('td',{class:'num'},String((s.line_ids||[]).length))));
+      body.replaceChildren(ruleFacts([['Rules',String(counts.sources??sources.length)],['Lines',String(counts.lines??'—')],
+          ['Kept for history',String(counts.history_sources??'—')],['Evidence hash',String(census.hash||'—')]]),
+        el('table',{class:'dt-table'},el('thead',{},head),el('tbody',{},...rows)));
+    }).catch(err=>{if(!sessionChanged(err)&&alive(body))body.replaceChildren(readFailed('the full evidence',err,()=>evidencePanel(record)));});
+  }});
+}
 function actions(ctx:Context,record:Row|null,plan:Row,state:string,mine:boolean,ready:boolean,proofState:string,refresh:()=>Promise<void>):HTMLElement{
   const can=(...keys:string[])=>ctx.permits(...keys);
   const done=async(message:string)=>{closeDock();notify(message);await refresh();};
   const decide=(kind:string,title:string,text:string,label:string,message:string,final=false)=>confirmAction(title,text,async reason=>{
     await command(kind,{reason},record!.id,record!.revision);await done(message);},label,undefined,false,final);
   const buttons:HTMLElement[]=[];
+  // The proposal's full evidence, bound to its stored hash, one action from where it is decided.
+  if(record)buttons.push(button('Full evidence',()=>evidencePanel(record),'secondary'));
   const checking=['not_checked','queued','running'].includes(proofState);
   if(state==='preview'&&!ready&&!checking)buttons.push(button('Preview again',()=>simplifyPanel(ctx,refresh),'secondary'));
   if(state==='preview'&&can(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN))buttons.push(button('Propose',()=>confirmAction('Simplify rules','One proposal for the whole department. The current rules apply until another authorised person activates it.',async reason=>{
