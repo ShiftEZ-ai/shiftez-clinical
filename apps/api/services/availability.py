@@ -548,10 +548,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     else:
         require(decision_allowed(db, actor, row, approval_context=approval_context),
                 "SELF_APPROVAL", "A different authorised person must decide this request", 403)
-        from .training import change_people
-        independence.ensure(db, actor, "request.decide",
-                            independence.person_key(db, row.created_by) != independence.person_key(db, actor.identity_id)
-                            and actor.person_id not in change_people(db, row),
+        independence.ensure(db, actor, "request.decide", all(not_own(row, actor)),
                             "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
         row.status = "approved" if value.decision == "approve" else "rejected"
         row.decided_by = actor.identity_id
@@ -1199,12 +1196,17 @@ def _impact(db, actor, items):
 
 
 def not_own(cls, actor):
-    """Ownership exclusions for request and weekly availability decisions without self-approval."""
-    peer_scope = ()
-    if cls is m.RequestRecord and actor.person_id:
-        peer = cls.details["swap"]["person_id"].as_string()
-        peer_scope = (or_(peer.is_(None), peer != actor.person_id),)
-    return (cls.created_by != actor.identity_id, *peer_scope,
+    """Subject-based request independence, for SQL scopes and loaded rows; patterns retain creator ownership."""
+    if cls is m.RequestRecord or isinstance(cls, m.RequestRecord):
+        if not actor.person_id:
+            return ()
+        if cls is m.RequestRecord:
+            peer = cls.details["swap"]["person_id"].as_string()
+            peer_scope = or_(peer.is_(None), peer != actor.person_id)
+        else:
+            peer_scope = (cls.details or {}).get("swap", {}).get("person_id") != actor.person_id
+        return (cls.person_id != actor.person_id, peer_scope)
+    return (cls.created_by != actor.identity_id,
             *([cls.person_id != actor.person_id, cls.created_by.not_in(select(m.Identity.id).where(
                 m.Identity.person_id == actor.person_id))] if actor.person_id else []))
 

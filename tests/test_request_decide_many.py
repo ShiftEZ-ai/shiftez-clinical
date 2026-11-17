@@ -248,12 +248,11 @@ def test_permissions_are_checked_for_each_item_and_rollback_the_prefix(h, role, 
     assert state(h) == before
 
 
-@pytest.mark.parametrize("own_by", ["person", "submitter"])
-def test_an_own_request_refuses_the_whole_batch(h, own_by):
-    identity(h, "own_reviewer", ["coordinator", "approver"],
-             h.seed["people"][0] if own_by == "person" else None)
+@pytest.mark.parametrize("entered_by", ["staff", "own_reviewer"])
+def test_an_own_request_refuses_the_whole_batch(h, entered_by):
+    identity(h, "own_reviewer", ["coordinator", "approver"], h.seed["people"][0])
     other = request_row(h, "coordinator", h.seed["people"][1])
-    own = request_row(h) if own_by == "person" else request_row(h, "own_reviewer", h.seed["people"][1])
+    own = request_row(h, entered_by, h.seed["people"][0])
     h.client("own_reviewer")
     before = state(h)
     assert decide(h, [other, own], role="own_reviewer", status=403)["error"]["code"] == "SELF_APPROVAL"
@@ -292,7 +291,7 @@ def test_list_eligibility_preserves_role_and_ownership_for_bulk_decisions(databa
         own_submission = request_row(h, "reviewer")
         alternate_submission = request_row(h, "same_person")
         rows = [other, own_target, own_submission, alternate_submission]
-        eligible_ids = {other["id"]}
+        eligible_ids = {other["id"], own_submission["id"], alternate_submission["id"]}
     else:
         other = pattern_row(h)
         # Coordinators' own weekly patterns are proposed for independent approval.

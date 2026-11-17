@@ -25,6 +25,11 @@ FACT_LABELS = {"workload": "Personal workload", "target": "Personal target", "ov
 FACT_STAGES = {"proposed": "waiting", "active": "approved", "declined": "declined", "retired": "withdrawn"}
 
 
+def subject_independent(actor, person_id):
+    """A personal fact needs self-approval only from its subject; also accepts a SQL person column."""
+    return actor.person_id is None or person_id != actor.person_id
+
+
 def scoped_query(db, actor):
     """Programme visibility is independent of a fact's workflow state."""
     F = m.SchedulingFact
@@ -53,8 +58,7 @@ def pending_query(db, actor, *, decidable=False):
     if decidable:
         query = query.where(F.migration_proposal_id.is_(None))
         if independence.permission_for(db, actor, "rule.activate") is None:
-            own = select(m.Identity.id).where(m.Identity.person_id == actor.person_id) if actor.person_id else [actor.identity_id]
-            query = query.where(F.proposed_by != actor.identity_id, F.proposed_by.not_in(own))
+            query = query.where(or_(F.person_id.is_(None), subject_independent(actor, F.person_id)))
     return query
 
 
@@ -117,7 +121,7 @@ def approval_item(db, actor, row, names):
     entry = db.get(m.ProgrammeCalendarEntry, row.calendar_entry_id) if row.calendar_entry_id else None
     proposer = db.get(m.Identity, row.proposed_by)
     can_decide = row.status == "proposed" and actor.permits("approver") and row.migration_proposal_id is None and (
-        independence.person_key(db, row.proposed_by) != independence.person_key(db, actor.identity_id)
+        subject_independent(actor, row.person_id)
         or independence.permission_for(db, actor, "rule.activate") is not None)
     return s.SchedulingFactApproval(id=row.id, revision=row.revision, kind=row.kind,
         title=row_title, catalogue_id=row.data["catalogue_id"],
@@ -309,8 +313,8 @@ def command(db, actor, command, require_checks=False):
     if action == "activate":
         require_role(actor, "approver")
         require(row.status == "proposed", "WORKFLOW_STATE", "Only a proposed fact can be activated", 409)
-        independence.ensure(db, actor, "rule.activate", independence.person_key(db, row.proposed_by) !=
-            independence.person_key(db, actor.identity_id), "Another authorised person must approve this scheduling fact", value.reason, row.id)
+        independence.ensure(db, actor, "rule.activate", subject_independent(actor, row.person_id),
+            "Another authorised person must approve this scheduling fact", value.reason, row.id)
         if row.replaces_id:
             guard_goal_change(db, actor, [row.replaces_id])
         _references(db, actor, s.SchedulingFactInput.model_validate({**{k: v for k, v in row.data.items() if k in s.SchedulingFactInput.model_fields}, "kind": row.kind,

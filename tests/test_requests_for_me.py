@@ -68,9 +68,10 @@ def test_for_me_is_the_count_queue_with_paging_stage_counts_and_exclusions(h):
     })["pattern"]
     fact = h.command("coordinator", "person.workload.propose", workload(h))["fact"]
     with transaction(h.app.state.engine, write=True) as db:
-        excluded = m.RequestRecord(department_id=h.seed["department_id"], person_id=me, kind="leave",
+        db.get(m.Identity, h.seed["identities"]["approver"]).person_id = h.seed["people"][2]
+        excluded = m.RequestRecord(department_id=h.seed["department_id"], person_id=h.seed["people"][2], kind="leave",
             start=datetime(2026, 10, 12, tzinfo=timezone.utc), end=datetime(2026, 10, 13, tzinfo=timezone.utc),
-            private_reason="Synthetic self-authored request", status="submitted",
+            private_reason="Synthetic request about the reviewer", status="submitted",
             created_by=h.seed["identities"]["approver"])
         db.add(excluded)
 
