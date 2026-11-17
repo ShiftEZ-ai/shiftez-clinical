@@ -113,7 +113,8 @@ def _policy_input(row):
     return value
 
 
-@lru_cache(maxsize=128)
+# Keep a catalogue's worth of current and captured definitions reusable across a list read.
+@lru_cache(maxsize=1024)
 def _catalogue_definition_issues(text):
     from .solver_rules import definition_issues
 
@@ -149,10 +150,11 @@ def manifest(data, *, content_revision=None):
     def catalogue_definition_issues(context):
         issues = {}
         for row in context['policies']:
+            if row['status'] != 'active' or not row.get('active', True):
+                continue
             definition = row['definition']
             rule = definition['rule']
-            if (rule['kind'] != 'catalogue' or row['status'] != 'active'
-                    or not row.get('active', True) or not selected(row)):
+            if rule['kind'] != 'catalogue' or not selected(row):
                 continue
             # The compiler also validates the parent definition. Expansion already covers the lines.
             envelope = {**definition, 'rule': {**rule, 'lines': []}}
