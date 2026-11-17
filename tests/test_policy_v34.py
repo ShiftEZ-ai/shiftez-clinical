@@ -74,13 +74,33 @@ class ImporterV34Tests(unittest.TestCase):
             self.assertFalse(policy.renewal_only(json.dumps(old).encode(),json.dumps(changed).encode()))
 
     def test_pipeline_keeps_default_limits_until_measurement(self):
+        # Lower limits require new measured runs in ci/hosted-durations.json.
+        durations = Path(__file__).resolve().parents[1] / 'ci/hosted-durations.json'
+        source_runs = json.loads(durations.read_text(encoding='utf-8'))['source_run_ids']
+        self.assertCountEqual(source_runs, [44114266718, 44131154009])
+
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'
         for name in ('ci.yml','ci-tests.yml','working-policy.yml'):
             doc=yaml.load((root/name).read_text(),Loader=yaml.BaseLoader)
-            for job in doc['jobs'].values():
-                self.assertNotIn('timeout-minutes',job)
-                for step in job.get('steps',[]):self.assertNotIn('timeout-minutes',step)
+            jobs = doc['jobs']
+            if name == 'ci.yml':
+                limits = {
+                    'unit': "${{ github.event_name == 'merge_group' && 34 || 10 }}",
+                    'browser': "${{ github.event_name == 'merge_group' && 24 || 8 }}",
+                }
+                for shard, limit in limits.items():
+                    self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')
+                    self.assertEqual(jobs[shard]['strategy'].get('max-parallel'), limit)
+            for job_id, job in jobs.items():
+                with self.subTest(workflow=name, job=job_id):
+                    if name == 'ci.yml' and job_id in ('unit', 'browser'):
+                        self.assertNotIn('timeout-minutes', job)
+                    else:
+                        expected = '60' if name == 'ci-tests.yml' else '10'
+                        self.assertEqual(job.get('timeout-minutes'), expected)
+                    for step in job.get('steps', []):
+                        self.assertNotIn('timeout-minutes', step)
         self.assertNotIn('--timeout=',(HELPERS/'trusted_ci.py').read_text())
 
 if __name__=='__main__':unittest.main()
