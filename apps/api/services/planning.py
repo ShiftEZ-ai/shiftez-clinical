@@ -19,7 +19,7 @@ from packages.domain.assignment_override import assignment_reason_allowed, ZERO_
 from apps.api import models as m, snapshots
 from apps.api.auth import require_role, person_access, current_roles
 from apps.api.errors import require
-from apps.api.serialization import record, job_progress_record
+from apps.api.serialization import json_value, record, job_progress_record
 from apps.api.snapshots import (domain_snapshot, fingerprint, publication_snapshot,
                                 shift_record, workspace_content, workspace_shifts)
 from .common import scoped, expected, bump_inputs, outbox
@@ -596,7 +596,12 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
             require_no_override_overlap(db, workspace, workspace.starts_on, workspace.ends_on)
     workspace.revision += 1
     if content_changed:
-        workspace.content_revision += 1
+        from packages.domain.input_manifest import workspace_input
+        original = before['workspace']
+        # An authority query may already have flushed and stamped a changed workspace field.
+        if workspace.content_revision == original['content_revision'] or all(
+                json_value(getattr(workspace, key)) == value for key, value in workspace_input(original).items()):
+            workspace.content_revision += 1
         workspace.submitted_fingerprint = None
     if not review_rejection:
         workspace.last_edited_by = actor.identity_id

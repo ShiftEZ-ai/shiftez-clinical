@@ -10,15 +10,22 @@ from sqlalchemy.orm import Session
 from apps.api import models as m, snapshots
 from apps.api.db import transaction
 from packages.contracts.schemas import AutoscheduleAnimationSettings, GenerationOptions
+from packages.domain.input_manifest import manifest
 from tests.conftest import TEST_PASSWORD, postgres_harness, sqlite_harness
 from apps.api.identity_store import hash_password
 from tests.test_events import event, event_type, occurrences
 
 
 WRITERS = ('flush', 'statement', 'core', 'bulk')
+WORKSPACE_READ_FIELDS = next(shape.columns for _, cls, _, _, shape, _ in snapshots.snapshot_input_specs()
+                             if cls is m.Workspace)
 EXCLUSIONS = [pytest.param(cls, exclusion, id=f'{cls.__name__}.{exclusion}')
               for _name, cls, _category, _scope, _shape, excluded in snapshots.snapshot_input_specs()
+              if cls is not m.Workspace
               for exclusion in sorted(excluded)]
+WORKSPACE_CASES = [pytest.param(field, writer, id=f'{writer}-Workspace.{field}')
+                   for field in sorted(m.Workspace.__table__.columns.keys())
+                   for writer in WRITERS if (field, writer) != ('id', 'flush')]
 
 
 @pytest.fixture(scope='module', params=['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)])
@@ -68,7 +75,7 @@ def oracle_context(request, tmp_path_factory):
                 visibility='shared', purpose='alternative', actor_id=h.seed['identities']['admin'], reason='Synthetic oracle access')
                 for revision in (20, 21))
         yield h, target['id'], {m.Organisation: h.seed['organisation_id'], m.Department: h.seed['department_id'],
-            m.Workspace: target['id'], m.Identity: identity.id, m.RoleBinding: binding.id,
+            m.Workspace: target['id'], m.Person: h.seed['people'][0], m.Identity: identity.id, m.RoleBinding: binding.id,
             m.AvailabilityPattern: pattern.id, m.AnnouncementReceipt: receipt_id}
     finally:
         next(harness, None)
@@ -82,7 +89,7 @@ def fresh_currency(connection, target, organisation, *, workspace_scope=False, r
             content_revision = snapshots.currency_hint(db, workspace)['content_revision']
             reused = (snapshots.cheap_fingerprints(db, [workspace], checks={target: {'input_manifest': recorded}})
                       .get(target) if recorded is not None else None)
-            return data['fingerprint'], (content_revision,), data['input_manifest'], reused
+            return manifest(data, content_revision=0)['token'], (content_revision,), data['input_manifest'], reused
         token = snapshots.fingerprint(db, workspace)
         org = db.get(m.Organisation, organisation)
         return token, (org.input_revision, org.availability_revision), None, None
@@ -128,6 +135,8 @@ def safe_values(db, cls, ident, exclusion):
     if isinstance(column.type, DateTime):
         return [datetime(2026, 10, day, 12, tzinfo=timezone.utc) for day in (2, 3)]
     if isinstance(column.type, Date):
+        if cls is m.Workspace and name == 'ends_on':
+            return [date(2026, 10, day) for day in (12, 13)]
         return [date(2026, 10, day) for day in (2, 3)]
     if isinstance(column.type, Integer):
         if name == 'policy_retire_approvals_required':
@@ -164,6 +173,8 @@ def safe_values(db, cls, ident, exclusion):
             return [m.uid(), m.uid()]
         if cls is m.Workspace and name == 'origin':
             return ['auto', 'import']
+        if cls is m.Workspace and name == 'status':
+            return ['submitted', 'approved']
         if cls is m.Workspace and name == 'urgency':
             return ['urgent', 'routine']
         if name.endswith('fingerprint'):
@@ -200,8 +211,6 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
     assert cls in rows, f'NO_SAFE_SYNTHETIC_ROW {cls.__name__}: add a representative fixture for this registered reader'
     ident = rows[cls] if ident is None else ident
     name = exclusion.partition('.')[0]
-    if cls is m.Workspace and name == 'id' and writer == 'flush':
-        pytest.fail('NO_SAFE_SYNTHETIC_VALUES Workspace.id flush: ORM read-check projection retains its foreign key; changing it would rewrite retained identity evidence')
     results = []
     with transaction(h.app.state.engine, write=True) as outer:
         connection = outer.connection()
@@ -232,12 +241,15 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
                     ident = write_value(db, cls, ident, name, value, writer)
                 if cls is m.Workspace and name == 'id':
                     target = ident
-                after, current, _, reused = fresh_currency(connection, target, rows[m.Organisation],
+                after, current, updated_manifest, reused = fresh_currency(connection, target, rows[m.Organisation],
                     workspace_scope=workspace_scope, recorded=recorded if name != 'id' else None)
                 expected = list(revisions)
                 if cls is m.Organisation and name in {'input_revision', 'availability_revision'}:
                     # A direct counter assignment is the baseline; detect any additional listener increment.
                     expected[('input_revision', 'availability_revision').index(name)] = value
+                if workspace_scope and name == 'content_revision':
+                    # A direct revision assignment changes the raw token but must not trigger a second stamp.
+                    expected[0] = value
                 with Session(bind=connection, join_transaction_mode='create_savepoint') as db:
                     actual = getattr(db.get(cls, ident), name)
                     assert actual == value or isinstance(actual, datetime) and actual.replace(tzinfo=timezone.utc) == value, (
@@ -245,6 +257,8 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
                 results.append({'field': f'{cls.__name__}.{exclusion}', 'writer': writer, 'value': index,
                     'before': before, 'after': after, 'fingerprint_equal': before == after,
                     'revisions': revisions, 'current': current, 'automatic_bump': tuple(expected) != current,
+                    'raw_before': recorded['token'] if recorded else before,
+                    'raw_after': updated_manifest['token'] if updated_manifest else after,
                     'reused_stored_fingerprint': reused,
                     'paired_subject_write': cls is m.Identity and name in {'subject', 'subject_normalized'}})
         finally:
@@ -265,9 +279,26 @@ def test_every_declared_exclusion_has_fingerprint_and_revision_equivalence(oracl
     results = measure_values(oracle_context, cls, exclusion, writer)
     record_property('oracle', json.dumps(results))
     for row in results:
-        if cls is not m.Workspace:
-            assert row['fingerprint_equal'] and not row['automatic_bump'], row
+        assert row['fingerprint_equal'] and not row['automatic_bump'], row
         assert row['fingerprint_equal'] == (not row['automatic_bump']), row
+
+
+@pytest.mark.parametrize('field,writer', WORKSPACE_CASES)
+def test_workspace_read_fields_match_workspace_currency(oracle_context, field, writer, record_property):
+    # ORM updates of a primary key with retained check references are invalid.
+    # For id, the other writers exercise an unbound preview that has no retained references.
+    results = measure_values(oracle_context, m.Workspace, field, writer)
+    record_property('oracle', json.dumps(results))
+    read = field in WORKSPACE_READ_FIELDS
+    for row in results:
+        assert row['fingerprint_equal'] == (not read), row
+        assert row['automatic_bump'] == read, row
+        if read:
+            assert row['current'][0] == row['revisions'][0] + 1, row
+            assert row['raw_before'] != row['raw_after'], row
+            assert row['reused_stored_fingerprint'] is None, row
+        elif field != 'content_revision':
+            assert row['raw_before'] == row['raw_after'], row
 
 
 @pytest.mark.parametrize('writer', WRITERS)

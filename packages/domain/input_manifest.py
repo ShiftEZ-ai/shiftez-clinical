@@ -101,6 +101,10 @@ def department_facts(row):
     return facts
 
 
+def workspace_input(row):
+    return project(row, FIELDS['workspace'])
+
+
 DEPARTMENT_INPUT_FIELDS = frozenset(FIELDS['department']) | {'organisation_id', 'generation_defaults', 'wish_settings'}
 
 
@@ -151,7 +155,7 @@ def manifest(data, *, content_revision=None):
     for kind in ('organisation', 'department'):
         facts = department_facts(data[kind]) if kind == 'department' else project(data[kind], FIELDS[kind])
         add('mandatory_inputs', kind, data[kind]['id'], facts)
-    add('content', 'workspace', period['id'], {**project(period, FIELDS['workspace']),
+    add('content', 'workspace', period['id'], {**workspace_input(period),
         'content_revision': period['content_revision'] if content_revision is None else content_revision})
     for row in data['shifts']:
         add('content' if row['id'] in focus else 'mandatory_inputs', 'shifts', row['id'], shift_input(row), row)

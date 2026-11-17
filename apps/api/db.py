@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from threading import Lock, get_native_id
 import time
-from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
+from sqlalchemy import and_, case, create_engine, event, exists, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
 from sqlalchemy.orm import Session, with_loader_criteria
 from .errors import Problem
@@ -248,7 +248,7 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
     from . import models as m
     from .snapshots import snapshot_input_specs, snapshot_input_organisations, snapshot_inserted_row_is_read
     from sqlalchemy.orm.attributes import NO_VALUE
-    specs = {cls: (category, shape, exclusions) for _name, cls, category, _scope, shape, exclusions in snapshot_input_specs()}
+    specs = {cls: (category, scope, shape, exclusions) for _name, cls, category, scope, shape, exclusions in snapshot_input_specs()}
     general, availability, related = set(), set(), {}
     for row in (*session.new, *session.dirty, *session.deleted):
         spec = specs.get(type(row))
@@ -257,7 +257,7 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         # A proposal does not change operative inputs or invalidate its own conversion proof.
         if isinstance(row, m.CatalogueConversion) and row in session.new and row.status == 'proposed':
             continue
-        category, shape, exclusions = spec
+        category, scope, shape, exclusions = spec
         if getattr(shape, 'insert_only', False) and row not in session.new:
             continue
         if row in session.new and not snapshot_inserted_row_is_read(session, shape, row):
@@ -266,7 +266,12 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
             continue
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
-            if _snapshot_projected_change(session, shape, row) is False:
+            if scope == 'workspace':
+                if (not state.attrs.content_revision.history.has_changes()
+                        and any(state.attrs[name].history.has_changes() for name in shape.columns)
+                        and _snapshot_projected_change(session, shape, row)):
+                    row.content_revision += 1
+            elif _snapshot_projected_change(session, shape, row) is False:
                 continue
             if not any(attribute.history.has_changes() and _snapshot_attribute_changes(
                     attribute.key, attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,
@@ -300,7 +305,7 @@ def stamp_snapshot_input_statement(execution):
     spec = next((spec for spec in snapshot_input_specs() if spec[1].__tablename__ == getattr(table, 'name', None)), None)
     if spec is None:
         return
-    _name, cls, category, _scope, shape, exclusions = spec
+    _name, cls, category, scope, shape, exclusions = spec
     if getattr(shape, 'insert_only', False) and not execution.is_insert:
         return
     scope_columns = _snapshot_input_scope_columns(cls)
@@ -310,15 +315,19 @@ def stamp_snapshot_input_statement(execution):
         scope_columns = scope_columns | {'status', 'validation', 'archived_at'}
     # These SQLAlchemy 2.1 DML value containers have no public inspection API.
     from sqlalchemy.orm.attributes import NO_VALUE
+    ordered_values = getattr(statement, '_ordered_values', None)
+    if ordered_values is None and getattr(statement, '_maintain_values_ordering', False):
+        ordered_values = tuple(statement._values.items())
     values = {getattr(key, 'key', key): value for key, value in (
-        getattr(statement, '_values', None) or dict(getattr(statement, '_ordered_values', None) or ())).items()}
+        getattr(statement, '_values', None) or dict(ordered_values or ())).items()}
     parameters = execution.parameters
     parameter_rows = parameters if isinstance(parameters, list) else [parameters or {}]
     by_id = {row['id']: row for row in parameter_rows if 'id' in row}
     def changed_values(row_parameters):
         return {name: row_parameters.get(value.key, value.value) if isinstance(value, BindParameter) else NO_VALUE
                 for name, value in values.items()}
-    if execution.is_update and values and set(values) <= exclusions:
+    workspace_columns = shape.columns if scope == 'workspace' else frozenset()
+    if execution.is_update and values and set(values) <= exclusions - workspace_columns:
         return
     if session.autoflush and execution.execution_options.get('autoflush', True):
         session.flush()
@@ -364,7 +373,7 @@ def stamp_snapshot_input_statement(execution):
                           if execution.is_delete else list(session.scalars(query, query_parameters)))
         loaded_deleted = ([row for row in session.identity_map.values() if isinstance(row, cls)]
                           if execution.is_delete and not execution.is_orm_statement else [])
-        unresolved_ownership, updated_columns = [], {}
+        unresolved_ownership, updated_columns, content_stamps = [], {}, {}
         for row in candidates:
             if by_id:
                 parameters_for_row = by_id.get(getattr(row, 'id', None), parameter_rows[0])
@@ -381,7 +390,14 @@ def stamp_snapshot_input_statement(execution):
                     changes = {name: value for name, value in parameters_for_row.items()
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
-                if _snapshot_projected_change(session, shape, row, changes) is False:
+                if scope == 'workspace':
+                    explicit_stamp = changes.get('content_revision', row.content_revision)
+                    if (workspace_columns.intersection(changes)
+                            and (explicit_stamp is NO_VALUE or explicit_stamp == row.content_revision)
+                            and _snapshot_projected_change(session, shape, row, changes)):
+                        content_stamps[row.id] = row.content_revision + 1
+                        updated_columns[id(row)].append('content_revision')
+                elif _snapshot_projected_change(session, shape, row, changes) is False:
                     continue
                 if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
                                        for name, value in changes.items()):
@@ -401,7 +417,30 @@ def stamp_snapshot_input_statement(execution):
                 resolved = _snapshot_input_organisation_ids(session, replacement, related)
                 ids.update(snapshot_input_organisations(session, shape,
                     resolved if resolved is not None else _unresolved_snapshot_input(session, replacement, related), related))
-        result = execution.invoke_statement()
+        replacement_parameters = None
+        if content_stamps and execution.is_orm_statement and isinstance(parameters, list) and 'content_revision' not in values:
+            replacement_parameters = [
+                {**row, 'content_revision': content_stamps[row['id']]} if row.get('id') in content_stamps else row
+                for row in parameters
+            ]
+        elif content_stamps:
+            # Advance the row in the same UPDATE, even when it changes its identity.
+            explicit = values.get('content_revision')
+            bumped = cls.content_revision + 1
+            if explicit is not None:
+                bumped = case((explicit.is_distinct_from(cls.content_revision), explicit), else_=bumped)
+            revision = case((cls.id.in_(content_stamps), bumped),
+                            else_=cls.content_revision if explicit is None else explicit)
+            if ordered_values:
+                statement = statement._generate()
+                statement._ordered_values = statement._values = None
+                statement._maintain_values_ordering = False
+                statement = statement.ordered_values(*(item for item in ordered_values
+                                                       if getattr(item[0], 'key', item[0]) != 'content_revision'),
+                                                     (cls.content_revision, revision))
+            else:
+                statement = statement.values(content_revision=revision)
+        result = execution.invoke_statement(statement=statement, params=replacement_parameters)
         if getattr(result, 'rowcount', None) == 0:
             return result
         for row in unresolved_ownership:

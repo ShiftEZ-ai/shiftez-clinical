@@ -1,4 +1,5 @@
 """Snapshot read declarations cover consumed fields and conditional write paths."""
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -46,6 +47,11 @@ def test_declared_snapshot_read_sets_match_consumed_attributes():
     assert specs[m.Department][4].columns == department.read
     assert specs[m.Department][-1] == (set(m.Department.__table__.columns.keys()) - department.read) | {
         'generation_defaults.' + key for key in GENERATION_RUNTIME_OPTIONS}
+    workspace = ReadMapping(**dict.fromkeys(m.Workspace.__table__.columns.keys()))
+    _, _, _, scope, workspace_shape, _ = specs[m.Workspace]
+    workspace_shape.projection(workspace)
+    assert scope == 'workspace' and workspace_shape.columns == workspace.read
+    assert 'content_revision' not in workspace.read
     binding = ReadRow(identity_id='identity', department_id='department', role='staff',
                       revoked=False, starts_on=date(2020, 1, 1), ends_on=date(2030, 1, 1))
     statements = []
@@ -97,7 +103,57 @@ def test_historical_acquisition_has_the_expected_revision_owners():
     assert scope == 'department' and shape.insert_only
 
 
-@pytest.mark.parametrize('kind', ['policy', 'bulk_staged'])
+def test_saving_a_draft_check_leaves_it_current(backend):
+    h = backend
+    workspace = h.shift(h.workspace())['workspace']
+    h.lifecycle(workspace, 'validate')
+    result = h.detail(workspace)
+    assert result['workspace']['content_revision'] == workspace['content_revision']
+    assert result['workspace']['validation']['fingerprint'] == result['current_fingerprint']
+    assert result['current_fingerprint'] == h.snapshot(workspace)['fingerprint']
+
+
+def test_loading_an_existing_checked_draft_preserves_its_currency(backend, monkeypatch):
+    from apps.api.services.workspace_reads import stored_checks
+
+    h = backend
+    with monkeypatch.context() as previous:
+        previous.setattr(snapshots, 'SNAPSHOT_INPUT_SOURCE_SPECS', tuple(
+            (name, cls, category, 'department', replace(shape, columns=frozenset(), projection=None), exclusions)
+            if cls is m.Workspace else (name, cls, category, scope, shape, exclusions)
+            for name, cls, category, scope, shape, exclusions in snapshots.snapshot_input_specs()))
+        workspace = h.shift(h.workspace())['workspace']
+        revisions = input_revisions(h)
+        with transaction(h.app.state.engine) as db:
+            row = db.get(m.Workspace, workspace['id'])
+            check = stored_checks(db, [row])[row.id]
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, workspace['id'])
+        assert check['input_manifest']['dirty_hint']['content_revision'] == workspace['content_revision']
+        assert snapshots.cheap_fingerprints(db, [row], checks={row.id: check}) == {
+            row.id: check['input_manifest']['token']}
+    result = h.detail(workspace)
+    assert result['workspace']['content_revision'] == workspace['content_revision']
+    assert result['current_fingerprint'] == check['input_manifest']['token']
+    assert input_revisions(h) == revisions
+
+
+def test_workspace_statement_stamps_changed_rows_and_preserves_explicit_revision(backend):
+    h = backend
+    first, second = h.workspace(), h.workspace()
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(update(m.Workspace).where(m.Workspace.id == first['id'])
+                   .ordered_values((m.Workspace.origin, 'auto')))
+        db.execute(update(m.Workspace), [
+            {'id': first['id'], 'origin': 'auto'},
+            {'id': second['id'], 'origin': 'auto', 'content_revision': second['content_revision'] + 2},
+        ])
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Workspace, first['id']).content_revision == first['content_revision'] + 1
+        assert db.get(m.Workspace, second['id']).content_revision == second['content_revision'] + 2
+
+
+@pytest.mark.parametrize('kind', ['policy', 'bulk_staged', 'catalogue_conversion'])
 def test_history_insert_stamps_only_historical_snapshot_inputs(backend, kind):
     from copy import deepcopy
 
@@ -116,6 +172,8 @@ def test_history_insert_stamps_only_historical_snapshot_inputs(backend, kind):
     for index, hours in enumerate((2, 3), start=1):
         definition['rule']['hours'] = hours
         changed = {**policy, 'revision': policy['revision'] + index, 'definition': definition}
+        if kind == 'catalogue_conversion':
+            changed['status'] = 'proposed'
         with transaction(h.app.state.engine, write=True) as db:
             db.execute(insert(m.DefinitionHistory.__table__).values(
                 department_id=h.seed['department_id'], kind=kind, object_id=policy['id'],

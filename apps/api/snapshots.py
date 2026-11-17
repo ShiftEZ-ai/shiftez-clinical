@@ -3,7 +3,7 @@ import hashlib
 import json
 import uuid
 from collections import OrderedDict, defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
@@ -17,7 +17,7 @@ from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.validation import ENGINE_VERSION
-from packages.domain.input_manifest import DEPARTMENT_INPUT_FIELDS, department_input
+from packages.domain.input_manifest import DEPARTMENT_INPUT_FIELDS, FIELDS, department_input, workspace_input
 from .settings import Settings, quota_policy_limit
 
 
@@ -37,6 +37,7 @@ class SnapshotInputRead:
     projection: object = None
     inserted_scope: object = None
     insert_only: bool = False
+    insert_filter: Callable[[object], bool] | None = None
 
 
 def _input_read(name, cls, category, scope, columns, *, where=None, requires=None, projection=None, inserted_scope=None, exclude=()):
@@ -48,8 +49,16 @@ def _input_read(name, cls, category, scope, columns, *, where=None, requires=Non
 POLICY_HISTORY_KIND = 'policy'
 EXCEPTION_HISTORY_KIND = 'exception'
 SCHEDULING_FACT_HISTORY_KIND = 'scheduling_fact'
-SCHEDULING_HISTORY_KINDS = (SCHEDULING_FACT_HISTORY_KIND, 'catalogue_conversion')
+CONVERSION_HISTORY_KIND = 'catalogue_conversion'
+SCHEDULING_HISTORY_KINDS = (SCHEDULING_FACT_HISTORY_KIND, CONVERSION_HISTORY_KIND)
 DATE_SET_HISTORY_KIND = 'date_sets'
+PERSON_SNAPSHOT_OMISSIONS = frozenset({'pager'})
+
+
+def _operative_history(row):
+    # Approval adds bindings and retirement ends them. Pending and declined conversions never have bindings in force.
+    return not (isinstance(row.kind, str) and row.kind == CONVERSION_HISTORY_KIND
+                and isinstance(row.snapshot, Mapping) and row.snapshot.get('status') in ('proposed', 'declined'))
 
 
 # One registry owns the tables that can change a prepared snapshot's inputs.
@@ -88,14 +97,15 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('date_sets', m.DateSet, 'general', 'department', 'date_set', frozenset()),
     ('tags', m.Tag, 'general', 'department', 'tag', frozenset()),
     ('tag_members', m.TagMember, 'general', 'department', 'tag_member', frozenset()),
-    ('people', m.Person, 'general', 'organisation', 'people', frozenset()),
+    ('people', m.Person, 'general', 'organisation', 'people', PERSON_SNAPSHOT_OMISSIONS),
     _input_read('departments', m.Department, 'general', 'organisation', DEPARTMENT_INPUT_FIELDS,
         projection=department_input, exclude=(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)),
     ('programme_calendar_entries', m.ProgrammeCalendarEntry, 'general', 'department', None, frozenset()),
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
-    ('workspaces', m.Workspace, 'general', 'department', SnapshotInputRead(frozenset(), inserted_scope='external_workspace'), frozenset({
+    ('workspaces', m.Workspace, 'general', 'workspace',
+        SnapshotInputRead(frozenset(FIELDS['workspace']), projection=workspace_input, inserted_scope='external_workspace'), frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
         'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
         'urgency_reason', 'target_overrides', 'rule_adjustments', 'accepted_issues', 'archived_by',
@@ -108,7 +118,7 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('definition_history', m.DefinitionHistory, 'general', 'department',
         SnapshotInputRead(frozenset(), where=('kind', frozenset({
             POLICY_HISTORY_KIND, EXCEPTION_HISTORY_KIND, *SCHEDULING_HISTORY_KINDS, DATE_SET_HISTORY_KIND,
-        })), insert_only=True), frozenset()),
+        })), insert_only=True, insert_filter=_operative_history), frozenset()),
     ('staff_wishes', m.StaffWish, 'general', 'department', None, frozenset()),
     ('wish_overrides', m.WishOverride, 'general', 'department', None, frozenset()),
     ('rotation_attachments', m.RotationAttachment, 'general', None, None, frozenset()),
@@ -165,6 +175,8 @@ def snapshot_input_classes():
 
 
 def snapshot_inserted_row_is_read(db, shape, row):
+    if isinstance(shape, SnapshotInputRead) and shape.insert_filter is not None:
+        return shape.insert_filter(row)
     if not isinstance(shape, SnapshotInputRead) or shape.inserted_scope != 'external_workspace':
         return True
     from .services.wishes import reservation_input
@@ -732,7 +744,8 @@ def scheduling_inputs(db, department_ids, when=None, *, include_offer_history=Fa
                 m.DefinitionHistory.kind.in_(SCHEDULING_HISTORY_KINDS),
                 m.DefinitionHistory.created_at <= when).order_by(
                     m.DefinitionHistory.created_at, m.DefinitionHistory.object_revision)):
-            versions[row.object_id] = row.snapshot
+            if _operative_history(row):
+                versions[row.object_id] = row.snapshot
         facts = [versions[r["id"]] for r in facts if r["id"] in versions]
         conversions = [versions[r["id"]] for r in conversions if r["id"] in versions]
     if include_offer_history:
@@ -988,7 +1001,7 @@ def _snapshot_inputs(db, org):
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
-    acquired = records_many(db, sources, exclude={'people': ('pager',)}, order_by=SCHEDULING_ORDER)
+    acquired = records_many(db, sources, exclude={'people': PERSON_SNAPSHOT_OMISSIONS}, order_by=SCHEDULING_ORDER)
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
