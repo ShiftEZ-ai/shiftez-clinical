@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
-from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, now, overlaps, union_hours
+from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
 from packages.contracts.schemas import TypeDefinition, requirement_key, safety_rule, validate_attributes
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
@@ -434,7 +434,7 @@ def person_active_for_interval(data, person_id, a, b):
     zone = data['organisation']['timezone']
     inactive_from = person.get('inactive_from')
     if inactive_from is None:
-        inactive_from = now().astimezone(ZoneInfo(zone)).date()
+        return False
     elif isinstance(inactive_from, datetime):
         inactive_from = inactive_from.date()
     elif isinstance(inactive_from, str):

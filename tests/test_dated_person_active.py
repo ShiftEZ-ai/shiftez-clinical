@@ -48,7 +48,7 @@ def test_dated_inactivity_keeps_past_membership_and_blocks_future_candidate():
     assert not candidate_evidence(context, 'a', future)['eligible_and_available']
 
 
-def test_inactive_without_date_is_inactive_from_today():
+def test_inactive_without_date_blocks_every_date():
     today = now().date()
     past = _duty('past', today - timedelta(days=1))
     future = _duty('future', today + timedelta(days=1))
@@ -56,11 +56,10 @@ def test_inactive_without_date_is_inactive_from_today():
     context['people']['a']['active'] = False
     definition = past['type_snapshot']['definition']
 
-    assert qualification_failures(context, 'a', past, definition,
-                                  datetime.fromisoformat(past['start']), datetime.fromisoformat(past['end'])) == []
-    assert qualification_failures(context, 'a', future, definition,
-                                  datetime.fromisoformat(future['start']), datetime.fromisoformat(future['end'])) == [
-        {'code': 'PERSON_INACTIVE', 'person_id': 'a'}]
+    for duty in (past, future):
+        assert qualification_failures(context, 'a', duty, definition,
+                                      datetime.fromisoformat(duty['start']), datetime.fromisoformat(duty['end'])) == [
+            {'code': 'PERSON_INACTIVE', 'person_id': 'a'}]
 
 
 def test_membership_end_still_binds_independently_of_person_inactive_date():
@@ -403,3 +402,67 @@ def test_inactivity_migration_retains_existing_rows_without_backfill():
             assert column['nullable'] and isinstance(column['type'], sa.Date)
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_undated_inactive_person_is_never_seated_and_published_finding_remains(h):
+    from packages.domain import generation
+    from packages.domain.cp_sat import generate
+
+    published = h.publish(h.shift(h.workspace('Retained inactive finding', '2026-10-01', '2026-10-05'),
+                          '2026-10-02T08:00:00+03:00', '2026-10-02T12:00:00+03:00')['workspace'])
+    draft = h.shift(h.workspace('Undated inactive candidate', '2026-10-01', '2026-10-05'),
+                    '2026-10-02T08:00:00+03:00', '2026-10-02T12:00:00+03:00', people=[])['workspace']
+    person_id = h.seed['people'][0]
+    with transaction(h.app.state.engine, write=True) as db:
+        person = db.get(m.Person, person_id)
+        person.active, person.inactive_from = False, None
+    context = h.snapshot(draft)
+    context['people'] = {person_id: context['people'][person_id]}
+    assert not generation.generate(context, 5)['additions']
+    result = generate(context, 5, workers=1, feasibility_only=True)
+    assert not result['additions']
+    assert len(result['candidate_evidence']) == 1
+    assert all(not row['eligible_and_available'] for row in result['candidate_evidence'])
+    retained = h.snapshot(published['workspace'])
+    duty = retained['shifts'][0]
+    assert any(row['code'] == 'PERSON_INACTIVE' for row in candidate_evidence(retained, person_id, duty)['exclusions'])
+    assert any(row['code'] == 'NOT_ELIGIBLE' and row['person_id'] == person_id
+               for row in evaluate(retained)['findings'])
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_inactive_date_edit_reaches_an_open_draft_without_refresh_or_baseline_drift(h):
+    from apps.api.workspace_baselines import _diff
+
+    draft = h.workspace('Live dated person change', '2026-10-04', '2026-10-08')
+    for day in ('04', '06'):
+        draft = h.shift(draft, f'2026-10-{day}T08:00:00+03:00',
+                        f'2026-10-{day}T12:00:00+03:00', people=[])['workspace']
+    before = h.snapshot(draft)
+    person_id = h.seed['people'][0]
+    person = before['people'][person_id]
+    with transaction(h.app.state.engine) as db:
+        baseline = latest(db, draft['id'])
+        baseline_id, payload_hash = baseline.id, baseline.payload_hash
+    saved = h.configure('people', {'display_name': person['display_name'], 'active': False, 'inactive_from': '2026-10-06'},
+                        person_id, person['revision'], role='admin')['record']
+    changed = h.snapshot(draft)
+    assert changed['fingerprint'] != before['fingerprint']
+    assert changed['people'][person_id]['inactive_from'] == '2026-10-06'
+    duties = {row['start'][:10]: row for row in changed['shifts']}
+    assert candidate_evidence(changed, person_id, duties['2026-10-04'])['eligible_and_available']
+    assert not candidate_evidence(changed, person_id, duties['2026-10-06'])['eligible_and_available']
+    h.configure('people', {'display_name': person['display_name'], 'active': False, 'inactive_from': '2026-10-04'},
+                person_id, saved['revision'], role='admin')
+    edited = h.snapshot(draft)
+    assert edited['fingerprint'] != changed['fingerprint']
+    assert edited['people'][person_id]['inactive_from'] == '2026-10-04'
+    assert not candidate_evidence(edited, person_id, duties['2026-10-04'])['eligible_and_available']
+    with transaction(h.app.state.engine) as db:
+        workspace = db.get(m.Workspace, draft['id'])
+        baseline = latest(db, workspace.id)
+        assert (baseline.id, baseline.payload_hash) == (baseline_id, payload_hash)
+        assert verify(baseline)['people'][person_id]['active'] is True
+        current = snapshot_inputs(db, db.get(m.Organisation, h.seed['organisation_id']))
+        assert not any(change['source'] == 'people' for change in _diff(baseline, workspace, current)[2])
