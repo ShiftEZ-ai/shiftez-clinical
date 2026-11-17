@@ -11,6 +11,70 @@ from apps.api.services import rule_effects
 from .test_rule_catalogue_api import approve, line, propose
 
 
+def insert_publication(db, h, name, starts_on, ends_on, sequence, *, effective_until=None):
+    workspace = m.Workspace(department_id=h.seed['department_id'], name=name,
+        starts_on=starts_on, ends_on=ends_on, status='published',
+        created_by=h.seed['identities']['coordinator'], last_edited_by=h.seed['identities']['coordinator'])
+    db.add(workspace)
+    db.flush()
+    publication = m.Publication(department_id=h.seed['department_id'], workspace_id=workspace.id,
+        sequence=sequence, starts_on=starts_on, ends_on=ends_on, current=True,
+        published_by=h.seed['identities']['coordinator'], snapshot={},
+        validation={'contracts': {'block_quota': 'block-quota-v6', 'programmes': 'programmes-v1'}}, fingerprint='test',
+        effective_until=effective_until)
+    db.add(publication)
+    db.flush()
+    return workspace
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_published_impact_uses_local_today_and_effective_until(request, database, monkeypatch):
+    from apps.api.services.independence import today
+    h = request.getfixturevalue(database)
+    with transaction(h.app.state.engine, write=True) as db:
+        day = today(db, h.seed['department_id'])
+        past = insert_publication(db, h, 'Past publication', day - timedelta(days=7), day,
+                                  1, effective_until=day - timedelta(days=1))
+        current = insert_publication(db, h, "Today's publication", day, day + timedelta(days=7), 2)
+        ended = insert_publication(db, h, 'Ended publication', day - timedelta(days=1), day + timedelta(days=7),
+                                   3, effective_until=day)
+        superseded = insert_publication(db, h, 'Superseded publication', day + timedelta(days=7), day + timedelta(days=14), 4)
+        archived = insert_publication(db, h, 'Archived publication', day + timedelta(days=14), day + timedelta(days=21), 5)
+        db.scalar(select(m.Publication).where(m.Publication.workspace_id == superseded.id)).current = False
+        archived.archived_at = m.now()
+        db.flush()
+        monkeypatch.setattr(rule_effects, 'reachable_workspaces', lambda db, actor, policies, rows: rows)
+        found = rule_effects.affected_workspaces(db, SimpleNamespace(department_id=h.seed['department_id']), [],
+            periods=[(day - timedelta(days=365), None, None)])
+        assert [row.id for row in found] == [current.id]
+        assert past.id not in {row.id for row in found}
+        assert not {ended.id, superseded.id, archived.id} & {row.id for row in found}
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_backdated_rule_with_24_month_publication_history_stays_below_impact_limit(request, database, monkeypatch):
+    from apps.api.services.independence import today
+    h = request.getfixturevalue(database)
+    with transaction(h.app.state.engine, write=True) as db:
+        day = today(db, h.seed['department_id'])
+        month = day.year * 12 + day.month - 1
+        for offset in range(-23, 1):
+            total = month + offset
+            starts_on = date(total // 12, total % 12 + 1, 1)
+            next_total = total + 1
+            ends_on = date(next_total // 12, next_total % 12 + 1, 1)
+            for copy in range(5):
+                window_start = day + timedelta(days=copy) if offset == 0 else starts_on + timedelta(days=copy * 5)
+                window_end = window_start + timedelta(days=1 if offset == 0 else 5)
+                insert_publication(db, h, f'Publication {offset} {copy}', window_start, window_end,
+                                   (offset + 23) * 5 + copy + 1)
+        monkeypatch.setattr(rule_effects, 'reachable_workspaces', lambda db, actor, policies, rows: rows)
+        found = rule_effects.affected_workspaces(db, SimpleNamespace(department_id=h.seed['department_id']), [],
+            periods=[(date(2020, 1, 1), None, None)])
+        assert len(found) == 5
+        assert all(day <= row.starts_on < day + timedelta(days=5) for row in found)
+
+
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_thousand_dated_lines_activate_with_exact_affected_rotas_and_audit(request, database):
     h = request.getfixturevalue(database)

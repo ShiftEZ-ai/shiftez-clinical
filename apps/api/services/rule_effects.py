@@ -17,6 +17,7 @@ from packages.domain.rule_lines import named_people, unconditional_people, when
 from packages.domain.solver_rules import COMPILER_VERSION
 from packages.domain.validation import evaluate, finding_observations
 from .common import scoped
+from . import schedule
 from .workspace_access import shared_clause
 
 
@@ -180,8 +181,9 @@ def draft_line_effect(db, actor, catalogue_id, value):
                 'on': original.get('on', True), 'settings': original.get('settings') or {}, 'lines': checked['lines']}})
     effects = []
     for workspace in affected_workspaces(db, actor, [candidate]):
-        before = domain_snapshot(db, workspace)
-        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)])
+        operational = workspace.status == 'published'
+        before = domain_snapshot(db, workspace, operational=operational)
+        after = domain_snapshot(db, workspace, operational=operational, policy_overrides=[record(candidate)])
         effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
             'starts_on': str(workspace.starts_on), 'ends_on': str(workspace.ends_on),
             **effect_projection(before, evaluate(before), after, evaluate(after))})
@@ -303,8 +305,17 @@ def affected_workspaces(db, actor, policies, *, periods=None):
     first = min(p[0] for p in periods)
     last = None if any(p[1] is None for p in periods) else max(p[1] for p in periods)
     scoped_ids = {p[2] for p in periods}
+    from .independence import today
+    publication_start = max(first, today(db, actor.department_id))
+    publication_window = [m.Publication.workspace_id == W.id, m.Publication.current.is_(True),
+                          *schedule.in_force_filters(m.Publication, publication_start, last)]
+    current_publication = select(1).where(*publication_window).exists()
+    change_list_workspace = select(1).where(m.PublicationChangeList.workspace_id == W.id,
+                                            m.PublicationChangeList.department_id == actor.department_id).exists()
     rows = [w for w in db.scalars(select(W).where(shared_clause(), W.department_id == actor.department_id,
-        W.status.in_(('draft', 'submitted', 'approved')), W.archived_at.is_(None), W.ends_on > first,
+        or_(and_(W.status.in_(('draft', 'submitted', 'approved')), ~change_list_workspace),
+            and_(W.status == 'published', current_publication)),
+        W.archived_at.is_(None), W.ends_on > first,
         *([W.starts_on < last] if last else []), *([] if None in scoped_ids else [W.id.in_(scoped_ids)])).order_by(W.starts_on, W.id))
         if any(w.ends_on > a and (b is None or w.starts_on < b) and (ws is None or w.id == ws) for a, b, ws in periods)]
     rows = reachable_workspaces(db, actor, policies, rows)

@@ -488,13 +488,14 @@ def test_legacy_publications_do_not_receive_retroactive_quota_reports(h):
 def test_new_policy_applies_to_drafts_while_published_rotas_keep_their_rules(h):
     first = h.publish(h.shift(h.workspace())["workspace"])
     w = h.workspace(start="2027-02-07", end="2027-02-14")
-    h.publish(h.shift(w, start=at("08:00", "2027-02-07"), end=at("12:00", "2027-02-07"))["workspace"])
+    future = h.publish(h.shift(w, start=at("08:00", "2027-02-07"), end=at("12:00", "2027-02-07"))["workspace"])
     draft = h.shift(h.workspace(start="2027-02-14", end="2027-02-21"), start=at("08:00", "2027-02-14"), end=at("12:00", "2027-02-14"))["workspace"]
     policy = h.command("coordinator", "policy.create", {"name": "Long-block limit", "owner": "Test", "source": "Explicit test input", "starts_on": "2020-01-01",
         "definition": {"scope": {"person_id": h.seed["people"][0]}, "rule": rule(ends_on="2027-03-01", amount=1)}})["record"]
     impact = h.get("approver", "/api/policies/" + policy["id"] + "/impact")["impact"]
-    assert [i["workspace_id"] for i in impact] == [draft["id"]]
+    assert [i["workspace_id"] for i in impact] == [first["workspace"]["id"], future["workspace"]["id"], draft["id"]]
     assert any(f["code"] == "QUOTA_ABOVE_MAXIMUM" for f in impact[0]["findings"])
+    assert all(any(f["code"] == "QUOTA_ABOVE_MAXIMUM" for f in item["findings"]) for item in impact)
     h.command("approver", "policy.activate", {"reason": "Independent policy review"}, policy["id"], policy["revision"])
     live = h.get("coordinator", "/api/publications/" + first["publication_id"] + "/coverage")["evaluation"]
     assert not any(f["rule_id"] == policy["id"] for f in live["findings"])
