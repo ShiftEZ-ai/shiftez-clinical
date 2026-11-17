@@ -89,7 +89,7 @@ def test_planner_view_settings_belong_to_the_renderer_and_keep_hidden_choices(br
         pick_view(page, 'Week'); grid_choices(True); kept()
         if phone:
             bar.get_by_role('radiogroup', name='Calendar layout').get_by_role('radio', name='Agenda', exact=True).click()
-            grid_choices(False)
+            grid_choices(False, colour=True)
             # A remembered phone Agenda does not hide controls on a desktop that renders the Grid.
             page.set_viewport_size({'width': 1440, 'height': 1000})
             pick_view(page, 'List'); pick_view(page, 'Week'); grid_choices(True)  # the next draw is at desktop width

@@ -9,7 +9,7 @@ from playwright.sync_api import expect
 
 from apps.api import models as m
 from apps.api.db import transaction
-from .test_browser import route_fetch, browser, live_server, sign_in, navigate, fill_sign_in, reconnect  # noqa: F401
+from .test_browser import route_fetch, browser, live_server, sign_in, navigate, fill_sign_in, reconnect, wait_held  # noqa: F401
 from .test_browser_uiux_sessions import switch_account
 
 pytestmark = pytest.mark.browser
@@ -93,36 +93,34 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
     try:
         navigate(page,'home')
         # Hold an actual server reply, then let another ordinary reconnect refresh replace /api/me.
-        page.route('**/api/notifications', lambda route: held.append((route, route_fetch(route))))
-        previous = page.locator('#main').element_handle()
-        # The reconnect reads the inbox badge when the pulse moved (as the third reconnect below): a notice arrives first.
+        badge_read = '**/api/requests/all?status=waiting&limit=1'
+        page.route(badge_read, lambda route: held.append((route, route_fetch(route))))
+        previous = page.locator('#main .home-grid').element_handle()
+        # Inbox totals arrive with the pulse; the Requests count holds the badge loader's loading slot.
         with transaction(h.app.state.engine, write=True) as db:
             notification(db, h, recipient, 'Notice before the first badge refresh')
-        with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications'):
+        with page.expect_request(badge_read):
             reconnect(page)
         page.wait_for_function('old => !old.isConnected', arg=previous)
-        # Overview awaits the same non-notification reads as the badge loader.
+        # Home redraws while the badge loader still owns the held reply.
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'home')
-        # Receiving the request does not mean route.fetch has finished under concurrent load.
-        deadline = time.monotonic() + 10
-        while not held and time.monotonic() < deadline:
-            page.wait_for_timeout(50)
+        wait_held(page, held)
         assert len(held) == 1
-        previous = page.locator('#main').element_handle()
+        previous = page.locator('#main .home-grid').element_handle()
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/me'):
             reconnect(page)
         page.wait_for_function('old => !old.isConnected', arg=previous)
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'home')
         route, response = held.pop()
-        with page.expect_response(lambda reply: urlsplit(reply.url).path == '/api/notifications') as delivered:
+        page.unroute(badge_read)
+        with page.expect_response(badge_read) as delivered:
             route.fulfill(response=response)
         delivered.value.finished()
-        page.unroute('**/api/notifications')
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         with transaction(h.app.state.engine, write=True) as db:
             notification(db, h, recipient, 'Notice after overlapping badge refresh')
         # A third reconnect must start a fresh badge read, rather than leave badgesLoading locked forever.
-        with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications', timeout=5000):
+        with page.expect_request(badge_read, timeout=5000):
             reconnect(page)
         expect(page.locator('.topbar .bell')).to_have_attribute('aria-label', 'Inbox · 2 unread')  # the unread count sits on the top-bar bell
     finally:

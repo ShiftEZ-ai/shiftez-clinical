@@ -2,7 +2,7 @@
 import re
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, save_dialog, open_session  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, save_dialog, open_session, open_rota  # noqa: F401
 
 pytestmark = pytest.mark.browser
 OVERTIME = re.compile('^Overtime — ')
@@ -53,10 +53,10 @@ def test_participant_switches_are_inline_and_persist(browser, live_server, h):
 
 
 def test_read_only_role_sees_no_session_editing(browser, live_server, h):
-    h.shift(h.workspace())
+    w = h.shift(h.workspace())['workspace']
     context, page = sign_in(browser, live_server, 'auditor')
     try:
-        navigate(page, 'planner')
+        open_rota(page, w['id'])
         open_session(page)
         expect(page.get_by_role('button', name='Edit session', exact=True)).to_have_count(0)
         expect(page.get_by_role('checkbox', name=OVERTIME)).to_have_count(0)

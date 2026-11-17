@@ -164,7 +164,9 @@ def test_replace_picks_reviews_and_sends_with_urgent_only_when_a_route_is_active
         # One primary: the first who passes every rule; every Assign says whom.
         expect(panel.locator('.wk-cand .button.primary')).to_have_count(1)
         expect(panel.get_by_role('button', name='Assign Taylor Noor')).to_have_class(re.compile('primary'))
-        expect(panel.get_by_role('button', name='Luca Davies')).to_be_visible()
+        blocked = panel.locator('.wk-blocked li').filter(has_text=fake.candidates[-1]['display_name'])
+        expect(blocked).to_be_visible()
+        expect(blocked).to_contain_text(fake.candidates[-1]['findings'][0]['message'])
         # A published change never breaks a rule on purpose (maintenance has no override): not even an overridable one.
         expect(panel.get_by_role('button', name=re.compile('^Break rule and assign'))).to_have_count(0)
         assert fake.prepared == 1  # candidates come from the hidden draft's copy of the session

@@ -167,7 +167,7 @@ def test_compare_shows_the_verdict_head_to_head_and_details_on_real_drafts(brows
         expect(main.get_by_role('heading', name=re.compile('scores higher|nothing to fix|Both rotas score the same'))).to_be_visible()
         duel = main.get_by_role('region', name=re.compile('compared with'))
         expect(duel.get_by_role('radio')).to_have_count(2)
-        expect(page.get_by_role('button', name=re.compile(r'^(Submit for review…|Resolve \d+ blocking)$'))).to_have_count(1)
+        expect(page.get_by_role('button', name=re.compile(r'^(Submit for review…|Resolve \d+ must fix)$'))).to_have_count(1)
         duel.get_by_role('radio').first.check()
         expect(duel.get_by_role('radio').first).to_be_checked()
         for tab in ('Fairness', 'Gaps', 'All details', 'Rules'):
@@ -414,12 +414,13 @@ def test_read_roles_see_a_populated_compare_read_only(browser, live_server, h, r
     try:
         navigate(page, 'schedule/benchmark/compare?draft=' + source['id'])
         main = page.locator('#main')
-        duel = main.get_by_role('region', name='Your rota compared with Rota')
+        short_name = h.get('coordinator', '/api/branding')['short_name']
+        duel = main.get_by_role('region', name=f'Your rota compared with {short_name}', exact=True)
         expect(duel.get_by_role('radio')).to_have_count(2)
         expect(main.get_by_role('note').filter(has_text='Read only')).to_be_visible()
         for name in ('Submit for review…', 'Auto-schedule now', 'Adjust & re-run'):
             expect(page.get_by_role('button', name=name)).to_have_count(0)
-        expect(page.get_by_role('button', name=re.compile(r'^Resolve \d+ blocking$'))).to_have_count(0)
+        expect(page.get_by_role('button', name=re.compile(r'^Resolve \d+ must fix$'))).to_have_count(0)
         main.get_by_role('tab', name=re.compile('^Rules')).focus()
         page.keyboard.press('ArrowRight')
         expect(main.get_by_role('tab', name=re.compile('^Fairness'))).to_be_focused()  # the shared tabs' arrow keys

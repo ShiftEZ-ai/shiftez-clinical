@@ -61,8 +61,9 @@ def test_own_save_is_not_refreshed_twice_by_the_live_pulse(browser, live_server,
     h.shift(w, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
-        # The live stream opens on the first periodic tick; its first pulse records the starting point.
+        # The live stream opens at boot; observe that boot before measuring the save.
         with page.expect_request(re.compile(r'/api/events'), timeout=30000):
+            page.reload()
             navigate(page, 'planner'); settled(page)
         page.wait_for_timeout(1000)
         lists, sent = [], []
