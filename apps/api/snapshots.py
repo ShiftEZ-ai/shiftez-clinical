@@ -743,6 +743,22 @@ def snapshot_inputs(db, org):
     return _snapshot_inputs(db, org)
 
 
+def role_binding_records(db, department_id, person_ids, starts_on, ends_on):
+    """Load the dated, person-bound roles used by generation scopes in one window query."""
+    if not person_ids:
+        return []
+    rows = db.execute(select(m.RoleBinding, m.Identity.person_id).join(
+        m.Identity, m.Identity.id == m.RoleBinding.identity_id).where(
+            m.RoleBinding.department_id == department_id,
+            m.RoleBinding.identity_id.is_not(None),
+            m.Identity.disabled.is_(False),
+            m.Identity.person_id.in_(person_ids),
+            m.RoleBinding.revoked.is_(False),
+            m.RoleBinding.starts_on < ends_on,
+            or_(m.RoleBinding.ends_on.is_(None), m.RoleBinding.ends_on > starts_on))).all()
+    return [{**record(binding), 'person_id': person_id} for binding, person_id in rows]
+
+
 HINT_DATE_UNRESOLVED = "__unresolved__"
 
 
@@ -1013,6 +1029,11 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result.update({"workspace": record(workspace, exclude=("validation",)), "department": record(department),
                    "operational": operational,
                    "quota_policy_limit": quota_policy_limit()})
+    result['role_bindings'] = role_binding_records(db, workspace.department_id, result['people'],
+                                                    workspace.starts_on, workspace.ends_on)
+    result['_role_bindings_by_person'] = defaultdict(list)
+    for binding in result['role_bindings']:
+        result['_role_bindings_by_person'][binding['person_id']].append(binding)
     department_settings = result['department']
     if baseline is not None:
         from .workspace_baselines import frozen_department_settings

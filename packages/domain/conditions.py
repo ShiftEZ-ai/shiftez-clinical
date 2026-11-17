@@ -830,6 +830,12 @@ def rule_holds(data, person_id, shift, a, b, *, rotation_at=None):
             return None
         if field == 'person_ids':
             return {person_id}
+        if field == 'roles':
+            by_person = data.get('_role_bindings_by_person')
+            rows = (by_person.get(person_id, ()) if by_person is not None else
+                    [row for row in data.get('role_bindings', ()) if row.get('person_id') == person_id])
+            return {row['role'] for row in rows
+                    if not row.get('revoked') and valid_dates(row, a, b, zone)}
         if field == OWN_LINE:
             return {o['id'] for o in selector_policies(data, values, person_id=person_id) if valid_dates(o, a, b, zone)}
         if field == OUTRANKED:

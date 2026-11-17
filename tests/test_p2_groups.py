@@ -136,6 +136,19 @@ def test_group_generation_non_editor_is_refused_before_queueing(h):
             m.Job.kind == 'generation'))
 
 
+def test_non_group_generation_does_not_build_domain_snapshot(h, monkeypatch):
+    from apps.api.services import jobs
+
+    def unexpected_snapshot(*args, **kwargs):
+        pytest.fail('non-group generation should not build a domain snapshot')
+
+    monkeypatch.setattr(jobs, 'domain_snapshot', unexpected_snapshot)
+    workspace = h.shift(h.workspace(), people=[])['workspace']
+    job = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation'},
+                    revision=workspace['revision'])['job']
+    assert job['status'] == 'queued'
+
+
 def test_deferred_group_worker_rechecks_changed_authority(h):
     h.settings = replace(h.settings, generation_engine='cp_sat')
     h.app = create_app(h.settings)

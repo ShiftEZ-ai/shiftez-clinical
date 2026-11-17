@@ -3377,6 +3377,39 @@ def create_app(settings: Settings | None = None, engine=None):
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
+            # Refused group generations are private unless the requester or a current
+            # group editor can read them.  Apply that visibility before paging so
+            # unreadable refusals cannot consume the page size.
+            refusal = and_(m.Job.kind == 'generation', m.Job.status == 'failed',
+                           m.Job.error_code == 'GROUP_GENERATION_SCOPE',
+                           m.Job.requested_by != actor.identity_id)
+            from .services.planning_groups import effective_generation_group_versions
+            workspace_rows = db.scalars(select(m.Workspace).join(
+                m.Job, m.Job.workspace_id == m.Workspace.id).where(
+                    *history_filters, refusal).distinct().options(defer(m.Workspace.validation)))
+            effective_readable = {}
+            for workspace in workspace_rows:
+                versions = [row for row in effective_generation_group_versions(db, workspace)
+                            if actor.identity_id in set(row['definition'].get('owner_identity_ids', ())) |
+                            set(row['definition'].get('co_editor_identity_ids', ()))]
+                if versions:
+                    effective_readable[workspace.id] = [row['id'] for row in versions]
+            readable_refusal_ids = [
+                (refusal_workspace_id, select(m.AuditEvent.correlation_id).where(
+                    m.AuditEvent.department_id == actor.department_id,
+                    m.AuditEvent.target_id == refusal_workspace_id,
+                    m.AuditEvent.correlation_id.is_not(None),
+                    m.AuditEvent.action == 'command.refused',
+                    m.AuditEvent.detail['error_code'].as_string() == 'GROUP_GENERATION_SCOPE',
+                    m.AuditEvent.detail['planning_group_version_id'].as_string().in_(version_ids),
+                ))
+                for refusal_workspace_id, version_ids in effective_readable.items()
+            ]
+            visible_refusal = or_(m.Job.requested_by == actor.identity_id,
+                                  *(and_(m.Job.workspace_id == refusal_workspace_id, m.Job.id.in_(query))
+                                    for refusal_workspace_id, query in readable_refusal_ids)) if readable_refusal_ids \
+                else m.Job.requested_by == actor.identity_id
+            history_filters.append(or_(~refusal, visible_refusal))
             found = db.execute(select(m.Job, superseded_flag(db, m.Job))
                 .options(load_only(*history_fields)).where(*history_filters)
                 .order_by(m.Job.created_at.desc(), m.Job.seq.desc()).offset(offset).limit(limit + 1)).all()

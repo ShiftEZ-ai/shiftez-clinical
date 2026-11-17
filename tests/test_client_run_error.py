@@ -43,6 +43,13 @@ def test_access_revoked_keeps_check_your_access(client_modules):
         'head': 'This run could not finish', 'body': 'Check your access and try again.', 'action': None, 'lines': []}
 
 
+def test_group_generation_scope_names_the_group_and_offers_no_feedback(client_modules):
+    assert words(client_modules, 'GROUP_GENERATION_SCOPE') == {
+        'head': 'This run was refused',
+        'body': 'The selected population is outside your scheduling group. Choose only your group’s people, then run auto-schedule again.',
+        'action': None, 'lines': []}
+
+
 def test_an_unknown_code_offers_feedback_and_never_asks_to_quote_it(client_modules):
     said = words(client_modules, 'WORKER_LEASE_EXPIRED')
     assert said == {'head': 'This run could not finish',

@@ -2,7 +2,7 @@
 from copy import deepcopy
 from datetime import date, timedelta
 
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.orm import aliased
 
 from apps.api import models as m
@@ -391,11 +391,11 @@ def _generation_group_context(db, actor, workspace, value):
     require(value.planning_group_version_id is None or selected_group is not None,
             'GROUP_VERSION_SCOPE', 'Choose an effective scheduling group for this period', 422)
     if selected_group is None:
-        return None, versions, {}, False
+        return None, versions, {'_group_generation': True}, False
     definition = selected_group['definition']
     editors = set(definition['owner_identity_ids']) | set(definition.get('co_editor_identity_ids', []))
     require(definition.get('active', True) and actor.identity_id in editors,
-            'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
+            'GROUP_GENERATION_SCOPE', 'The selected population is outside your scheduling group; choose only your group population', 403)
     default_scope = value.generation_scope is None
     scope = value.generation_scope or s.GenerationScope(conditions=definition['membership'])
     lookahead = value.lookahead or settings_definition(db, actor.department_id)['group_lookahead']
@@ -403,6 +403,7 @@ def _generation_group_context(db, actor, workspace, value):
     selected = value.session_ids or list(db.scalars(select(m.Shift.id).where(
         m.Shift.workspace_id == workspace.id).order_by(m.Shift.start, m.Shift.id)))
     return selected_group, versions, {
+        '_group_generation': True,
         'planning_group_version_id': selected_group['id'],
         'planning_group_id': selected_group['group_id'],
         'lookahead': lookahead,
@@ -411,18 +412,175 @@ def _generation_group_context(db, actor, workspace, value):
     }, default_scope
 
 
+def defer_group_generation_supersession(snapshot):
+    """Group runs must not affect other runs until their worker guard succeeds."""
+    return bool((snapshot or {}).get('_group_generation'))
+
+
+def _compact_generation_snapshot(db, workspace, value, *, scope=None, versions=()):
+    """Load only the person facts, groups and selected duties needed by the scope predicate."""
+    from apps.api.snapshots import role_binding_records, shift_records
+    from apps.api.serialization import records_many
+    from packages.domain.conditions import with_tags
+    from packages.domain.validation import index_person_rows
+
+    department = db.get(m.Department, workspace.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    department_id = workspace.department_id
+    organisation_people = select(m.Person.id).where(m.Person.organisation_id == organisation.id)
+    fields = set()
+    if scope is not None:
+        pending = [scope, *(row['definition']['membership'] for row in versions)]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, dict):
+                if node.get('field'):
+                    fields.add(node['field'])
+                children = node.get('conditions')
+                if isinstance(children, dict):
+                    pending.append(children)
+                else:
+                    pending.extend(children or ())
+    all_facts = scope is None
+    need = lambda *names: all_facts or bool(fields & set(names))
+    def dated_source(cls):
+        source = and_(cls.department_id == department_id,
+                      cls.starts_on < workspace.ends_on,
+                      or_(cls.ends_on.is_(None), cls.ends_on > workspace.starts_on))
+        if cls is m.TagMember:
+            return and_(source, cls.kind == 'people', cls.member_id.in_(organisation_people))
+        return and_(source, cls.person_id.in_(organisation_people))
+    sources = {
+        'people': (m.Person, m.Person.organisation_id == organisation.id),
+    }
+    if need('capability_ids'):
+        sources.update({'services': (m.Service, m.Service.department_id == department_id),
+                        'types': (m.AssignmentType, m.AssignmentType.department_id == department_id)})
+    if need('category_ids'):
+        sources.update({'categories': (m.Category, m.Category.department_id == department_id),
+                        'memberships': (m.Membership, dated_source(m.Membership))})
+    if need('capability_ids'):
+        sources.update({'capabilities': (m.Capability, m.Capability.department_id == department_id),
+                        'grants': (m.CapabilityGrant, dated_source(m.CapabilityGrant))})
+    if need('programme_ids'):
+        sources.update({'programmes': (m.Programme, m.Programme.department_id == department_id),
+                        'programme_memberships': (m.ProgrammeMembership, dated_source(m.ProgrammeMembership))})
+    if need('rotation_type_ids', 'cohort_ids'):
+        sources.update({'programmes': (m.Programme, m.Programme.department_id == department_id),
+                        'rotation_types': (m.RotationType, m.RotationType.department_id == department_id),
+                        'cohorts': (m.Cohort, m.Cohort.department_id == department_id),
+                        'rotations': (m.Rotation, dated_source(m.Rotation))})
+    if need('tags'):
+        sources.update({'tags': (m.Tag, m.Tag.department_id == department_id),
+                        'tag_members': (m.TagMember, dated_source(m.TagMember))})
+    if need('eligible_service_ids'):
+        sources['eligibilities'] = (m.Eligibility, dated_source(m.Eligibility))
+    acquired = records_many(db, sources)
+    keyed = {'categories', 'capabilities', 'locations', 'services', 'types', 'programmes',
+             'rotation_types', 'cohorts'}
+    data = {'organisation': record(organisation),
+            'people': {row['id']: row for row in acquired['people']},
+            'tags': {}}
+    data.update({name: {row['id']: row for row in acquired.get(name, [])} for name in keyed})
+    data.update({name: acquired.get(name, []) for name in (
+        'memberships', 'grants', 'eligibilities', 'programme_memberships', 'rotations')})
+    tags = {row['id']: {'id': row['id'], 'name': row['name'], 'labels': list(row.get('labels') or []), 'members': {}}
+            for row in acquired.get('tags', [])}
+    for member in sorted(acquired.get('tag_members', []), key=lambda row: row['member_id']):
+        tags[member['tag_id']]['members'].setdefault(member['kind'], []).append(member['member_id'])
+    data['tags'] = tags
+    with_tags(data)
+    data['role_bindings'] = (role_binding_records(db, department_id, data['people'],
+                                                  workspace.starts_on, workspace.ends_on)
+                             if need('roles') else [])
+    data['_role_bindings_by_person'] = {}
+    for binding in data['role_bindings']:
+        data['_role_bindings_by_person'].setdefault(binding['person_id'], []).append(binding)
+    query = select(m.Shift).where(m.Shift.workspace_id == workspace.id)
+    if value.session_ids:
+        query = query.where(m.Shift.id.in_(value.session_ids))
+    shifts = shift_records(db, db.scalars(query.order_by(m.Shift.start, m.Shift.id)), include_participants=False)
+    data.update({'workspace': record(workspace, exclude=('validation',)),
+                 'shifts': shifts, 'focus_ids': [row['id'] for row in shifts]})
+    if value.session_ids:
+        data['generation_session_ids'] = list(value.session_ids)
+    data['_person_rows'] = index_person_rows(data)
+    data['_person_dates_cache'] = {}
+    data['_scope_matches_cache'] = {}
+    return data
+
+
+def effective_generation_group_versions(db, workspace):
+    """Return the effective group versions for one workspace window."""
+    return load_groups(db, workspace.department_id, starts_on=workspace.starts_on, ends_on=workspace.ends_on)
+
+
+def generation_job_readable(db, actor, job):
+    """Keep a refused group run private to its requester and group editors."""
+    if job.error_code != 'GROUP_GENERATION_SCOPE' or job.status != 'failed':
+        return True
+    if job.requested_by == actor.identity_id:
+        return True
+    snapshot = job.input_snapshot or {}
+    version_id = snapshot.get('planning_group_version_id')
+    if not version_id:
+        return False
+    workspace = db.get(m.Workspace, job.workspace_id)
+    if workspace is None:
+        return False
+    selected = next((row for row in effective_generation_group_versions(db, workspace)
+                     if row['id'] == version_id), None)
+    if selected is None:
+        return False
+    definition = selected['definition']
+    return actor.identity_id in (set(definition.get('owner_identity_ids', ())) |
+                                 set(definition.get('co_editor_identity_ids', ())))
+
+
+def require_generation_job_read(db, actor, job):
+    require(generation_job_readable(db, actor, job), 'NOT_FOUND', 'Record not found', 404)
+
+
+def record_generation_scope_refusal(db, job, message):
+    """Persist the worker refusal with the same command.refused shape as enqueue refusals."""
+    from uuid import NAMESPACE_URL, uuid5
+    event_id = str(uuid5(NAMESPACE_URL, f'{job.department_id}:{job.requested_by}:{job.id}:GROUP_GENERATION_SCOPE'))
+    if db.get(m.AuditEvent, event_id) is not None:
+        return
+    snapshot = job.input_snapshot or {}
+    db.add(m.AuditEvent(id=event_id, department_id=job.department_id, actor_id=job.requested_by,
+        action='command.refused', target_id=job.workspace_id,
+        reason=str(message or 'The selected population is outside your scheduling group; choose only your group population')[:500],
+        detail={'error_code': 'GROUP_GENERATION_SCOPE', 'command_kind': 'job.create', 'status': 403,
+                'target_id': job.workspace_id, 'target_kind': 'job',
+                'planning_group_id': snapshot.get('planning_group_id'),
+                'planning_group_version_id': snapshot.get('planning_group_version_id')},
+        correlation_id=job.id))
+
+
 def guard_generation(db, actor, workspace, snapshot, value, *, enqueue=False):
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
-    if enqueue:
+    if versions is None and value.generation_scope is None:
         return metadata
+    scope = value.generation_scope
+    if selected_group is not None and default_scope:
+        scope = s.GenerationScope(conditions=selected_group['definition']['membership'])
+    if snapshot is None:
+        snapshot = _compact_generation_snapshot(db, workspace, value,
+                                                scope=scope.model_dump(mode='json') if scope else None,
+                                                versions=versions or ())
     if versions is None:
+        requested = {**snapshot, **({'generation_scope': value.generation_scope.model_dump(mode='json')}
+                                    if value.generation_scope else {})}
+        from packages.domain.generation_scope import has_population
+        require(has_population(requested), 'INVALID_SCOPE',
+                'No people match this group during the selected duties; change the population or duty selection', 422)
         return
     from packages.domain.generation_scope import population_allows
     resolver = GroupResolver(snapshot, versions)
-    scope = (s.GenerationScope(conditions=selected_group['definition']['membership'])
-             if default_scope else value.generation_scope)
-    requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None}
-    selected = set(value.session_ids or snapshot['focus_ids'])
+    requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None,
+                 **({'generation_session_ids': list(value.session_ids)} if value.session_ids else {})}
+    selected = set(value.session_ids) if value.session_ids else set(snapshot['focus_ids'])
     population = {}
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
@@ -436,15 +594,18 @@ def guard_generation(db, actor, workspace, snapshot, value, *, enqueue=False):
                 continue
             require(primary is not None and actor.identity_id in primary['editor_identity_ids']
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
-                    'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
+                    'GROUP_GENERATION_SCOPE', 'The selected population is outside your scheduling group; choose only your group population', 403)
             population[shift['id']].append(pid)
-    if selected_group:
+    require(any(population.values()), 'INVALID_SCOPE',
+            'No people match this group during the selected duties; change the population or duty selection', 422)
+    if selected_group and not enqueue:
         snapshot.update({**metadata,
             'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
             'planning_group_versions': versions,
             'planning_context': {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}})
         if default_scope:
             snapshot['generation_scope'] = scope.model_dump(mode='json')
+    return metadata
 
 
 def guard_job_control(db, actor, job):

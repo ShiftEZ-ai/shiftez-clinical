@@ -802,6 +802,9 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
     if error_detail is not None and error:
         result = {'status': 'refused', 'error': error_detail}
     job.result, job.error_code = result, error
+    if error == 'GROUP_GENERATION_SCOPE':
+        from apps.api.services.planning_groups import record_generation_scope_refusal
+        record_generation_scope_refusal(db, job, (error_detail or {}).get('message'))
     search_spent(job, result)
     search_spent(job, progress)
     if job.kind == 'generation':
@@ -1121,10 +1124,12 @@ def prune_generation_state(engine, *, settings=None):
 
 def prepare_deferred_generation(engine, claim, settings):
     """Freeze a queued auto-schedule request only after the worker leases it."""
-    if claim['kind'] != 'generation' or not claim['input'].get('_deferred_generation'):
+    if claim['kind'] != 'generation':
         return
     from apps.api.errors import require
-    from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
+    deferred_generation = bool(claim['input'].get('_deferred_generation'))
+    from apps.api.services.jobs import (catalogue_proof_identity, generation_request_from_snapshot,
+                                        require_solver_compatible)
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
     from apps.api.services.planning_groups import guard_generation
@@ -1137,12 +1142,12 @@ def prepare_deferred_generation(engine, claim, settings):
         require(job is not None and job.status == 'running' and job.attempts == claim['attempt'],
                 'STALE_INPUTS', 'The auto-schedule request is no longer current', 409)
         workspace = db.get(m.Workspace, job.workspace_id)
-        requested = claim['input'].get('generation_request') or {}
-        value = s.JobInput.model_validate(requested)
         expected_revision = claim['input'].get('workspace', {}).get('revision')
         require(workspace is not None and workspace.revision == expected_revision and workspace.status == 'draft'
                 and workspace.archived_at is None, 'STALE_INPUTS',
                 'The rota changed before auto-scheduling started', 409)
+        requested = generation_request_from_snapshot(workspace, claim['input'])
+        value = s.JobInput.model_validate(requested)
         identity = db.get(m.Identity, job.requested_by)
         require(identity is not None and not identity.disabled, 'ACCESS_REVOKED', 'The requester no longer has access', 403)
         department = db.get(m.Department, workspace.department_id)
@@ -1150,6 +1155,11 @@ def prepare_deferred_generation(engine, claim, settings):
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
+        if not deferred_generation:
+            guard_generation(db, actor, workspace, None, value)
+            from apps.api.services.jobs import record_supersessions
+            record_supersessions(db, job)
+            return
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
         options = s.GenerationOptions.model_validate(claim['input'].get('generation_options') or {})
@@ -1208,6 +1218,7 @@ def prepare_deferred_generation(engine, claim, settings):
                 accepted_issues=workspace.accepted_issues or [])['fix_list']
         snapshot['generation_manifest'] = generation_manifest(
             baseline, snapshot, job=job, requester_id=job.requested_by)
+        snapshot['generation_request'] = requested
         job.input_snapshot = snapshot
         job.input_fingerprint = snapshot['fingerprint']
         from apps.api.services.jobs import record_supersessions
@@ -1267,14 +1278,14 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         log.info("job_started", extra={"job_id": claim["id"], "kind": claim["kind"], "attempt": claim["attempt"]})
         stopped, finished = threading.Event(), threading.Event()
         progress = dict(claim.get('progress') or {"stage": "checking", "elapsed_seconds": 0})
-        deferred_generation = claim['kind'] == 'generation' and claim['input'].get('_deferred_generation')
+        deferred_generation = claim['kind'] == 'generation'
         try:
             prepare_deferred_generation(engine, claim, settings)
         except Exception as exc:
             error = getattr(exc, 'code', type(exc).__name__)
             if deferred_generation:
                 from apps.api.errors import PROBLEM_DETAIL_LIMIT, Problem, problem_payload
-                if isinstance(exc, Problem) and exc.details is not None:
+                if isinstance(exc, Problem) and (exc.code == 'GROUP_GENERATION_SCOPE' or exc.details is not None):
                     error_detail = problem_payload(exc, cap=PROBLEM_DETAIL_LIMIT)
             log.warning("generation_preparation_failed", extra={"job_id": claim["id"],
                 "error_code": error, "exception_type": type(exc).__name__})
@@ -1422,7 +1433,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         monitor = threading.Thread(target=maintain_lease, daemon=True)
         monitor.start()
         try:
-            if claim["kind"] == "generation":
+            if error:
+                result = None
+            elif claim["kind"] == "generation":
                 if claim['input'].get('generation_scope') is not None:
                     identity = proof_identity.identity()
                     if identity is None or identity['source_digest'] != claim['input'].get('generation_scope_source'):

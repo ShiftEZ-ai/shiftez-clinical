@@ -23,6 +23,8 @@ export const RUN_ERROR_WORDS={
   SOLVER_RULE_INCOMPATIBLE:{head:(n:number)=>n?`${plural(n,'rule line')} can’t be scheduled automatically`:'A rule can’t be scheduled automatically',
     body:(n:number)=>n?'Change these lines, then run auto-schedule again:':'Change the lines marked on Rules, then run auto-schedule again.',action:'Open Rules'},
   ACCESS_REVOKED:{head:'This run could not finish',body:'Check your access and try again.'},
+  // Refused by the worker's group-population guard (apps/worker/main.py): nothing ran and nothing was superseded.
+  GROUP_GENERATION_SCOPE:{head:'This run was refused',body:'The selected population is outside your scheduling group. Choose only your group’s people, then run auto-schedule again.'},
   unknown:{head:'This run could not finish',body:'This run stopped. Run auto-schedule again. If it stops again, send feedback.',action:'Send feedback'},
 } as const;
 /** One rule line a run can't schedule: its rule, its line number (when the issue names one) and the server's reason. */
@@ -43,6 +45,7 @@ export function runError(code:string,issues?:unknown,total?:number):{head:string
     return {head:w.head(lines.length),body:w.body(lines.length),action:!lines.length||capped?'rules':null,lines};
   }
   if(code==='ACCESS_REVOKED')return {...RUN_ERROR_WORDS.ACCESS_REVOKED,action:null,lines:[]};
+  if(code==='GROUP_GENERATION_SCOPE')return {...RUN_ERROR_WORDS.GROUP_GENERATION_SCOPE,action:null,lines:[]};
   return {head:RUN_ERROR_WORDS.unknown.head,body:RUN_ERROR_WORDS.unknown.body,action:'feedback',lines:[]};
 }
 // shortcut: the server's generic refusal sentences, matched at the end of its message (planning.py, swaps.py); a reworded
