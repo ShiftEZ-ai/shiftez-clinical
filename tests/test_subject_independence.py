@@ -1,15 +1,16 @@
 """Decision independence follows the subject, while authorship remains in the audit trail."""
 import uuid
+from copy import deepcopy
 from datetime import date
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import literal, select
+from sqlalchemy import String, literal, select
 
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import record
-from apps.api.services import independence
+from apps.api.services import bulk as bulk_service, independence
 from .governance_support import identity
 from .test_request_decide_many import decide as decide_many, request_row
 from .test_requests_for_me import read
@@ -192,8 +193,8 @@ def test_no_subject_calendar_protection_refuses_proposer_without_audited_permiss
     activate_calendar(h, role, fact, bulk=bulk, reason="Reviewed with independent calendar cover")
     activated = read(h, role, id=fact["id"])["fact"]
     assert activated["status"] == "active" and activated["proposed_by"] == proposer and activated["approved_by"] == reviewer
-    action = "bulk.apply" if bulk else "calendar.protection.activate"
-    event = next(e for e in h.get("auditor", "/api/audit?self_approved=true")["events"] if e["action"] == action)
+    event = next(e for e in h.get("auditor", "/api/audit?self_approved=true")["events"]
+                 if e["action"] == "calendar.protection.activate")
     assert event["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]
     assert "entered_on_behalf_by" not in event["detail"]
 
@@ -216,7 +217,7 @@ def personal_entry(h, source, entered_by, person):
         # Retained proposals may have been entered by a coordinator or a login linked to another person.
         with transaction(h.app.state.engine, write=True) as db:
             row = m.AvailabilityPattern(department_id=h.seed["department_id"],
-                created_by=h.seed["identities"][entered_by], **pattern(person, starts_on=date(2026, 9, 1)))
+                created_by=h.seed["identities"][entered_by], status="proposed", **pattern(person, starts_on=date(2026, 9, 1)))
             db.add(row)
             db.flush()
             return record(row)
@@ -328,6 +329,49 @@ def test_shared_subject_independence_matches_python_and_sql(database):
         for subjects, entered_by, reviewer, allowed in cases:
             actor, enterer = actors[reviewer], actors[entered_by].identity_id
             assert independence.subject_independent(db, actor, subjects, enterer) is allowed
-            query = independence.subject_independent(db, actor, tuple(literal(person) for person in subjects), literal(enterer), sql=True)
+            query = independence.subject_independent(db, actor, tuple(literal(person, type_=String) for person in subjects), literal(enterer), sql=True)
             assert db.scalar(select(query)) is allowed
         assert "entered_on_behalf_by" not in db.info
+
+
+def test_bulk_person_fact_decisions_keep_on_behalf_and_self_approval_audits_separate(database):
+    h = database
+    reviewer = identity(h, "fact_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+    rows = [h.command("fact_reviewer", "person.workload.propose", workload(h, person_id=person))["fact"]
+            for person in (h.seed["people"][1], h.seed["people"][0])]
+    permission = h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["rule.activate"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit personal fact permission"})["permission"]
+    result = h.command("fact_reviewer", "bulk.apply", {"reason": "Reviewed both facts with independent cover", "items": [
+        {"item_kind": "person.workload.activate", "target_id": row["id"], "expected_revision": row["revision"], "payload": {}}
+        for row in rows]})
+    assert result["count"] == 2
+    assert all(read(h, "fact_reviewer", id=row["id"])["fact"]["status"] == "active" for row in rows)
+    events = h.get("auditor", "/api/audit")["events"]
+    decisions = {event["target_id"]: event for event in events if event["action"] == "person.workload.activate"}
+    assert decisions[rows[0]["id"]]["detail"]["entered_on_behalf_by"] == [reviewer]
+    assert "self_approved" not in decisions[rows[0]["id"]]["detail"]
+    assert decisions[rows[1]["id"]]["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]
+    assert "entered_on_behalf_by" not in decisions[rows[1]["id"]]["detail"]
+    parent = next(event for event in events if event["action"] == "bulk.apply")
+    assert "entered_on_behalf_by" not in parent["detail"] and "self_approved" not in parent["detail"]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_bulk_item_restores_approval_audit_metadata(database, monkeypatch, existing):
+    h = database
+    actor = SimpleNamespace(identity_id=h.seed["identities"]["coordinator"], person_id=None)
+
+    def fail(db, *args):
+        independence.ensure_subject(db, actor, "rule.activate", (h.seed["people"][0],), actor.identity_id,
+                                    "Independent fact review")
+        db.info.setdefault("self_approved", []).append({"action": "rule.activate", "permission_id": "synthetic"})
+        raise ValueError("Synthetic later item refusal")
+
+    monkeypatch.setattr(bulk_service, "_dispatch_item", fail)
+    with transaction(h.app.state.engine) as db:
+        previous = {"self_approved": [{"action": "request.decide", "permission_id": "previous"}],
+                    "entered_on_behalf_by": {"previous"}} if existing else {}
+        db.info.update(deepcopy(previous))
+        with pytest.raises(ValueError, match="Synthetic later item refusal"):
+            bulk_service._run_item(db, actor, {}, {}, None, "synthetic")
+        assert {key: db.info[key] for key in ("self_approved", "entered_on_behalf_by") if key in db.info} == previous
