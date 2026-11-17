@@ -15,6 +15,7 @@ from packages.contracts.schemas import LEAD_FIELDS, SESSION_SCOPE_FIELDS, Policy
 from .conditions import absolute_values, active_rules
 from .rule_groups import PROTECTED_TIME, expanded, expanded_copies, normal
 from .rule_lines import (SCORING_DEFAULT_SOURCE, _defaults, _settings, both_apply, department_catalogue_version,
+                         line_without_notes,
                          duplicates, fair_share_goal_settings, line_validity, named_people, outranking, scope_of, tier)
 
 NAMESPACE = uuid.UUID('6f1c0b8e-6c55-4a39-9a43-6a2f7c1d9e10')  # line ids are derived from the old rule: a plan is repeatable
@@ -146,11 +147,11 @@ def who_where(scope, extra_who=(), extra_where=()):
     return ({'match': 'all', 'conditions': who} if who else None), ({'match': 'all', 'conditions': where} if where else None)
 
 
-def lines_of(p, *, validate=True):
+def lines_of(p, *, validate=True, entry_id=None):
     """An old rule as catalogue lines, exactly as `active_rules` reads it (its own line for everyone it matches unless
     it is for its lines only, then one line per row of its table)."""
     d = normal(p['definition']) if validate else p['definition']
-    entry = CATALOGUE_BY_ID[entry_of({**p, 'definition': d})]
+    entry = CATALOGUE_BY_ID[entry_id or entry_of({**p, 'definition': d})]
     rule, scope, rows, field = d['rule'], d['scope'], d['per_person'], line_field(d)
     items = [] if d['listed_only'] else [(scope, rule, p.get('starts_on'), p.get('ends_on'), (), ())]
     for r in rows:
@@ -642,7 +643,7 @@ def source_policy(binding, destinations):
         groups = {}
         for destination, line in items:
             clean = deepcopy(line)
-            groups.setdefault(_digest(clean), []).append((destination, clean))
+            groups.setdefault(_digest(line_without_notes(clean)), []).append((destination, clean))
         for group in groups.values():
             destination, line = group[0]
             people = {item['person_id'] for item, _ in group if item.get('person_id')}
@@ -652,7 +653,7 @@ def source_policy(binding, destinations):
             line['_source_index'] = n
             if len(groups) > 1:
                 line['_source_identity'] = line['id']
-                line['id'] = _derived('source-variant', line['id'], _digest(line))
+                line['id'] = _derived('source-variant', line['id'], _digest(line_without_notes(line)))
             if n in personal:
                 line.setdefault('settings', {}).setdefault('balance_goal', {})['person_amounts'] = personal[n]
             lines.append((n, line))
@@ -775,7 +776,7 @@ def source_policy(binding, destinations):
     if rows:
         source['_v2_row_templates'] = row_templates
     # This assembled wrapper is structurally checked above; the compiler checks every operative row separately.
-    _, expected = lines_of(source, validate=not quota_rows)
+    _, expected = lines_of(source, validate=not quota_rows, entry_id=binding['source_catalogue_id'])
     offset = 0 if d.get('listed_only') else 1
     expected = ({-1: expected[0]} if offset and expected else {}) | {
         n: line for n, line in enumerate(expected[offset:])}

@@ -119,13 +119,24 @@ def _line_identity(line, *, person=None):
     ], sort_keys=True, default=str)
 
 
-def _carrier_lines(policy):
+def line_without_notes(line):
+    value = {key: item for key, item in line.items() if key != 'note'}
+    if default := line.get('source_default'):
+        value['source_default'] = line_without_notes(default)
+    return value
+
+
+def _carrier_lines(policy, fact):
     rule = (policy.get('definition') or {}).get('rule') or {}
     if rule.get('kind') == 'catalogue':
         return rule.get('lines') or []
     from .rule_catalogue_migration import Kept, lines_of
+    entry_id = None
+    if rule.get('kind') == 'restriction':
+        entry_id = 'protected_time' if (policy['definition'].get('calendar_entry_id')
+            or (fact.get('data') or {}).get('catalogue_id') == 'protected_time') else 'keep_off'
     try:
-        return lines_of(policy)[1]
+        return lines_of(policy, entry_id=entry_id)[1]
     except (Kept, KeyError, TypeError, ValueError):
         return []
 
@@ -139,7 +150,7 @@ def _has_identical_person_line(policy, fact):
         fact_line = fact_policy(fact)['definition']['rule']['lines'][0]
     return any((line.get('who') is None or person in named_people(line))
                and _line_identity(line, person=person) == _line_identity(fact_line, person=person)
-               for line in _carrier_lines(policy))
+               for line in _carrier_lines(policy, fact))
 
 
 def _safety_number(data):

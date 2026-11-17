@@ -20,9 +20,12 @@ def rules_changed(facts):
     for fact in facts:
         if fact['kind'] == 'live_safety':
             def active(side):
+                value = fact.get(side) or {}
+                rows = value.get(kind, [])
+                if 'rule_lines' in value:
+                    return rows, value['rule_lines'], value.get('policy_definition_issues', {})
                 return {row['id']: (row.get('revision'), {key: row.get(key) for key in POLICY_INPUT_FIELDS})
-                        for row in (fact.get(side) or {}).get(kind, [])
-                        if row.get('status') == 'active' and row.get('active', True)}
+                        for row in rows if row.get('status') == 'active' and row.get('active', True)}
             if active('before') != active('after'):
                 return True
     return False

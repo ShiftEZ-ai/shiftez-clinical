@@ -175,9 +175,10 @@ def test_native_seed_defaults_convert_with_later_legacy_rules_and_undo_exactly(h
     restored = h.snapshot(workspace)
     assert restored['fingerprint'] == after['fingerprint']
     expected['fingerprint'] = restored['fingerprint']
-    for policy in expected['policies']:
-        if policy['id'] in bindings:
-            policy['revision'] += 2  # Activation and Undo retain their separate lifecycle revisions.
+    # The draft retains its captured versions. Activation and Undo advance the live versions twice.
+    live = {p['id']: p['revision'] for p in h.get('coordinator', '/api/policies?status=active')['policies']}
+    assert {key: live[key] for key in bindings} == {
+        key: binding['source_revision'] + 2 for key, binding in bindings.items()}
     proof = strict_proof(expected, restored)
     assert proof['identical'], proof
 
