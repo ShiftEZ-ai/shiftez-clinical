@@ -668,6 +668,12 @@
     },
     {
       "class": "unstable",
+      "node": "tests/test_browser_be18_check.py::test_a_check_refused_for_the_persons_own_access_only_says_so",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
+    },
+    {
+      "class": "unstable",
       "node": "tests/test_browser_be18_check.py::test_a_take_over_that_fails_too_says_the_check_has_not_started",
       "owner": "maintainer",
       "reason": "Different measured outcomes between replicas in run 44114266718, attempt 1."
@@ -679,16 +685,22 @@
       "reason": "Different measured outcomes between replicas in run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_browser_bulk_changes.py::test_their_leave_pages_on_the_server_and_selects_all_matching_by_count",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
       "node": "tests/test_browser_catalogue_hydration.py::test_lean_pages_load_setup_counts_without_hydrating_lists[case-ngoicaolbhpdbgnfmoiaafiiddcocpojgielpfcgclcgjnefeidhoagcckabjldl]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_combined_acceptance.py::test_two_pass_group_preserves_supervisor_fields_and_normal_review_guards",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -737,6 +749,12 @@
       "node": "tests/test_browser_edit_delta.py::test_an_edit_and_its_undo_redraw_from_the_delta_without_reading_the_rota",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_edit_requests.py::test_another_persons_assign_reaches_the_watcher_from_its_pulse_with_no_rota_read",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -883,6 +901,12 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
+      "class": "unstable",
+      "node": "tests/test_browser_frontend_simplification.py::test_reloaded_run_setup_rechecks_current_bounds_and_keeps_jobs_server_authoritative",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
+    },
+    {
       "class": "baseline",
       "node": "tests/test_browser_governance.py::test_inactive_staff_keeps_personal_pages_without_forbidden_swap_background_reads[case-encibpahokhpnfnfecahjogkljbelhbedldcfhinchbloopjooadmjcbdnjenhlf]",
       "owner": "maintainer",
@@ -1007,6 +1031,12 @@
       "node": "tests/test_browser_p2_groups.py::test_a_private_draft_is_created_from_the_rota_shared_one_way_and_view_only_for_others",
       "owner": "maintainer",
       "reason": "Different measured outcomes between replicas in run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_p2_groups.py::test_a_rota_coordinator_makes_a_shared_draft_the_rota",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -1135,10 +1165,28 @@
       "reason": "Different measured outcomes between replicas in run 44114266718, attempt 1."
     },
     {
+      "class": "unstable",
+      "node": "tests/test_browser_palette_sources.py::test_rota_search_opens_unloaded_draft_and_exact_publication_sources[case-enbloijbadnkcecgmakmdfggjijbpdjihkjpfgegjcedhpjomaiianlgpcijmonh]",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_people_forms.py::test_ending_a_rank_says_so_with_undo",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
+    },
+    {
       "class": "baseline",
       "node": "tests/test_browser_people_merged.py::test_a_credentialer_on_a_phone_gets_the_directory_never_the_collection",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_people_merged.py::test_department_scale_people_open_fast_with_one_request",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -1153,10 +1201,10 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_browser_perf.py::test_resolve_queue_reads_each_sessions_findings_once",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -1295,6 +1343,12 @@
       "node": "tests/test_browser_planner_phone.py::test_phone_fill_routes_resolve_and_help_share_the_agenda_panel",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_planner_why.py::test_why_tab_explains_everyone_and_acts_with_undo",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -1451,6 +1505,18 @@
       "node": "tests/test_browser_schedule.py::test_every_role_opens_the_schedule_on_desktop_and_phone_in_light_and_dark[case-omabgmndbpafbkjnjlbmhkbbmdmfkkmbfepclognmkolpfmiidebpippaoojghgc]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_schedule_flows.py::test_change_the_published_rota_opens_an_amendment_that_supersedes_it",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_browser_schedule_flows.py::test_replace_from_a_date_trims_the_published_rota_on_publish",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -1615,10 +1681,10 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_browser_view_settings.py::test_calendar_rows_are_duties_or_people_and_people_group_by_rank",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -2347,10 +2413,10 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_generation_department.py::test_repeat_supervisor_limit_blocks_manual_and_guides_allocation",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -2525,6 +2591,12 @@
       "node": "tests/test_lifecycle_short_writer.py::test_revision_only_race_is_checked_inside_final_writer[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "unstable",
+      "node": "tests/test_lock_diagnostics.py::test_gone_row_lock_blocker_is_an_empty_diagnostic",
+      "owner": "maintainer",
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -3709,40 +3781,40 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_all_hardening_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_canaries_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_content_classifier_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_node_census_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_plan_lapse_backstop_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_stop_loss.py::StopLossTests::test_window_expiry_off_keeps_core_verdict",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -3805,10 +3877,10 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_first_main_release_reads_accepted_dev_lists_when_main_has_none",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -3817,28 +3889,28 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_guard_removal_repair_and_promotion",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_main_group_checks_actual_base_after_retarget",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_merge_tree_ignores_null_or_stale_event_sha",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
@@ -3847,16 +3919,16 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_same_pr_node_ledger_structural_addition_is_flagged_tier2",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_working_policy.py::PolicyTests::test_trusted_verdict_materializes_only_target_json_and_candidate_subtraction",
       "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json."
     },
     {
       "class": "baseline",
