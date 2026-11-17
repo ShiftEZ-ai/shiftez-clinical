@@ -937,7 +937,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 ok, expiry = github_integrations.check_repository(repo, credential_token)
                 github_check = github_integrations.RepositoryCheck(**context, ok=ok, expiry=expiry)
 
-    from .services import planning_preparation
+    from .services import generation_reconciliation, planning_preparation
     planning_plan = None
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
@@ -968,8 +968,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     actor = authenticate(db, token, csrf, write=True, settings=settings)
                     require_role(actor, *command_roles(command))
                     if not existing_receipt(db, actor):
-                        planner_tools.assert_precondition(db, actor, command)
                         planning_preparation.bind(db, planning_plan)
+                        planner_tools.assert_precondition(db, actor, command)
                         if command.kind == 'workspace.approve':
                             planning.lifecycle(db, actor, command, validation=(workspace_check[1], workspace_check[2]))
                         else:
@@ -978,9 +978,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     raise planning_preparation.RollbackPreparation()
             except planning_preparation.ComputePreparation as pending:
                 # Rollback released row locks too: a check of this same rota cannot convoy other writers.
-                database._remaining(preparation_deadline)
-                planning_plan['checks'].append((pending.key, pending.compute()))
-                database._remaining(preparation_deadline)
+                for key, compute in [*pending.pending, (pending.key, pending.compute)]:
+                    database._remaining(preparation_deadline)
+                    planning_plan['checks'].append((key, compute()))
+                    database._remaining(preparation_deadline)
                 if pending.final:
                     break
             except planning_preparation.RollbackPreparation:
@@ -1197,6 +1198,14 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                      context={"correlation_id": correlation_id, "command_kind": logged_command_kind(command.kind)},
                                      serialize=command.kind not in NON_SERIALIZED_COMMANDS)
                 break
+            except generation_reconciliation.GenerationInputsChanged:
+                with transaction(reader) as db:
+                    if engine.dialect.name == 'sqlite':
+                        db.execute(text('BEGIN'))
+                    actor = authenticate(db, token, csrf, write=True, settings=settings)
+                    require_role(actor, *command_roles(command))
+                    generation_plan = generation_reconciliation.refresh_inputs(db, actor, command, generation_plan)
+                    generation_plan['writer_current_inputs'] = attempt >= 1
             except CheckInputsChanged:
                 # An unrelated revision may leave the canonical fingerprint unchanged. Resolve
                 # that (or build the stale-input explanation) without holding up user writes.
