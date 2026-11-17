@@ -2458,7 +2458,7 @@ def _publication_approval(db, workspace, fp):
         'APPROVER_REVOKED', 'The approving authority is no longer active; obtain a new review', 409)
 
 
-def lifecycle(db, actor, command, *, validation=None, shared_inputs=None, publish_check=None):
+def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
         if validation is None:
@@ -2584,8 +2584,6 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None, publis
         # The fresh data drives the immutable publication evidence below.
         acquired = checked_data[0]
         fp = acquired['fingerprint']
-        if publish_check is not None:
-            publish_check(acquired)
         result = {key: value for key, value in result.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
         # still run the current evaluator so publication can never bypass a

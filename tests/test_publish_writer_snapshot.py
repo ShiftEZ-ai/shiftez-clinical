@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 from sqlalchemy import inspect, select, text
 
-from apps.api import models as m, snapshots
+from apps.api import commands, models as m, snapshots
 from apps.api.db import WRITE_LOCK_KEY, transaction
 from apps.api.services import planning
 from tests.test_fix_list_performance import backend
@@ -26,7 +26,8 @@ def _other_writer_is_blocked(h, db):
             assert blocked.value.sqlite_errorcode in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
-def test_rule_activated_after_preliminary_read_refuses_publication(backend, monkeypatch):
+@pytest.mark.parametrize('already_active', [False, True])
+def test_rule_activated_after_preliminary_read_refuses_publication(backend, monkeypatch, already_active):
     h = backend
     typ = h.configure('assignment_types', {'name': 'Synthetic next-day duty',
         'starts_on': '2020-01-01', 'definition': {}})['record']
@@ -42,47 +43,61 @@ def test_rule_activated_after_preliminary_read_refuses_publication(backend, monk
                      'to_type_ids': [typ['id']]},
             'scope': {'person_id': h.seed['people'][0]}, 'severity': 'mandatory',
             'exception_allowed': False}})['record']
-    activating, committed, acquired, writer = False, False, [], []
+    preliminary = h.snapshot(workspace)['fingerprint']
+    activating, committed, acquired, writer = False, [], [], []
+    expected = commands.expected
+
+    def activate():
+        nonlocal activating
+        assert not committed
+        activating = True
+        try:
+            h.command('approver', 'policy.activate', {'reason': 'Activate in the admission window'},
+                      rule['id'], rule['revision'])
+            committed.append(True)
+        finally:
+            activating = False
+
+    if already_active:
+        activate()
+
+    def after_precondition(row, revision):
+        result = expected(row, revision)
+        if row.id == workspace['id'] and not committed:
+            # Another session commits after the cheap read, before writer admission.
+            activate()
+        return result
+
     original = planning.domain_snapshot
 
     def snapshot(db, row, *args, **kwargs):
-        nonlocal activating, committed
         data = original(db, row, *args, **kwargs)
         if row.id == workspace['id'] and not activating:
             locked = bool(db.connection().info.get('rota_write'))
             acquired.append((locked, data['fingerprint']))
-            if locked:
-                assert committed
-                writer.append(db)
-            else:
-                assert not committed
-                activating = True
-                try:
-                    # A separate command/session commits while the preliminary reader stays open.
-                    h.command('approver', 'policy.activate', {'reason': 'Activate in the admission window'},
-                              rule['id'], rule['revision'])
-                    committed = True
-                finally:
-                    activating = False
+            assert locked and committed == [True]
+            writer.append(db)
         return data
 
     evaluate = planning.evaluate
 
     def checked(data, **kwargs):
         if not activating:
-            assert committed and len(writer) == 1
+            assert committed == [True] and len(writer) == 1
             # No cooperating activation can commit between this snapshot and its use.
             _other_writer_is_blocked(h, writer[0])
         return evaluate(data, **kwargs)
 
     monkeypatch.setattr(planning, 'domain_snapshot', snapshot)
     monkeypatch.setattr(planning, 'evaluate', checked)
+    monkeypatch.setattr(commands, 'expected', after_precondition)
     refused = h.lifecycle(workspace, 'publish', status=422)['error']
     assert refused['code'] == 'VALIDATION_FAILED'
+    assert refused['message'] == 'Fix safety findings and acknowledge each remaining mandatory cause with a reason'
     assert refused['details']['stale_approval']['code'] == 'STALE_APPROVAL'
     assert 'FORBIDDEN_TRANSITION' in {f['code'] for f in refused['details']['findings']}
-    assert [locked for locked, _ in acquired] == [False, True]
-    assert acquired[0][1] != acquired[1][1]
+    assert [locked for locked, _ in acquired] == [True]
+    assert preliminary != acquired[0][1]
     assert h.detail(workspace)['workspace']['status'] == 'approved'
     assert not h.get('coordinator', '/api/publications')['publications']
 
