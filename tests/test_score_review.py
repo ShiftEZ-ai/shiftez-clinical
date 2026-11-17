@@ -54,6 +54,130 @@ def test_score_review_reuses_current_validation_without_changing_payload(h, monk
     assert h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review") == expected.model_dump(mode='json')
 
 
+@pytest.mark.parametrize('snapshot_kind', ['dict', 'domain_snapshot'])
+def test_retired_score_review_context_cache_preserves_payload_and_bounds_calls(monkeypatch, snapshot_kind):
+    from copy import deepcopy
+    from apps.api.snapshots import DomainSnapshot
+    from packages.domain import fairness
+    from packages.domain.score import score_review_lines, schedule_score
+    from packages.domain.validation import evaluate
+    from tests.test_schedule_score_scale import department
+
+    data = department()
+    if snapshot_kind == 'domain_snapshot':
+        data = DomainSnapshot(data)
+    template = deepcopy(data['policies'][0])
+    for number in range(1300):
+        retired = deepcopy(template)
+        retired.update(id=f'retired-score-review-{number}', name=f'Retired score rule {number}',
+                       revision=number + 1, status='retired', active=False)
+        data['policies'].append(retired)
+    validation = evaluate(data, explain_findings=False)
+    scored = schedule_score(data, validation, data.get('generation_options'))
+    baseline = score_review_lines(deepcopy(data), deepcopy(validation), data.get('generation_options'), deepcopy(scored))
+
+    real_goal_applies = fairness.goal_applies
+    def uncached_goal_applies(value, *args, **kwargs):
+        if hasattr(value, '_fair_share_measurement_cache'):
+            del value._fair_share_measurement_cache
+        cache = value.get('_line_index_cache')
+        if hasattr(cache, 'context'):
+            cache.context = cache.key = None
+        return real_goal_applies(value, *args, **kwargs)
+
+    with monkeypatch.context() as uncached:
+        uncached.setattr(fairness, 'goal_applies', uncached_goal_applies)
+        reference = score_review_lines(deepcopy(data), deepcopy(validation), data.get('generation_options'), deepcopy(scored))
+    assert baseline == reference
+
+    calls = []
+    contexts = []
+    real_measurement_context = fairness.measurement_context
+    def counted_measurement_context(value):
+        calls.append(id(value))
+        context = real_measurement_context(value)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(fairness, 'measurement_context', counted_measurement_context)
+    score_review_lines(deepcopy(data), deepcopy(validation), data.get('generation_options'), deepcopy(scored))
+    context_counts = {}
+    for context in contexts:
+        context_counts[id(context)] = context_counts.get(id(context), 0) + 1
+    assert calls and len(context_counts) <= 2 and max(context_counts.values()) > 1, (len(calls), len(context_counts))
+
+
+@pytest.mark.parametrize('snapshot_kind', ['dict', 'domain_snapshot'])
+@pytest.mark.parametrize('opt_in', [False, True])
+def test_measurement_context_runtime_cache_stays_out_of_snapshot_payload(snapshot_kind, opt_in):
+    from copy import deepcopy
+    import pickle
+    from apps.api.snapshots import DomainSnapshot
+    from packages.domain.fairness import measurement_context
+    from packages.domain.input_manifest import manifest
+    from packages.domain.serialization import json_value
+    from tests.test_schedule_score_scale import department
+
+    snapshot = deepcopy(department())
+    if snapshot_kind == 'domain_snapshot':
+        snapshot = DomainSnapshot(snapshot, read_quality={'diagnostics': []})
+    if opt_in:
+        snapshot['_line_index_cache'] = {}
+    before = json_value(snapshot)
+    token = manifest(snapshot)['token']
+    context = measurement_context(snapshot)
+
+    assert manifest(snapshot)['token'] == token
+    assert json_value(snapshot) == before
+    assert '_fair_share_measurement_context' not in snapshot
+    assert '_fair_share_measurement_context_key' not in snapshot
+    if snapshot_kind == 'domain_snapshot':
+        assert context.read_quality is snapshot.read_quality
+    if snapshot_kind == 'domain_snapshot' or opt_in:
+        assert measurement_context(snapshot) is context
+        restored = pickle.loads(pickle.dumps(snapshot))
+        cache = (restored._fair_share_measurement_cache if snapshot_kind == 'domain_snapshot'
+                 else restored['_line_index_cache'])
+        assert cache.context is None and cache.key is None
+        assert json_value(restored) == before
+        assert measurement_context(restored) is not context
+
+
+def test_measurement_context_cache_keeps_independent_input_views():
+    from packages.domain.fairness import measurement_context
+    from tests.test_schedule_score_scale import department
+
+    snapshot = {**department(), '_line_index_cache': {}}
+    first = measurement_context(snapshot)
+    other = {**snapshot, 'generation_options': {'balance_measure': 'duties'}}
+    second = measurement_context(other)
+    assert id(second) != id(first)
+    assert id(measurement_context(snapshot)) == id(first)
+    assert id(measurement_context(other)) == id(second)
+    assert second['generation_options'] is other['generation_options']
+
+
+@pytest.mark.parametrize('source', ['policies', 'rotations', 'shifts', 'memberships', 'people',
+                                   'generation_options', 'workspace'])
+def test_measurement_context_cache_rebuilds_after_input_replacement(source):
+    from copy import deepcopy
+    from apps.api.snapshots import DomainSnapshot
+    from packages.domain.fairness import measurement_context
+    from tests.test_schedule_score_scale import department
+
+    snapshot = DomainSnapshot(department())
+    first = measurement_context(snapshot)
+    assert measurement_context(snapshot) is first
+    snapshot[source] = deepcopy(snapshot.get(source, {}))
+    if source == 'workspace':
+        snapshot[source]['ends_on'] = '2026-11-01'
+    second = measurement_context(snapshot)
+    assert second is not first
+    assert measurement_context(snapshot) is second
+    if source != 'policies':
+        assert second[source] is snapshot[source]
+
+
 @pytest.mark.parametrize('invalid', ['fingerprint', 'score', 'scope'])
 def test_score_review_recomputes_unusable_validation(h, monkeypatch, invalid):
     from copy import deepcopy

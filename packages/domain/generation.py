@@ -966,7 +966,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         name_leads()
         pair_attached(data, shifts, added, removals, period)
     for cache in ('_scope_interval_cache', '_policy_applies_cache', '_policy_applies_people', '_allocation_match_cache', '_person_rows', '_person_dates_cache', '_line_index_cache', '_bucket_keys_cache', '_workload_matches_cache', '_quota_cache', '_counted_policies', '_workload_normalization_cache'):
-        data.pop(cache)
+        data.pop(cache, None)
+    if hasattr(data, '_fair_share_measurement_cache'):
+        del data._fair_share_measurement_cache
     validation = evaluate(data)
     unexpected = [f for f in finding_observations(validation) if f['severity'] == 'error'
         and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM', 'ATTACHMENT_PAIRING'}
