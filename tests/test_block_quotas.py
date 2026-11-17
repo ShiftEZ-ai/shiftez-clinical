@@ -607,7 +607,9 @@ def test_exception_catalogue_approval_rechecks_identity_linkage_with_unchanged_e
         # The enterer's person does not own a personal exception.
         assert set(after.json()) == {'_versions'}
         assert after.json()['_versions']['exceptions'] == before.json()['_versions']['exceptions']
-        assert client.get('/api/catalogues', headers={'If-None-Match': before.headers['etag']}).status_code == 304
+        changed = client.get('/api/catalogues', headers={'If-None-Match': before.headers['etag']})
+        assert changed.status_code == 200
+        assert client.get('/api/catalogues', headers={'If-None-Match': changed.headers['etag']}).status_code == 304
         current = next(row for row in h.get('exception_alias', '/api/catalogues')['exceptions'] if row['id'] == exc['id'])
         assert current['can_approve'] is True and current['revision'] == exc['revision']
         approved = h.command('exception_alias', 'exception.approve', {'reason': 'Independent subject decision'},
