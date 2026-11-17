@@ -139,7 +139,7 @@ def test_unstable_accepts_pass_or_fail_but_enforces_cap_and_expiry():
         check(too_many, too_many, [{RED: "passed", GREEN: "passed"}], limit=1)
 
 
-def test_only_current_two_run_difference_defines_unstable():
+def test_two_run_difference_and_seed_membership_define_unstable():
     runs = [{RED: "failed", GREEN: "passed"}, {RED: "passed", GREEN: "passed"}]
     candidate = make_candidate(runs, [GREEN, "tests/test_removed.py::test_old"], TREE, 123, "2026-12-01", 80, today=TODAY)
     assert candidate == listing(unstable=[RED])
@@ -385,7 +385,7 @@ def test_bootstrap_class_is_checked_against_the_exported_baseline_file(tmp_path,
     ratchet.preflight(ctx, **args)
 
 
-def test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list(tmp_path):
+def test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py", ".github/scripts/node_census.py", "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
@@ -434,11 +434,23 @@ def test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list(tmp_pat
         assert done.returncode == 0, done.stdout + done.stderr
         return done
 
+    root_base_sha = base
+    (repo / "pipeline.txt").write_text("prepared controls\n")
+    git("add", "pipeline.txt")
+    commit("fixture PR1")
+    root_sha = git("rev-parse", "HEAD")
     bind()
-    run("--capture-root")
+    runs = ratchet.collect_reports(plan, evidence, "fixture", "1")
+    groups = ratchet.classified_results(runs, {RED}, set())
+    root_data = {"schema": 1, "sha": root_sha, "tree": plan["tree"], "base_sha": root_base_sha,
+                 "baseline_sha256": hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
+                 "runs": [{"run_id": "fixture", "run_attempt": "1", "replica": replica}
+                          for replica in plan["replicas"]],
+                 "counts": {kind: len(nodes) for kind, nodes in groups.items()},
+                 "receipts_sha256": ratchet.digest(sorted(hashlib.sha256(path.read_bytes()).hexdigest()
+                                      for path in evidence.rglob("shard-receipt.json")))}
     root_input = repo / "ci/root-run-evidence.json"
-    shutil.copyfile(repo / ".run/ratchet/root-run-evidence.json", root_input)
-    root_data = json.loads(root_input.read_text())
+    root_input.write_text(ratchet.encoded(root_data))
     assert root_data["sha"] == root_sha
     assert root_data["counts"] == {"baseline": 1, "cleanup": 1, "unstable": 0, "baseline-error": 0}
     assert [row["replica"] for row in root_data["runs"]] == [1, 2]

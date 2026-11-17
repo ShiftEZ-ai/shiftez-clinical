@@ -2406,12 +2406,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_lifecycle_read_performance.py::test_lifecycle_and_fairness_at_department_scale",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2677,12 +2671,6 @@
     {
       "class": "baseline",
       "node": "tests/test_policy_transition_approvals.py::test_retirement_approval_setting_defaults_validates_preserves_and_undoes",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_policy_v33.py::V33Tests::test_dispatch_null_absent_or_empty_inputs_works",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -3666,18 +3654,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_working_policy.py::PolicyTests::test_fixed_test_with_removed_entry_reads_candidate_and_passes",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_working_policy.py::PolicyTests::test_removed_entry_with_still_failing_test_is_refused",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_workload_report_preparation.py::test_default_workload_preparation_is_fresh_after_in_place_fact_edits[case-kclmfboejdkehnfjlnfpgmmbhljgjjialhmachaiiefecnjgldindngkihgikeme]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3738,6 +3714,38 @@
     }
   ],
   "unstable": [
+    {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_input_change_during_preparation_refuses_without_saving",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
+    {
+      "node": "tests/test_be17_cold_reads.py::test_preparation_reuse_still_reacquires_under_final_writer_lock",
+      "class": "unstable",
+      "owner": "G4",
+      "reason": "green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
+      "issue": 1,
+      "expires_on": "2026-12-17"
+    },
     {
       "class": "unstable",
       "node": "tests/test_browser_audit_collection_scroll.py::test_request_panel_approval_and_undo_keep_position_but_link_filter_resets_it",
@@ -3993,111 +4001,7 @@
       "reason": "Different measured outcomes between replicas in run 44114266718, attempt 1.",
       "issue": 1,
       "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_all_hardening_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_canaries_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_content_classifier_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_node_census_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_plan_lapse_backstop_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_stop_loss.py::StopLossTests::test_window_expiry_off_keeps_core_verdict",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_first_main_release_reads_accepted_dev_lists_when_main_has_none",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_guard_removal_repair_and_promotion",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_main_group_checks_actual_base_after_retarget",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_merge_tree_ignores_null_or_stale_event_sha",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_same_pr_node_ledger_structural_addition_is_flagged_tier2",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_working_policy.py::PolicyTests::test_trusted_verdict_materializes_only_target_json_and_candidate_subtraction",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
     }
   ],
-  "classifications_sha256": "50d58f94bd0450182412db5127ec4448b4e2cbc12e01fabbaf82eed2f2ee7acf"
+  "classifications_sha256": "1d4ec30562e5e6c89958f9229957b29c9ab787bcddb62c92a6137a6f3c07d6d5"
 }

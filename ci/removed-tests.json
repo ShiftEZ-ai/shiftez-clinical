@@ -1,5 +1,16 @@
 {
   "schema": 2,
   "removed": [],
-  "removed_nodes": []
+  "removed_nodes": [
+    {
+      "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
+      "owner": "maintainer",
+      "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
+      "owner": "maintainer",
+      "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
+    }
+  ]
 }

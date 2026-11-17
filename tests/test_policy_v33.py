@@ -33,7 +33,7 @@ class V33Tests(unittest.TestCase):
     def test_dispatch_null_absent_or_empty_inputs_works(self):
         for event in ({},{'inputs':None},{'inputs':{}}):
             path=self.folder/'event.json';path.write_text(json.dumps(event))
-            with patch.dict(os.environ,{'GITHUB_EVENT_PATH':str(path),'GITHUB_SHA':'a'*40}), \
+            with patch.dict(os.environ,{'GITHUB_EVENT_PATH':str(path),'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'workflow_dispatch'}), \
                  patch.object(trusted_ci,'settings',return_value={'unit_shards':1,'browser_shards':1}), \
                  patch.object(trusted_ci.subprocess,'check_output',return_value='b'*40),patch.object(trusted_ci,'output') as output:
                 trusted_ci.select()
@@ -77,6 +77,25 @@ class V33Tests(unittest.TestCase):
         privacy.check(yaml.safe_dump(doc))
         doc['jobs']['test']['steps'][0]['if']='false'
         with self.assertRaises(ValueError):privacy.check(yaml.safe_dump(doc))
+    def test_workflow_cache_event_boundaries(self):
+        workflows=HELPERS.parent/'workflows' if (HELPERS.parent/'workflows').is_dir() else HELPERS
+        checked=0
+        for name in ('ci.yml','ci-tests.yml'):
+            doc=yaml.load((workflows/name).read_text(),Loader=yaml.BaseLoader)
+            for job in doc['jobs'].values():
+                caches=[s for s in job.get('steps',[]) if s.get('uses','').startswith('actions/cache')]
+                if not caches:continue
+                checked+=1
+                self.assertEqual(len(caches),2)
+                self.assertEqual({s['uses'].split('@')[0] for s in caches},{'actions/cache/restore','actions/cache/save'})
+                for step in caches:
+                    self.assertIn('${{ github.event_name }}',step['with']['key'])
+                    self.assertNotIn('restore-keys',step['with'])
+                    action=step['uses'].split('@')[0]
+                    expected="github.event_name == 'pull_request'" if action.endswith('/restore') else "github.event_name == 'merge_group' || github.event_name == 'push'"
+                    self.assertEqual(step['if'],expected)
+        self.assertEqual(checked,3)
+
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')
     def test_expiry_only_renewal_is_ci_eligible_but_remains_tier1(self):

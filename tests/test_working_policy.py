@@ -17,6 +17,7 @@ if not HELPERS.is_dir():
     HELPERS = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(HELPERS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
 import working_policy as policy
 import trusted_verdict as verifier
 import node_census
@@ -196,7 +197,7 @@ def pytest_runtest_makereport(item, call):
                                 "control_inventory": lambda revision: self.inventory,
                                 "migrations": lambda revision: {}, "read_file": read, "findings_report": record}.items():
                 stack.enter_context(patch.object(policy, name, value))
-            stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_EVENT_NAME": kind}))
+            stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_EVENT_NAME": kind, "TRUSTED_BOOTSTRAP": "false"}))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             policy.guard()
         return report
@@ -300,7 +301,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             data = {"merge_group":{"base_ref":"refs/heads/main", "base_sha":"a"*40,"head_sha":"b"*40}}
             with patch.object(policy, "event", return_value=data), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or "d"*40), \
                  patch.object(policy, "tree", return_value="c"*40), patch.object(policy, "migrations", return_value={}), patch.object(policy,'assert_public_tree'), \
-                 patch.dict(os.environ, {"GITHUB_EVENT_NAME":"merge_group"}):
+                 patch.dict(os.environ, {"GITHUB_EVENT_NAME":"merge_group", "TRUSTED_BOOTSTRAP":"false"}):
                 with self.assertRaisesRegex(ValueError, "Not reachable"): policy.guard()
 
     def test_detached_forged_dev_commit_is_refused(self):
@@ -367,8 +368,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         with self.assertRaisesRegex(ValueError,'New failures outside'):
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
-    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False):
+    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request"):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
+        if event == "workflow_dispatch": base = candidate
         plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": [1],
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
@@ -415,6 +417,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
             maker.collect_reports = lambda *a: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
+            maker.product_error_nodes = lambda *a, **kw: set()
+            maker.mixed_listed_nodes = lambda *a: set()
+            maker.outside_observations = lambda *a: []
             if real_reader:
                 import make_known_failures as actual_reader
                 def reader_context(actual_base):
@@ -438,18 +443,19 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             maker.main = compare
             argv = ["trusted_verdict.py", "--plan", str(plan_file), "--reports", str(reports), "--output", str(output)]
             env = {"NEEDS_JSON": json.dumps({k: {"result": "success"} for k in ("checks", "static", "unit", "browser")}),
-                   "CANDIDATE_SHA": candidate, "GITHUB_EVENT_NAME": "pull_request", "RUNNER_TEMP": str(folder),
+                   "CANDIDATE_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch, "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
                    "UNIT_COUNT": "1", "BROWSER_COUNT": "1", "GITHUB_RUN_ID":"1", "GITHUB_RUN_ATTEMPT":"1"}
             with patch.object(node_census,"base_nodes",return_value={"tests/test_a.py::test_a","tests/test_browser_a.py::test_a"}), patch.object(node_census,"removed_nodes",return_value=set()), patch.object(node_census,"emit"), patch.object(verifier, "TRUSTED", trusted_root), patch.object(canaries, "verify_directory"), patch.object(sys, "argv", argv), patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, env), \
                  patch.dict(sys.modules, {"make_known_failures": maker}), patch.object(verifier, "git", side_effect=fake_git), \
-                 patch.object(policy, "git", fake_git), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or trusted), \
+                 patch.object(policy, "git", fake_git), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or trusted) as fetched, \
                  patch.object(policy, "accepted_dev_commit", return_value=base), \
-                 patch.object(policy, "event", return_value={"pull_request": {"base": {"ref": branch, "sha": base if branch == "dev" else "9"*40}}}), \
+                 patch.object(policy, "event", return_value={"before": base, "pull_request": {"base": {"ref": branch, "sha": base if branch == "dev" else "9"*40}}}), \
                  patch.object(policy, "read_file", side_effect=object_read), contextlib.redirect_stdout(io.StringIO()):
                 verifier.main()
             self.assertEqual(summaries, [True])
             self.assertTrue(all(revision == base for revision, name in reads if name not in {policy.KNOWN,'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
+            return fetched.call_args_list
 
 
 

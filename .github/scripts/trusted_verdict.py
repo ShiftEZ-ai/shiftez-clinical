@@ -131,6 +131,8 @@ def main():
     if root_raw is None or skips_raw is None:
         raise ValueError("Reviewed target known-skips/root evidence is missing")
     root_evidence = policy.decode(root_raw)
+    measured_sha = policy.commit(root_evidence["sha"])
+    policy.fetch(measured_sha, measured_sha)
     known_skips.require_measurements(root_evidence)
     skip_list = known_skips.decode_list(skips_raw, root_evidence, maker.SAFE_NODE.fullmatch)
     allowed_skips = {row["node"] for row in skip_list["skips"]}
@@ -176,6 +178,10 @@ def main():
             if branch == "main" and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
+            product_errors = maker.product_error_nodes(reports, listed=failure_nodes)
+            error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
+            outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
+            error_nodes |= product_errors & outside
             compared, skipped = known_skips.comparison_runs(runs, allowed_skips, release=branch == "main", allowed_errors=error_nodes)
             maker.collect_reports = lambda *args: compared
             print("Known skips: reviewed=" + str(len(allowed_skips)) + "; observed=" + str(len(skipped)))

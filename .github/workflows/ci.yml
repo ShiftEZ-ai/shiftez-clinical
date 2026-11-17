@@ -80,7 +80,8 @@ jobs:
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
     - name: README must remain empty, including the first root run
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/tests/test_readme_empty.py"
-    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: github.event_name == 'pull_request'
       with:
         path: |-
           ~/.cache/pip
@@ -88,7 +89,7 @@ jobs:
           ${{ runner.temp }}/runtime-archives
 
           ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
+        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
     - name: Install the committed runtime pins
       run: |
         python3 .github/scripts/hosted_ci.py runtime --tool python
@@ -124,6 +125,16 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: github.event_name == 'merge_group' || github.event_name == 'push'
+      with:
+        path: |-
+          ~/.cache/pip
+          ~/.npm
+          ${{ runner.temp }}/runtime-archives
+
+          ${{ runner.temp }}/public-ci-playwright
+        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
   unit:
     name: Unit (${{ matrix.shard }}/${{ needs.checks.outputs.unit_count }}, run ${{ matrix.replica }})
     needs: checks
@@ -223,7 +234,9 @@ jobs:
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}
         UNIT_COUNT: ${{ needs.checks.outputs.unit_count }}
         BROWSER_COUNT: ${{ needs.checks.outputs.browser_count }}
-      run: python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
+      run: |
+        python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
+        python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
     - name: Keep raw measurement or qualification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -287,7 +300,8 @@ jobs:
         persist-credentials: false
         submodules: false
         lfs: false
-    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: github.event_name == 'pull_request'
       with:
         path: |-
           ~/.cache/pip
@@ -295,7 +309,7 @@ jobs:
           ${{ runner.temp }}/runtime-archives
 
           ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
+        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
     - name: Install the committed runtime pins
       run: |
         python3 .github/scripts/hosted_ci.py runtime --tool python
@@ -325,6 +339,16 @@ jobs:
             raise SystemExit('Exactly one migration head is required')
         print(heads[0])
         PY
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: github.event_name == 'merge_group' || github.event_name == 'push'
+      with:
+        path: |-
+          ~/.cache/pip
+          ~/.npm
+          ${{ runner.temp }}/runtime-archives
+
+          ${{ runner.temp }}/public-ci-playwright
+        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
 'on':
   pull_request:
     types:

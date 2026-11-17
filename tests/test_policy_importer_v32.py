@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -48,7 +49,7 @@ class PublicV32Cases(unittest.TestCase):
     def write_reports(self, error=False):
         for suite,row in self.plan["suites"].items():
             stem=row["shards"][0]["files"][0]
-            for replica in (1,2):
+            for replica in self.plan['replicas']:
                 folder=self.reports/(suite+str(replica));folder.mkdir(exist_ok=True)
                 node=stem+"::test_case"
                 report=folder/"junit.xml"
@@ -101,6 +102,90 @@ class PublicV32Cases(unittest.TestCase):
             self.assertEqual(maker.load_root_evidence(path,'a'*64)[0],data)
         path.write_text(maker.encoded({k:v for k,v in data.items() if k!='base_sha'}))
         with self.assertRaises(ValueError):maker.load_root_evidence(path,'a'*64)
+
+    def ancestry_history(self):
+        repo = self.folder / 'history'
+        subprocess.run(['git', 'init', str(repo)], check=True, capture_output=True)
+        env = {**os.environ, 'GIT_AUTHOR_NAME':'Test', 'GIT_AUTHOR_EMAIL':'test@example.invalid',
+               'GIT_COMMITTER_NAME':'Test', 'GIT_COMMITTER_EMAIL':'test@example.invalid'}
+        def git(*args, **kwargs):
+            return subprocess.check_output(['git', '-C', str(repo), *args], env=env, **kwargs)
+        tree = git('mktree', input=b'').decode().strip()
+        root = git('commit-tree', tree, input=b'Root\n').decode().strip()
+        first = git('commit-tree', tree, '-p', root, input=b'Initial controls\n').decode().strip()
+        head = git('commit-tree', tree, '-p', first, input=b'Bootstrap controls\n').decode().strip()
+        orphan = git('commit-tree', tree, input=b'Unrelated root\n').decode().strip()
+        git('update-ref', 'refs/heads/main', head)
+        git('symbolic-ref', 'HEAD', 'refs/heads/main')
+        return git, root, first, head, orphan, tree
+
+    def ancestry_inputs(self, head, tree, base):
+        root = {'sha':head, 'tree':tree, 'base_sha':base}
+        capture = copy.deepcopy(self.capture)
+        capture['run'].update(head_sha=head, pull_requests=[{'head_sha':head,'base_sha':base}])
+        capture['run_readback_after_download'] = copy.deepcopy(capture['run'])
+        evidence = {'schema':1, **root, 'baseline_sha256':'a'*64,
+                    'runs':[{'run_id':'10','run_attempt':'1','replica':i} for i in (1,2)],
+                    'counts':{'baseline':0,'cleanup':0,'unstable':0},'receipts_sha256':'b'*64}
+        path = self.folder / 'ancestry-evidence.json'
+        path.write_text(maker.encoded(evidence))
+        return root, capture, evidence, path
+
+    def test_two_commit_pr1_chain_is_accepted_by_both_readers(self):
+        git, base, first, head, orphan, tree = self.ancestry_history()
+        root, capture, evidence, path = self.ancestry_inputs(head, tree, base)
+        self.assertNotEqual(git('show','-s','--format=%P',head).decode().strip(), base)
+        with patch.object(policy, 'git', side_effect=git), \
+             patch.object(maker, 'git', side_effect=lambda *args:git(*args).decode().strip()):
+            importer.validate_capture(capture, root)
+            importer.validate_source(root)
+            self.assertEqual(maker.load_root_evidence(path, 'a'*64)[0], evidence)
+
+    def test_pr1_head_outside_root_history_is_refused_by_both_readers(self):
+        git, base, first, head, orphan, tree = self.ancestry_history()
+        root, capture, evidence, path = self.ancestry_inputs(orphan, tree, base)
+        with patch.object(policy, 'git', side_effect=git), \
+             patch.object(maker, 'git', side_effect=lambda *args:git(*args).decode().strip()):
+            importer.validate_capture(capture, root)
+            with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                importer.validate_source(root)
+            with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                maker.load_root_evidence(path, 'a'*64)
+
+    def test_pr1_base_other_than_root_is_refused_by_both_readers(self):
+        git, base, first, head, orphan, tree = self.ancestry_history()
+        root, capture, evidence, path = self.ancestry_inputs(head, tree, first)
+        with patch.object(policy, 'git', side_effect=git), \
+             patch.object(maker, 'git', side_effect=lambda *args:git(*args).decode().strip()):
+            with self.assertRaises(ValueError):
+                importer.validate_capture(capture, {**root, 'base_sha':base})
+            with self.assertRaises(ValueError):
+                maker.load_root_evidence(path, 'a'*64)
+
+    def check_event_replicas(self, event, replicas):
+        accepted={'schema':3,'fails':[],'unstable':[]}
+        planner=importer.trusted_ci
+        def git(*args):
+            return self.root['tree'] if args[-1]=='HEAD^{tree}' else 'tests/test_policy_importer_v32.py\ntests/test_browser_recurring_sessions.py' if args[0]=='ls-files' else self.root['sha']
+        durations={'suites':{'unit':{'files':{'tests/test_policy_importer_v32.py':1.0}},'browser':{'files':{'tests/test_browser_recurring_sessions.py':1.0}}}}
+        with patch.dict(os.environ,{'GITHUB_EVENT_NAME':event}), patch.object(maker,'at_revision',return_value=accepted):
+            context=maker.context(self.root['base_sha'])
+            self.assertEqual(context['replicas'],replicas)
+            with patch.object(planner,'settings',return_value={'unit_shards':1,'browser_shards':1}), \
+                 patch.object(hosted,'git',side_effect=git),patch.object(hosted,'load_durations',return_value=durations), \
+                 patch.object(planner.canaries,'sha',return_value='f'*64):
+                self.assertEqual(planner.plan(self.root['base_sha'],False)['replicas'],context['replicas'])
+            self.plan['replicas']=replicas
+            self.write_reports()
+            self.assertEqual(len(maker.collect_reports(self.plan,self.reports,'10','1')),len(replicas))
+        with patch.dict(os.environ,{'GITHUB_EVENT_NAME':event}),patch.object(maker,'at_revision',return_value=None):
+            self.assertEqual(maker.context(self.root['base_sha'])['replicas'],[1,2])
+
+    def test_ordinary_pull_request_uses_two_replicas(self):
+        self.check_event_replicas('pull_request',[1,2])
+
+    def test_merge_group_uses_two_replicas(self):
+        self.check_event_replicas('merge_group',[1,2])
 
     def test_pr1_wrong_head_is_refused(self):
         self.capture['run']['head_sha']='d'*40
