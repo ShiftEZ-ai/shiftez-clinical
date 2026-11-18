@@ -179,6 +179,8 @@ class ImporterV34Tests(unittest.TestCase):
                         self.assertEqual(job.get('timeout-minutes'), expected)
                     for step in job.get('steps', []):
                         self.assertNotIn('timeout-minutes', step)
-        self.assertNotIn('--timeout=',(HELPERS/'trusted_ci.py').read_text())
+        trusted_ci = (HELPERS/'trusted_ci.py').read_text()
+        for option in ('--timeout=600', '--timeout-method=signal', 'faulthandler_timeout=540'):
+            self.assertIn(option, trusted_ci)
 
 if __name__=='__main__':unittest.main()
