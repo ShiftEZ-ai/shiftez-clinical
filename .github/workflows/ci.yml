@@ -103,16 +103,28 @@ jobs:
         submodules: false
         lfs: false
     - name: Install the trusted pinned Python for the policy guard
+      id: policy-python
       if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
       working-directory: .trusted-controls
-      run: python3 .github/scripts/hosted_ci.py runtime --tool python
+      # Its own folder and no PATH change: the later runtime step re-extracts runtime-python-<digest> in place.
+      run: |
+        python3 -I - <<'PY'
+        import json, os, sys
+        from pathlib import Path
+        sys.path.insert(0, ".github/scripts")
+        from hosted_ci import install_runtime
+        pins = json.loads(Path("requirements/ci-runtimes.json").read_text(encoding="utf-8"))
+        binary = install_runtime("python", pins["python"], Path(os.environ["RUNNER_TEMP"]) / "policy-guard")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("python=" + str(binary / "python3") + chr(10))
+        PY
     - name: Enforce working policy before test fan-out
       if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
       working-directory: .trusted-controls
       env:
         POLICY_WORKFLOW_SHA: ${{ github.workflow_sha }}
       run: |
-        python -I - <<'PY'
+        "${{ steps.policy-python.outputs.python }}" -I - <<'PY'
         import os
         import subprocess
         import sys
