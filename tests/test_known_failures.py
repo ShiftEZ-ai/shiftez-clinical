@@ -69,6 +69,13 @@ def test_vanished_node_must_be_deleted_and_skipped_is_not_passed():
     with pytest.raises(ValueError, match="Vanished"):
         check(known, known, [{GREEN: "passed"}])
     assert check(listing(), known, [{GREEN: "passed"}])
+    other = "tests/test_other.py::test_other"
+    selection = {"tests/test_other.py"}
+    assert check(known, known, [{other: "passed"}] * 2, selected_files=selection)
+    with pytest.raises(ValueError, match="Vanished"):
+        check(known, known, [{GREEN: "passed"}] * 2, selected_files={"tests/test_sample.py"})
+    with pytest.raises(ValueError, match="New failures"):
+        check(known, known, [{other: "failed"}] * 2, selected_files=selection)
     with pytest.raises(ValueError, match="did not execute"):
         check(known, known, [{RED: "skipped"}])
 
@@ -340,7 +347,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             with monkeypatch.context() as other:
                 for event in ("pull_request", "push", "schedule"):
                     other.setenv("GITHUB_EVENT_NAME", event)
-                    with pytest.raises(ValueError, match="restricted to merge groups"):
+                    with pytest.raises(ValueError, match="Unexpected retry evidence"):
                         group_collect()
                 other.setenv("GITHUB_EVENT_NAME", "pull_request")
                 with pytest.raises(ValueError, match="Unexpected retry evidence"):

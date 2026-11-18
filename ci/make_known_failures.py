@@ -186,9 +186,7 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
 
 
 def collect_reports(plan, directory, run_id, run_attempt, output=None):
-    group = plan["replicas"] == [1] and not plan.get("smoke")
-    if group and os.getenv("GITHUB_EVENT_NAME") != "merge_group":
-        raise ValueError("Single-replica full runs are restricted to merge groups")
+    group = os.getenv("GITHUB_EVENT_NAME") == "merge_group" and not plan.get("smoke")
     recoveries = []
     expected = {(suite, index, replica)
                 for suite, row in plan["suites"].items()
@@ -212,7 +210,7 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None):
             raise ValueError("Missing or unexpected invocation report")
         for row in receipt["reports"]:
             report = path.parent / row["file"]
-            cases = report_cases(report, row)
+            cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
             if group and row["exit_code"] == 1 and "retry" not in row:
                 raise ValueError("Missing merge-group retry evidence: " + row["file"])
             recovered = recovered_nodes(report, row, cases)
@@ -475,7 +473,8 @@ def stale_report_dir(output):
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              group=False, recovered=frozenset(),
-             limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(), stale_output=None):
+             limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
+             selected_files=None, stale_output=None):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -510,7 +509,9 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
             problems.append("Tests failed after their merge-group retry: " + ", ".join(red))
     elif outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
         problems.append("New failures outside the known-failure list require two complete replicas")
-    if current_nodes - observed:
+    expected = current_nodes if selected_files is None else {
+        node for node in current_nodes if node.split("::", 1)[0] in selected_files}
+    if expected - observed:
         problems.append("Vanished listed nodes: delete their lines from ci/known-failures.json")
     stable = (groups["baseline"] | groups["cleanup"] | groups["baseline-error"]) - set(recovered)
     if stale_output is not None:
@@ -624,6 +625,9 @@ def main():
                 and git("diff", "--name-status", "--no-renames", ctx["base_sha"], "HEAD") == "A\t" + KNOWN)
     tree = git("rev-parse", ctx["base_sha"] + "^{tree}") if add_only else plan["tree"]
     args.output.mkdir(parents=True, exist_ok=True)
+    selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
+                      if "selection" in plan else None)
+    listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):
@@ -637,7 +641,6 @@ def main():
             recovered = {}
             product_errors = set()
             if not args.capture_root:
-                listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
                 product_errors = product_error_nodes(args.reports, listed=listed, recovered=recovered)
             groups = classified_results(runs, baseline, exceptions, recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
@@ -667,13 +670,17 @@ def main():
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
                      group=os.getenv("GITHUB_EVENT_NAME") == "merge_group", recovered=recovered,
-                     product_errors=product_errors, stale_output=stale_report_dir(args.output))
+                     product_errors=product_errors, selected_files=selected_files,
+                     stale_output=stale_report_dir(args.output))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:
         verdict = {"passed": False, "reason": str(error)}
     else:
         verdict = {"passed": True, "reason": "Smoke wiring passed; no baseline qualification" if plan["smoke"] else "Known-failure ratchet passed"}
+    if selected_files is not None:
+        verdict["selection"] = plan["selection"]
+        verdict["not_observed"] = sorted(node for node in listed if node.split("::", 1)[0] not in selected_files)
     (args.output / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
     if ctx["bootstrap"]:
         print("::warning::Bootstrap baseline is permitted only in the add-only first PR with exact two-run evidence")

@@ -103,6 +103,35 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
         assert not (tmp_path / (event + "-retry.xml")).exists()
 
 
+def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    sources = tmp_path / "tests"
+    sources.mkdir()
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\nmarkers = ["browser"]\n')
+    path = "tests/test_scoped.py"
+    (tmp_path / path).write_text("import pytest\n@pytest.mark.browser\ndef test_a():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
+    report = tmp_path / "junit.xml"
+    evidence = trusted_ci.invocation_receipt([path], "unit", report, [], "0", None, partial=True)
+    assert trusted_ci.canaries.report_cases(report, evidence, selected_scope={path}) == []
+    for scope in ((), {"tests/test_other.py"}):
+        with pytest.raises(ValueError, match="Incomplete execution"):
+            trusted_ci.canaries.report_cases(report, evidence, selected_scope=scope)
+    (tmp_path / "shard-receipt.json").write_text(json.dumps({
+        "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
+    }))
+    trusted_ci.canaries.verify_directory(tmp_path, partial=True)
+    with pytest.raises(ValueError, match="Reported node set differs"):
+        trusted_ci.canaries.verify_directory(tmp_path)
+
+
 @pytest.mark.parametrize("private,counts", [
     (False, (2, 2)),
     (None, (2, 2)),
