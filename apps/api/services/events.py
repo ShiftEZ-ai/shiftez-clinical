@@ -592,6 +592,13 @@ def receipt_list(db, actor, occurrence_id, page, page_size):
         'page': page, 'page_size': page_size, 'total': total}
 
 
+def attendance_receipts(occurrence_ids):
+    from apps.api.snapshots import snapshot_input_row_predicate
+    receipt = m.AnnouncementReceipt
+    return select(receipt.event_occurrence_id, receipt.person_id).where(
+        receipt.event_occurrence_id.in_(occurrence_ids), snapshot_input_row_predicate(receipt))
+
+
 def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None):
     """Derive protected-time facts, resolved by the same catalogue path as approved academic time."""
     from . import audiences
@@ -599,8 +606,7 @@ def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None):
     if not rows or not people:
         return []
     going = {}
-    for occurrence_id, person_id in db.execute(select(m.AnnouncementReceipt.event_occurrence_id, m.AnnouncementReceipt.person_id).where(
-            m.AnnouncementReceipt.event_occurrence_id.in_([r.id for r in rows]), m.AnnouncementReceipt.response == "going")):
+    for occurrence_id, person_id in db.execute(attendance_receipts([row.id for row in rows])):
         if person_id:
             going.setdefault(occurrence_id, set()).add(person_id)
     contexts, dates, result = {}, {}, []

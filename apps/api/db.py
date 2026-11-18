@@ -200,8 +200,14 @@ def _snapshot_input_row_is_read(session, shape, row, changes=None):
     name, expected = shape.where
     state = inspect(row)
     current = state.attrs[name].loaded_value
-    if current is NO_VALUE and state.persistent:
-        current = getattr(row, name)
+    if current is NO_VALUE:
+        if state.persistent:
+            current = getattr(row, name)
+        elif name not in state.dict:
+            # Omitted values without defaults are NULL. Explicit SQL expressions stay unknown.
+            column = state.mapper.columns[name]
+            if column.nullable and column.default is None and column.server_default is None:
+                current = None
     if changes is not None:
         previous, current = current, changes.get(name, current)
     else:
@@ -309,8 +315,9 @@ def stamp_snapshot_input_statement(execution):
     if getattr(shape, 'insert_only', False) and not execution.is_insert:
         return
     scope_columns = _snapshot_input_scope_columns(cls)
-    if getattr(shape, 'where', None) is not None:
-        scope_columns = scope_columns | {shape.where[0]}
+    predicate_column = shape.where[0] if getattr(shape, 'where', None) is not None else None
+    if predicate_column is not None:
+        scope_columns = scope_columns | {predicate_column}
     if execution.is_insert and getattr(shape, 'inserted_scope', None) is not None:
         scope_columns = scope_columns | {'status', 'validation', 'archived_at'}
     # These SQLAlchemy 2.1 DML value containers have no public inspection API.
@@ -351,7 +358,8 @@ def stamp_snapshot_input_statement(execution):
             if not rows:
                 rows = list(statement._multi_values[0]) if statement._multi_values else [{}]
             candidates = [cls(**{name: value for name, value in {**changed_values(row), **row}.items()
-                                if name in inspect(cls).column_attrs and value is not NO_VALUE}) for row in rows]
+                                if name in inspect(cls).column_attrs and (value is not NO_VALUE or name == predicate_column)})
+                          for row in rows]
         else:
             query = (select(*(getattr(cls, name) for name in sorted(scope_columns))).distinct()
                      if execution.is_delete else select(cls))

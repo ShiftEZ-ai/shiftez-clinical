@@ -219,6 +219,17 @@ def measure_values(context, cls, exclusion, writer, *, values=None, ident=None, 
                 with Session(bind=connection, join_transaction_mode='create_savepoint') as db:
                     db.get(m.Department, rows[m.Department]).operating_calendar_id = None
                     db.commit()
+            if cls is m.AnnouncementReceipt and name == 'content_id':
+                # A receipt belongs to either an event or a notice, never both.
+                with Session(bind=connection, join_transaction_mode='create_savepoint') as db:
+                    notices = [m.DepartmentContent(id=m.uid(), department_id=rows[m.Department],
+                        name=f'Synthetic oracle notice {n}', starts_on=date(2026, 10, 1)) for n in range(3)]
+                    db.add_all(notices)
+                    db.flush()
+                    ident, values = m.uid(), [notice.id for notice in notices[1:]]
+                    db.add(m.AnnouncementReceipt(id=ident, content_id=notices[0].id,
+                        identity_id=h.seed['identities']['staff']))
+                    db.commit()
             if cls is m.Workspace and name == 'id':
                 # A valid unbound preview has no retained history or duty references to rewrite.
                 with Session(bind=connection, join_transaction_mode='create_savepoint') as db:

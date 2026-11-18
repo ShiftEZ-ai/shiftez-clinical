@@ -3,14 +3,14 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, event as sql_event, insert, literal, select, update
+from sqlalchemy import delete, event as sql_event, func, insert, literal, select, update
 from sqlalchemy.sql import visitors
 
 from apps.api import models as m, snapshots
 from apps.api.db import snapshot_input_listener_classes, transaction
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
-from apps.api.services import audiences, availability_patterns
-from tests.test_events import event, event_type, input_revisions
+from apps.api.services import audiences, availability_patterns, events
+from tests.test_events import event, event_type, input_revisions, occurrences
 from tests.test_fix_list_performance import backend
 from tests.test_request_decide_many import request_row
 from tests.test_events_access_fingerprint import test_event_attendance_access_change_stales_only_blocking_generation as check_event_access
@@ -79,8 +79,25 @@ def test_declared_snapshot_read_sets_match_consumed_attributes():
     cls, where = availability_patterns.snapshot_source(['department'], ['person'])
     predicate_columns = {node.key for node in visitors.iterate(where) if getattr(node, 'table', None) is cls.__table__}
     assert specs[cls][4].columns == pattern.read | predicate_columns
-    for cls in (m.Identity, m.RoleBinding, m.AvailabilityPattern):
+    receipts = events.attendance_receipts(['occurrence'])
+    receipt_columns = {node.key for node in visitors.iterate(receipts)
+                       if getattr(node, 'table', None) is m.AnnouncementReceipt.__table__}
+    assert specs[m.AnnouncementReceipt][4].columns == receipt_columns
+    for cls in (m.Identity, m.RoleBinding, m.AvailabilityPattern, m.AnnouncementReceipt):
         assert specs[cls][-1] == set(cls.__table__.columns.keys()) - specs[cls][4].columns
+
+
+def test_receipt_insert_with_sql_response_advances_currency(backend):
+    h = backend
+    meeting = event(h, event_type(h, blocks_duties=True, attendance='optional', rsvp=True))
+    occurrence = next(row for row in occurrences(h, 'staff') if row['event_id'] == meeting['id'])
+    draft = h.workspace()
+    fingerprint, before = h.snapshot(draft)['fingerprint'], input_revisions(h)
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(insert(m.AnnouncementReceipt.__table__).values(event_occurrence_id=occurrence['id'],
+            identity_id=h.seed['identities']['staff'], person_id=h.seed['people'][0], response=func.lower('GOING')))
+    assert h.snapshot(draft)['fingerprint'] != fingerprint
+    assert input_revisions(h) == tuple(revision + 1 for revision in before)
 
 
 def test_historical_acquisition_has_the_expected_revision_owners():

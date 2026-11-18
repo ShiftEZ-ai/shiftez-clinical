@@ -1,7 +1,7 @@
 """Scheduling writes invalidate bound previews; workflow-only writes preserve them."""
 from datetime import datetime
 import pytest
-from sqlalchemy import select
+from sqlalchemy import literal, select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -33,7 +33,8 @@ WRITERS = [
     'pattern.undo', 'pattern.end', 'pattern.restore',
     'publication.stage_absence', 'publication.undo_absence', 'publication.publish_absence',
     'import.recorded_leave',
-    'event.create', 'event.update', 'event.occurrence_update', 'event.rsvp', 'event.reconcile', 'event.receipts',
+    'event.create', 'event.update', 'event.occurrence_update', 'event.rsvp', 'event.reconcile',
+    pytest.param('event.receipts', False, id='event.receipts'), 'event.receipts_going',
     'event.tag_members',
     pytest.param('request.overtime_create', False, id='request.overtime_create'),
     pytest.param('request.rotation_change', False, id='request.rotation_change'),
@@ -185,7 +186,7 @@ def operation(h, writer, monkeypatch):
                 assert recorded_leave(db, manifest)['added'] == 1
         return import_leave
     typ = event_type(h, blocks_duties=True, rsvp=True,
-                     attendance='optional' if writer == 'event.rsvp' else 'expected')
+                     attendance='optional' if writer in {'event.rsvp', 'event.receipts_going'} else 'expected')
     if writer == 'event.create':
         return lambda: event(h, typ)
     if writer == 'event.reconcile':
@@ -208,13 +209,26 @@ def operation(h, writer, monkeypatch):
         master = definition(h, row)
         return lambda: h.configure('events', input_of(master, heading='Changed event'),
                                    row['id'], master['revision'], role='coordinator')
+    occurrence = next(item for item in occurrences(h, 'staff') if item['event_id'] == row['id'])
     if writer == 'event.receipts':
-        occurrence = next(item for item in occurrences(h, 'staff') if item['event_id'] == row['id'])
         def receipts():
             with transaction(h.app.state.engine, write=True) as db:
-                event_delivery.sync_receipts(db, db.get(m.EventOccurrence, occurrence['id']))
+                assert event_delivery.sync_receipts(db, db.get(m.EventOccurrence, occurrence['id']))
+                assert db.scalar(select(m.AnnouncementReceipt.id).where(
+                    m.AnnouncementReceipt.event_occurrence_id == occurrence['id'],
+                    m.AnnouncementReceipt.response.is_(None)))
         return receipts
-    occurrence = next(item for item in occurrences(h, 'staff') if item['event_id'] == row['id'])
+    if writer == 'event.receipts_going':
+        from apps.api.services.announcements import _id, _insert
+        def accepted_receipt():
+            with transaction(h.app.state.engine, write=True) as db:
+                result = _insert(db, m.AnnouncementReceipt.__table__,
+                    ['id', 'revision', 'created_at', 'event_occurrence_id', 'identity_id', 'person_id', 'response'],
+                    select(_id(db), literal(1), literal(m.now()), literal(occurrence['id']),
+                           m.Identity.id, m.Identity.person_id, literal('going'))
+                    .where(m.Identity.id == h.seed['identities']['staff']), ['event_occurrence_id', 'identity_id'])
+                assert result.rowcount == 1
+        return accepted_receipt
     if writer == 'event.rsvp':
         return lambda: command(h, 'event.rsvp', {'response': 'going', 'reason': REASON}, occurrence, 'staff')
     assert writer == 'event.occurrence_update'

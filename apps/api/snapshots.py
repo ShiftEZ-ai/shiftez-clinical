@@ -137,7 +137,8 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
         where=('status', 'active')),
     ('events', m.Event, 'availability', 'department', None, frozenset()),
     ('event_occurrences', m.EventOccurrence, 'availability', 'department', None, frozenset()),
-    ('announcement_receipts', m.AnnouncementReceipt, 'availability', None, None, frozenset({'revision', 'delivered_at', 'read_at', 'acknowledged_at'})),
+    _input_read('announcement_receipts', m.AnnouncementReceipt, 'availability', None,
+        {'event_occurrence_id', 'person_id', 'response'}, where=('response', 'going')),
 )
 
 
