@@ -199,10 +199,13 @@ class TwoObservationGateTests(unittest.TestCase):
         shared = "apps/api/models.py"
         shared_owner = "tests/test_shared_owner.py"
         indirect_owner = "tests/test_indirect_owner.py"
+        fixture = "tests/fixtures/test_sample.py"
+        nested_conftest = "tests/fixtures/conftest.py"
         unknown = "apps/api/unknown_fixture.py"
         unknown_doc = "docs/unowned.md"
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
-        guarded_tests = {"tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_legacy_encoding.py"}
+        guarded_tests = {fixture, "tests/test_product_helper.py", "tests/test_runner_hook.py",
+                         "tests/test_existing_hook.py", "tests/test_legacy_encoding.py"}
         files = trusted_ci.PR_SMOKE | {owner, shared_owner} | unrelated | guarded_tests
         durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
         sources = dict.fromkeys(files, "def test_a(): pass\n")
@@ -226,8 +229,10 @@ class TwoObservationGateTests(unittest.TestCase):
                                  trusted_ci.PR_SMOKE | {shared_owner, added})
             full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
                           "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
-                          "tests/conftest.py", "tests/fixtures/sample.json", "test_support/fixture.py",
-                          "tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_legacy_encoding.py",
+                          "tests/conftest.py", nested_conftest, fixture, "apps/api/conftest.py",
+                          "tests/fixtures/sample.json", "test_support/fixture.py",
+                          "tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_existing_hook.py",
+                          "tests/test_legacy_encoding.py",
                           "migrations/env.py", "packages/contracts/schemas.py", "apps/web/src/generated.ts",
                           unknown, unknown_doc)
             cases = [(path, [], "dev", False, False) for path in full_paths]
@@ -256,6 +261,9 @@ class TwoObservationGateTests(unittest.TestCase):
                         return b'{"dependencies":{"example":"1"}}' if revision == base else b'{"dependencies":{"example":"2"}}'
                     if name == "tests/test_runner_hook.py" and revision == candidate:
                         return b"def pytest_configure(config): pass\n"
+                    if name == "tests/test_existing_hook.py":
+                        return b"def pytest_configure(config): pass\n" + (
+                            b"x = 2\n" if revision == candidate else b"x = 1\n")
                     if name == "tests/test_legacy_encoding.py":
                         return b"# coding: latin-1\nvalue = '\xe9'\n"
                     return b"x = 1\n"
@@ -270,7 +278,7 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.object(trusted_ci.policy, "event", return_value=payload), \
                      patch.object(trusted_ci.policy, "read_file", side_effect=file_at), \
                      patch.object(trusted_ci.policy, "control_inventory", return_value={
-                         "helpers": {"tools/control.py"}, "product_imports": {"tests/test_product_helper.py"}}), \
+                         "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
                     self.assertEqual(maker.context(base)["replicas"], [1, 2])

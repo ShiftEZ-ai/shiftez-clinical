@@ -452,7 +452,6 @@ jobs:
   workflow_dispatch: {}
   push:
     branches:
-    - preview
     - dev
 defaults:
   run:

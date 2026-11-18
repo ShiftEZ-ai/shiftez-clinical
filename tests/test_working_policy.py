@@ -1,6 +1,7 @@
 """Synthetic policy regressions, reusable as tests/test_working_policy.py in PR #1."""
 import contextlib
 import copy
+from fnmatch import fnmatchcase
 import io
 import json
 import os
@@ -166,14 +167,27 @@ def pytest_runtest_makereport(item, call):
              patch.object(policy, "read_file", return_value=None):
             with self.assertRaises(ValueError): policy.accepted_dev_commit(expected_tree, dev)
 
-    def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False, kind="pull_request", after_removed=None):
+    def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False,
+                  kind="pull_request", after_removed=None, preview_probe=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
                  "head": {"ref": "feature", "sha": head, "repo": {"id": policy.REPOSITORY}}, "merge_commit_sha": candidate}}
         data["pull_request"]["merge_commit_sha"] = None
         data["merge_group"] = {"base_ref": "refs/heads/" + branch, "base_sha": base, "head_sha": head}
         report = {}
+        preview_ref = "refs/heads/preview"
+        fetch = policy.fetch
+        def fake_fetch(ref, expected=None, **options):
+            if ref == preview_ref and preview_probe is not None:
+                return fetch(ref, expected, **options)
+            return expected or source
         def fake_git(*args):
+            if args == ("fetch", "--no-tags", "origin", preview_ref):
+                raise subprocess.CalledProcessError(128, args)
+            if args == ("ls-remote", "--exit-code", "--refs", "origin", preview_ref):
+                if preview_probe:
+                    raise subprocess.CalledProcessError(preview_probe, args)
+                return (source + "\t" + preview_ref + "\n").encode()
             if args[0]=='ls-tree':return b''
             if args[0] == "rev-parse": return source.encode()
             if args[0] == "diff": return changed.encode() + b"\0"
@@ -190,7 +204,7 @@ def pytest_runtest_makereport(item, call):
             if name.endswith(".py"): return b"x=1\n"
             return b"{}"
         with contextlib.ExitStack() as stack:
-            for name, value in {"event": lambda: data, "git": fake_git, "fetch": lambda ref, expected=None: expected or source,
+            for name, value in {"event": lambda: data, "git": fake_git, "fetch": fake_fetch,
                                 "merge_tree": lambda *a: candidate,
                                 "tree": lambda rev: ((merge_tree or candidate) if rev == head else candidate),
                                 "accepted_dev_commit": lambda candidate_tree, dev_tip: source,
@@ -201,6 +215,24 @@ def pytest_runtest_makereport(item, call):
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             policy.guard()
         return report
+
+    def test_review_required_patterns_cover_tracked_or_reserved_paths(self):
+        root = HELPERS.parents[1]
+        paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"]).decode("utf-8").split("\0")[:-1]
+        rules = (root / "ci/review_required_paths.txt").read_text(encoding="utf-8")
+        for line in rules.splitlines():
+            pattern, _, note = line.partition("#")
+            if pattern := pattern.strip():
+                with self.subTest(pattern=pattern):
+                    self.assertEqual(any(fnmatchcase(path, pattern) for path in paths),
+                                     note.strip() != "must never exist")
+        for path in ("apps/api/auth.py", "apps/api/commands.py", "apps/api/services/access.py", "apps/api/data_crypto.py",
+                     "packages/domain/rule_lines.py", "migrations/versions/new.py", ".github/workflows/ci.yml",
+                     "ci/review_required_paths.txt", "infra/Dockerfile", "DESIGN.md"):
+            with self.subTest(path=path):
+                self.assertTrue(policy.review_required(["tests/test_example.py", path]))
+        self.assertFalse(policy.review_required(["tests/test_example.py", "apps/web/src/branding.ts"]))
+        self.assertFalse(policy.review_required([]))
 
     def test_guard_refuses_previous_event(self):
         with self.assertRaisesRegex(ValueError,'Unsupported policy event'):
@@ -219,6 +251,14 @@ def pytest_runtest_makereport(item, call):
         self.run_guard(".github/workflows/ci.yml", branch="main")
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40)
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", preview_history=True)
+
+    def test_guard_allows_an_absent_preview_ref_but_propagates_fetch_failures(self):
+        for kind in ("pull_request", "merge_group"):
+            with self.subTest(kind=kind):
+                self.assertEqual(self.run_guard("apps/example.py", kind=kind, preview_probe=2)["tier1"], [])
+                for code in (0, 128):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.run_guard("apps/example.py", kind=kind, preview_probe=code)
 
     def test_same_pr_node_ledger_structural_addition_is_flagged_tier2(self):
         after={'schema':2,'removed':[],'removed_nodes':[{'node':'tests/test_a.py::test_old','owner':'test-owner','reason':'Reviewed redundant assertion'}]}

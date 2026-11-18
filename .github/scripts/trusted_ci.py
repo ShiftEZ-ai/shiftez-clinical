@@ -94,19 +94,26 @@ def pr_scope(data, git, trusted_sha, candidate):
     for path in sorted(changed):
         before, after = policy.read_file(base, path), policy.read_file(candidate, path)
         tier, _ = policy.tier(path, before, after, inventory)
-        if tier >= 1 and (tier != 2 or not ordinary_test_module(path, before, after, inventory)):
+        if tier == 1 or path.rsplit("/", 1)[-1] == "conftest.py":
+            return None
+        if tier == 2 and not (
+            path.startswith(("apps/", "packages/")) and path.endswith((".py", ".ts", ".css"))
+            or ordinary_test_module(path, before, after, inventory)
+        ):
             return None
     return changed
 
 
 def ordinary_test_module(path, before, after, inventory):
-    """Allow changed leaf tests in quick plans while keeping Working Policy's tiers."""
+    """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
     if (after is None or path in inventory["product_imports"]
-            or not policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", path)):
+            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
         return False
     try:
-        return "\0" not in (before or b"").decode("utf-8") and "\0" not in after.decode("utf-8")
-    except UnicodeDecodeError:
+        if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
+            return False
+        return not (policy.python_controls(after) or policy.mechanisms(after) or policy.reporter_controls(after))
+    except (SyntaxError, ValueError):
         return False
 
 
