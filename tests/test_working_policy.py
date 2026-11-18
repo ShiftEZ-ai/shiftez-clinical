@@ -288,7 +288,7 @@ def pytest_runtest_makereport(item, call):
         omitted["suites"]["unit"]["shards"][0]["files"] = []
         with self.assertRaises(ValueError): verifier.assert_inventory(omitted, rows, {"unit": 1, "browser": 1})
         with self.assertRaises(ValueError): verifier.assert_inventory(plan, rows.replace(b"100644", b"120000", 1), {"unit": 1, "browser": 1})
-        partial = {**plan, "replicas": [1, 2], "selection": {"reason": "affected"}}
+        partial = {**plan, "replicas": [1], "selection": {"reason": "affected"}}
         rows += b"100644 blob " + b"c" * 40 + b"\ttests/test_unobserved.py\0"
         with patch.object(verifier, "PR_SMOKE", {"tests/test_browser_a.py"}):
             self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_a.py"}),
@@ -402,6 +402,10 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_trusted_verdict_materializes_only_target_json_and_candidate_subtraction(self):
         self.exercise_verdict_materialization("dev")
 
+    def test_trusted_verdict_rejects_a_plan_with_the_wrong_replica_count(self):
+        with self.assertRaisesRegex(ValueError, "Replica count differs from the trusted reader context"):
+            self.exercise_verdict_materialization("dev", replicas=(1, 2))
+
     def test_old_base_pr_evaluates_merge_with_29_inherited_allowances_removed(self):
         self.exercise_verdict_materialization("dev", old_base_pr=True)
 
@@ -424,13 +428,14 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         with self.assertRaisesRegex(ValueError,'New failures outside'):
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
-    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request", old_base_pr=False):
+    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request",
+                                         old_base_pr=False, replicas=(1,)):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
         target = base if branch == "dev" else "9" * 40
         payload = {"before": base, "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
-        plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": [1],
+        plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": list(replicas),
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
         inventory = (b"100644 blob " + b"e" * 40 + b"\ttests/test_a.py\0"
@@ -496,7 +501,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                     self.assertEqual(actual_base,base)
                     self.assertEqual(actual_reader.load_frozen_baseline(Path('ci/frozen-baseline-failures.json'))[0],set())
                     current=actual_reader.decode_list(maker.git('show','HEAD:'+policy.KNOWN))
-                    actual_reader.evaluate(current,before,[{'tests/test_a.py::test_a':'failed' if still_fails else 'passed'}])
+                    actual_reader.evaluate(current,before,[{'tests/test_a.py::test_a':'failed' if still_fails else 'passed'}],
+                                           expected_replicas=1)
                     return {'replicas':[1]}
                 maker.context=reader_context
             else:

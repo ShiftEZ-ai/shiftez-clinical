@@ -58,8 +58,8 @@ def assert_inventory(plan, raw_inventory, counts, scope=None):
             raise ValueError("Candidate plan omits, duplicates or misclassifies committed test files")
         selected_files.update(actual)
     if partial:
-        if scope is None or plan["replicas"] != [1, 2]:
-            raise ValueError("Partial selection requires an ordinary dev pull request and two replicas")
+        if scope is None:
+            raise ValueError("Partial selection requires an ordinary dev pull request")
         required = PR_SMOKE | (scope & (set(selected["unit"]) | set(selected["browser"])))
         if plan["selection"] != {"reason": "affected"} or not required <= selected_files:
             raise ValueError("Partial selection disagrees with the PR scope or omits required test files")

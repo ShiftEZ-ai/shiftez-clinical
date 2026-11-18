@@ -125,11 +125,12 @@ def at_revision(revision):
     return decode_list(git("show", revision + ":" + KNOWN)) if names else None
 
 
-def context(base_sha):
+def _read_context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
+    single_replica = base is not None and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1] if os.getenv("GITHUB_EVENT_NAME") == "merge_group" else [1, 2]}
+            "replicas": [1] if single_replica else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -145,6 +146,13 @@ def require_bootstrap_inputs(issue, expires_on, *, today=None):
     today = today or datetime.now(timezone.utc).date()
     if not 1 <= (expiry - today).days <= 90:
         raise ValueError(message)
+
+
+def context(base_sha):
+    result = _read_context(base_sha)
+    if not result["bootstrap"] and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        result["replicas"] = [1]
+    return result
 
 
 def preflight(ctx, *, smoke, limit, issue, expires_on,
@@ -474,7 +482,7 @@ def stale_report_dir(output):
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
-             selected_files=None, stale_output=None):
+             selected_files=None, stale_output=None, expected_replicas=2):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -497,25 +505,28 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
                 raise ValueError("Moving failures to unstable requires verified recovery on retry")
             if not group and (len(runs) != 2 or not moved <= differing(runs)):
                 raise ValueError("Moving failures to unstable requires two full runs with different results")
+    if group and base is not None:
+        expected_replicas = 1
+    if group:
+        red = sorted({node for run in runs for node, outcome in run.items() if outcome in {"failed", "error"}})
+        if red:
+            raise ValueError("Tests failed after their merge-group retry: " + ", ".join(red))
     observed = set(runs[0])
     mixed_listed = mixed_listed_nodes(current, runs, recovered if group else ())
     problems = []
     outside = outside_observations(current, runs, exceptions)
-    transient = {row["node"] for row in outside if not group and len(runs) == 2 and set(runs[0]) == set(runs[1])
+    transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
                  and row["red_count"] == 1 and "passed" in row["observations"]}
-    if group:
-        red = sorted({node for run in runs for node, outcome in run.items() if outcome in {"failed", "error"}})
-        if red:
-            problems.append("Tests failed after their merge-group retry: " + ", ".join(red))
-    elif outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
-        problems.append("New failures outside the known-failure list require two complete replicas")
+    if outside and (len(runs) != expected_replicas or any(set(run) != observed for run in runs)):
+        required = "two complete replicas" if expected_replicas == 2 else "one complete replica"
+        problems.append("New failures outside the known-failure list require " + required)
     expected = current_nodes if selected_files is None else {
         node for node in current_nodes if node.split("::", 1)[0] in selected_files}
     if expected - observed:
         problems.append("Vanished listed nodes: delete their lines from ci/known-failures.json")
     stable = (groups["baseline"] | groups["cleanup"] | groups["baseline-error"]) - set(recovered)
     if stale_output is not None:
-        stale = sorted(node for node in stable if len(runs) == (1 if group else 2) and all(run.get(node) == "passed" for run in runs))
+        stale = sorted(node for node in stable if len(runs) == expected_replicas and all(run.get(node) == "passed" for run in runs))
         (stale_output / "stale-report.json").write_text(encoded(stale), encoding="utf-8")
         lines = ["Stale passing failure entries: " + str(len(stale)), *("- " + node for node in stale)]
         print("\n".join(lines))
@@ -671,7 +682,7 @@ def main():
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
                      group=os.getenv("GITHUB_EVENT_NAME") == "merge_group", recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
-                     stale_output=stale_report_dir(args.output))
+                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:
