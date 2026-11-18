@@ -7787,7 +7787,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}
