@@ -2022,12 +2022,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_fairness_dashboard.py::test_schedule_score_and_trend_for_planners_only",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_fairness_goals_performance.py::test_supervision_fairness_goals_at_department_scale",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
