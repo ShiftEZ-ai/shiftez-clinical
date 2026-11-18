@@ -3787,14 +3787,6 @@
       "expires_on": "2026-12-17"
     },
     {
-      "node": "tests/test_browser_combined_acceptance.py::test_two_pass_group_preserves_supervisor_fields_and_normal_review_guards",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
       "node": "tests/test_browser_edit_requests.py::test_another_persons_assign_reaches_the_watcher_from_its_pulse_with_no_rota_read",
       "class": "unstable",
       "owner": "maintainer",
@@ -3875,14 +3867,6 @@
       "expires_on": "2026-12-17"
     },
     {
-      "node": "tests/test_browser_people_merged.py::test_department_scale_people_open_fast_with_one_request",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
       "node": "tests/test_browser_perf.py::test_resolve_queue_reads_each_sessions_findings_once",
       "class": "unstable",
       "owner": "maintainer",
@@ -3924,14 +3908,6 @@
     },
     {
       "node": "tests/test_browser_schedule_flows.py::test_change_the_published_rota_opens_an_amendment_that_supersedes_it",
-      "class": "unstable",
-      "owner": "maintainer",
-      "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-      "issue": 1,
-      "expires_on": "2026-12-17"
-    },
-    {
-      "node": "tests/test_browser_schedule_flows.py::test_replace_from_a_date_trims_the_published_rota_on_publish",
       "class": "unstable",
       "owner": "maintainer",
       "reason": "Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
