@@ -135,8 +135,9 @@ def at_revision(revision):
 def context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
+    single_replica = base is not None and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1, 2]}
+            "replicas": [1] if single_replica else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -458,7 +459,7 @@ def stale_report_dir(output):
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
-             selected_files=None, stale_output=None):
+             selected_files=None, stale_output=None, expected_replicas=2):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -482,10 +483,11 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     mixed_listed = mixed_listed_nodes(current, runs)
     problems = []
     outside = outside_observations(current, runs, exceptions)
-    transient = {row["node"] for row in outside if len(runs) == 2 and set(runs[0]) == set(runs[1])
+    transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
                  and row["red_count"] == 1 and "passed" in row["observations"]}
-    if outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
-        problems.append("New failures outside the known-failure list require two complete replicas")
+    if outside and (len(runs) != expected_replicas or any(set(run) != observed for run in runs)):
+        required = "two complete replicas" if expected_replicas == 2 else "one complete replica"
+        problems.append("New failures outside the known-failure list require " + required)
     expected = current_nodes if selected_files is None else {
         node for node in current_nodes if node.split("::", 1)[0] in selected_files}
     if expected - observed:
@@ -644,7 +646,7 @@ def main():
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
                      product_errors=product_errors, selected_files=selected_files,
-                     stale_output=stale_report_dir(args.output))
+                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:
