@@ -308,18 +308,29 @@ def effective_issued_definition(issued, current):
 
 
 def effective_type_definition(data, shift):
-    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values."""
-    issued = shift['type_snapshot']['definition'] or {}
-    if not data.get('operational'):
-        effective = deepcopy(issued)
+    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values.
+    Run-cached definitions are read-only.
+    """
+    issued = shift['type_snapshot']['definition']
+    operational = bool(data.get('operational'))
+    current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
+    published = _published_session(data, shift) if operational else False
+    cache = data.get('_line_index_cache')
+    if cache is not None:
+        definitions = cache.setdefault('effective_type_definitions', {})
+        key = id(issued), id(current), operational, published
+        entry = definitions.get(key)
+        if entry is not None and entry[0] is issued and entry[1] is current:
+            return entry[2]
+    if operational and published:
+        effective = effective_issued_definition(issued, current)
+    else:
+        effective = deepcopy((current if operational else issued) or {})
         effective['requirements'] = list(effective.get('requirements') or [])
-        return effective
-    current = data['types'][shift['assignment_type_id']]['definition'] or {}
-    if not _published_session(data, shift):
-        effective = deepcopy(current)
-        effective['requirements'] = list(effective.get('requirements') or [])
-        return effective
-    return effective_issued_definition(issued, current)
+    if cache is not None:
+        # Retain both sources so their identities cannot be reused during this run.
+        definitions[key] = issued, current, effective
+    return effective
 
 
 def trainee_intervals(data, shift, participant):
