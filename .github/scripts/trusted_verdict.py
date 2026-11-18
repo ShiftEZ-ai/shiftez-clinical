@@ -25,6 +25,10 @@ def policy_context(data, kind, candidate):
         return data["pull_request"]["base"]["ref"], policy.commit(data["pull_request"]["base"]["sha"])
     if kind == "merge_group":
         return data["merge_group"]["base_ref"].removeprefix("refs/heads/"), policy.commit(data["merge_group"]["base_sha"])
+    if kind == "schedule":
+        if candidate != git("rev-parse", "HEAD").decode().strip():
+            raise ValueError("Nightly evidence must use the pinned dev source")
+        return "dev", candidate
     branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
     return branch, policy.commit(data["before"]) if kind == "push" and branch == "dev" else candidate
 
@@ -54,6 +58,7 @@ def required_producers(raw):
     needs = policy.decode(raw)
     if set(needs) != {"checks", "static", "unit", "browser"} or any(row.get("result") != "success" for row in needs.values()):
         raise ValueError("Every producer must run and succeed")
+    return needs
 
 
 def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags):
@@ -90,7 +95,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     flags=hardening.load()
-    required_producers(os.environ["NEEDS_JSON"])
+    needs = required_producers(os.environ["NEEDS_JSON"])
     plan_path, reports, output = args.plan.resolve(), args.reports.resolve(), args.output.resolve()
     plan = policy.decode(plan_path.read_bytes())
     candidate = policy.commit(os.environ["CANDIDATE_SHA"])
@@ -99,6 +104,8 @@ def main():
     data = policy.event()
     branch, base = policy_context(data, os.environ["GITHUB_EVENT_NAME"], candidate)
     kind=os.environ["GITHUB_EVENT_NAME"]
+    if kind == "schedule" and needs["static"].get("outputs", {}).get("candidate_sha") != candidate:
+        raise ValueError("Nightly static checks used a different dev candidate")
     census_base=(policy.commit(data["pull_request"]["base"]["sha"]) if kind=="pull_request" else
                  policy.commit(data["merge_group"]["base_sha"]) if kind=="merge_group" else
                  policy.commit(data["before"]) if kind=="push" else candidate)
@@ -163,7 +170,7 @@ def main():
             context = maker.context(base)
             if plan["replicas"] != context["replicas"]:
                 raise ValueError("Replica count differs from the trusted reader context")
-            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], output)
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}

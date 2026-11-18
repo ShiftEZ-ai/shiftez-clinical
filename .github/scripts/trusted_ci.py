@@ -45,16 +45,20 @@ def output(values):
 
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+    kind = os.environ["GITHUB_EVENT_NAME"]
+    trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
     if measurement:
-        if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
+        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
+    elif kind == "schedule":
+        candidate = policy.commit(trusted_sha)
     else:
-        candidate = policy.commit(data["pull_request"]["head"]["sha"] if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" else os.environ["GITHUB_SHA"])
+        candidate = policy.commit(data["pull_request"]["head"]["sha"] if kind == "pull_request" else os.environ["GITHUB_SHA"])
     config = settings()
     output({"candidate_sha": candidate, "measurement": str(measurement).lower(),
-            "trusted_sha": subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip(),
+            "trusted_sha": trusted_sha,
             "unit_count": config["unit_shards"], "browser_count": config["browser_shards"]})
 
 
@@ -183,6 +187,21 @@ def invocation(targets, suite, report, extra, workers, base_targets=None):
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
 
 
+def invocation_receipt(targets, suite, report, extra, workers, base_targets):
+    def attempt(selected, path, options, parallelism, before):
+        code = invocation(selected, suite, path, options, parallelism, before)
+        files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
+        return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
+
+    first = attempt(targets, report, extra, workers, base_targets)
+    if first["exit_code"] == 1 and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        original = canaries.report_cases(report, first)
+        path = report.with_name(report.stem + "-retry.xml")
+        first["retry"] = attempt(canaries.failed_nodes(original), path, [], "0", None)
+        canaries.recovered_nodes(report, first, original)
+    return first
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("select", "context", "plan", "run"))
@@ -239,9 +258,8 @@ def main():
                          and Path(p).name.startswith("test_browser")== (args.suite=="browser"))
             count=len(candidate["suites"][args.suite]["shards"])
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
-        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers, base_targets)
-        paths = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
-        receipt["reports"].append({"file": name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in paths}})
+        receipt["reports"].append(invocation_receipt(
+            targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers, base_targets))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 

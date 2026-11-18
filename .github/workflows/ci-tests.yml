@@ -110,7 +110,11 @@ jobs:
     - name: Install hash-locked dependencies
       run: |
         python3 -m venv "$RUNNER_TEMP/public-ci-venv"
-        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock"
+        pip_retry=()
+        if [[ "$GITHUB_EVENT_NAME" == merge_group ]]; then
+          pip_retry=(--retries 3 --resume-retries 3)
+        fi
+        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install "${pip_retry[@]}" --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock"
         echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
     - name: Install locked Chromium and its system dependencies

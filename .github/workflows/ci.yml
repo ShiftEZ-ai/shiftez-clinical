@@ -97,7 +97,11 @@ jobs:
     - name: Install hash-locked dependencies
       run: |
         python3 -m venv "$RUNNER_TEMP/public-ci-venv"
-        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
+        pip_retry=()
+        if [[ "$GITHUB_EVENT_NAME" == merge_group ]]; then
+          pip_retry=(--retries 3 --resume-retries 3)
+        fi
+        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install "${pip_retry[@]}" --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
         echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
     - name: Reject environment and status destination URLs
@@ -244,6 +248,8 @@ jobs:
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
     steps:
     - name: Require GitHub-hosted execution
       env:
@@ -310,7 +316,11 @@ jobs:
     - name: Install hash-locked dependencies
       run: |
         python3 -m venv "$RUNNER_TEMP/public-ci-venv"
-        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
+        pip_retry=()
+        if [[ "$GITHUB_EVENT_NAME" == merge_group ]]; then
+          pip_retry=(--retries 3 --resume-retries 3)
+        fi
+        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install "${pip_retry[@]}" --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
         echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
     - name: Lint
@@ -343,6 +353,8 @@ jobs:
     types:
     - checks_requested
   workflow_dispatch: {}
+  schedule:
+  - cron: '0 2 * * *'
   push:
     branches:
     - preview

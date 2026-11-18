@@ -49,7 +49,7 @@ def test_missing_producer_and_duplicate_durations_are_refused():
         json.loads('{"a":1,"a":2}', object_pairs_hook=hosted_ci.unique_object)
 
 
-def test_success_requires_complete_original_execution(tmp_path):
+def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     report = tmp_path / "junit.xml"
     node = "tests/test_x.py::test_a"
     report.with_suffix(".selection.json").write_text(json.dumps([node]))
@@ -60,6 +60,47 @@ def test_success_requires_complete_original_execution(tmp_path):
         hosted_ci.require_execution(report, ["tests/test_missing.py"], rows)
     with pytest.raises(ValueError):
         hosted_ci.require_execution(report, ["tests/test_x.py"], lambda paths: [])
+
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    sources = tmp_path / "tests"
+    sources.mkdir()
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (sources / "test_x.py").write_text(
+        "from pathlib import Path\n"
+        "def test_a():\n"
+        "    marker = Path('first-attempt')\n"
+        "    recovered = marker.exists()\n"
+        "    marker.touch()\n"
+        "    assert recovered\n"
+        "def test_always_red():\n"
+        "    assert False\n"
+        "def test_always_green():\n"
+        "    pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    run = trusted_ci.invocation_receipt
+    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None)
+    original = trusted_ci.canaries.report_cases(report, evidence)
+    assert evidence["exit_code"] == evidence["retry"]["exit_code"] == 1
+    assert trusted_ci.canaries.failed_nodes(original) == [node, "tests/test_x.py::test_always_red"]
+    assert trusted_ci.canaries.recovered_nodes(report, evidence, original) == {node}
+    assert sorted(path.name for path in tmp_path.glob("*.raw.xml")) == ["junit-retry.raw.xml", "junit.raw.xml"]
+    (tmp_path / "shard-receipt.json").write_text(json.dumps({
+        "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
+    }))
+    trusted_ci.canaries.verify_directory(tmp_path)
+    for event in ("pull_request", "push"):
+        monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+        single = run(["tests/test_x.py"], "unit", tmp_path / (event + ".xml"), [], "0", None)
+        assert single["exit_code"] == 1 and "retry" not in single
+        assert not (tmp_path / (event + "-retry.xml")).exists()
 
 
 @pytest.mark.parametrize("private,counts", [

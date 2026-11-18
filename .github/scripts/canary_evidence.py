@@ -1,6 +1,8 @@
 """Verify raw sentinel outcomes and collected nodes before reading normalized product JUnit."""
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -43,14 +45,65 @@ def verify_cases(cases, manifest, collected):
     return expected
 
 
+def collection_error(case):
+    error = case.find("error")
+    return error is not None and re.search(
+        r"failed (?:during|on) collect(?:ion|ing)|error collecting", error.get("message", ""), re.I)
+
+
+def report_cases(report, evidence):
+    sidecars = (report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json"))
+    if any(item.is_symlink() or not item.is_file() or sha(item) != evidence["sha256"].get(item.name)
+           for item in sidecars):
+        raise ValueError("Missing or changed shard evidence")
+    selected = json.loads(sidecars[1].read_text(encoding="utf-8"))
+    cases = list(ET.parse(report).getroot().iter("testcase"))
+    if (not selected or len(selected) != len(set(selected))
+            or sorted(node(case) for case in cases) != sorted(selected)
+            or type(evidence["exit_code"]) is not int or evidence["exit_code"] not in (0, 1)
+            or (evidence["exit_code"] == 1) != any(outcome(case) in {"failed", "error"} for case in cases)):
+        raise ValueError("Incomplete execution or pytest infrastructure failure")
+    if any(collection_error(case) for case in cases):
+        raise ValueError("Collection error in test evidence")
+    return cases
+
+
+def retry_path(report, retry):
+    path = report.with_name(report.stem + "-retry.xml")
+    if (os.getenv("GITHUB_EVENT_NAME") != "merge_group"
+            or set(retry) != {"file", "exit_code", "sha256"} or retry["file"] != path.name):
+        raise ValueError("Unexpected retry evidence")
+    return path
+
+
+def failed_nodes(cases):
+    return sorted(node(case) for case in cases if outcome(case) in {"failed", "error"})
+
+
+def recovered_nodes(report, evidence, original):
+    if "retry" not in evidence:
+        return set()
+    retry = evidence["retry"]
+    cases = report_cases(retry_path(report, retry), retry)
+    failures = failed_nodes(original)
+    if not failures or sorted(node(case) for case in cases) != failures:
+        raise ValueError("Retry must execute exactly the first-attempt failed nodes")
+    return {node(case) for case in cases if outcome(case) == "passed"}
+
+
 def verify_directory(directory, *, allow_product_errors=False):
     receipts = list(directory.rglob("shard-receipt.json"))
     if not receipts:
         raise ValueError("Missing shard receipts")
     for receipt_path in receipts:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        for report in receipt["reports"]:
-            normalized = receipt_path.parent / report["file"]
+        reports = []
+        for row in receipt["reports"]:
+            original = receipt_path.parent / row["file"]
+            reports.append(original)
+            if "retry" in row:
+                reports.append(retry_path(original, row["retry"]))
+        for normalized in reports:
             ledger_path = normalized.with_suffix(".canaries.json")
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
             if (ledger["sha"] != receipt["sha"] or ledger["tree"] != receipt["tree"]

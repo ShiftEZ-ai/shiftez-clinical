@@ -231,10 +231,11 @@ def pytest_runtest_makereport(item, call):
     def test_trusted_verifier_rejects_skipped_missing_producers(self):
         good = {name: {"result": "success"} for name in ("checks", "static", "unit", "browser")}
         verifier.required_producers(json.dumps(good))
-        for status in ("skipped", "cancelled", "failure", "unknown"):
-            bad = copy.deepcopy(good)
-            bad["checks"]["result"] = status
-            with self.assertRaises(ValueError): verifier.required_producers(json.dumps(bad))
+        for producer in good:
+            for status in ("skipped", "cancelled", "failure", "unknown"):
+                bad = copy.deepcopy(good)
+                bad[producer]["result"] = status
+                with self.assertRaises(ValueError): verifier.required_producers(json.dumps(bad))
         del good["checks"]
         with self.assertRaises(ValueError): verifier.required_producers(json.dumps(good))
 

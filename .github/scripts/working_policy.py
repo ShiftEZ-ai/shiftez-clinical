@@ -554,6 +554,8 @@ def ci_context():
     elif kind == "merge_group":
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
+    elif kind == "schedule":
+        branch, base = "dev", commit(git("rev-parse", "HEAD").decode().strip())
     else:
         branch, base = os.environ["GITHUB_REF"].removeprefix("refs/heads/"), commit(git("rev-parse", "HEAD").decode().strip())
     if branch not in {"dev", "preview", "main"}:

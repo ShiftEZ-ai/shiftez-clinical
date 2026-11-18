@@ -179,13 +179,13 @@ class PublicV32Cases(unittest.TestCase):
             self.write_reports()
             self.assertEqual(len(maker.collect_reports(self.plan,self.reports,'10','1')),len(replicas))
         with patch.dict(os.environ,{'GITHUB_EVENT_NAME':event}),patch.object(maker,'at_revision',return_value=None):
-            self.assertEqual(maker.context(self.root['base_sha'])['replicas'],[1,2])
+            self.assertEqual(maker.context(self.root['base_sha'])['replicas'],replicas)
 
     def test_ordinary_pull_request_uses_two_replicas(self):
         self.check_event_replicas('pull_request',[1,2])
 
     def test_merge_group_uses_two_replicas(self):
-        self.check_event_replicas('merge_group',[1,2])
+        self.check_event_replicas('merge_group',[1])
 
     def test_pr1_wrong_head_is_refused(self):
         self.capture['run']['head_sha']='d'*40

@@ -92,6 +92,9 @@ class TwoObservationGateTests(unittest.TestCase):
                     report.write(path)
                     with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
                         maker.product_error_nodes(self.folder)
+                    with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
+                        with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                            maker.product_error_nodes(self.folder)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
@@ -183,6 +186,10 @@ class TwoObservationGateTests(unittest.TestCase):
             self.assertTrue(self.evaluate(["passed", "passed"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [NODE])
             self.assertIn("- " + NODE, summary.read_text())
+            self.assertTrue(self.evaluate(["passed"], group=True, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+            self.assertTrue(self.evaluate(["passed"], group=True, recovered={NODE: "error"}, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [])
             self.assertTrue(self.evaluate(["passed", "error"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [])
             down = "tests/test_product.py::test_unlisted"
@@ -193,6 +200,33 @@ class TwoObservationGateTests(unittest.TestCase):
 
     def test_plan_and_reader_use_two_replicas_on_every_event(self):
         import trusted_ci
+        import trusted_verdict
+        import yaml
+
+        config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
+        event = self.folder / "schedule.json"
+        event.write_text("{}")
+        pin, default_sha = "a" * 40, "b" * 40
+        nightly = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": default_sha,
+                   "GITHUB_OUTPUT": str(self.folder / "output")}
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.subprocess, "check_output", return_value=pin + "\n"), \
+             patch.object(trusted_ci, "output") as selected:
+            trusted_ci.select()
+            self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.policy, "event", return_value={}), \
+             patch.object(trusted_ci.policy, "git", return_value=pin.encode()):
+            trusted_ci.policy.ci_context()
+            self.assertIn("base_sha=" + pin, Path(nightly["GITHUB_OUTPUT"]).read_text())
+            self.assertIn("release=false", Path(nightly["GITHUB_OUTPUT"]).read_text())
+        with patch.object(trusted_verdict, "git", return_value=pin.encode()):
+            self.assertEqual(trusted_verdict.policy_context({}, "schedule", pin), ("dev", pin))
+            with self.assertRaisesRegex(ValueError, "pinned dev"):
+                trusted_verdict.policy_context({}, "schedule", default_sha)
+
         durations = {"suites": {suite: {"files": {"tests/test_unit.py": 1}} for suite in ("unit", "browser")}}
         for name in ("test_unit.py", "test_browser_unit.py"):
             target = self.folder / "tests" / name
@@ -203,7 +237,8 @@ class TwoObservationGateTests(unittest.TestCase):
         previous = Path.cwd()
         try:
             os.chdir(self.folder)
-            for event in ("pull_request", "merge_group", "workflow_dispatch", "push"):
+            for event in ("pull_request", "merge_group", "workflow_dispatch", "push", "schedule"):
+                replicas = [1] if event == "merge_group" else [1, 2]
                 with self.subTest(event=event), patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
@@ -211,8 +246,8 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    self.assertEqual(maker.context("a" * 40)["replicas"], [1, 2])
-                    self.assertEqual(trusted_ci.plan("a" * 40, False)["replicas"], [1, 2])
+                    self.assertEqual(maker.context("a" * 40)["replicas"], replicas)
+                    self.assertEqual(trusted_ci.plan("a" * 40, False)["replicas"], replicas)
         finally:
             os.chdir(previous)
 
