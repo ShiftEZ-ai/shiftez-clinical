@@ -3491,7 +3491,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     can_recheck=application_recheckable(projection['input_snapshot'], projection['result'], source),
                     superseded=bool(found[1]),
                     deferred=deferred)
-            value['delta'] = complete_validation_delta(job, db.get(m.Workspace, job.workspace_id))
+            value['delta'] = complete_validation_delta(db, job, workspace)
             return {'job': disclose_leave(db, actor, json_value(value))}
 
     @app.get("/api/jobs/{job_id}")
