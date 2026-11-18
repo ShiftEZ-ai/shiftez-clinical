@@ -297,7 +297,7 @@ class SolverControl:
         `tier=None` shares its first finite allowance across score completions, without changing search progress
         or plateau state."""
         self.check()
-        if self.stopped:
+        if self.stopped and tier is not None:
             return cp_model.UNKNOWN
         searching = isinstance(tier, int)
         managed = self.search_budget is not None and searching
@@ -338,7 +338,7 @@ class SolverControl:
             def on_solution_callback(self):
                 control.poll()
                 if not searching:
-                    if control.cancelled() or control.stopped:
+                    if control.cancelled() or control.stopped and tier is not None:
                         self.stop_search()
                     return
                 if not first_incumbent:
@@ -400,7 +400,8 @@ class SolverControl:
                 if self.cancelled():
                     # Repeat until completion: cancellation can race solver startup.
                     solver.stop_search()
-                elif self.stopped:
+                elif self.stopped and (tier is not None or self.stop_deadline is not None
+                                      and time.monotonic() >= self.stop_deadline):
                     solver.stop_search()
                 elif tier == 'diagnostics' and self.diagnostic_deadline is not None and time.monotonic() >= self.diagnostic_deadline:
                     solver.stop_search()

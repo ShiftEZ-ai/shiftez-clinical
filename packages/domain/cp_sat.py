@@ -123,6 +123,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
                                   'elapsed_seconds': time.monotonic() - control.started,
                                   'search_elapsed_seconds': control.search_spent,
                                   'phase_timings': control.timings()})
+    result.setdefault('score_completed', False)
     control.phase(None)
     from .generation_outcome import generation_outcome, score_value, solver_status
     result['solver_status'] = solver_status(result)
@@ -1929,16 +1930,12 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             raise ValueError('Prepared solution hint does not match its model')
         if available_search() <= 0:
             control.stage('scoring')
-        if control.stopped:
-            status = cp_model.UNKNOWN
-        else:
-            solver, status = complete_score(hint)
+        solver, status = complete_score(hint)
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             values, pairs, overtime_values, lead_values = keep_incumbent()
         elif status == cp_model.UNKNOWN and control.stopped:
             values, pairs, overtime_values, lead_values = keep_incumbent(hint)
             compiled_score_complete = False
-            result['solver_status'] = 'UNKNOWN'
         elif status == cp_model.INFEASIBLE:
             if hint_repaired:
                 # Rules or eligibility may have changed since the checkpoint.
@@ -2136,10 +2133,6 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 if deterministic:
                     spent[0] += control.last_solve_deterministic_time
                 if search_model is not model and status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                    if control.stopped:
-                        values, pairs, overtime_values, lead_values = keep_incumbent(solver.response_proto.solution)
-                        compiled_score_complete = False
-                        break
                     evaluator, completion_status = complete_score(solver.response_proto.solution)
                     if completion_status == cp_model.INFEASIBLE:
                         return {**result, 'status': 'translation_error', 'optimality_proven': False,
@@ -2376,6 +2369,10 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     control.validated_result = {**result,
         'status': 'candidate_with_gaps' if diagnostic_proposal or not validation_ok else 'candidate_feasible',
         'first_solution_seconds': control.first_solution_seconds}
+    if not compiled_score_complete:
+        control.stage('ready', best_score=None, shared_validation_passed=validation_ok)
+        return {**control.validated_result, 'score_completed': False,
+                'message': 'Stopped; final score not completed.'}
     if not feasibility_only:
         from .solver_diagnostics import explain_unmet_requirements
         result['allocation_diagnostics'] = explain_unmet_requirements(data, validation, tiers)

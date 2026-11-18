@@ -204,21 +204,44 @@ def test_stop_grace_expiry_in_canonical_validation_is_resumable_not_applyable(h,
     assert saved[0]['hint'] and saved[0]['checkpoint_assignments']
 
 
-def test_stop_interrupts_completion_without_solution_callbacks():
+def test_stop_interrupts_completion_without_solution_callbacks(stop_clock):
     update, interrupted = {}, threading.Event()
     control = solver_control.SolverControl(search_control=lambda: update)
     control.configure_stop_conditions(GenerationOptions())
     control.search_budget = 60
-    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=1), stop_search=interrupted.set)
 
     def solve(model, callback):
         update['stop'] = True
-        assert interrupted.wait(1), 'Completion ignored operator stop without a new solution'
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cap'
+        stop_clock[0] += 1
+        assert interrupted.wait(1), 'Completion ignored its cap without a new solution'
         return cp_model.UNKNOWN
 
     solver.solve = solve
     assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.stopped and control.stop_reason == 'operator_stop'
+    assert control.completion_spent == control.completion_budget == 1
+
+
+def test_stop_grace_interrupts_completion_without_solution_callbacks(stop_clock):
+    interrupted = threading.Event()
+    control = solver_control.SolverControl(search_control=lambda: {'stop': True})
+    control.configure_stop_conditions(GenerationOptions(generation_stop_grace_seconds=1))
+    control.search_budget = 60
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+
+    def solve(model, callback):
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its grace deadline'
+        stop_clock[0] += 1
+        assert interrupted.wait(2), 'Stop grace did not interrupt score completion'
+        return cp_model.UNKNOWN
+
+    solver.solve = solve
+    with pytest.raises(solver_control.StopGraceExpired):
+        control.solve(solver, None, None)
+    assert control.completion_spent == 1 < control.completion_budget
 
 
 @pytest.mark.parametrize('value', [0, 16, True, 1.5, '5'])

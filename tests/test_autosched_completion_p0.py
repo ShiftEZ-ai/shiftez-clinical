@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from ortools.sat.python import cp_model
 
-from packages.domain import generation, solver_control, solver_summary, validation, wish_reasons
+from packages.domain import cp_sat, generation, score, solver_control, solver_summary, validation, wish_reasons
 from packages.domain.candidate_evidence import candidate_evidence
 from packages.domain.solver_control import Cancelled, SolverControl
 from packages.domain.validation import evaluate
@@ -69,6 +69,9 @@ def test_completion_watcher_enforces_cap_without_solution_callbacks(clock):
     solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=1), stop_search=interrupted.set)
 
     def solve(model, callback):
+        callback.stop_search = interrupted.set
+        callback.on_solution_callback()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cap'
         clock[0] += 1
         assert interrupted.wait(2), 'Completion allowance did not interrupt a solve without callbacks'
         return cp_model.UNKNOWN
@@ -76,6 +79,16 @@ def test_completion_watcher_enforces_cap_without_solution_callbacks(clock):
     solver.solve = solve
     assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.completion_spent == 1 and control.search_spent == 1
+
+
+def test_cancelled_stopped_search_does_not_start_completion():
+    control = SolverControl(cancelled=lambda: True, search_control=lambda: {'stop': True})
+    control.search_budget = 1
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=1),
+                             solve=lambda *args: pytest.fail('Cancellation started score completion'))
+    with pytest.raises(Cancelled):
+        control.solve(solver, None, None)
+    assert control.completion_budget is None and control.completion_spent == 0
 
 
 def test_cancel_interrupts_completion_and_accounts_elapsed_time(clock):
@@ -101,6 +114,68 @@ def test_zero_completion_allowance_does_not_start_native_solve():
     solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=0))
     assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.completion_spent == 0
+
+
+@pytest.mark.parametrize('case', ['completed', 'capped', 'no_incumbent', 'cancelled'])
+def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
+    h.policy({'kind': 'restriction'}, severity='advisory')
+    workspace = h.shift(h.workspace(), people=[])['workspace']
+    data = h.snapshot(workspace)
+    data['generation_options'] = {'diagnostic_seconds': 1, 'shortlist_width': 0}
+    before, update, controls, completions, progress = deepcopy(data), {}, [], [], []
+    original = SolverControl.solve
+
+    def solve(control, solver, model, tier):
+        controls.append(control)
+        if tier is None:
+            completions.append(tier)
+            native_solve = solver.solve
+
+            def complete(model, callback):
+                status = native_solve(model, callback)
+                clock[0] += 1 if case == 'capped' else .25
+                return cp_model.UNKNOWN if case == 'capped' else status
+
+            monkeypatch.setattr(solver, 'solve', complete)
+            return original(control, solver, model, tier)
+        status = cp_model.UNKNOWN if case == 'no_incumbent' else original(control, solver, model, tier)
+        update['stop'] = True
+        update['cancel'] = case == 'cancelled'
+        control.poll()
+        return status
+
+    monkeypatch.setattr(SolverControl, 'solve', solve)
+    result = cp_sat.generate(data, 3, progress=progress.append, search_control=lambda: update,
+                             cancelled=lambda: update.get('cancel', False))
+    expected = {
+        'completed': ('candidate_feasible', 'FEASIBLE', True),
+        'capped': ('candidate_feasible', 'FEASIBLE', False),
+        'no_incumbent': ('needs_more_time', 'UNKNOWN', False),
+        'cancelled': ('cancelled', 'UNKNOWN', False),
+    }
+    assert (result['status'], result['solver_status'], result['score_completed']) == expected[case]
+    control = controls[0]
+    if case in {'completed', 'capped'}:
+        assert result['validation']['valid'] and result['additions']
+        assert progress[-1]['stage'] == 'ready' and progress[-1]['shared_validation_passed']
+        assert not result['optimality_proven']
+        assert completions == [None]
+        assert 0 < control.completion_spent <= control.completion_budget == 1
+        if case == 'completed':
+            assert result['compiled_component_values'] and result['score'] is not None
+            after = deepcopy(data)
+            for addition in result['additions']:
+                next(s for s in after['shifts'] if s['id'] == addition['shift_id'])['participants'].append(addition['participant'])
+            assert result['score'] == score.schedule_score(after, evaluate(after))['score']
+        else:
+            assert control.completion_spent == control.completion_budget
+            assert progress[-1]['best_score'] is None
+            assert result['score'] is None and 'summary' not in result
+    else:
+        assert not completions and control.completion_spent == 0
+        assert result['additions'] == result['removals'] == []
+        assert result['score'] is None and 'validation' not in result
+    assert data == before
 
 
 def test_summary_trials_skip_decoration_without_changing_public_reasons(h, monkeypatch):
