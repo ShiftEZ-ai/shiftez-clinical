@@ -1079,8 +1079,11 @@ def changed_files(base):
 
 def include_failures(picked, reports):
     """Pure local diagnostic union; failed CPU/wall budgets require separate qualification."""
+    import importlib.util
     import xml.etree.ElementTree as ET
-    from scripts.cloud_test_plan import pytest_ci
+    spec = importlib.util.spec_from_file_location("pytest_ci", ROOT / ".github/scripts/pytest_ci.py")
+    pytest_ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pytest_ci)
 
     combined = {kind: "all" if targets == "all" else set(targets) for kind, targets in picked.items()}
     for report in reports:
