@@ -47,7 +47,9 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
         expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
         original_node = page.locator('.note-item').first.element_handle()
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=15000) as startup:
-            page.clock.run_for(11000)  # the pulse is the app's 10 s timer, on the page clock
+            # The pulse is the app's 10 s timer, on the page clock; with the stream live it reads once a minute. On a
+            # loaded runner its first tick already ran in real time while signing in, so step past the next minute's check.
+            page.clock.run_for(71_000)
         startup.value.finished()
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
