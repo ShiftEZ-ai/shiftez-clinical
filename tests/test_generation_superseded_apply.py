@@ -311,9 +311,9 @@ def test_apply_uses_frozen_non_safety_mandatory_rules_after_creation(request, ba
     before = h.snapshot(w)
     reply = apply(h, w, job)
     assert not rules_changed(reply['reconciliation']['changed_facts'])
+    assert reply['reconciliation']['validation_current']
     if non_rule_change:
         assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'unresolved'
-        assert reply['reconciliation']['validation_current']
         assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
         assert h.snapshot(w) == before
     else:
