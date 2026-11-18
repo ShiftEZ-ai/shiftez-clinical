@@ -421,6 +421,23 @@ def mentions(path, test, text, names=True):
             or (names and any(w in Path(test).stem for w in words)))
 
 
+def direct_test_owners(changed, candidate_tests):
+    """Resolve each path through direct imports and file references in protected tests."""
+    reverse, texts, _ = graph(ROOT)
+    files = {test: texts[test] for test in test_files()}
+    selected = set()
+    for path in changed:
+        owners = reverse.get(path, set()) & files.keys()
+        owners |= doc_tests([path], files)
+        owners |= {test for test, text in files.items() if mentions(path, test, text, names=False)}
+        if path in candidate_tests:
+            owners.add(path)
+        if not owners:
+            return None
+        selected.update(owners)
+    return selected
+
+
 def web_graph():
     """The source dependency graph shared by browser and compiled-client readers."""
     web = {p.resolve(): p.read_text(encoding="utf-8", errors="replace") for p in (ROOT / "apps/web/src").rglob("*.ts")}

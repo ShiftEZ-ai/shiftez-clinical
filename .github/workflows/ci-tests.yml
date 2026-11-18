@@ -153,7 +153,7 @@ jobs:
         PY
         echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
         python scripts/compiled_client.py
-    - name: Run the exact full-suite shard once
+    - name: Run the exact planned shard once
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
     - name: Retain first-attempt reports and failure evidence
       if: always()
