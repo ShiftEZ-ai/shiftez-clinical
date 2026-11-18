@@ -79,6 +79,10 @@ class ImporterV34Tests(unittest.TestCase):
         source_runs = json.loads(durations.read_text(encoding='utf-8'))['source_run_ids']
         self.assertCountEqual(source_runs, [44114266718, 44131154009])
 
+        config = durations.with_name('bootstrap-settings.json')
+        groups = json.loads(config.read_text(encoding='utf-8'))['merge_group_shards']
+        self.assertEqual(groups, {'unit_shards': 17, 'browser_shards': 20})
+
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'
         for name in ('ci.yml','ci-tests.yml','working-policy.yml'):
@@ -86,8 +90,8 @@ class ImporterV34Tests(unittest.TestCase):
             jobs = doc['jobs']
             if name == 'ci.yml':
                 limits = {
-                    'unit': "${{ github.event_name == 'merge_group' && 34 || 10 }}",
-                    'browser': "${{ github.event_name == 'merge_group' && 24 || 8 }}",
+                    'unit': "${{ github.event_name == 'merge_group' && 17 || 10 }}",
+                    'browser': "${{ github.event_name == 'merge_group' && 20 || 8 }}",
                 }
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')
