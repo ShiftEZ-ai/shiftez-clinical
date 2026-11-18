@@ -72,32 +72,34 @@ def pr_scope(data, git, trusted_sha, candidate):
     diff_base = policy.commit(git("merge-base", base, candidate).decode().strip())
     diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z")
     changed = {path.decode() for path in policy.paths(git(*diff, diff_base, candidate, "--"))}
-    if any(policy.protected(path.encode()) or path == "scripts" or path.startswith("scripts/") for path in changed):
+    if any(policy.protected(path.encode()) or path in {"scripts", "apps/web/src/generated.ts"}
+           or path.startswith(("scripts/", "migrations/", "packages/contracts/")) for path in changed):
+        return None
+    if git(*diff, "--diff-filter=D", diff_base, candidate, "--"):
         return None
     inventory = policy.control_inventory(trusted_sha)
-    if any(policy.tier(path, policy.read_file(base, path), policy.read_file(candidate, path), inventory)[0] == 1
+    if any(policy.tier(path, policy.read_file(base, path), policy.read_file(candidate, path), inventory)[0] >= 1
            for path in sorted(changed)):
         return None
-    deleted = {path.decode() for path in policy.paths(git(*diff, "--diff-filter=D", diff_base, candidate, "--", "tests"))
-               if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py", path)}
-    return changed, deleted
+    return changed
 
 
 def affected_files(changed, files):
     required = PR_SMOKE | (changed & files)
     if not PR_SMOKE <= files:
-        raise ValueError("A required PR smoke file is missing")
-    if changed:
-        try:
-            selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
-            owners = selector["direct_test_owners"](Path.cwd(), sorted(changed), files)
-            if not isinstance(owners, set) or not owners <= files:
-                raise ValueError("Selector returned files outside the candidate inventory")
-        except Exception as error:
-            print("::warning::PR selector failed (" + type(error).__name__ + "); using changed tests and smoke")
-            return required, "changed-tests-and-smoke"
-        required |= owners
-    return required, "affected"
+        return None
+    if not changed:
+        return required
+    try:
+        selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
+        picked, reason = selector["select_with_reason"](sorted(changed), strict=True)
+        if reason or "all" in picked.values():
+            return None
+        owners = {target.split("::", 1)[0] for targets in picked.values() for target in targets}
+    except Exception as error:
+        print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
+        return None
+    return required | owners if owners <= files else None
 
 
 def plan(base, measurement):
@@ -124,21 +126,21 @@ def plan(base, measurement):
     result = {"schema": 1, "sha": candidate, "tree": candidate_tree, "base_sha": base,
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
-    quick = None
+    selected_files = None
     if (not measurement and not context["bootstrap"] and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
             and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
         trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
-        quick = pr_scope(policy.event(), policy.git, trusted_sha, candidate)
-    if quick is not None:
-        changed, deleted = quick
-        selected_files, reason = affected_files(changed, set(files))
-        result["selection"] = {"reason": reason, "deleted_test_files": sorted(deleted)}
+        changed = pr_scope(policy.event(), policy.git, trusted_sha, candidate)
+        if changed is not None:
+            selected_files = affected_files(changed, set(files))
+    if selected_files is not None:
+        result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)
     for suite in ("unit", "browser"):
         selected = [p for p in files if Path(p).name.startswith("test_browser") == (suite == "browser")]
         seconds = data["suites"][suite]["files"]
         count = config[suite + "_shards"]
-        if quick is not None:
+        if selected_files is not None:
             median = statistics.median(seconds.values())
             total = sum(seconds.get(path, median) for path in selected)
             count = min(count, len(selected), max(1, math.ceil(total / 120)))
@@ -149,8 +151,7 @@ def plan(base, measurement):
 
 def census_files(plan, files):
     if "selection" in plan:
-        scope = set(plan["selection"]["deleted_test_files"])
-        scope.update(path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"])
+        scope = {path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
         return set(files) & scope
     return set(files)
 

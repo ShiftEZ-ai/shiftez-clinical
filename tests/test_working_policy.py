@@ -247,15 +247,18 @@ def pytest_runtest_makereport(item, call):
         omitted["suites"]["unit"]["shards"][0]["files"] = []
         with self.assertRaises(ValueError): verifier.assert_inventory(omitted, rows, {"unit": 1, "browser": 1})
         with self.assertRaises(ValueError): verifier.assert_inventory(plan, rows.replace(b"100644", b"120000", 1), {"unit": 1, "browser": 1})
-        partial = {**plan, "replicas": [1, 2], "selection": {"reason": "changed-tests-and-smoke", "deleted_test_files": []}}
+        partial = {**plan, "replicas": [1, 2], "selection": {"reason": "affected"}}
         rows += b"100644 blob " + b"c" * 40 + b"\ttests/test_unobserved.py\0"
         with patch.object(verifier, "PR_SMOKE", {"tests/test_browser_a.py"}):
-            self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, ({"tests/test_a.py"}, set())),
+            self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_a.py"}),
                              {"tests/test_a.py", "tests/test_browser_a.py"})
             with self.assertRaisesRegex(ValueError, "ordinary dev pull request"):
                 verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2})
             with self.assertRaisesRegex(ValueError, "omits required test files"):
-                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, ({"tests/test_unobserved.py"}, set()))
+                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_unobserved.py"})
+            with self.assertRaisesRegex(ValueError, "Partial selection disagrees"):
+                verifier.assert_inventory({**partial, "selection": {"reason": "selector-error"}}, rows,
+                                          {"unit": 2, "browser": 2}, {"tests/test_a.py"})
 
     def test_computed_conftest_attack_refused(self):
         attack = b'''import sys
@@ -482,6 +485,17 @@ class BootstrapControlTests(unittest.TestCase):
         for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml'):
             doc = yaml.load((workflows / name).read_text(), Loader=yaml.BaseLoader)
             self.assertNotIn('pull_request_target', (workflows / name).read_text())
+            if name == 'ci.yml':
+                checks = doc['jobs']['checks']['steps']
+                context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
+                plan, upload = checks[context_index + 1:context_index + 3]
+                self.assertEqual(plan['id'], 'plan')
+                self.assertNotIn('if', plan)
+                self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
+                self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
+                for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
+                                        'Build web assets and compiled client modules'):
+                    self.assertIn(name_after_plan, [step.get('name') for step in checks[context_index + 3:]])
             for job in doc['jobs'].values():
                 steps = job.get('steps', [])
                 for index, step in enumerate(steps):

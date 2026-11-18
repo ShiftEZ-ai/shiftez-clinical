@@ -1,4 +1,5 @@
 """Ordinary gate observations never grant an implicit committed allowance."""
+from contextlib import chdir
 from datetime import date, timedelta
 import json
 import os
@@ -146,40 +147,51 @@ class TwoObservationGateTests(unittest.TestCase):
 
     def test_plan_and_reader_use_two_replicas_on_every_event(self):
         import trusted_ci
-        changed_test = "tests/test_changed.py"
-        direct_owner = "tests/test_direct.py"
+        owner = "tests/test_quick_owner.py"
+        owned = "apps/api/quick_fixture.py"
+        unknown = "apps/api/unknown_fixture.py"
+        unknown_doc = "docs/unowned.md"
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py"}
-        files = trusted_ci.PR_SMOKE | {changed_test, direct_owner} | unrelated
+        files = trusted_ci.PR_SMOKE | {owner} | unrelated
         durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
-        for name in files:
+        sources = dict.fromkeys(files, "def test_a(): pass\n")
+        sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
+                        unknown: "value = 2\n", unknown_doc: "# Example\n",
+                        "scripts/affected_tests.py": (ROOT / "scripts/affected_tests.py").read_text(encoding="utf-8")})
+        for name, content in sources.items():
             target = self.folder / name
-            target.parent.mkdir(exist_ok=True)
-            target.write_text("def test_a(): pass\n")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
         head, base = "a" * 40, "b" * 40
         def source_git(*args):
             return "\n".join(sorted(files)) if args[0] == "ls-files" else head
-        previous = Path.cwd()
-        try:
-            os.chdir(self.folder)
-            cases = [("pull_request", "apps/api/settings_extra.py", [], "affected"),
-                     ("pull_request", "apps/api/settings_extra.py", ["full-ci"], None),
-                     ("pull_request", "scripts/tool.py", [], None),
-                     ("pull_request", "test_support/plugin.py", [], None),
-                     ("pull_request", "apps/api/broken.py", [], "changed-tests-and-smoke"),
-                     *((event, "", [], None) for event in ("merge_group", "workflow_dispatch", "push"))]
-            for event, path, labels, reason in cases:
-                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": "dev"},
+        with patch.object(sys, "path", list(sys.path)), chdir(self.folder):
+            full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
+                          "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
+                          "tests/conftest.py", "tests/fixtures/sample.json", "test_support/fixture.py", owner,
+                          "migrations/env.py", "packages/contracts/schemas.py", "apps/web/src/generated.ts",
+                          unknown, unknown_doc)
+            cases = [(path, [], "dev", False, False) for path in full_paths]
+            cases += [(owned, [], "dev", False, True), (owned, ["full-ci"], "dev", False, False),
+                      (owned, [], "main", False, False), (owned, [], "dev", True, False)]
+            events = [("pull_request", *case) for case in cases]
+            events += [(event, owned, [], "dev", False, False) for event in ("merge_group", "workflow_dispatch", "push")]
+            events.append(("pull_request", owned, [], "dev", False, False))
+            for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
+                if index == len(events) - 1:
+                    # The real selector raises when reading this inventory entry as a file.
+                    (self.folder / "tests/test_unreadable.py").mkdir()
+                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": branch},
                                             "labels": [{"name": label} for label in labels]}}
                 def event_git(*args):
                     if args[0] == "merge-base":
                         return base.encode()
-                    return b"" if "--diff-filter=D" in args else (path + "\0" + changed_test + "\0").encode()
-                def selector(root, paths, inventory):
-                    self.assertEqual((root, paths, inventory), (self.folder, sorted([path, changed_test]), files))
-                    if path.endswith("broken.py"):
-                        raise RuntimeError("selector failed")
-                    return {direct_owner}
-                with self.subTest(event=event, path=path, labels=labels), \
+                    return b"" if "--diff-filter=D" in args and not deleted else (path + "\0").encode()
+                def file_at(revision, name):
+                    if name == "package.json":
+                        return b'{"dependencies":{"example":"1"}}' if revision == base else b'{"dependencies":{"example":"2"}}'
+                    return b"x = 1\n"
+                with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "TRUSTED_BOOTSTRAP": "false"}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
@@ -188,28 +200,21 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.object(trusted_ci.subprocess, "check_output", return_value=head), \
                      patch.object(trusted_ci.policy, "git", side_effect=event_git), \
                      patch.object(trusted_ci.policy, "event", return_value=payload), \
-                     patch.object(trusted_ci.policy, "read_file", return_value=b"x = 1\n"), \
-                     patch.object(trusted_ci.policy, "control_inventory", return_value={"helpers": {"test_support/plugin.py"}, "product_imports": set()}), \
-                     patch.object(trusted_ci.runpy, "run_path", return_value={"direct_test_owners": selector}) as load_selector, \
+                     patch.object(trusted_ci.policy, "read_file", side_effect=file_at), \
+                     patch.object(trusted_ci.policy, "control_inventory", return_value={"helpers": {"tools/control.py"}, "product_imports": set()}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
                     self.assertEqual(maker.context(base)["replicas"], [1, 2])
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["replicas"], [1, 2])
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
-                    if reason is None:
+                    if partial:
+                        self.assertEqual(plan["selection"], {"reason": "affected"})
+                        self.assertEqual(actual, trusted_ci.PR_SMOKE | {owner})
+                        self.assertEqual(trusted_ci.census_files(plan, files), actual)
+                    else:
                         self.assertNotIn("selection", plan)
                         self.assertEqual(actual, files)
-                        load_selector.assert_not_called()
-                    else:
-                        self.assertEqual(plan["selection"], {"reason": reason, "deleted_test_files": []})
-                        expected = trusted_ci.PR_SMOKE | {changed_test}
-                        if reason == "affected":
-                            expected.add(direct_owner)
-                        self.assertEqual(actual, expected)
-                        self.assertEqual(trusted_ci.census_files(plan, files), expected)
-        finally:
-            os.chdir(previous)
 
     def test_dispatch_and_push_fetch_the_measured_pr_before_reader(self):
         import test_working_policy as fixtures
