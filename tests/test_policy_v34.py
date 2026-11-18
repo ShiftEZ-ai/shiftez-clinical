@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -78,6 +79,69 @@ class ImporterV34Tests(unittest.TestCase):
         for running, admitted in ((0, True), (101, True), (102, False), (120, False)):
             with self.subTest(running=running):
                 self.assertEqual(nightly_budget.can_start(running), admitted)
+
+    def test_ci_jobs_run_by_event_with_skipped_budget(self):
+        workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
+        jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
+        full = {'checks', 'static', 'unit', 'browser', 'result'}
+        cases = (
+            ('pull request', 'pull_request', 'refs/pull/1/merge', True, {}, full),
+            ('merge group', 'merge_group', 'refs/heads/queue', True, {}, full),
+            ('preview push', 'push', 'refs/heads/preview', True, {}, full),
+            ('dev push', 'push', 'refs/heads/dev', True, {}, {'checks'}),
+            ('dispatch', 'workflow_dispatch', 'refs/heads/dev', True, {}, full),
+            ('admitted nightly', 'schedule', 'refs/heads/dev', True, {}, full | {'nightly-budget'}),
+            ('declined nightly', 'schedule', 'refs/heads/dev', False, {}, {'nightly-budget'}),
+            ('failed budget', 'schedule', 'refs/heads/dev', True,
+             {'nightly-budget': 'failure'}, {'nightly-budget'}),
+            ('failed checks', 'pull_request', 'refs/pull/1/merge', True,
+             {'checks': 'failure'}, {'checks', 'result'}),
+        )
+        for label, event, ref, admitted, overrides, expected in cases:
+            with self.subTest(case=label):
+                results, ancestors = {}, {}
+
+                def run(job):
+                    if job in results:
+                        return
+                    needs = jobs[job].get('needs', [])
+                    if isinstance(needs, str):
+                        needs = [needs]
+                    for dependency in needs:
+                        run(dependency)
+                    ancestors[job] = set(needs).union(*(ancestors[item] for item in needs))
+                    condition = jobs[job]['if']
+                    # GitHub's implicit success check includes skipped jobs earlier in the dependency chain.
+                    implicit_success = not re.search(r'\b(?:always|cancelled|success|failure)\(\)', condition)
+                    if implicit_success and any(results[item] != 'success' for item in ancestors[job]):
+                        results[job] = 'skipped'
+                        return
+
+                    values = {
+                        "github.event_name == 'schedule'": event == 'schedule',
+                        "github.event_name != 'schedule'": event != 'schedule',
+                        "github.event_name != 'push'": event != 'push',
+                        "github.ref != 'refs/heads/dev'": ref != 'refs/heads/dev',
+                        "vars.HOSTED_CI_ENABLED == 'true'": True,
+                        "github.event.repository.private": False,
+                        "always()": True,
+                        "cancelled()": False,
+                        "needs['nightly-budget'].result == 'success'": results.get('nightly-budget') == 'success',
+                        "needs['nightly-budget'].outputs.admitted == 'true'": admitted,
+                        "needs.checks.result == 'success'": results.get('checks') == 'success',
+                        "needs.checks.result != 'skipped'": results.get('checks') != 'skipped',
+                    }
+                    for expression, value in values.items():
+                        condition = condition.replace(expression, str(value))
+                    condition = condition.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ')
+                    # Evaluate only the known boolean grammar, with no access to builtins.
+                    self.assertRegex(condition, r'^(?:True|False|and|or|not|[()\s])+$')
+                    enabled = eval(condition.strip(), {'__builtins__': {}})
+                    results[job] = overrides.get(job, 'success') if enabled else 'skipped'
+
+                for job in jobs:
+                    run(job)
+                self.assertEqual({name for name, result in results.items() if result != 'skipped'}, expected)
 
     def test_pipeline_keeps_default_limits_until_measurement(self):
         # Lower limits require new measured runs in ci/hosted-durations.json.
