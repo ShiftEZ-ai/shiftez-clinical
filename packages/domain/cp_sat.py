@@ -124,6 +124,10 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
                                   'search_elapsed_seconds': control.search_spent,
                                   'phase_timings': control.timings()})
     result.setdefault('score_completed', False)
+    if control.stopped and result['status'] == 'candidate_feasible' and not result['score_completed']:
+        result['message'] = 'complete; score optimisation unfinished'
+        if (saved := (result.get('summary') or {}).get('score_saved')) is not None:
+            saved['score_completed'] = False
     control.phase(None)
     from .generation_outcome import generation_outcome, score_value, solver_status
     result['solver_status'] = solver_status(result)
@@ -2369,10 +2373,6 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     control.validated_result = {**result,
         'status': 'candidate_with_gaps' if diagnostic_proposal or not validation_ok else 'candidate_feasible',
         'first_solution_seconds': control.first_solution_seconds}
-    if not compiled_score_complete:
-        control.stage('ready', best_score=None, shared_validation_passed=validation_ok)
-        return {**control.validated_result, 'score_completed': False,
-                'message': 'Stopped; final score not completed.'}
     if not feasibility_only:
         from .solver_diagnostics import explain_unmet_requirements
         result['allocation_diagnostics'] = explain_unmet_requirements(data, validation, tiers)
@@ -2408,8 +2408,8 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         result['summary']['score_before'] = before_score
         saved = schedule_score(after_data, after_validation, scoring)
         control.check()
-        result['score_completed'] = True
-        if control.has_progress:
+        result['score_completed'] = compiled_score_complete
+        if compiled_score_complete and control.has_progress:
             from .score import progress_score
             live_score = progress_score(saved)
             if live_score is not None:
@@ -2428,8 +2428,9 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         result['summary']['fixed_breaches'] = fixed_breaches
         result['summary']['fixed_breach_count'] = len(fixed_breaches)
         result['summary']['message'] = result['message']
+    ready_score = {} if compiled_score_complete else {'best_score': None}
     if diagnostic_proposal or (locked_staffing and not validation_ok):
-        control.stage('ready', shared_validation_passed=validation_ok)
+        control.stage('ready', shared_validation_passed=validation_ok, **ready_score)
         return {**result, 'status': 'candidate_with_gaps', 'optimality_proven': False,
                 'message': (DIAGNOSTIC_PROPOSAL_MESSAGE
                             if diagnostic_proposal else 'Locked sessions still have open places. The editable sessions have been scheduled; no locked assignments were changed.'),
@@ -2437,7 +2438,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 'elapsed_seconds': time.monotonic() - control.started}
     control.stage('ready', shared_validation_passed=validation_ok,
                   selected_scope_validation_passed=not any(f['severity'] == 'error' and in_scope(f)
-                                                          for f in validation_observations))
+                                                          for f in validation_observations), **ready_score)
     return {**result, 'status': 'candidate_feasible' if validation_ok else 'candidate_with_gaps',
             'first_solution_seconds': control.first_solution_seconds,
             'elapsed_seconds': time.monotonic() - control.started}

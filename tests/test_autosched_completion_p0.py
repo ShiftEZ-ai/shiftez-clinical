@@ -170,7 +170,13 @@ def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
         else:
             assert control.completion_spent == control.completion_budget
             assert progress[-1]['best_score'] is None
-            assert result['score'] is None and 'summary' not in result
+            assert result['message'] == 'complete; score optimisation unfinished'
+            assert result['score'] is None and result['compiled_component_values'] == {}
+            assert 'objective_components' in result
+            assert 'declined_wishes' in result and 'allocation_diagnostics' in result
+            assert result['summary']['score_before']['score'] is not None
+            assert result['summary']['score_saved']['score'] is not None
+            assert result['summary']['score_saved']['score_completed'] is False
     else:
         assert not completions and control.completion_spent == 0
         assert result['additions'] == result['removals'] == []
