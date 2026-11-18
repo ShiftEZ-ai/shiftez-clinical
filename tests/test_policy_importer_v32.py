@@ -168,12 +168,22 @@ class PublicV32Cases(unittest.TestCase):
         def git(*args):
             return self.root['tree'] if args[-1]=='HEAD^{tree}' else 'tests/test_policy_importer_v32.py\ntests/test_browser_recurring_sessions.py' if args[0]=='ls-files' else self.root['sha']
         durations={'suites':{'unit':{'files':{'tests/test_policy_importer_v32.py':1.0}},'browser':{'files':{'tests/test_browser_recurring_sessions.py':1.0}}}}
-        with patch.dict(os.environ,{'GITHUB_EVENT_NAME':event}), patch.object(maker,'at_revision',return_value=accepted):
+        base, candidate, head = self.root['base_sha'], self.root['sha'], 'd' * 40
+        payload = {'pull_request': {'base': {'ref': 'dev', 'sha': base}, 'head': {'sha': head}, 'labels': []}}
+        git_rows = {
+            'rev-list': f'{candidate} {base} {head}'.encode(),
+            'diff': b'',
+        }
+        env = {'GITHUB_EVENT_NAME': event, 'GITHUB_SHA': candidate, 'TRUSTED_BOOTSTRAP': 'false'}
+        with patch.dict(os.environ, env), patch.object(maker,'at_revision',return_value=accepted):
             context=maker.context(self.root['base_sha'])
             self.assertEqual(context['replicas'],replicas)
             with patch.object(planner,'settings',return_value={'unit_shards':1,'browser_shards':1}), \
                  patch.object(hosted,'git',side_effect=git),patch.object(hosted,'load_durations',return_value=durations), \
-                 patch.object(planner.canaries,'sha',return_value='f'*64):
+                 patch.object(planner.canaries,'sha',return_value='f'*64), \
+                 patch.object(policy, 'event', return_value=payload), \
+                 patch.object(policy, 'git', side_effect=lambda command, *args: git_rows[command]), \
+                 patch.object(policy, 'control_inventory', return_value=self.inventory):
                 self.assertEqual(planner.plan(self.root['base_sha'],False)['replicas'],context['replicas'])
             self.plan['replicas']=replicas
             self.write_reports()

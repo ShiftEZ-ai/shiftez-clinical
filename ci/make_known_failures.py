@@ -221,7 +221,11 @@ def collect_reports(plan, directory, run_id, run_attempt, *, historical_capture=
                 raise ValueError("Missing or changed shard evidence")
             selected = json.loads(sidecars[1].read_text(encoding="utf-8"))
             cases = list(case_rows([report]))
-            if (not selected or len(selected) != len(set(selected))
+            intentionally_empty = False
+            if not selected and "selection" in plan:
+                deselected = json.loads(sidecars[2].read_text(encoding="utf-8"))
+                intentionally_empty = bool(deselected) and all(node.split("::", 1)[0] in files for node in deselected)
+            if ((not selected and not intentionally_empty) or len(selected) != len(set(selected))
                     or sorted(node for node, _ in cases) != sorted(selected)
                     or type(row["exit_code"]) is not int or row["exit_code"] not in (0, 1)
                     or (row["exit_code"] == 1) != any(item["outcome"] in {"failed", "error"} for _, item in cases)):
@@ -453,7 +457,8 @@ def stale_report_dir(output):
 
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
-             limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(), stale_output=None):
+             limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
+             selected_files=None, stale_output=None):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -481,7 +486,9 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
                  and row["red_count"] == 1 and "passed" in row["observations"]}
     if outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
         problems.append("New failures outside the known-failure list require two complete replicas")
-    if current_nodes - observed:
+    expected = current_nodes if selected_files is None else {
+        node for node in current_nodes if node.split("::", 1)[0] in selected_files}
+    if expected - observed:
         problems.append("Vanished listed nodes: delete their lines from ci/known-failures.json")
     stable = groups["baseline"] | groups["cleanup"] | groups["baseline-error"]
     if stale_output is not None:
@@ -595,6 +602,9 @@ def main():
                 and git("diff", "--name-status", "--no-renames", ctx["base_sha"], "HEAD") == "A\t" + KNOWN)
     tree = git("rev-parse", ctx["base_sha"] + "^{tree}") if add_only else plan["tree"]
     args.output.mkdir(parents=True, exist_ok=True)
+    selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
+                      if "selection" in plan else None)
+    listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):
@@ -623,7 +633,6 @@ def main():
                 return
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
             require_root_binding(ctx["current"], root_evidence, root_sha)
-            listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
             product_errors = product_error_nodes(args.reports, listed=listed)
             report_outside(ctx["current"], runs, args.output, exceptions)
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
@@ -634,7 +643,7 @@ def main():
                 (args.output / "known-failures.candidate.json").write_text(encoded(candidate), encoding="utf-8")
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
-                     product_errors=product_errors,
+                     product_errors=product_errors, selected_files=selected_files,
                      stale_output=stale_report_dir(args.output))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
@@ -642,6 +651,9 @@ def main():
         verdict = {"passed": False, "reason": str(error)}
     else:
         verdict = {"passed": True, "reason": "Smoke wiring passed; no baseline qualification" if plan["smoke"] else "Known-failure ratchet passed"}
+    if selected_files is not None:
+        verdict["selection"] = plan["selection"]
+        verdict["not_observed"] = sorted(node for node in listed if node.split("::", 1)[0] not in selected_files)
     (args.output / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
     if ctx["bootstrap"]:
         print("::warning::Bootstrap baseline is permitted only in the add-only first PR with exact two-run evidence")
