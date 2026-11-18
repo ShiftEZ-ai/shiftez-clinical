@@ -139,7 +139,9 @@ def test_a_deferred_inbox_pulse_does_not_reboot_the_next_accounts_page(browser, 
         expect(page.get_by_role('dialog')).to_be_visible()
         # A real pulse is deferred while this person's form is open.
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=15000):
-            page.clock.run_for(11000)  # the pulse is the app's 10 s timer, on the page clock
+            # The app's 10 s timer reads the pulse once a minute with the stream live; its first tick may already have run
+            # in real time on a loaded runner, so step past the next minute's check.
+            page.clock.run_for(71_000)
         page.wait_for_timeout(100)
         page.keyboard.press('Escape')
         expect(page.get_by_role('dialog')).to_have_count(0)
@@ -151,7 +153,7 @@ def test_a_deferred_inbox_pulse_does_not_reboot_the_next_accounts_page(browser, 
         # Wait for the next real timer tick (its pulse read) instead of a fixed sleep: a stale deferred pulse would
         # have been applied on that tick instead of reading a new one.
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=25000):
-            page.clock.run_for(11000)  # the tick is the app's 10 s timer, on the page clock
+            page.clock.run_for(71_000)  # past the next minute's check of the app's 10 s timer (as above)
         assert '/api/me' not in reads, 'The former account pulse rebooted the staff session: ' + repr(reads)
         assert current.evaluate('(node) => node.isConnected'), 'The old account replaced the current page'
     finally:
