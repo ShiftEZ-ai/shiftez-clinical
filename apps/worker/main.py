@@ -747,15 +747,19 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         except Problem as rejected:
             result, error = None, rejected.code
     if job.kind == 'validation' and not error:
+        from apps.api.snapshots import domain_snapshot
         workspace = db.get(m.Workspace, job.workspace_id)
         if (workspace.status != 'draft' or workspace.archived_at is not None
-                or (job.input_snapshot.get('validation_basis') == 'current' and
-                    workspace.content_revision != job.input_snapshot['workspace']['content_revision'])
-                or fingerprint(db, workspace) != (result['fingerprint'] if
-                    job.input_snapshot.get('validation_basis') == 'current' else job.input_fingerprint)):
+                or ('previous_check' in claim
+                    and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
+                or (current_manifest := domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
+            # The same inputs can have newer counters after an access change.
+            if manifest := result.get('input_manifest'):
+                result = {**result, 'input_manifest': {**manifest, 'dirty_hint': current_manifest['dirty_hint']}}
             workspace.validation = result
+            result = {**result, 'checked_revision': workspace.revision}
             # A current-rota check queued only an intent token; record the inputs it checked, so readers comparing a
             # job with the rota's fingerprint (panel, history, Home) see a fresh check as current.
             if job.input_snapshot.get('validation_basis') == 'current':
@@ -1583,6 +1587,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                         require(fingerprint(db, workspace) == claim['input']['fingerprint'],
                                 'STALE_INPUTS', 'The check inputs changed', 409)
                     db.info['_check_budget'] = check_cancelled
+                    # Fix-list receipts depend on the evidence and acknowledgements seen by this check.
+                    claim['previous_check'] = (workspace.validation, workspace.accepted_issues)
                     result = revalidate(db, workspace, store=False, include_internal=True)
                     check_cancelled()
         except Exception as exc:
