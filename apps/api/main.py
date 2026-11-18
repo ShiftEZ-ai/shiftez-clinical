@@ -3491,7 +3491,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     can_recheck=application_recheckable(projection['input_snapshot'], projection['result'], source),
                     superseded=bool(found[1]),
                     deferred=deferred)
-            value['delta'] = complete_validation_delta(job, db.get(m.Workspace, job.workspace_id))
+            value['delta'] = complete_validation_delta(db, job, workspace)
             return {'job': disclose_leave(db, actor, json_value(value))}
 
     @app.get("/api/jobs/{job_id}")
@@ -3687,7 +3687,8 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get("/api/score-imports/{import_id}/check")
     def score_import_check(import_id: str, request: Request):
         from .services import score_check_api
-        with transaction(engine) as db:
+        # Refreshing the check writes gaps and inferred dates. Queue behind other writers before reading the import.
+        with transaction(engine, write=True) as db:
             actor = score_actor_for(request, db)
             return score_check_api.view_check(db, actor, scoped(db, m.ScoreCheckImportBatch, import_id, actor), settings)
 
