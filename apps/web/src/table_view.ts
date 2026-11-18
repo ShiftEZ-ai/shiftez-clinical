@@ -1504,7 +1504,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     memo=null;
     // A search the server runs: the rows shown stay (marked busy) until its answer redraws the list once, instead of
     // drawing the old rows again first (SH-05). The page reads again on every search (onSearch's contract).
-    body.setAttribute('aria-busy',String(!!pendingRead));
+    body.setAttribute('aria-busy',String(searched||!!pendingRead));  // a search answered by a later redraw is busy until then
     if(searched&&body.firstElementChild){bar.sync();return;}
     const {layout,groupKey}=layoutNow();
     const rows=matches(),per=size(),pages=Math.max(1,Math.ceil(rows.length/per));v.page=Math.min(v.page,pages-1);

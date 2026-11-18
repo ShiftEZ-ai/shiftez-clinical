@@ -109,7 +109,7 @@ def test_clicking_a_request_while_its_list_is_reading_opens_it_afterwards(browse
         body = page.locator("#main .requests .dt-body")
         row = rows(page).and_(page.locator(f'[data-row="{swap["id"]}"]'))
         expect(row).to_be_visible()
-        page.route(status_read, held.append)
+        page.route(status_read, lambda route: held.append(route))
         filter_by(page, "Status", ["Waiting for colleague"])
         wait_held(page, held)
         expect(body).to_have_attribute("aria-busy", "true")

@@ -369,6 +369,9 @@ def test_simplify_propose_reload_independent_activate_reload_undo(browser, live_
         expect(panel.get_by_role('button', name='Withdraw', exact=True)).to_be_visible()
         panel.get_by_role('button', name='Close panel', exact=True).click()
         navigate(review, 'rules')
+        # The ⋯ menu lists Simplify rules once its conversions read lands (a slow runner opened it first).
+        with review.expect_response(lambda r: '/api/rules/catalogue/conversions' in r.url):
+            review.reload()
         rules_action(review, 'Simplify rules · waiting for approval')
         review.locator('.rs-panel').get_by_role('button', name='Activate', exact=True).click()
         reason(review, 'Independently reviewed', 'Activate')
