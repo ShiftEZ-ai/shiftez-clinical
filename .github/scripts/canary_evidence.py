@@ -1,6 +1,8 @@
 """Verify raw sentinel outcomes and collected nodes before reading normalized product JUnit."""
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -21,7 +23,7 @@ def node(case):
             if module is not None else case.get("name", "collection error"))
 
 
-def verify_cases(cases, manifest, collected):
+def verify_cases(cases, manifest, collected, *, allow_empty=False):
     if set(manifest) != {"passed", "failed", "skipped", "error"} or len(set(manifest.values())) != 4:
         raise ValueError("Four distinct random sentinels are required")
     seen, product = {}, []
@@ -38,19 +40,75 @@ def verify_cases(cases, manifest, collected):
     if set(seen) != set(manifest) or any(seen[k] != 1 for k in ("passed", "failed", "skipped")):
         raise ValueError("Sentinel execution is missing or duplicated")
     expected = [n for n in collected if not any(t in n for t in manifest.values())]
-    if not expected or len(expected) != len(set(expected)) or sorted(product) != sorted(expected):
+    if (not expected and not allow_empty) or len(expected) != len(set(expected)) or sorted(product) != sorted(expected):
         raise ValueError("Reported node set differs from trusted collection of the same candidate")
     return expected
 
 
-def verify_directory(directory, *, allow_product_errors=False):
+def collection_error(case):
+    error = case.find("error")
+    return error is not None and re.search(
+        r"failed (?:during|on) collect(?:ion|ing)|error collecting", error.get("message", ""), re.I)
+
+
+def report_cases(report, evidence, *, selected_scope=()):
+    sidecars = (report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json"))
+    if any(item.is_symlink() or not item.is_file() or sha(item) != evidence["sha256"].get(item.name)
+           for item in sidecars):
+        raise ValueError("Missing or changed shard evidence")
+    selected = json.loads(sidecars[1].read_text(encoding="utf-8"))
+    cases = list(ET.parse(report).getroot().iter("testcase"))
+    intentionally_empty = False
+    if not selected and selected_scope:
+        deselected = json.loads(sidecars[2].read_text(encoding="utf-8"))
+        intentionally_empty = bool(deselected) and all(node.split("::", 1)[0] in selected_scope for node in deselected)
+    if ((not selected and not intentionally_empty) or len(selected) != len(set(selected))
+            or sorted(node(case) for case in cases) != sorted(selected)
+            or type(evidence["exit_code"]) is not int or evidence["exit_code"] not in (0, 1)
+            or (evidence["exit_code"] == 1) != any(outcome(case) in {"failed", "error"} for case in cases)):
+        raise ValueError("Incomplete execution or pytest infrastructure failure")
+    if any(collection_error(case) for case in cases):
+        raise ValueError("Collection error in test evidence")
+    return cases
+
+
+def retry_path(report, retry):
+    path = report.with_name(report.stem + "-retry.xml")
+    if (os.getenv("GITHUB_EVENT_NAME") != "merge_group"
+            or set(retry) != {"file", "exit_code", "sha256"} or retry["file"] != path.name):
+        raise ValueError("Unexpected retry evidence")
+    return path
+
+
+def failed_nodes(cases):
+    return sorted(node(case) for case in cases if outcome(case) in {"failed", "error"})
+
+
+def recovered_nodes(report, evidence, failures):
+    if "retry" not in evidence:
+        if failures:
+            raise ValueError("Missing merge-group retry evidence: " + report.name)
+        return set()
+    retry = evidence["retry"]
+    cases = report_cases(retry_path(report, retry), retry)
+    if not failures or sorted(node(case) for case in cases) != failures:
+        raise ValueError("Retry must execute exactly the unlisted first-attempt failed nodes")
+    return {node(case) for case in cases if outcome(case) == "passed"}
+
+
+def verify_directory(directory, *, allow_product_errors=False, partial=False):
     receipts = list(directory.rglob("shard-receipt.json"))
     if not receipts:
         raise ValueError("Missing shard receipts")
     for receipt_path in receipts:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        for report in receipt["reports"]:
-            normalized = receipt_path.parent / report["file"]
+        reports = []
+        for row in receipt["reports"]:
+            original = receipt_path.parent / row["file"]
+            reports.append(original)
+            if "retry" in row:
+                reports.append(retry_path(original, row["retry"]))
+        for normalized in reports:
             ledger_path = normalized.with_suffix(".canaries.json")
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
             if (ledger["sha"] != receipt["sha"] or ledger["tree"] != receipt["tree"]
@@ -60,14 +118,15 @@ def verify_directory(directory, *, allow_product_errors=False):
             census = normalized.with_suffix(".collection.json")
             if ledger["raw_sha256"] != sha(raw) or ledger["collection_sha256"] != sha(census):
                 raise ValueError("Raw sentinel/collection evidence changed")
-            selected = verify_cases(list(ET.parse(raw).getroot().iter("testcase")), ledger["sentinels"],
-                                    json.loads(census.read_text(encoding="utf-8")))
+            raw_cases = list(ET.parse(raw).getroot().iter("testcase"))
+            selected = verify_cases(raw_cases, ledger["sentinels"],
+                                    json.loads(census.read_text(encoding="utf-8")), allow_empty=partial)
             normal_cases = list(ET.parse(normalized).getroot().iter("testcase"))
             if not allow_product_errors and any(outcome(c) == "error" for c in normal_cases):
                 raise ValueError("Product collection/setup errors are refused")
             if sorted(node(c) for c in normal_cases) != sorted(selected):
                 raise ValueError("Normalized evidence dropped or added product nodes")
-            raw_products = sorted((node(c), outcome(c)) for c in ET.parse(raw).getroot().iter("testcase")
+            raw_products = sorted((node(c), outcome(c)) for c in raw_cases
                                   if not any(t in node(c) for t in ledger["sentinels"].values()))
             if sorted((node(c), outcome(c)) for c in normal_cases) != raw_products:
                 raise ValueError("Normalization changed a product outcome")

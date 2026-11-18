@@ -27,6 +27,10 @@ def policy_context(data, kind, candidate):
         return data["pull_request"]["base"]["ref"], policy.commit(data["pull_request"]["base"]["sha"])
     if kind == "merge_group":
         return data["merge_group"]["base_ref"].removeprefix("refs/heads/"), policy.commit(data["merge_group"]["base_sha"])
+    if kind == "schedule":
+        if candidate != git("rev-parse", "HEAD").decode().strip():
+            raise ValueError("Nightly evidence must use the pinned dev source")
+        return "dev", candidate
     branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
     return branch, policy.commit(data["before"]) if kind == "push" and branch == "dev" else candidate
 
@@ -147,7 +151,7 @@ def main():
     # All code imports resolve under this trusted source, never the candidate or artifact directory.
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
-    if flags['canaries']:canary_evidence.verify_directory(reports, allow_product_errors=True)
+    if flags['canaries']:canary_evidence.verify_directory(reports, allow_product_errors=True, partial=partial)
     root_raw = policy.read_file(base, "ci/root-run-evidence.json")
     skips_raw = policy.read_file(base, "ci/known-skips.json")
     if root_raw is None or skips_raw is None:
@@ -187,7 +191,7 @@ def main():
                 raise ValueError("Replica count differs from the trusted reader context")
             # After the replica check, so the more specific refusal names a wrong replica count.
             validate_selected_reports(plan, reports)
-            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], output)
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
@@ -202,7 +206,10 @@ def main():
             if branch == "main" and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
-            product_errors = maker.product_error_nodes(reports, listed=failure_nodes)
+            recovered = {}
+            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, recovered=recovered)
+            if recovered and (branch == "main" or allowed_skips & recovered.keys()):
+                raise ValueError("Release/known-skip execution contains a failure or error")
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
             outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
             error_nodes |= product_errors & outside

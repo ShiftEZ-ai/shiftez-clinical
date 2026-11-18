@@ -64,18 +64,22 @@ def require_pr_merge(data, git, candidate):
 
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+    kind = os.environ["GITHUB_EVENT_NAME"]
+    trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
     if measurement:
-        if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
+        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
-    elif os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
+    elif kind == "schedule":
+        candidate = policy.commit(trusted_sha)
+    elif kind == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
         candidate = policy.commit(data["pull_request"]["head"]["sha"])
     else:
         candidate = policy.commit(os.environ["GITHUB_SHA"])
     config = settings()
     output({"candidate_sha": candidate, "measurement": str(measurement).lower(),
-            "trusted_sha": subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip(),
+            "trusted_sha": trusted_sha,
             "unit_count": config["unit_shards"], "browser_count": config["browser_shards"]})
 
 
@@ -265,7 +269,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             raise ValueError('Pytest execution/collection did not complete')
         parsed = ET.parse(raw)
         cases=list(parsed.getroot().iter('testcase'))
-        selected = canaries.verify_cases(cases,manifest,collected) if flags['canaries'] else [canaries.node(c) for c in cases]
+        selected = canaries.verify_cases(cases, manifest, collected, allow_empty=partial) if flags['canaries'] else [canaries.node(c) for c in cases]
         if not flags['canaries'] and flags['node_census'] and sorted(selected)!=sorted(collected):
             raise ValueError('Reported nodes differ from trusted collection')
         for parent in parsed.getroot().iter():
@@ -289,6 +293,25 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
                       "sentinels": manifest, "raw_sha256": canaries.sha(raw), "collection_sha256": canaries.sha(census)}
             report.with_suffix(".canaries.json").write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
+
+
+def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, partial=False, listed=frozenset()):
+    def attempt(selected, path, options, parallelism, before, *, partial=False):
+        code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
+        files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
+        return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
+
+    first = attempt(targets, report, extra, workers, base_targets, partial=partial)
+    if first["exit_code"] == 1 and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        from make_known_failures import retry_nodes
+
+        original = canaries.report_cases(report, first)
+        failures = retry_nodes(original, listed)
+        if failures:
+            path = report.with_name(report.stem + "-retry.xml")
+            first["retry"] = attempt(failures, path, [], "0", None)
+            canaries.recovered_nodes(report, first, failures)
+    return first
 
 
 def main():
@@ -330,6 +353,11 @@ def main():
     workers = os.getenv(f"CI_{args.suite.upper()}_WORKERS", "")
     if not policy.re.fullmatch(r"[1-8]", workers):
         workers = "4"
+    listed = frozenset()
+    if os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        import make_known_failures as maker
+
+        listed = maker.listed_nodes(maker.at_revision(candidate["sha"]))
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
@@ -349,10 +377,9 @@ def main():
             files = sorted(census_files(candidate, files))
             count=len(candidate["suites"][args.suite]["shards"])
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
-        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
-                          base_targets, partial="selection" in candidate)
-        paths = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
-        receipt["reports"].append({"file": name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in paths}})
+        receipt["reports"].append(invocation_receipt(
+            targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
+            base_targets, partial="selection" in candidate, listed=listed))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
