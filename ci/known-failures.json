@@ -1680,12 +1680,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_bulk_reverse_transitions.py::test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
