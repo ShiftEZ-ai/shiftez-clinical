@@ -840,12 +840,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_frontend_budget.py::test_a_page_opened_again_is_drawn_from_what_was_read_while_the_server_is_asked_again",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
