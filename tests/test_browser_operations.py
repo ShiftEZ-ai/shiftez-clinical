@@ -35,6 +35,9 @@ def test_operator_can_find_old_failed_event_and_retry_from_ui(browser, live_serv
         dialog.get_by_label("Reason", exact=True).fill("Explicit fictional operator retry")
         save_dialog(dialog, "Confirm")
         caption(page, "Showing 0–0 of 0")
+        # The retry gives the worker work, so Operations re-reads every 10 s (app.ts opsBusy) and a redraw can move the
+        # Filter popover under the click. A hidden tab skips only that periodic check; Clear all still reads the list.
+        page.evaluate("() => Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'hidden'})")
         # The filter that emptied the list stays visible, so it can be cleared.
         page.get_by_role("button", name=re.compile("^Filter: failed")).click()  # active filters live in the Filter popover
         page.get_by_role("button", name="Clear all filters", exact=True).click()  # its rule is a builder row; Clear all drops it
