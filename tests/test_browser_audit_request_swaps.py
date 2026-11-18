@@ -1,6 +1,7 @@
-import re
 """Request paging and Person filters must retain swaps hidden by neither authorization nor expiry."""
+import re
 from datetime import timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -11,7 +12,7 @@ from apps.api.db import transaction
 from apps.api.services import swaps
 from tests.outbox_support import process_one_after_undo as process_one
 from .governance_support import identity
-from .test_browser import browser, live_server, sign_in, navigate, filter_by, expect_loaded, whole_list  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, filter_by, expect_loaded, whole_list, wait_held  # noqa: F401
 from .test_browser_requests import PHONE, published, rows
 from .test_browser_rule_catalogue import shot
 
@@ -80,6 +81,8 @@ def test_person_filter_keeps_a_swap_received_by_that_person(browser, live_server
         # Waiting for colleague is a built-in status view: the views button names it, Filter counts the person only (X-01).
         # F-C2: the list's own view rules are counted after the person's ("1 active, N from the view").
         expect(page.get_by_role('button', name=re.compile(rf'^Filter: {re.escape(item["recipient_name"])} \(1 active(, \d+ from the view)?\)$'))).to_be_visible()
+        # Wait for the status read before clicking the row this filter returned.
+        expect(page.locator("#main .requests .dt-body")).to_have_attribute("aria-busy", "false")
         rows(page).locator("td[data-col=type]").click()
         panel = page.get_by_role("region", name=f'{item["proposer_name"]} and {item["recipient_name"]}', exact=True)
         expect(panel).to_contain_text("Audit swap invitation")
@@ -88,6 +91,38 @@ def test_person_filter_keeps_a_swap_received_by_that_person(browser, live_server
         expect(rows(page)).to_have_count(1)
         expect(rows(page)).to_have_attribute("data-row", swap["id"])
     finally:
+        context.close()
+
+
+def test_clicking_a_request_while_its_list_is_reading_opens_it_afterwards(browser, live_server, h):
+    swap = h.command("staff", "swap.offer", offer_payload(h))["swap"]
+    context, page = sign_in(browser, live_server, "coordinator")
+    held = []
+
+    def status_read(url):
+        path = urlsplit(url)
+        return path.path == "/api/requests/all" and parse_qs(path.query).get("status") == ["reply"]
+
+    try:
+        navigate(page, "requests")
+        whole_list(page)
+        body = page.locator("#main .requests .dt-body")
+        row = rows(page).and_(page.locator(f'[data-row="{swap["id"]}"]'))
+        expect(row).to_be_visible()
+        page.route(status_read, held.append)
+        filter_by(page, "Status", ["Waiting for colleague"])
+        wait_held(page, held)
+        expect(body).to_have_attribute("aria-busy", "true")
+        row.locator("td[data-col=type]").click()
+        panel = page.locator(".request-panel")
+        expect(panel).to_have_count(0)
+        held.pop().continue_()
+        expect(body).to_have_attribute("aria-busy", "false")
+        expect(panel).to_have_count(1)
+        expect(panel).to_contain_text("Audit swap invitation")
+    finally:
+        for route in held:
+            route.continue_()
         context.close()
 
 
