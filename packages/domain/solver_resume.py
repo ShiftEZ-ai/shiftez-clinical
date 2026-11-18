@@ -26,11 +26,12 @@ SEMANTIC_PREPARATION_KEYS = frozenset({
 
 
 def compress_state(state):
-    """Stream the immutable JSON preparation into a cheap gzip envelope for the existing JSON column."""
+    """Encode the immutable preparation as JSON inside the existing gzip envelope."""
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode='wb', compresslevel=1, mtime=0) as compressed:
-        with io.TextIOWrapper(compressed, encoding='utf-8') as output:
-            json.dump(state, output, ensure_ascii=False, separators=(',', ':'))
+        compressed.write(json.dumps(state, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+        # Match the sync flush the old text wrapper wrote before gzip closed.
+        compressed.flush()
     return {'encoding': 'gzip', 'data': base64.b64encode(buffer.getbuffer()).decode('ascii'),
             'key': state.get('key')}
 
