@@ -685,10 +685,10 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
+      "class": "unstable",
       "node": "tests/test_browser_autoschedule_state.py::test_held_apply_keeps_review_and_live_strip_without_success_or_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+      "owner": "G1",
+      "reason": "flaps: red in run 44214678816 (merge group, replica 2), run 44187583259 (replica 1) and both replicas of run 44203517613; green in both replicas of runs 44195649728 and 44214744246 (merge groups); listed as unstable so a chance green-twice no longer refuses a group"
     },
     {
       "class": "unstable",
