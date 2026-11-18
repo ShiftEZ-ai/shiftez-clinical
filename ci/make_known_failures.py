@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
 from canary_evidence import node as report_node, outcome as report_outcome
+from latest_reports import planned_shards, producing_attempt
 
 def case_rows(paths):
     import xml.etree.ElementTree as ET
@@ -134,8 +135,9 @@ def at_revision(revision):
 def context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
+    single_replica = base is not None and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1, 2]}
+            "replicas": [1] if single_replica else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -191,10 +193,8 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
             raise ValueError("Entry class disagrees with the frozen baseline input")
 
 
-def collect_reports(plan, directory, run_id, run_attempt):
-    expected = {(suite, index, replica)
-                for suite, row in plan["suites"].items()
-                for index in range(1, len(row["shards"]) + 1) for replica in plan["replicas"]}
+def collect_reports(plan, directory, run_id, run_attempt, *, historical_capture=False):
+    expected = planned_shards(plan)
     seen, runs = set(), {replica: {} for replica in plan["replicas"]}
     for path in sorted(directory.rglob("shard-receipt.json")):
         receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
@@ -202,7 +202,9 @@ def collect_reports(plan, directory, run_id, run_attempt):
         if (receipt.get("schema") != 1 or type(receipt["shard"]) is not int or type(receipt["replica"]) is not int
                 or identity not in expected or identity in seen or receipt["sha"] != plan["sha"]
                 or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != digest(plan)
-                or receipt["run_id"] != run_id or receipt["run_attempt"] != run_attempt):
+                or receipt["run_id"] != run_id
+                or receipt["run_attempt"] != (run_attempt if historical_capture else
+                                              producing_attempt(directory, path, identity, run_attempt))):
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
         seen.add(identity)
         suite, index, replica = identity
@@ -457,7 +459,7 @@ def stale_report_dir(output):
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
-             selected_files=None, stale_output=None):
+             selected_files=None, stale_output=None, expected_replicas=2):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -481,10 +483,11 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     mixed_listed = mixed_listed_nodes(current, runs)
     problems = []
     outside = outside_observations(current, runs, exceptions)
-    transient = {row["node"] for row in outside if len(runs) == 2 and set(runs[0]) == set(runs[1])
+    transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
                  and row["red_count"] == 1 and "passed" in row["observations"]}
-    if outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
-        problems.append("New failures outside the known-failure list require two complete replicas")
+    if outside and (len(runs) != expected_replicas or any(set(run) != observed for run in runs)):
+        required = "two complete replicas" if expected_replicas == 2 else "one complete replica"
+        problems.append("New failures outside the known-failure list require " + required)
     expected = current_nodes if selected_files is None else {
         node for node in current_nodes if node.split("::", 1)[0] in selected_files}
     if expected - observed:
@@ -643,7 +646,7 @@ def main():
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
                      product_errors=product_errors, selected_files=selected_files,
-                     stale_output=stale_report_dir(args.output))
+                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:

@@ -203,9 +203,13 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             functions = folder / ("test_" + secrets.token_hex(20) + ".py")
             error = folder / (manifest["error"] + ".py")
             marker = "pytestmark = pytest.mark.browser\n" if suite == "browser" else ""
-            functions.write_text("import pytest\n" + marker
+            timing = targets == [hosted.TIMING_NODE]
+            timeout_setup = "from threading import Event\n" if timing else ""
+            timeout_marker = "@pytest.mark.timeout(1)\n" if timing else ""
+            failure = "    Event().wait(5)\n" if timing else "    assert False\n"
+            functions.write_text("import pytest\n" + marker + timeout_setup
                 + "def " + manifest["passed"] + "():\n    assert True\n"
-                + "def " + manifest["failed"] + "():\n    assert False\n"
+                + timeout_marker + "def " + manifest["failed"] + "():\n" + failure
                 + "def " + manifest["skipped"] + "():\n    pytest.skip('trusted sentinel')\n", encoding="utf-8")
             error.write_text("raise RuntimeError('trusted collection sentinel')\n", encoding="utf-8")
         raw = report.with_suffix(".raw.xml")
@@ -215,7 +219,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
         def pytest_command(project, selected, options):
             return [sys.executable,"-m","pytest","-p","hosted_ci","-p","sentinel_plugin","-q",
                     *selected,*([str(folder)] if flags['canaries'] else []),"-m",hosted.execution_marker(suite),"-c",str(project/"pyproject.toml"),
-                    "--rootdir="+str(project),"--continue-on-collection-errors",*options]
+                    "--rootdir="+str(project),"--continue-on-collection-errors",
+                    "--timeout=600","--timeout-method=signal","-o","faulthandler_timeout=540",*options]
         def collection_ok(code,cases):
             if not flags['canaries']:return code in ((0, 5) if partial else (0,)) and not cases
             return code in (1,2) and bool(cases) and all(manifest['error'] in canaries.node(c) and canaries.outcome(c)=='error' for c in cases)
