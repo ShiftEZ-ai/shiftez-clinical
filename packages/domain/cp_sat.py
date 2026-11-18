@@ -127,6 +127,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
     from .generation_outcome import generation_outcome, score_value, solver_status
     result['solver_status'] = solver_status(result)
     result['score'] = score_value(result)
+    outcome = generation_outcome(result)
     final_stop_reason = control.stop_reason
     if control.stopped and result.get('status') != 'cancelled':
         final_stop_reason = 'optimal' if result.get('optimality_proven') else 'operator_stop'
@@ -140,7 +141,9 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
     else:
         search_stop_reason = {'target_gap': 'gap', 'target_score': 'score', 'stop_by': 'clock',
                               'slice_limit': 'time_limit'}.get(final_stop_reason, final_stop_reason)
-        if search_stop_reason not in {'optimal', 'time_limit', 'plateau', 'gap', 'score', 'clock', 'operator_stop'}:
+        if search_stop_reason == 'optimal' and outcome['status'] != 'OPTIMAL':
+            search_stop_reason = 'model_proven'
+        if search_stop_reason not in {'optimal', 'model_proven', 'time_limit', 'plateau', 'gap', 'score', 'clock', 'operator_stop'}:
             search_stop_reason = 'no_search' if not control.search_spent and not control.improvements_found else 'time_limit'
         search_stop_detail = result.get('message', '')
     search_seconds = result.get('search_elapsed_seconds', control.search_spent)
@@ -148,7 +151,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
         search_seconds = 0
     return {**result, 'on_conflict': options.on_conflict, 'stop_reason': final_stop_reason, 'search_stop': {
                 'reason': search_stop_reason, 'search_seconds': search_seconds, 'detail': search_stop_detail},
-            'generation_outcome': generation_outcome(result), **scope_receipt(snapshot), 'phase_timings': control.phase_timings,
+            'generation_outcome': outcome, **scope_receipt(snapshot), 'phase_timings': control.phase_timings,
             'score_completion_seconds': control.completion_spent,
             'live_score_metrics': control.score_metrics,
             'improvements_found': control.improvements_found,

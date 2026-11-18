@@ -9200,6 +9200,7 @@
           "reason": {
             "enum": [
               "optimal",
+              "model_proven",
               "time_limit",
               "plateau",
               "gap",
