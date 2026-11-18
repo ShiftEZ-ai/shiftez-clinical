@@ -1,7 +1,7 @@
 """Scheduling writes invalidate bound previews; workflow-only writes preserve them."""
 from datetime import datetime
 import pytest
-from sqlalchemy import literal, select
+from sqlalchemy import func, literal, select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -213,10 +213,12 @@ def operation(h, writer, monkeypatch):
     if writer == 'event.receipts':
         def receipts():
             with transaction(h.app.state.engine, write=True) as db:
-                assert event_delivery.sync_receipts(db, db.get(m.EventOccurrence, occurrence['id']))
-                assert db.scalar(select(m.AnnouncementReceipt.id).where(
+                pending = select(func.count()).select_from(m.AnnouncementReceipt).where(
                     m.AnnouncementReceipt.event_occurrence_id == occurrence['id'],
-                    m.AnnouncementReceipt.response.is_(None)))
+                    m.AnnouncementReceipt.response.is_(None))
+                before = db.scalar(pending)
+                assert event_delivery.sync_receipts(db, db.get(m.EventOccurrence, occurrence['id']))
+                assert db.scalar(pending) > before
         return receipts
     if writer == 'event.receipts_going':
         from apps.api.services.announcements import _id, _insert

@@ -56,15 +56,18 @@ def oracle_context(request, tmp_path_factory):
                 purpose='swap', starts_on=date(2020, 1, 1), status='active',
                 definition={'steps': [{'key': 'review', 'label': 'Review', 'role': 'approver'}]},
                 created_by=h.seed['identities']['admin']) for n in (1, 2))
-        meeting = event(h, event_type(h, blocks_duties=True, attendance='optional', rsvp=True,
-                                     default_audience={'roles': ['approver']}))
-        occurrence = next(row for row in occurrences(h) if row['event_id'] == meeting['id'])
+        meeting_type = event_type(h, blocks_duties=True, attendance='optional', rsvp=True,
+                                  default_audience={'roles': ['approver']})
+        meeting = event(h, meeting_type)
+        other_meeting = event(h, meeting_type, start='2026-10-05T09:00:00+03:00', end='2026-10-05T10:00:00+03:00')
+        occurrence_ids = {row['event_id']: row['id'] for row in occurrences(h)}
+        occurrence_id = occurrence_ids[meeting['id']]
         with transaction(h.app.state.engine, write=True) as db:
-            receipt = db.scalars(select(m.AnnouncementReceipt).where(m.AnnouncementReceipt.event_occurrence_id == occurrence['id'],
+            receipt = db.scalars(select(m.AnnouncementReceipt).where(m.AnnouncementReceipt.event_occurrence_id == occurrence_id,
                                 m.AnnouncementReceipt.identity_id == identity.id)).first()
             if receipt is None:
                 receipt = m.AnnouncementReceipt(identity_id=identity.id, person_id=h.seed['people'][0],
-                                                event_occurrence_id=occurrence['id'])
+                                                event_occurrence_id=occurrence_id)
                 db.add(receipt)
             receipt.response = 'going'
             db.flush()
@@ -76,7 +79,8 @@ def oracle_context(request, tmp_path_factory):
                 for revision in (20, 21))
         yield h, target['id'], {m.Organisation: h.seed['organisation_id'], m.Department: h.seed['department_id'],
             m.Workspace: target['id'], m.Person: h.seed['people'][0], m.Identity: identity.id, m.RoleBinding: binding.id,
-            m.AvailabilityPattern: pattern.id, m.AnnouncementReceipt: receipt_id}
+            m.AvailabilityPattern: pattern.id, m.AnnouncementReceipt: receipt_id,
+            m.EventOccurrence: occurrence_ids[other_meeting['id']]}
     finally:
         next(harness, None)
 
@@ -320,12 +324,20 @@ def test_workspace_read_fields_match_workspace_currency(oracle_context, field, w
     (m.RoleBinding, 'role', ['coordinator', 'approver']),
     (m.AvailabilityPattern, 'end_time', ['11:00', '12:00']),
     (m.AnnouncementReceipt, 'response', ['not_going', 'going']),
+    (m.AnnouncementReceipt, 'person_id', None),
+    (m.AnnouncementReceipt, 'event_occurrence_id', None),
     (m.Workspace, 'starts_on', [date(2026, 10, 3), date(2026, 10, 2)]),
 ], ids=lambda value: value.__name__ if isinstance(value, type) else None)
 def test_read_fields_change_full_fingerprint_and_revision(oracle_context, cls, field, values, writer, record_property):
     if cls is m.Department:
         with transaction(oracle_context[0].app.state.engine) as db:
             values = [None, db.get(m.Department, oracle_context[2][cls]).operating_calendar_id]
+    if cls is m.AnnouncementReceipt and values is None:
+        h, _target, rows = oracle_context
+        with transaction(h.app.state.engine) as db:
+            receipt = db.get(m.AnnouncementReceipt, rows[cls])
+            alternate = rows[m.EventOccurrence] if field == 'event_occurrence_id' else None
+            values = [alternate, getattr(receipt, field)]
     ident = oracle_context[1] if cls is m.Workspace else None
     results = measure_values(oracle_context, cls, field, writer, values=values, ident=ident)
     record_property('oracle', json.dumps(results))

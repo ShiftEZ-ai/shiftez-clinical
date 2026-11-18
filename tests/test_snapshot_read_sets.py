@@ -100,6 +100,31 @@ def test_receipt_insert_with_sql_response_advances_currency(backend):
     assert input_revisions(h) == tuple(revision + 1 for revision in before)
 
 
+@pytest.mark.parametrize('chained', [False, True], ids=['one-group', 'multiple-groups'])
+def test_column_keyed_receipt_insert_advances_currency(backend, chained):
+    h = backend
+    meeting = event(h, event_type(h, blocks_duties=True, attendance='optional', rsvp=True))
+    occurrence = next(row for row in occurrences(h, 'staff') if row['event_id'] == meeting['id'])
+    draft = h.workspace()
+    fingerprint, before = h.snapshot(draft)['fingerprint'], input_revisions(h)
+    receipt = m.AnnouncementReceipt.__table__
+    pending = {receipt.c.event_occurrence_id: occurrence['id'], receipt.c.identity_id: h.seed['identities']['coordinator'],
+               receipt.c.person_id: None, receipt.c.response: None}
+    attending = {receipt.c.event_occurrence_id: occurrence['id'], receipt.c.identity_id: h.seed['identities']['staff'],
+                 receipt.c.person_id: h.seed['people'][0], receipt.c.response: 'going'}
+    statement = insert(receipt)
+    if chained:
+        statement = statement.values([pending]).values([attending])
+    else:
+        statement = statement.values([pending, attending])
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(statement)
+        responses = db.scalars(select(receipt.c.response).where(receipt.c.event_occurrence_id == occurrence['id']))
+        assert set(responses) == {None, 'going'}
+    assert h.snapshot(draft)['fingerprint'] != fingerprint
+    assert input_revisions(h) == tuple(revision + 1 for revision in before)
+
+
 def test_historical_acquisition_has_the_expected_revision_owners():
     owned = {m.Workspace.__table__}
     while linked := {table for table in m.Base.metadata.tables.values() if table not in owned

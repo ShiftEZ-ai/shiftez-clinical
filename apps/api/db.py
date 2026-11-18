@@ -356,7 +356,8 @@ def stamp_snapshot_input_statement(execution):
                     if not rows:
                         return execution.invoke_statement()
             if not rows:
-                rows = list(statement._multi_values[0]) if statement._multi_values else [{}]
+                rows = [{getattr(key, 'key', key): value for key, value in row.items()}
+                        for group in statement._multi_values for row in group] or [{}]
             candidates = [cls(**{name: value for name, value in {**changed_values(row), **row}.items()
                                 if name in inspect(cls).column_attrs and (value is not NO_VALUE or name == predicate_column)})
                           for row in rows]
