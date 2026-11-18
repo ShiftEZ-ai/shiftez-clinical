@@ -412,7 +412,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             plan_file, reports, output = folder / "plan.json", folder / "reports", folder / "output"
             reports.mkdir()
             plan_file.write_text(json.dumps(plan))
-            (reports / "conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
+            for suite in plan["suites"]:
+                (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
+            (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")

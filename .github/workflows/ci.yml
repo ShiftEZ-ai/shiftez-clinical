@@ -52,6 +52,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
+      artifact_attempt: ${{ github.run_attempt }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
       unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
       browser_matrix: ${{ steps.plan.outputs.browser_matrix }}
@@ -236,6 +237,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
       census_base_sha: ${{ needs.checks.outputs.census_base_sha }}
@@ -262,6 +264,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
       census_base_sha: ${{ needs.checks.outputs.census_base_sha }}
@@ -312,9 +315,23 @@ jobs:
         lfs: false
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        name: ci-plan-${{ github.run_attempt }}
+        name: ci-plan-${{ needs.checks.outputs.artifact_attempt }}
         path: .candidate-evidence/plan
+    - name: Detect trusted report selection
+      id: reports
+      run: |
+        if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
+          echo 'mixed_attempts=true' >> "$GITHUB_OUTPUT"
+        fi
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: steps.reports.outputs.mixed_attempts == 'true'
+      with:
+        pattern: ci-test-*
+        path: .candidate-evidence/test-results
+        merge-multiple: false
+    # shortcut: transitional until the first run after merge; remove in the next CI window
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: steps.reports.outputs.mixed_attempts != 'true'
       with:
         pattern: ci-test-${{ github.run_attempt }}-*
         path: .candidate-evidence/test-results
@@ -327,6 +344,9 @@ jobs:
         BROWSER_COUNT: ${{ needs.checks.outputs.browser_count }}
       run: |
         python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
+        if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
+          python3 -I .trusted-verdict/.github/scripts/latest_reports.py .candidate-evidence/test-results --plan .candidate-evidence/plan/shard-plan.json
+        fi
         python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
     - name: Keep raw measurement or qualification evidence
       if: always()
@@ -398,7 +418,7 @@ jobs:
         lfs: false
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        name: ci-dependencies-${{ github.run_attempt }}
+        name: ci-dependencies-${{ needs.checks.outputs.artifact_attempt }}
         path: ${{ runner.temp }}/hosted-shared
     - name: Use the shared hash-locked package downloads
       run: |

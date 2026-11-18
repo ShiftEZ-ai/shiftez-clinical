@@ -14,6 +14,7 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
+from latest_reports import validate_selected_reports
 
 
 def git(*args):
@@ -113,6 +114,7 @@ def main():
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
     assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
                      {"unit": int(os.environ["UNIT_COUNT"]), "browser": int(os.environ["BROWSER_COUNT"])})
+    validate_selected_reports(plan, reports)
     if policy.bootstrap(data, kind, base):
         sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
         import make_known_failures as maker
