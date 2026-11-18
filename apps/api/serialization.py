@@ -385,7 +385,10 @@ def job_result_projection(kind, result):
                 'diagnostics': [counts(item.get('candidates', []), item.get('shift_id'))
                                 for item in check.get('diagnostics', [])],
                 'checks': {phase: evidence(part) for phase, part in check.get('checks', {}).items()}}
-    return {'result': job_detail_result(kind, result), 'evidence': evidence(result)}
+    projection = {'result': job_detail_result(kind, result), 'evidence': evidence(result)}
+    if kind == 'validation' and 'input_manifest' in result:
+        projection['input_manifest'] = result['input_manifest']
+    return projection
 
 
 def job_outcome(status, result):
