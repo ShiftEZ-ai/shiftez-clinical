@@ -361,6 +361,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_trusted_verdict_materializes_only_target_json_and_candidate_subtraction(self):
         self.exercise_verdict_materialization("dev")
 
+    def test_old_base_pr_evaluates_merge_with_29_inherited_allowances_removed(self):
+        self.exercise_verdict_materialization("dev", old_base_pr=True)
+
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
 
@@ -380,9 +383,12 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         with self.assertRaisesRegex(ValueError,'New failures outside'):
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
-    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request"):
+    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request", old_base_pr=False):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
+        head = "7" * 40
+        target = base if branch == "dev" else "9" * 40
+        payload = {"before": base, "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
         plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": [1],
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
@@ -395,12 +401,20 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         if real_reader:
             before={**before,'classifications_sha256':'a'*64,'fails':[{'node':'tests/test_a.py::test_a','class':'baseline','owner':'test-owner','reason':'Measured failure'}],'unstable':[]}
             after={**before,'fails':[]}
+        if old_base_pr:
+            after = before
+            inherited = [{"node": f"tests/test_previous.py::test_previous_{i:02d}", "class": "baseline"} for i in range(29)]
+            stale = json.dumps({**before, "fails": before["fails"] + inherited}).encode()
+            self.assertFalse(policy.removal_only(json.dumps(before).encode(), stale))
         reads = []
         def object_read(revision, name):
             if revision == "9"*40:
                 raise AssertionError("Old main has no lists; it must never be read")
             reads.append((revision, name))
-            if name == policy.KNOWN: return json.dumps(after if revision == candidate else before).encode()
+            if name == policy.KNOWN:
+                if old_base_pr and revision == head:
+                    return stale
+                return json.dumps(after if revision == candidate else before).encode()
             if real_reader and name == "ci/frozen-baseline-failures.json": return b"[]\n"
             if name == "ci/root-run-evidence.json": return json.dumps({"sha":"e"*40,"tree":"f"*40,
                 "runs":[{"run_id":"1","run_attempt":"1","replica":i} for i in (1,2)],
@@ -411,6 +425,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         def fake_git(*args):
             if args[0] == "ls-tree": return inventory
             if args[0] == "show": return json.dumps(after if args[1] == candidate+":"+policy.KNOWN else before).encode()
+            if args[:4] == ("rev-list", "--parents", "-n", "1"):
+                return (f"{candidate} {target} {head}" if args[4] == candidate else f"{head} {'6' * 40}").encode()
             if args == ("rev-parse", "HEAD"): return trusted.encode()
             if args[0] == "rev-parse": return tree.encode()
             raise AssertionError(args)
@@ -455,17 +471,33 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 (output / "verdict.json").write_text('{"passed":true}')
             maker.main = compare
             argv = ["trusted_verdict.py", "--plan", str(plan_file), "--reports", str(reports), "--output", str(output)]
+            event_file = folder / "event.json"
+            event_file.write_text(json.dumps(payload))
             env = {"NEEDS_JSON": json.dumps({k: {"result": "success"} for k in ("checks", "static", "unit", "browser")}),
-                   "CANDIDATE_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch, "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
+                   "CANDIDATE_SHA": candidate, "GITHUB_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(event_file),
+                   "GITHUB_REF": "refs/pull/1/merge" if event == "pull_request" else "refs/heads/" + branch,
+                   "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
                    "UNIT_COUNT": "1", "BROWSER_COUNT": "1", "GITHUB_RUN_ID":"1", "GITHUB_RUN_ATTEMPT":"1"}
             with patch.object(node_census,"base_nodes",return_value={"tests/test_a.py::test_a","tests/test_browser_a.py::test_a"}), patch.object(node_census,"removed_nodes",return_value=set()), patch.object(node_census,"emit"), patch.object(verifier, "TRUSTED", trusted_root), patch.object(canaries, "verify_directory"), patch.object(sys, "argv", argv), patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, env), \
                  patch.object(verifier, "settings", return_value=config), \
                  patch.dict(sys.modules, {"make_known_failures": maker}), patch.object(verifier, "git", side_effect=fake_git), \
                  patch.object(policy, "git", fake_git), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or trusted) as fetched, \
                  patch.object(policy, "accepted_dev_commit", return_value=base), \
-                 patch.object(policy, "event", return_value={"before": base, "pull_request": {"base": {"ref": branch, "sha": base if branch == "dev" else "9"*40}}}), \
+                 patch.object(policy, "event", return_value=payload), \
                  patch.object(policy, "read_file", side_effect=object_read), contextlib.redirect_stdout(io.StringIO()):
-                verifier.main()
+                if old_base_pr:
+                    import trusted_ci
+                    with patch.object(trusted_ci, "settings", return_value=config), \
+                         patch.object(trusted_ci.subprocess, "check_output", return_value=trusted), \
+                         patch.object(trusted_ci, "output") as selected:
+                        trusted_ci.select()
+                    with patch.dict(os.environ, {"CANDIDATE_SHA": selected.call_args.args[0]["candidate_sha"]}):
+                        verifier.main()
+                    with patch.dict(os.environ, {"CANDIDATE_SHA": head, "GITHUB_SHA": head}):
+                        with self.assertRaisesRegex(ValueError, "PR candidate must be the event merge"):
+                            verifier.main()
+                else:
+                    verifier.main()
             self.assertEqual(summaries, [True])
             self.assertTrue(all(revision == base for revision, name in reads if name not in {policy.KNOWN,'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
@@ -487,6 +519,11 @@ class BootstrapControlTests(unittest.TestCase):
             self.assertNotIn('pull_request_target', (workflows / name).read_text())
             if name == 'ci.yml':
                 checks = doc['jobs']['checks']['steps']
+                merge_ref = "${{ github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false' && github.sha || steps.select.outputs.candidate_sha }}"
+                for job in ('checks', 'static'):
+                    checkout = next(step for step in doc['jobs'][job]['steps'] if step.get('with', {}).get('path') == 'candidate')
+                    self.assertEqual(checkout['with']['ref'], merge_ref)
+                self.assertEqual(doc['jobs']['checks']['outputs']['candidate_sha'], '${{ steps.candidate.outputs.commit }}')
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
                 plan, upload = checks[context_index + 1:context_index + 3]
                 self.assertEqual(plan['id'], 'plan')

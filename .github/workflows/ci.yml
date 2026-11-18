@@ -23,7 +23,7 @@ jobs:
       replicas: ${{ steps.plan.outputs.replicas }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
       census_base_sha: ${{ steps.context.outputs.census_base_sha }}
-      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
+      candidate_sha: ${{ steps.candidate.outputs.commit }}
       measurement: ${{ steps.select.outputs.measurement }}
       trusted_sha: ${{ steps.select.outputs.trusted_sha }}
     steps:
@@ -69,8 +69,9 @@ jobs:
       working-directory: .
       run: python3 -I .trusted-controls/.github/scripts/trusted_ci.py select
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      id: candidate
       with:
-        ref: ${{ steps.select.outputs.candidate_sha }}
+        ref: ${{ github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false' && github.sha || steps.select.outputs.candidate_sha }}
         path: candidate
         fetch-depth: 0
         persist-credentials: false
@@ -288,7 +289,7 @@ jobs:
       run: python3 -I .trusted-controls/.github/scripts/trusted_ci.py select
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ steps.select.outputs.candidate_sha }}
+        ref: ${{ github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false' && github.sha || steps.select.outputs.candidate_sha }}
         path: candidate
         fetch-depth: 0
         persist-credentials: false

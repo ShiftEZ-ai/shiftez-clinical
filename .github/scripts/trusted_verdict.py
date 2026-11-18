@@ -14,7 +14,7 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import PR_SMOKE, census_files, pr_scope, settings
+from trusted_ci import PR_SMOKE, census_files, pr_scope, require_pr_merge, settings
 
 
 def git(*args):
@@ -111,6 +111,8 @@ def main():
     data = policy.event()
     branch, base = policy_context(data, os.environ["GITHUB_EVENT_NAME"], candidate)
     kind=os.environ["GITHUB_EVENT_NAME"]
+    if kind == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") != "true":
+        require_pr_merge(data, git, candidate)
     census_base=(policy.commit(data["pull_request"]["base"]["sha"]) if kind=="pull_request" else
                  policy.commit(data["merge_group"]["base_sha"]) if kind=="merge_group" else
                  policy.commit(data["before"]) if kind=="push" else candidate)

@@ -47,6 +47,14 @@ def output(values):
             destination.write(key + "=" + str(value) + "\n")
 
 
+def require_pr_merge(data, git, candidate):
+    pr = data["pull_request"]
+    base, head = policy.commit(pr["base"]["sha"]), policy.commit(pr["head"]["sha"])
+    if (candidate != policy.commit(os.environ["GITHUB_SHA"])
+            or git("rev-list", "--parents", "-n", "1", candidate).decode().split() != [candidate, base, head]):
+        raise ValueError("PR candidate must be the event merge of the target base and head")
+
+
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
@@ -54,8 +62,10 @@ def select():
         if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
+    elif os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
+        candidate = policy.commit(data["pull_request"]["head"]["sha"])
     else:
-        candidate = policy.commit(data["pull_request"]["head"]["sha"] if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" else os.environ["GITHUB_SHA"])
+        candidate = policy.commit(os.environ["GITHUB_SHA"])
     config = settings()
     output({"candidate_sha": candidate, "measurement": str(measurement).lower(),
             "trusted_sha": subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip(),
@@ -64,24 +74,33 @@ def select():
 
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
-    if policy.commit(pr["head"]["sha"]) != candidate:
-        raise ValueError("PR selection is bound to a different head")
     if pr["base"]["ref"] != "dev" or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
     base = policy.commit(pr["base"]["sha"])
-    diff_base = policy.commit(git("merge-base", base, candidate).decode().strip())
     diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z")
-    changed = {path.decode() for path in policy.paths(git(*diff, diff_base, candidate, "--"))}
-    if any(policy.protected(path.encode()) or path in {"scripts", "apps/web/src/generated.ts"}
-           or path.startswith(("scripts/", "migrations/", "packages/contracts/")) for path in changed):
-        return None
-    if git(*diff, "--diff-filter=D", diff_base, candidate, "--"):
+    changed = {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
+    if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
+           or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
+           for path in changed):
         return None
     inventory = policy.control_inventory(trusted_sha)
-    if any(policy.tier(path, policy.read_file(base, path), policy.read_file(candidate, path), inventory)[0] >= 1
-           for path in sorted(changed)):
-        return None
+    for path in sorted(changed):
+        before, after = policy.read_file(base, path), policy.read_file(candidate, path)
+        tier, _ = policy.tier(path, before, after, inventory)
+        if tier >= 1 and (tier != 2 or not ordinary_test_module(path, before, after, inventory)):
+            return None
     return changed
+
+
+def ordinary_test_module(path, before, after, inventory):
+    """Allow changed leaf tests in quick plans while keeping Working Policy's tiers."""
+    if (after is None or path in inventory["product_imports"]
+            or not policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", path)):
+        return False
+    try:
+        return "\0" not in (before or b"").decode("utf-8") and "\0" not in after.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
 
 
 def affected_files(changed, files):
@@ -92,14 +111,11 @@ def affected_files(changed, files):
         return required
     try:
         selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
-        picked, reason = selector["select_with_reason"](sorted(changed), strict=True)
-        if reason or "all" in picked.values():
-            return None
-        owners = {target.split("::", 1)[0] for targets in picked.values() for target in targets}
+        owners = selector["direct_test_owners"](sorted(changed), files)
     except Exception as error:
         print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
         return None
-    return required | owners if owners <= files else None
+    return required | owners if isinstance(owners, set) and owners <= files else None
 
 
 def plan(base, measurement):
@@ -127,12 +143,15 @@ def plan(base, measurement):
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
     selected_files = None
-    if (not measurement and not context["bootstrap"] and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
             and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
-        trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
-        changed = pr_scope(policy.event(), policy.git, trusted_sha, candidate)
-        if changed is not None:
-            selected_files = affected_files(changed, set(files))
+        event = policy.event()
+        require_pr_merge(event, policy.git, candidate)
+        if not context["bootstrap"]:
+            trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
+            changed = pr_scope(event, policy.git, trusted_sha, candidate)
+            if changed is not None:
+                selected_files = affected_files(changed, set(files))
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)

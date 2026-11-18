@@ -421,6 +421,23 @@ def mentions(path, test, text, names=True):
             or (names and any(w in Path(test).stem for w in words)))
 
 
+def direct_test_owners(changed, candidate_tests):
+    """Resolve each path through direct imports and file references in protected tests."""
+    reverse, texts, _ = graph(ROOT)
+    files = {test: texts[test] for test in test_files()}
+    selected = set()
+    for path in changed:
+        owners = reverse.get(path, set()) & files.keys()
+        owners |= doc_tests([path], files)
+        owners |= {test for test, text in files.items() if mentions(path, test, text, names=False)}
+        if path in candidate_tests:
+            owners.add(path)
+        if not owners:
+            return None
+        selected.update(owners)
+    return selected
+
+
 def web_graph():
     """The source dependency graph shared by browser and compiled-client readers."""
     web = {p.resolve(): p.read_text(encoding="utf-8", errors="replace") for p in (ROOT / "apps/web/src").rglob("*.ts")}
@@ -583,8 +600,8 @@ def selector_file_selection(changed):
     return {kind: set(targets) for kind, targets in SELECTOR_FILE_OWNERS[next(iter(changed))].items()}
 
 
-def select_with_reason(changed, *, pr=False, strict=False):
-    """Return affected targets or a stable FULL reason. Strict callers supply their own smoke set."""
+def select_with_reason(changed, *, pr=False):
+    """Return the affected targets and a stable reason whenever ownership requires both full suites."""
     special = selector_file_selection(changed)
     if special is not None:
         return special, ""
@@ -594,7 +611,7 @@ def select_with_reason(changed, *, pr=False, strict=False):
             if shared_foundation(path):
                 return {"unit": "all", "browser": "all"}, f"shared-foundation: {json.dumps(path)}"
     files = {f: (ROOT / f).read_text(encoding="utf-8", errors="replace") for f in test_files()}
-    docs = set() if strict else doc_tests(changed, files)
+    docs = doc_tests(changed, files)
     picked = {kind: {test for test in docs if suite(test) == kind} for kind in ("unit", "browser")}
     code = False
     web = []
@@ -605,16 +622,7 @@ def select_with_reason(changed, *, pr=False, strict=False):
             picked[suite(f)].add(f)
 
     for path in changed:
-        if strict and not (ROOT / path).is_file():
-            return {"unit": "all", "browser": "all"}, f"missing-changed-path: {json.dumps(path)}"
         if path.startswith(("docs/", "changelog.d/")) or ("/" not in path and path.endswith(".md")) or path in ("LICENSE", ".gitignore"):
-            if strict:
-                hits = doc_tests([path], files) | {test for test, text in files.items()
-                                                  if mentions(path, test, text, names=False)}
-                if not hits:
-                    return {"unit": "all", "browser": "all"}, f"unknown-owner: {json.dumps(path)}"
-                for test in hits:
-                    add(test)
             continue
         if path in ("scripts/batch_prs.py", "tests/test_batch_prs.py"):
             add("tests/test_batch_prs.py")
@@ -672,7 +680,7 @@ def select_with_reason(changed, *, pr=False, strict=False):
         picked["browser"] = "all" if browser == "all" else picked["browser"] | browser
         if picked["browser"] != "all" and any(path.startswith(("apps/web/src/", "apps/web/public/")) for path in web):
             picked["browser"] |= set(WEB_BROWSER_SMOKE)
-    if code and not strict:
+    if code:
         for kind, tests in SMOKE.items():
             if picked[kind] != "all":
                 picked[kind] |= set(tests)

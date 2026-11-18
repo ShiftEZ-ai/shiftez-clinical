@@ -149,31 +149,44 @@ class TwoObservationGateTests(unittest.TestCase):
         import trusted_ci
         owner = "tests/test_quick_owner.py"
         owned = "apps/api/quick_fixture.py"
+        shared = "apps/api/models.py"
+        shared_owner = "tests/test_shared_owner.py"
+        indirect_owner = "tests/test_indirect_owner.py"
         unknown = "apps/api/unknown_fixture.py"
         unknown_doc = "docs/unowned.md"
-        unrelated = {"tests/test_other.py", "tests/test_browser_other.py"}
-        files = trusted_ci.PR_SMOKE | {owner} | unrelated
+        unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
+        guarded_tests = {"tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_legacy_encoding.py"}
+        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | unrelated | guarded_tests
         durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
         sources = dict.fromkeys(files, "def test_a(): pass\n")
         sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
+                        shared: "value = 1\n", shared_owner: "from apps.api.models import value\n",
+                        "apps/api/consumer.py": "from apps.api.models import value\n",
+                        indirect_owner: "from apps.api.consumer import value\n",
                         unknown: "value = 2\n", unknown_doc: "# Example\n",
                         "scripts/affected_tests.py": (ROOT / "scripts/affected_tests.py").read_text(encoding="utf-8")})
         for name, content in sources.items():
             target = self.folder / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        head, base = "a" * 40, "b" * 40
+        candidate, base, head = "a" * 40, "b" * 40, "c" * 40
         def source_git(*args):
-            return "\n".join(sorted(files)) if args[0] == "ls-files" else head
+            return "\n".join(sorted(files)) if args[0] == "ls-files" else candidate
         with patch.object(sys, "path", list(sys.path)), chdir(self.folder):
+            added = "tests/test_new_product_case.py"
+            with patch.object(trusted_ci, "TRUSTED", self.folder):
+                self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
+                                 trusted_ci.PR_SMOKE | {shared_owner, added})
             full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
                           "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
-                          "tests/conftest.py", "tests/fixtures/sample.json", "test_support/fixture.py", owner,
+                          "tests/conftest.py", "tests/fixtures/sample.json", "test_support/fixture.py",
+                          "tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_legacy_encoding.py",
                           "migrations/env.py", "packages/contracts/schemas.py", "apps/web/src/generated.ts",
                           unknown, unknown_doc)
             cases = [(path, [], "dev", False, False) for path in full_paths]
-            cases += [(owned, [], "dev", False, True), (owned, ["full-ci"], "dev", False, False),
-                      (owned, [], "main", False, False), (owned, [], "dev", True, False)]
+            cases += [(owned, [], "dev", False, True), (shared, [], "dev", False, True), (owner, [], "dev", False, True),
+                      (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
+                      (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
             events = [("pull_request", *case) for case in cases]
             events += [(event, owned, [], "dev", False, False) for event in ("merge_group", "workflow_dispatch", "push")]
             events.append(("pull_request", owned, [], "dev", False, False))
@@ -184,15 +197,23 @@ class TwoObservationGateTests(unittest.TestCase):
                 payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": branch},
                                             "labels": [{"name": label} for label in labels]}}
                 def event_git(*args):
-                    if args[0] == "merge-base":
-                        return base.encode()
-                    return b"" if "--diff-filter=D" in args and not deleted else (path + "\0").encode()
+                    if args[0] == "rev-list":
+                        return f"{candidate} {base} {head}".encode()
+                    self.assertEqual(args[-3:], (base, candidate, "--"))
+                    changed = [path, owner] if path == shared else [path]
+                    return ("\0".join(changed) + "\0").encode()
                 def file_at(revision, name):
+                    if deleted and revision == candidate:
+                        return None
                     if name == "package.json":
                         return b'{"dependencies":{"example":"1"}}' if revision == base else b'{"dependencies":{"example":"2"}}'
+                    if name == "tests/test_runner_hook.py" and revision == candidate:
+                        return b"def pytest_configure(config): pass\n"
+                    if name == "tests/test_legacy_encoding.py":
+                        return b"# coding: latin-1\nvalue = '\xe9'\n"
                     return b"x = 1\n"
                 with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index), \
-                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "TRUSTED_BOOTSTRAP": "false"}), \
+                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false"}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci, "settings", return_value={"unit_shards": 3, "browser_shards": 2}), \
@@ -201,16 +222,19 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.object(trusted_ci.policy, "git", side_effect=event_git), \
                      patch.object(trusted_ci.policy, "event", return_value=payload), \
                      patch.object(trusted_ci.policy, "read_file", side_effect=file_at), \
-                     patch.object(trusted_ci.policy, "control_inventory", return_value={"helpers": {"tools/control.py"}, "product_imports": set()}), \
+                     patch.object(trusted_ci.policy, "control_inventory", return_value={
+                         "helpers": {"tools/control.py"}, "product_imports": {"tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
                     self.assertEqual(maker.context(base)["replicas"], [1, 2])
                     plan = trusted_ci.plan(base, False)
+                    self.assertEqual(plan["sha"], candidate)
                     self.assertEqual(plan["replicas"], [1, 2])
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
-                        self.assertEqual(actual, trusted_ci.PR_SMOKE | {owner})
+                        expected = {shared_owner, owner} if path == shared else {owner}
+                        self.assertEqual(actual, trusted_ci.PR_SMOKE | expected)
                         self.assertEqual(trusted_ci.census_files(plan, files), actual)
                     else:
                         self.assertNotIn("selection", plan)
