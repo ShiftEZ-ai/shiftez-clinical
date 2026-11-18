@@ -269,15 +269,42 @@ def test_draft_validation_keeps_current_validity_and_frozen_definition(request, 
     ("draft", "published-context", False),
 ])
 def test_operational_type_source_preserves_draft_preview_and_published_context(status, shift_workspace, current):
-    issued, latest = {"requirements": [{"minimum": 1}]}, {"requirements": [{"minimum": 3}]}
+    issued = {"colour": "blue", "requirements": [{"minimum": 1}]}
+    latest = {"colour": "red", "requirements": [{"minimum": 3}]}
     data = {"operational": True, "workspace": {"id": "own", "status": status},
             "types": {"type": {"definition": latest}}}
     shift = {"workspace_id": shift_workspace, "assignment_type_id": "type", "type_snapshot": {"definition": issued}}
     effective = effective_type_definition(data, shift)
-    if current:
-        assert effective == latest
-    else:
-        assert effective["requirements"][0]["minimum"] == 3
+    assert effective == (latest if current else effective_issued_definition(issued, latest))
+    data['_line_index_cache'] = cache = {}
+    assert 'effective_type_definitions' not in cache
+    cached = effective_type_definition(data, shift)
+    assert cached == effective
+    assert effective_type_definition(data, shift) is cached
+    assert any(entry[0] is issued and entry[1] is latest
+               for entry in cache['effective_type_definitions'].values())
+    for source in (shift['type_snapshot'], data['types']['type']):
+        source['definition'] = deepcopy(source['definition'])
+        source['definition']['requirements'][0]['minimum'] += 4
+        assert effective_type_definition(data, shift) == _uncached_effective_type_definition(data, shift)
+    # The same sources must remain distinct across operational and publication views.
+    for mode in (False, True):
+        data['operational'] = mode
+        for state in ('draft', 'published', 'superseded'):
+            data['workspace']['status'] = state
+            assert effective_type_definition(data, shift) == _uncached_effective_type_definition(data, shift)
+
+
+@pytest.mark.parametrize('source', [None, {}, {'requirements': None}])
+def test_effective_definition_cache_normalizes_empty_sources_without_aliasing(source):
+    data = {'_line_index_cache': {}}
+    shift = {'type_snapshot': {'definition': source}}
+    cached = effective_type_definition(data, shift)
+    assert cached == effective_type_definition({**data, '_line_index_cache': None}, shift) == {'requirements': []}
+    assert effective_type_definition(data, shift) is cached
+    assert cached is not source
+
+
 
 
 @BACKENDS
@@ -393,3 +420,145 @@ def test_info_findings_are_excluded_from_counts_and_fix_projection():
     assert result["error_count"] == 1
     assert result["warning_count"] == 1
     assert [f["severity"] for f in result["findings"]] == ["info", "error", "warning"]
+
+
+def _uncached_effective_type_definition(data, shift):
+    """Pre-memo implementation, kept as the independent output oracle."""
+    from packages.domain.validation import _published_session
+    issued = shift['type_snapshot']['definition'] or {}
+    if not data.get('operational'):
+        effective = deepcopy(issued)
+        effective['requirements'] = list(effective.get('requirements') or [])
+        return effective
+    current = data['types'][shift['assignment_type_id']]['definition'] or {}
+    if not _published_session(data, shift):
+        effective = deepcopy(current)
+        effective['requirements'] = list(effective.get('requirements') or [])
+        return effective
+    return effective_issued_definition(issued, current)
+
+
+def _replace_definition_readers(monkeypatch, original, replacement):
+    import sys
+    for module in tuple(sys.modules.values()):
+        if module is not None and module.__name__.startswith(('packages.domain.', 'apps.api.services.')):
+            for name, value in tuple(vars(module).items()):
+                if value is original:
+                    monkeypatch.setattr(module, name, replacement)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('mode', ['draft', 'published', 'superseded'])
+def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg, monkeypatch, mode, request):
+    from hashlib import sha256
+    import json
+    # Load module-level helper aliases before switching implementations.
+    from packages.domain import candidate_evidence, cp_sat, cp_sat_goals, generation, validation
+    from packages.domain.score import schedule_score
+    from packages.domain.solver_control import SolverControl
+    from packages.contracts.schemas import GenerationOptions
+
+    trainee, supervisor, _ = pg.seed['people']
+    pg.command('coordinator', 'membership.create', {
+        'person_id': trainee, 'category_id': pg.seed['trainee_category'], 'starts_on': '2020-01-01'})
+    type_id = pg.configure('assignment_types', {'name': 'Cache supervised duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1, 'maximum': 4}], 'supervision': {
+            'trainee_category_ids': [pg.seed['trainee_category']], 'capability_id': pg.seed['supervisor_capability'],
+            'trainees_per_supervisor': 1, 'require_pairing': True}}})['record']['id']
+    plain = pg.configure('assignment_types', {'name': 'Cache independent duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': []}})['record']['id']
+    workspace = pg.workspace()
+    for day in (4, 6):
+        start, end = f'2026-10-{day:02}T08:00:00+03:00', f'2026-10-{day:02}T12:00:00+03:00'
+        people = [{'person_id': supervisor, 'start': start, 'end': end,
+                   'participation': 'supervisor', 'fixed': True},
+                  {'person_id': trainee, 'start': start, 'end': end,
+                   'participation': 'trainee', 'supervisor_person_id': supervisor}]
+        workspace = pg.shift(workspace, typ=type_id, people=people, start=start, end=end)['workspace']
+    workspace = pg.shift(workspace, typ=plain, people=[], location=1,
+                         start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00')['workspace']
+    if mode != 'draft':
+        workspace = pg.publish(workspace)['workspace']
+        # Tighten today's safety without changing the frozen issued type.
+        with transaction(pg.app.state.engine, write=True) as db:
+            typ = db.get(m.AssignmentType, type_id)
+            current = deepcopy(typ.definition)
+            current['requirements'] = [RequirementSegment(minimum=3, maximum=4).model_dump(mode='json')]
+            current['supervision']['trainees_per_supervisor'] = 1
+            typ.definition = current
+            typ.revision += 1
+        if mode == 'superseded':
+            with transaction(pg.app.state.engine, write=True) as db:
+                db.get(m.Workspace, workspace['id']).status = 'superseded'
+    data = pg.snapshot(workspace)
+    data['operational'] = True
+    assert data['workspace']['status'] == mode
+    assert '_line_index_cache' not in data
+    original_data = deepcopy(data)
+    memoised = validation.effective_type_definition
+
+    with monkeypatch.context() as oracle:
+        _replace_definition_readers(oracle, memoised, _uncached_effective_type_definition)
+        expected = evaluate(data)
+        expected_score = schedule_score(data, expected)
+    assert data == original_data
+
+    observed, caches, sources = {}, {}, {}
+    def checked(context, shift):
+        cache = context.get('_line_index_cache')
+        if cache is not None and id(cache) not in caches:
+            assert 'effective_type_definitions' not in cache
+            caches[id(cache)] = cache
+        result = memoised(context, shift)
+        if cache is not None and id(result) not in observed:
+            observed[id(result)] = result, deepcopy(result)
+            for source in (shift['type_snapshot']['definition'],
+                           context['types'][shift['assignment_type_id']]['definition'] if context.get('operational') else None):
+                if id(source) not in sources:
+                    sources[id(source)] = source, deepcopy(source)
+        return result
+
+    def unchanged():
+        assert observed
+        assert any(value.get('requirements') and value.get('supervision') for value, _ in observed.values())
+        assert all(value == before for value, before in observed.values())
+        assert all(value == before for value, before in sources.values())
+        for cache in caches.values():
+            for issued, current, value in cache.get('effective_type_definitions', {}).values():
+                assert value == observed[id(value)][1]
+
+    _replace_definition_readers(monkeypatch, memoised, checked)
+    actual = evaluate(data)
+    first_caches = set(caches)
+    assert actual == expected
+    assert evaluate(data) == actual
+    assert set(caches) - first_caches  # Fresh evaluations never inherit the prior memo.
+    assert schedule_score(data, actual) == expected_score
+    unchanged()
+    assert data == original_data
+
+    options = GenerationOptions.model_validate(data.get('generation_options') or {})
+    control = SolverControl()
+    control.configure_stop_conditions(options, data['organisation']['timezone'])
+    prepared = cp_sat._prepare(data, 30, 1, control, options, False, False)
+    assert 'model' in prepared, prepared.get('status')
+    unchanged()
+    run = prepared['data']
+    assert run['_line_index_cache']['effective_type_definitions']
+    assert evaluate(run) == evaluate(run)
+    unchanged()
+    # Scheduling admits drafts; issued contexts above still get full preparation.
+    if mode == 'draft':
+        greedy = generation.generate(data, 30)
+        assert 'validation' in greedy
+        unchanged()
+    assert data == original_data
+    fresh = pg.snapshot(workspace)
+    assert '_line_index_cache' not in fresh
+    assert actual['fingerprint'] == expected['fingerprint'] == data['fingerprint'] == fresh['fingerprint']
+    assert actual['findings'] == expected['findings']
+    request.node.user_properties.append(('effective_definition_oracle', json.dumps({
+        'mode': mode, 'fingerprint': actual['fingerprint'],
+        'findings_sha256': sha256(json.dumps(actual['findings'], sort_keys=True).encode()).hexdigest(),
+        'score_sha256': sha256(json.dumps(expected_score, sort_keys=True).encode()).hexdigest(),
+        'guarded_definitions': len(observed), 'run_caches': len(caches)})))

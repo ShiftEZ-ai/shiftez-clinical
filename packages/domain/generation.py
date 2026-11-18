@@ -16,7 +16,7 @@ from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
 from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
-from .validation import participation_for, trainee_intervals, named_people, session_matches, person_free
+from .validation import coverage_boundary_inputs, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
 from .supervision_levelling import levelled_order, session_spread_policies
@@ -425,7 +425,8 @@ def own_duty_blocked(data, shift, participant, own, known):
     pid = participant['person_id']
     kept = {s['id']: s for s in [*own, shift]}
     reduced = {**data, 'shifts': list(kept.values()), 'focus_ids': [i for i in data['focus_ids'] if i in kept],
-               '_partial': {'shifts': set(kept), 'people': {pid}}, 'quota_subjects': set(), 'skip_coverage': True}
+               '_partial': {'shifts': set(), 'people': {pid}, 'person_shifts': lambda _: kept.values()},
+               'quota_subjects': set()}
 
     def errors():
         result = evaluate(reduced, explain_findings=False)
@@ -444,20 +445,38 @@ def own_duty_blocked(data, shift, participant, own, known):
 class Recheck:
     """The run's whole-rota check kept in parts (each session's own checks, each person's), so a trial re-checks only the
     sessions it touches and the person it moves. Every part comes from the shared validator, computed exactly as a whole
-    check computes it (`_partial` in validation.evaluate); what a part leaves out (shapes and goals, advisory only;
-    resources and session setup, which do not depend on who works) cannot change a decision. The candidate is still
+    check computes it (`_partial` in validation.evaluate). Shapes, goals and advisory personal findings do not
+    guide trial decisions. Resource and session setup checks depend only on fixed inputs. The candidate is still
     checked whole at the end. tests/test_generation_recheck.py compares every trial with a whole check."""
 
     def __init__(self, data):
-        self.data = data
-        focus = set(data['focus_ids'])
-        live = [s for s in data['shifts'] if not inactive(s) and s['id'] in focus]
-        self.spans = [(aware(s['start']), aware(s['end']), s['id']) for s in live]
-        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
-        self.parts = self._check({s['id'] for s in live}, people)
+        from .quotas import applicable_policies
 
-    def _check(self, shift_ids, people):
-        r = evaluate({**self.data, '_partial': {'shifts': shift_ids, 'people': people}}, explain_findings=False)
+        self.data = data
+        self.prepared = prepare_assignment_trials(data)
+        self.prepared['_trial_boundary_inputs'] = coverage_boundary_inputs(self.prepared)
+        self.prepared['_quota_policies'] = applicable_policies(self.prepared)
+        self.setup_cache = {}
+        focus = set(data['focus_ids'])
+        self.active = {s['id']: s for s in self.prepared['shifts'] if not inactive(s)}
+        self.order = {sid: order for order, sid in enumerate(self.active)}
+        self.person_duties = defaultdict(set)
+        for sid, session in self.active.items():
+            for participant in session['participants']:
+                self.person_duties[participant['person_id']].add(sid)
+        self.live_ids = focus & self.active.keys()
+        self.spans = [(aware(s['start']), aware(s['end']), sid) for sid, s in self.active.items() if sid in focus]
+        self.peers = {}
+        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
+        self.parts = self._check(self.live_ids, people)
+
+    def _check(self, shift_ids, people, changed=frozenset()):
+        def person_shifts(pid):
+            ids = self.person_duties.get(pid, set()) | changed
+            return [self.active[sid] for sid in sorted(ids, key=self.order.__getitem__)]
+
+        r = evaluate({**self.prepared, '_partial': {'shifts': shift_ids, 'people': people,
+                     'setup_cache': self.setup_cache, 'person_shifts': person_shifts}}, explain_findings=False)
         sessions, persons, rows = {i: [] for i in shift_ids}, {i: [] for i in [*people, None]}, {i: [] for i in people}
         for f in r['session_findings']:
             sessions[f['shift_id']].append(f)
@@ -465,26 +484,46 @@ class Recheck:
             persons.setdefault(f['person_id'], []).append(f)
         for row in (r['quota_report'] or {}).get('rows', []):
             rows[row['person_id']].append(row)
+        for group in (sessions, persons):
+            for key, findings in group.items():
+                group[key] = list(finding_observations({'findings': findings}))
         return sessions, persons, rows
 
     def touched(self, changed):
         """The changed sessions and every session of this rota overlapping one (pooled cover and clinic-wide limits
         count the people on sessions at the same time)."""
         from .validation_scope import affected_sessions
-        return affected_sessions(self.data['shifts'], changed, spans=self.spans) | {
-            s['id'] for s in changed if any(i == s['id'] for _, _, i in self.spans)}
+        affected = set()
+        for shift in changed:
+            sid = shift['id']
+            if sid not in self.peers:
+                self.peers[sid] = affected_sessions((), [shift], spans=self.spans) | ({sid} & self.live_ids)
+            affected.update(self.peers[sid])
+        return affected
 
     def result(self, parts=None):
         merged = [{**whole, **part} for whole, part in zip(self.parts, parts or ({}, {}, {}))]
-        return {'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
+        return {'_plain_findings': True,
+                'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
                 'quota_report': {'rows': [r for items in merged[2].values() for r in items]}, '_parts': parts}
 
     def trial(self, changed, people):
-        return self.result(self._check(self.touched(changed), set(people)))
+        people = set(people)
+        changed_ids = {s['id'] for s in changed if s['id'] in self.active}
+        result = self.result(self._check(self.touched(changed), people, changed_ids))
+        # The caller restores the trial's assignments before deciding whether to accept.
+        result['_changed_duties'] = (changed_ids, {
+            pid: {s['id'] for s in changed if s['id'] in changed_ids and any(p['person_id'] == pid for p in s['participants'])}
+            for pid in people})
+        return result
 
     def accept(self, result):
         for whole, part in zip(self.parts, result['_parts'] or ({}, {}, {})):
             whole.update(part)
+        changed, duties = result['_changed_duties']
+        for pid, active in duties.items():
+            self.person_duties[pid].difference_update(changed)
+            self.person_duties[pid].update(active)
 
 
 def pair_attached(data, shifts, added, removals, period):
@@ -907,7 +946,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                                              candidate_overtime=overtime)[0], supervisor_id))
                 for other, prior in displaced:
                     other['participants'].remove(prior)
-                if own_duty_blocked(data, shift, participant, [s for s, _ in history[pid]], own_errors):
+                if own_duty_blocked(recheck.prepared, shift, participant, [s for s, _ in history[pid]], own_errors):
                     pairings = []  # the whole-rota check below would refuse every pairing
                 for supervisor_id in pairings:
                     if time.monotonic() >= deadline:

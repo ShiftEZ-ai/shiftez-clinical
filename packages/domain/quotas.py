@@ -360,7 +360,8 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
             'presence': windows, 'credits': credits}
 
 
-def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None, contribution_cache=None):
+def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None,
+                    contribution_cache=None, person_shifts=None):
     policies = [policy for policy in (data['_quota_policies'] if '_quota_policies' in data else applicable_policies(data))
                 if (policy_ids is None or policy['id'] in policy_ids)
                 and (line_id is None or (policy.get('template_line') or {}).get('id') == line_id)]
@@ -405,11 +406,17 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
     data = {**data, '_quota_subject_context_budget': subject_context_budget, '_quota_witness_cache': {}}
     proration_cache = data.get('_quota_cache', {})
     by_person = defaultdict(list)
-    for shift in data["shifts"]:
-        if inactive(shift) or data["types"][shift["assignment_type_id"]]["department_id"] != dept:
-            continue
-        for participant in shift["participants"]:
-            by_person[participant["person_id"]].append((shift, participant))
+    if person_shifts is None:
+        for shift in data["shifts"]:
+            if inactive(shift) or data["types"][shift["assignment_type_id"]]["department_id"] != dept:
+                continue
+            for participant in shift["participants"]:
+                by_person[participant["person_id"]].append((shift, participant))
+    else:
+        for pid in data['quota_subjects']:
+            by_person[pid] = [(shift, p) for shift in person_shifts(pid)
+                              if data['types'][shift['assignment_type_id']]['department_id'] == dept
+                              for p in shift['participants'] if p['person_id'] == pid]
     from .validation import category_scope_ids, named_people
     for policy in sorted(policies, key=lambda p: p["id"]):
         data.get('_check_budget', lambda: None)()
