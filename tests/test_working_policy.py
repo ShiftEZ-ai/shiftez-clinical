@@ -168,7 +168,7 @@ def pytest_runtest_makereport(item, call):
             with self.assertRaises(ValueError): policy.accepted_dev_commit(expected_tree, dev)
 
     def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False,
-                  kind="pull_request", after_removed=None, preview_probe=None):
+                  kind="pull_request", after_removed=None, after_python=None, entry=None, preview_probe=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
                  "head": {"ref": "feature", "sha": head, "repo": {"id": policy.REPOSITORY}}, "merge_commit_sha": candidate}}
@@ -194,14 +194,16 @@ def pytest_runtest_makereport(item, call):
             if args[0] == "rev-list": return b"preview-merge\n" if preview_history else b""
             raise AssertionError(args)
         def record(branch, base, head, candidate, rows, source, candidate_sha=None):
-            report.update({"tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]})
+            report.update({"branch": branch, "target_sha": base, "candidate_tree": candidate,
+                           "tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]})
             return report
         def read(rev, name):
             if name=='ci/removed-tests.json':
                 return json.dumps(after_removed if rev==candidate and after_removed is not None else {'schema':2,'removed':[],'removed_nodes':[]}).encode()
             if name == policy.KNOWN:
                 return json.dumps(after_known if rev == candidate and after_known is not None else self.before).encode()
-            if name.endswith(".py"): return b"x=1\n"
+            if name.endswith(".py"):
+                return after_python if rev == candidate and after_python is not None else b"x=1\n"
             return b"{}"
         with contextlib.ExitStack() as stack:
             for name, value in {"event": lambda: data, "git": fake_git, "fetch": fake_fetch,
@@ -213,8 +215,67 @@ def pytest_runtest_makereport(item, call):
                 stack.enter_context(patch.object(policy, name, value))
             stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_EVENT_NAME": kind, "TRUSTED_BOOTSTRAP": "false"}))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
-            policy.guard()
+            (entry or policy.guard)()
         return report
+
+    def checks_guard(self, summary):
+        import yaml
+        workflows = HELPERS if (HELPERS / "ci.yml").is_file() else HELPERS.parent / "workflows"
+        jobs = yaml.load((workflows / "ci.yml").read_bytes(), Loader=yaml.BaseLoader)["jobs"]
+        steps = jobs["checks"]["steps"]
+        guard = next(step for step in steps if step.get("name") == "Enforce working policy before test fan-out")
+        self.assertEqual(guard["working-directory"], ".trusted-controls")
+        self.assertEqual(guard["if"], "github.event_name == 'pull_request' || github.event_name == 'merge_group'")
+        self.assertEqual(guard["env"], {"POLICY_WORKFLOW_SHA": "${{ github.workflow_sha }}"})
+        for i, step in enumerate(steps):
+            if step.get("id") == "plan" or step.get("uses", "").startswith("actions/upload-artifact@"):
+                self.assertLess(steps.index(guard), i)
+        for job in ("unit", "browser", "static"):
+            self.assertEqual(jobs[job]["needs"], "checks")
+            self.assertIn("needs.checks.result == 'success'", jobs[job]["if"])
+        standalone = yaml.load((workflows / "working-policy.yml").read_bytes(), Loader=yaml.BaseLoader)
+        standalone_steps = standalone["jobs"]["policy"]["steps"]
+        self.assertIn("python -I .github/scripts/working_policy.py guard", [step.get("run") for step in standalone_steps])
+        source = guard["run"].split("\n", 1)[1].rsplit("\nPY", 1)[0]
+
+        def entry():
+            with patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                exec(compile(source, "Checks policy step", "exec"), {})
+
+        return entry
+
+    def test_checks_stops_on_other_policy_refusals_before_fan_out(self):
+        addition = copy.deepcopy(self.before)
+        addition["fails"].append({**addition["fails"][0], "node": "tests/test_new.py::test_case"})
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            entry = self.checks_guard(summary)
+            cases = [
+                (policy.KNOWN, {"after_known": addition}, "Known-failures changes"),
+                ("AGENTS.md", {}, "private agent instructions"),
+                ("apps/example.py", {"after_python": b"x = ("}, "syntax error"),
+                (".github/workflows/ci.yml", {"preview_history": True}, "Preview merge history"),
+            ]
+            for path, options, message in cases:
+                with self.subTest(path=path), self.assertRaisesRegex(SystemExit, message):
+                    self.run_guard(path, entry=entry, **options)
+            self.assertFalse(summary.exists())
+
+    def test_checks_continues_for_audited_route_and_standalone_still_refuses(self):
+        refusal = "Tier 1 control changes require the audited maintenance route"
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            entry = self.checks_guard(summary)
+            clean = self.run_guard("apps/example.py", entry=entry)
+            self.assertEqual(clean["tier1"], [])
+            self.assertFalse(summary.exists())
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(kind=kind):
+                    with self.assertRaisesRegex(ValueError, refusal):
+                        self.run_guard(".github/workflows/ci.yml", kind=kind)
+                    report = self.run_guard(".github/workflows/ci.yml", kind=kind, entry=entry)
+                    self.assertEqual([row["path"] for row in report["tier1"]], [".github/workflows/ci.yml"])
+            self.assertEqual(summary.read_text(encoding="utf-8").count(refusal), 2)
 
     def test_review_required_patterns_cover_tracked_or_reserved_paths(self):
         root = HELPERS.parents[1]
@@ -486,7 +547,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             plan_file, reports, output = folder / "plan.json", folder / "reports", folder / "output"
             reports.mkdir()
             plan_file.write_text(json.dumps(plan))
-            (reports / "conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
+            for suite in plan["suites"]:
+                (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
+            (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
