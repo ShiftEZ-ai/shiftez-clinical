@@ -52,7 +52,9 @@ export function solverReceipt(job:Row):HTMLElement|null{
   const stop=(GENERATION_STOP_REASONS as Record<string,string>)[code]||code;  // the contract's words for a typed reason
   const saved=r.score??job.score??r.summary?.score_saved??r.summary?.score;
   const value=typeof saved==='number'?saved:saved&&typeof saved==='object'?(saved.score??saved.uncapped_score):null;
-  const score=value==null?'no score: nothing placed':`score: ${value}`;
+  const score=value==null
+    ?(r.score_completed===false&&String(r.status).startsWith('candidate_')?'score unfinished':'no score: nothing placed')
+    :`score: ${value}`;
   return el('p',{class:'solver-receipt',role:'status'},`Solver status: ${status} · Stop reason: ${stop} · ${score}`);
 }
 

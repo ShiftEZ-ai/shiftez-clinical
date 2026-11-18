@@ -98,6 +98,25 @@ def test_job_result_metadata_preserves_an_explicit_diagnostic_mode(mode):
                                'strict_status': 'INFEASIBLE', 'optimality_proven': False}}
 
 
+def test_job_detail_keeps_unfinished_score_for_capped_candidate(h):
+    workspace = h.workspace()
+    with transaction(h.app.state.engine, write=True) as db:
+        job = m.Job(department_id=h.seed['department_id'], workspace_id=workspace['id'],
+            requested_by=h.seed['identities']['coordinator'], kind='generation', status='succeeded',
+            input_fingerprint='frozen', input_snapshot={'generation_engine': 'cp_sat'},
+            result={'status': 'candidate_feasible', 'solver_status': 'FEASIBLE', 'score': None,
+                    'score_completed': False, 'validation': {'valid': True},
+                    'additions': [{'shift_id': 'draft-session'}],
+                    'summary': {'score_saved': {'score': 80}}})
+        db.add(job)
+        db.flush()
+        job_id = job.id
+    result = h.get('coordinator', '/api/jobs/' + job_id)['job']['result']
+    assert result['score_completed'] is False and result['score'] is None
+    assert result['solver_status'] == 'FEASIBLE' and result['change_count'] == 1
+    assert 'summary' not in result
+
+
 def test_job_result_metadata_keeps_the_applied_revision_for_undo_in_recent_runs():
     """An applied run under a newer rota check (maintenance queues one after Apply) still offers Undo from the job list."""
     assert job_result_metadata({'status': 'candidate_feasible', 'additions': [{'shift_id': 's'}], 'applied_content_revision': 4}) == {

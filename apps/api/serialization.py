@@ -222,7 +222,7 @@ def job_result_metadata(result, *, include_error_detail=False):
     value = {'status': result.get('status')}
     if include_error_detail and (error_detail := job_error_detail(result)) is not None:
         value['error_detail'] = error_detail
-    for key in ('solver_status', 'search_stop'):
+    for key in ('solver_status', 'search_stop', 'score_completed'):
         if key in result:
             value[key] = deepcopy(result[key])
     if 'solver_status' in result and 'score' in result:
