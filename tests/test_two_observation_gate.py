@@ -84,7 +84,8 @@ class TwoObservationGateTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "Infrastructure"):
                             maker.product_error_nodes(self.folder)
                 with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-                    self.assertEqual(maker.product_error_nodes(self.folder), {NODE} if tag == "error" else set())
+                    retry = maker.retry_run({"replicas": [1]})
+                    self.assertEqual(maker.product_error_nodes(self.folder, allow_retry=retry), {NODE} if tag == "error" else set())
                     path = self.folder / "junit.xml"
                     report = ET.parse(path)
                     case = ET.SubElement(report.getroot(), "testcase",
@@ -92,10 +93,23 @@ class TwoObservationGateTests(unittest.TestCase):
                     ET.SubElement(case, "failure", message="ConnectionError: connection refused")
                     report.write(path)
                     with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                        maker.product_error_nodes(self.folder)
+                        maker.product_error_nodes(self.folder, allow_retry=retry)
                     with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
                         with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                            maker.product_error_nodes(self.folder)
+                            maker.product_error_nodes(self.folder, allow_retry=retry)
+
+    def test_pr_recovery_cannot_hide_multiple_infrastructure_failures(self):
+        self.report("error", "ConnectionError: connection refused")
+        path = self.folder / "junit.xml"
+        report = ET.parse(path)
+        case = ET.SubElement(report.getroot(), "testcase", classname="tests.test_product", name="test_b")
+        ET.SubElement(case, "failure", message="ConnectionError: connection refused")
+        report.write(path)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            retry = maker.retry_run({"replicas": [1]})
+            with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
+                with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                    maker.product_error_nodes(self.folder, allow_retry=retry)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
@@ -103,7 +117,8 @@ class TwoObservationGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Infrastructure"):
                 maker.product_error_nodes(self.folder)
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-            classified = maker.product_error_nodes(self.folder)
+            retry = maker.retry_run({"replicas": [1]})
+            classified = maker.product_error_nodes(self.folder, allow_retry=retry)
             self.assertEqual(classified, {NODE})
             runs, _ = known_skips.comparison_runs([{NODE: "error"}, {NODE: "passed"}], set(),
                                                   release=False, allowed_errors=classified)
@@ -112,7 +127,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 self.evaluate(["error", "error"], product_errors=classified)
             self.report("error", "error collecting tests/test_product.py")
             with self.assertRaisesRegex(ValueError, "Collection error"):
-                maker.product_error_nodes(self.folder)
+                maker.product_error_nodes(self.folder, allow_retry=retry)
 
     def test_schema_error_with_product_frame_is_product(self):
         self.report("error", "sqlalchemy.exc.OperationalError: no such table: example")
