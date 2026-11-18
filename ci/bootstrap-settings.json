@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "unit_shards": 25,
+  "browser_shards": 18,
+  "unstable_limit": 80,
+  "unstable_issue": null,
+  "unstable_expires_on": null,
+  "cleanup_issue": null
+}
