@@ -2580,6 +2580,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         own, checked_data = [], []
         # Publication remains the final safety boundary: revalidate verifies the
         # current inputs after pending writes have been flushed inside the writer.
+        # shortcut: publication runs one complete check under the writer, so other writes wait for it; upgrade: verify input revision stamps after flush and reuse the approved check when unchanged.
         result = revalidate(db, workspace, own, data_out=checked_data, include_internal=True)
         # The fresh data drives the immutable publication evidence below.
         acquired = checked_data[0]

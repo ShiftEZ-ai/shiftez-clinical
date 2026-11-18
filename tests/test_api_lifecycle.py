@@ -143,7 +143,7 @@ def test_revoked_approver_cannot_authorise_publication(h):
     h.get("approver","/api/me",status=403)
 
 
-def single_command_winner(h, commands, conflict_code, held_admission_lock):
+def single_command_winner(h, commands, conflict_code, held_admission_lock, *, publication=False):
     client=h.client("coordinator")
     keys=[str(uuid.uuid4()) for _ in commands]
     def send(index):
@@ -170,7 +170,8 @@ def single_command_winner(h, commands, conflict_code, held_admission_lock):
             return send(index)
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses=list(pool.map(write,range(2)))
-    assert sorted(response.status_code for response in responses) in ([200,409],[200,503]),[r.text for r in responses]
+    expected_statuses = ([200, 409], [200, 503], [200, 422]) if publication else ([200, 409], [200, 503])
+    assert sorted(response.status_code for response in responses) in expected_statuses,[r.text for r in responses]
     index=next(i for i,response in enumerate(responses) if response.status_code!=200)
     loser=responses[index]
     assert h.get("coordinator","/api/commands/"+keys[index],status=404)["error"]["code"]=="RECEIPT_NOT_FOUND"
@@ -178,9 +179,14 @@ def single_command_winner(h, commands, conflict_code, held_admission_lock):
         assert loser.json()["error"]["code"]=="COMMAND_WRITE_TIMEOUT"
         # Both contenders have finished: retry the identical operation once, now against the winner's state.
         loser=send(index)
-    assert loser.status_code==409,loser.text
-    expected_codes={conflict_code} if isinstance(conflict_code,str) else conflict_code
-    assert loser.json()["error"]["code"] in expected_codes,loser.text
+    if publication and loser.status_code == 422:
+        error = loser.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED", loser.text
+        assert error["details"]["stale_approval"]["code"] == "STALE_APPROVAL", loser.text
+    else:
+        assert loser.status_code==409,loser.text
+        expected_codes={conflict_code} if isinstance(conflict_code,str) else conflict_code
+        assert loser.json()["error"]["code"] in expected_codes,loser.text
 
 
 @pytest.mark.parametrize("held_admission_lock",[False,True])
@@ -208,7 +214,7 @@ def competing_publications(h,held_admission_lock):
         candidates.append(h.lifecycle(w,"approve","approver")["workspace"])
     commands=[{"kind":"workspace.publish","target_id":w["id"],"expected_revision":w["revision"],"payload":{"reason":"Competing publication test"}} for w in candidates]
     conflict_code = "STALE_APPROVAL" if held_admission_lock else {"STALE_APPROVAL", "STALE_INPUTS"}
-    single_command_winner(h,commands,conflict_code,held_admission_lock)
+    single_command_winner(h,commands,conflict_code,held_admission_lock,publication=True)
     pubs=h.get("coordinator","/api/publications")["publications"]
     assert len(pubs)==1 and pubs[0]["current"]
 
