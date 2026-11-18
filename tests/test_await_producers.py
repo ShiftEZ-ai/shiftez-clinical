@@ -37,11 +37,11 @@ def green():
 def api(monkeypatch):
     clock = SimpleNamespace(now=0, sleeps=[])
 
-    def sleep(seconds):
+    def advance(seconds):
         clock.sleeps.append(seconds)
         clock.now += seconds
 
-    monkeypatch.setattr(collector, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep))
+    monkeypatch.setattr(collector, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=advance))
 
     def install(respond):
         class Connection:
