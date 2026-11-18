@@ -11,6 +11,11 @@
       "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
+    },
+    {
+      "node": "tests/test_solver_search_budget.py::test_stopped_resume_checks_incumbent_without_relabelling_unknown_solver_status",
+      "owner": "maintainer",
+      "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
     }
   ]
 }
