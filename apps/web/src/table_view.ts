@@ -735,16 +735,17 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
   if(filterBtn){const f=spec.filter!;pop(filterBtn,'Filter',(panel,close)=>{
     // The popover starts with what is active: "Active · 9 of 43 people" and Clear all. Rules of the builder below are
     // its rows (each with its own ⋯ › Remove); only entries without a row (a link's filter) are listed with ×.
-    const head=el('div',{class:'dt-active'});
-    const changed=()=>{sync();const n=f.count(),act=(f.active?.()||[]).filter(a=>!a.row),on=n>0||!!f.any?.();head.hidden=!on;if(!on)return head.replaceChildren();
-      const clear=el('button',{type:'button',class:'button ghost small dt-clear','aria-label':'Clear all filters'},'Clear all');
-      clear.addEventListener('click',()=>{f.clear();draw();refocus();});
-      head.replaceChildren(el('div',{class:'dt-active-head'},el('span',{class:'dt-pop-label'},`Active · ${f.result?.()||n||''}`.replace(/ · $/,'')),clear),
-        ...(act.length?[el('ul',{class:'dt-active-list'},...act.map(a=>{
-          const x=el('button',{type:'button',class:'icon-button bare','aria-label':`Remove filter ${a.name}: ${a.value}`},icon('close'));
-          x.addEventListener('click',()=>{a.remove();draw();refocus();});
-          return el('li',{},el('span',{class:'truncate'},el('span',{class:'muted'},a.name+' '),a.value),x);}))]:[]));};
-    const draw=()=>{panel.replaceChildren(head);f.build(panel,changed,close);changed();};
+    const label=el('span',{class:'dt-pop-label'}),list=el('ul',{class:'dt-active-list',hidden:true});
+    const clear=el('button',{type:'button',class:'button ghost small dt-clear','aria-label':'Clear all filters'},'Clear all');
+    const head=el('div',{class:'dt-active'},el('div',{class:'dt-active-head'},label,clear),list);
+    clear.addEventListener('click',()=>{f.clear();draw();refocus();});panel.append(head);
+    const changed=()=>{sync();const n=f.count(),act=(f.active?.()||[]).filter(a=>!a.row);head.hidden=!(n>0||f.any?.());
+      label.textContent=`Active · ${f.result?.()||n||''}`.replace(/ · $/,'');list.hidden=!act.length;
+      list.replaceChildren(...act.map(a=>{
+        const x=el('button',{type:'button',class:'icon-button bare','aria-label':`Remove filter ${a.name}: ${a.value}`},icon('close'));
+        x.addEventListener('click',()=>{a.remove();draw();refocus();});
+        return el('li',{},el('span',{class:'truncate'},el('span',{class:'muted'},a.name+' '),a.value),x);}));};
+    const draw=()=>{while(head.nextSibling)head.nextSibling.remove();f.build(panel,changed,close);changed();};
     // New values redraw the builder's rows in place, unless a value list is open (it keeps what it offers until reopened).
     f.watch?.(fields=>{if(!head.isConnected)return;if(!fields||document.querySelector('.picker'))return changed();const had=panel.contains(document.activeElement);if(f.refield){f.refield();changed();}else draw();if(had)refocus();});
     // Focus stays in the popover when the control that had it goes away; never on Clear all, where Enter would wipe
