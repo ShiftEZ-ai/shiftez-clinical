@@ -9,6 +9,7 @@ from apps.api import models as m
 from apps.api.auth import digest, require_role
 from apps.api.errors import require
 from apps.api.serialization import record, job_record, job_progress_record, json_value, generation_defaults_record
+from apps.api.serialization import job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (currency_hint, currency_match, domain_snapshot, fingerprint,
                                 publication_score_baseline, snapshot_hash, workspace_content,
                                 workspace_shifts)
@@ -720,7 +721,7 @@ def apply_generation(db, actor, command):
                        'addition_indexes': [], 'removal_indexes': [],
                        'changed_facts': facts, 'changed_fact_count': len(facts)}
             receipt['id'] = snapshot_hash({k: v for k, v in receipt.items() if k != 'id'})
-        job.result = {**job.result, 'reconciliation': receipt}
+        retain_job_reconciliation(job, receipt, result=job_result_with_reconciliation(job, job.result))
         job.revision += 1
         return {'workspace': record(workspace, exclude=('validation',)), 'reconciliation': receipt,
                 'proposal_retained': True, 'proposal_action': 'reconcile_and_apply',
@@ -784,15 +785,15 @@ def apply_generation(db, actor, command):
     job.status = 'applied'
     receipt = {**receipt, 'status': 'applied', 'population_recorded': True,
                'population_people': plan['population_contribution'], 'applied_at': m.now().isoformat()}
-    job.result = {**job.result, 'reconciliation': receipt}
+    retain_job_reconciliation(job, receipt, result=job.result, interim=True)
     result = changed(db, actor, workspace, before, value.reason, prepared=(plan['validation'], plan['data']))
     receipt = {**receipt, 'applied_content_revision': workspace.content_revision}
     result['reconciliation'] = receipt
     job.progress = job_progress_record(job.progress)
     # The edit it made, so undoing that edit can say the proposal is no longer applied (planning.undo).
-    job.result = {**job.result, 'reconciliation': receipt, "applied_content_revision": workspace.content_revision,
-                  "applied": s.GenerationApplied(addition_indexes=addition_indexes, removal_indexes=removal_indexes,
-                      added_count=len(additions), removed_count=len(removals)).model_dump()}
+    retain_job_reconciliation(job, receipt, result={**job.result, "applied_content_revision": workspace.content_revision,
+        "applied": s.GenerationApplied(addition_indexes=addition_indexes, removal_indexes=removal_indexes,
+            added_count=len(additions), removed_count=len(removals)).model_dump()})
     job.revision += 1
     return result
 

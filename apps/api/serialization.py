@@ -245,7 +245,7 @@ def job_result_metadata(result, *, include_error_detail=False):
         value['reconciliation'] = {key: receipt[key] for key in ('id', 'status', 'changed_fact_count',
             'conflicting_placement_count', 'retention_optimal', 'validation', 'prepared_fingerprint',
             'current_fingerprint', 'validation_current', 'solver_status', 'reconciliation_allowance_exhausted',
-            'population_recorded', 'population_people') if key in receipt}
+            'population_recorded', 'population_people', 'applied_content_revision') if key in receipt}
     # applied_content_revision: Recent runs offers Undo on an applied run that is not the latest job (a check after it).
     for key in ('algorithm_version', 'applied_content_revision', 'generation_scope', 'generation_scope_source',
                 'planning_group_version_id', 'planning_context', 'lookahead', 'proof_scope', 'completion',
@@ -287,6 +287,55 @@ def job_read_metadata(snapshot, result):
     elif snapshot.get('fingerprint') is not None:
         value['input_fingerprint'] = snapshot['fingerprint']
     return value
+
+
+def retain_job_reconciliation(job, receipt, *, result=None, interim=False, applied_revision=None):
+    """Store a new receipt with the result, or change only the application state."""
+    metadata = job.read_metadata
+    if metadata is None:
+        metadata = job_read_metadata(job.input_snapshot, job.result)
+        job.result_summary = job_result_projection(job.kind, job.result)
+    projected = {**(metadata.get('result') or {})}
+    if receipt is not None:
+        projected['reconciliation'] = job_result_metadata({'reconciliation': receipt})['reconciliation']
+    if applied_revision is not None:
+        projected['applied_content_revision'] = applied_revision
+    job.read_metadata = {**metadata, 'result': projected}
+    if result is not None:
+        result = {**result, 'reconciliation': receipt}
+        if interim:
+            from sqlalchemy.orm.attributes import set_committed_value
+            # In-session readers see this receipt without flushing the proposal before the final update.
+            set_committed_value(job, 'result', result)
+        else:
+            job.result = result
+
+
+def job_result_with_reconciliation(job, result):
+    """Read current application state with the retained receipt and proposal."""
+    stored = (getattr(job, '__dict__', {}).get('read_metadata') or {}).get('result') or {}
+    if result is None or not stored:
+        return result
+    if 'applied_content_revision' in stored and result.get('applied_content_revision') != stored['applied_content_revision']:
+        result = {**result, 'applied_content_revision': stored['applied_content_revision']}
+    receipt, projected = result.get('reconciliation'), stored.get('reconciliation')
+    if isinstance(receipt, dict) and isinstance(projected, dict) and projected.get('id') == receipt.get('id'):
+        state = {key: projected[key] for key in ('status', 'applied_content_revision')
+                 if key in projected and projected[key] != receipt.get(key)}
+        if state:
+            result = {**result, 'reconciliation': {**receipt, **state}}
+    return result
+
+
+def job_reconciliation_columns():
+    """Read just the immutable receipt and the revision used by the application-state guard."""
+    from . import models as m
+    from sqlalchemy import func
+    revision = m.Job.result['applied_content_revision']
+    current_revision = func.coalesce(
+        m.Job.read_metadata['result', 'applied_content_revision'].as_integer(),
+        revision.as_integer())
+    return m.Job.result['reconciliation'], revision, current_revision
 
 
 def effective_input_fingerprint(row, *, input_snapshot=..., projection=..., deferred=...):
@@ -457,6 +506,7 @@ def job_record(row, *, include_result=True, include_events=False, include_progre
         value['progress'].pop('solution', None)
     result = (row.result if result_summary is ... else result_summary) if include_result else (
         row.result if result_metadata is ... else result_metadata)
+    result = job_result_with_reconciliation(row, result)
     error_detail = job_error_detail(result) if include_error_detail else None
     if include_result:
         value['result'] = job_result_summary(result)
