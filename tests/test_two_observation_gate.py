@@ -128,6 +128,18 @@ class TwoObservationGateTests(unittest.TestCase):
             with self.subTest(runs=runs), self.assertRaises(ValueError):
                 maker.evaluate(self.current, self.current, runs)
 
+    def test_single_replica_pr_refuses_and_reports_new_red_outcomes(self):
+        self.assertTrue(self.evaluate(["passed"], expected_replicas=1))
+        for outcome, reason in (("failed", "New failures"), ("error", "New errors")):
+            with self.subTest(outcome=outcome):
+                with self.assertRaisesRegex(ValueError, reason + ".*" + NODE) as refused:
+                    self.evaluate([outcome], expected_replicas=1, product_errors={NODE})
+                self.assertNotIn("complete replica", str(refused.exception))
+                self.assertEqual(maker.report_outside(self.current, [{NODE: outcome}], self.folder), [])
+                report = json.loads((self.folder / "outside-observations.json").read_text())
+                self.assertEqual(report["observations"][0]["observations"], [outcome])
+                self.assertEqual(report["observations"][0]["red_count"], 1)
+
     def test_main_release_remains_strict_for_single_sighting(self):
         for outcome in ("failed", "error"):
             with self.subTest(outcome=outcome), self.assertRaises(ValueError):
@@ -192,7 +204,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 maker.evaluate(self.current, self.current, runs, stale_output=self.folder)
             self.assertEqual(json.loads(artifact.read_text()), [NODE])
 
-    def test_plan_and_reader_use_two_replicas_on_every_event(self):
+    def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci
         owner = "tests/test_quick_owner.py"
         owned = "apps/api/quick_fixture.py"
@@ -240,7 +252,8 @@ class TwoObservationGateTests(unittest.TestCase):
                       (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
                       (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
             events = [("pull_request", *case) for case in cases]
-            events += [(event, owned, [], "dev", False, False) for event in ("merge_group", "workflow_dispatch", "push")]
+            events += [(event, owned, [], "dev", False, False)
+                       for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events.append(("pull_request", owned, [], "dev", False, False))
             for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
                 if index == len(events) - 1:
@@ -281,10 +294,11 @@ class TwoObservationGateTests(unittest.TestCase):
                          "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    self.assertEqual(maker.context(base)["replicas"], [1, 2])
+                    replicas = [1] if event == "pull_request" else [1, 2]
+                    self.assertEqual(maker.context(base)["replicas"], replicas)
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["sha"], candidate)
-                    self.assertEqual(plan["replicas"], [1, 2])
+                    self.assertEqual(plan["replicas"], replicas)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
