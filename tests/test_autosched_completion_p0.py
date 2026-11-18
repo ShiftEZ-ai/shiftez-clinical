@@ -206,9 +206,8 @@ def test_slow_default_completion_preserves_stopped_incumbent(h, clock, monkeypat
             assert interrupted.wait(2)
             return cp_model.UNKNOWN
 
-        monkeypatch.setattr(solver, 'solve', slow_solve)
-        monkeypatch.setattr(solver, 'stop_search', interrupted.set)
-        return original(solver, model, tier)
+        simulated = SimpleNamespace(parameters=solver.parameters, solve=slow_solve, stop_search=interrupted.set)
+        return original(simulated, model, tier)
 
     monkeypatch.setattr(control, 'solve', solve)
     result = cp_sat.generate(data, 3, _control=control)

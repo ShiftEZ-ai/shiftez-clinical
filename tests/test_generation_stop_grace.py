@@ -173,7 +173,9 @@ def test_stop_grace_expiry_keeps_checked_incumbent_without_score(h, monkeypatch,
     assert result['additions'] and result['score'] is None
     assert result['score_completed'] is False and not result['optimality_proven']
     assert result['search_stop']['reason'] == 'operator_stop'
-    assert {'allocation_diagnostics', 'objective_components', 'declined_wishes'} <= result.keys()
+    assert 'allocation_diagnostics' in result
+    assert ('objective_components' in result) is (phase == 'summary')
+    assert ('declined_wishes' in result) is (phase == 'summary')
     after = deepcopy(data)
     for addition in result['additions']:
         next(s for s in after['shifts'] if s['id'] == addition['shift_id'])['participants'].append(addition['participant'])
