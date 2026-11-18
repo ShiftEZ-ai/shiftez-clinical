@@ -1361,7 +1361,7 @@ def create_workspace(db, actor, command, settings):
                      'repair_unavailable': True, 'repair_conflicts': True}), settings)
     # Published rotas and other drafts on these days: the client warns and offers the ways out (schedule.overlaps).
     from apps.api.workspace_baselines import attach as attach_baseline, projection as baseline_projection
-    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)))
+    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)), baseline=baseline)
     return {"workspace": workspace_value, "baseline": baseline_projection(baseline),
             "snapshot_hash": baseline.payload_hash, "validation": result, 'setup': setup, 'template_skipped': skipped_people,
             'overlaps': schedule.overlaps(db, workspace.department_id, workspace)}
