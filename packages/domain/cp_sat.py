@@ -131,7 +131,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
             stop_message = SCORE_OPTIMISATION_UNFINISHED
         if (saved := (result.get('summary') or {}).get('score_saved')) is not None:
             saved['score_completed'] = False
-    if stop_message:
+    if stop_message and stop_message not in (result.get('message') or ''):
         result['message'] = ' '.join(filter(None, (result.get('message'), stop_message)))
     control.phase(None)
     result['solver_status'] = solver_status(result)
@@ -1890,6 +1890,9 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     def complete_score(partial):
         """Evaluate derived score variables at fixed coverage decisions, keeping a valid full-model hint."""
         control.check()
+        if control.stopped and snapshot.get('_group_witness_population') is not None:
+            # Leave the grace for group validation and scoring.
+            return None, cp_model.UNKNOWN
         completed = model.clone()
         completed.clear_objective()
         completed.clear_hints()

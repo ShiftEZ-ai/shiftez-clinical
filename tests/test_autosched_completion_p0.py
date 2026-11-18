@@ -184,7 +184,8 @@ def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
     assert data == before
 
 
-def test_slow_default_completion_preserves_stopped_incumbent(h, clock, monkeypatch):
+@pytest.fixture
+def slow_default_completion(h, clock, monkeypatch):
     h.policy({'kind': 'restriction'}, severity='advisory')
     data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     update, interrupted = {}, threading.Event()
@@ -210,10 +211,41 @@ def test_slow_default_completion_preserves_stopped_incumbent(h, clock, monkeypat
         return original(simulated, model, tier)
 
     monkeypatch.setattr(control, 'solve', solve)
+    return data, control
+
+
+def test_slow_default_completion_preserves_stopped_incumbent(slow_default_completion):
+    data, control = slow_default_completion
     result = cp_sat.generate(data, 3, _control=control)
     assert (result['status'], result['solver_status'], result['score_completed']) == ('candidate_feasible', 'FEASIBLE', False)
     assert result['validation']['valid'] and result['additions']
     assert control.completion_spent == 8
+
+
+def test_slow_default_coupled_completion_preserves_stopped_incumbent(slow_default_completion, clock, monkeypatch):
+    from packages.contracts.schemas import PlanningSettingsDefinition
+    from packages.domain import group_generation
+    from packages.domain.generation_outcome import SCORE_OPTIMISATION_UNFINISHED
+    from tests.test_generation_population import scope
+
+    data, control = slow_default_completion
+    data.update(planning_group_id='synthetic', lookahead=PlanningSettingsDefinition().group_lookahead,
+        generation_scope=scope('person_ids', *data['people']),
+        planning_population={s['id']: list(data['people']) for s in data['shifts']})
+
+    def timed_evaluate(snapshot):
+        clock[0] += 1.5
+        return evaluate(snapshot)
+
+    monkeypatch.setattr(group_generation, 'evaluate', timed_evaluate)
+    result = cp_sat.generate(data, 3, _control=control)
+    status = result['status'], result['solver_status'], result['score_completed']
+    assert status == ('candidate_feasible', 'FEASIBLE', False), f"{len(result['additions'])} additions"
+    assert result['validation']['valid'] and result['additions']
+    assert result['proof_scope'] == 'coupled_completion'
+    assert control.stopped and control.stop_deadline == 110
+    assert control.completion_spent == 0 and clock[0] == 103
+    assert result['message'].count(SCORE_OPTIMISATION_UNFINISHED) == 1
 
 
 def test_summary_trials_skip_decoration_without_changing_public_reasons(h, monkeypatch):
