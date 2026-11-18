@@ -85,6 +85,29 @@ def test_published_coverage_uses_issued_type_after_catalogue_change(request, bac
 
 
 @BACKENDS
+def test_published_recheck_flags_tightened_type_minimum_without_rewriting_issued_evidence(request, backend):
+    h = request.getfixturevalue(backend)
+    _, pub, ids = issue(h, (4,))
+    path = f"/api/publications/{pub}/coverage"
+    assert h.get("coordinator", path)["evaluation"]["valid"]
+    before = frozen(h, pub)
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.AssignmentType, h.seed["type"])
+        definition = deepcopy(row.definition)
+        assert definition["requirements"][0]["minimum"] == 1
+        definition["requirements"][0]["minimum"] = 2
+        row.definition = definition
+        row.revision += 1
+        db.get(m.Organisation, h.seed["organisation_id"]).input_revision += 1
+    current = h.get("coordinator", path)["evaluation"]
+    assert not current["valid"]
+    assert any(f["code"] == "COVERAGE_GAP" and f["severity"] == "error"
+               and f["shift_id"] == ids[0] and f["detail"]["required"] == 2
+               and f["message"].startswith("Today's requirement:") for f in current["findings"])
+    assert frozen(h, pub) == before
+
+
+@BACKENDS
 @pytest.mark.parametrize("issued_shape", ["empty", "missing"])
 def test_published_empty_requirement_rows_bind_current_minimum(request, backend, issued_shape):
     h = request.getfixturevalue(backend)

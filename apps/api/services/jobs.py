@@ -705,7 +705,7 @@ def apply_generation(db, actor, command):
     require_application_toolchain(job)
     require_latest_run(db, job)
     before = workspace_content(db, workspace)
-    current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+    current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
                  and currency_match(plan['currency_hint'], currency_hint(db, workspace))

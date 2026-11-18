@@ -9,6 +9,7 @@ from apps.api.db import transaction
 from apps.api.services.job_reads import proposals
 from apps.worker.main import process_one
 from packages.contracts import schemas as s
+from packages.domain.validation import evaluate
 
 
 def run(h, w, sessions=None, population=None):
@@ -223,15 +224,15 @@ def test_planning_groups_over_the_same_sessions_supersede_only_their_own_runs(re
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
-def test_a_mandatory_rule_activated_after_the_run_blocks_the_write_it_would_break(request, backend):
+def test_a_non_safety_mandatory_rule_activated_after_the_run_requires_revalidation(request, backend):
     h = request.getfixturevalue(backend)
     w = h.shift(h.workspace('Synthetic rule after run'), people=[])['workspace']
     job = run(h, w)
-    h.policy({'kind': 'max_duties', 'maximum': 0})  # mandatory: the proposed duty now breaks a hard limit
+    h.policy({'kind': 'max_duties', 'maximum': 0})
     before = h.snapshot(w)
     reply = apply(h, w, job)
-    assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'unresolved'
-    assert reply['reconciliation']['validation_current']
+    assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'revalidation_required'
+    assert not reply['reconciliation']['validation_current']
     assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
     assert h.snapshot(w) == before
     assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['status'] == 'succeeded'
@@ -279,25 +280,91 @@ def test_rules_changed_after_run_retain_even_a_safe_proposal(request, backend, c
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 @pytest.mark.parametrize('non_rule_change', [False, True])
-def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, backend, non_rule_change):
+@pytest.mark.parametrize('rule_change', ['added', 'tightened'])
+def test_apply_uses_frozen_non_safety_mandatory_rules_after_creation(request, backend, non_rule_change, rule_change):
     from apps.api.input_changes import rules_changed
 
     h = request.getfixturevalue(backend)
-    w = h.shift(h.workspace('Synthetic live mandatory guard'), people=[])['workspace']
-    # The draft baseline predates this quota, but the run currency already includes it.
-    h.policy({'kind': 'max_duties', 'maximum': 0})
+    policy = h.policy({'kind': 'max_duties', 'maximum': 1}) if rule_change == 'tightened' else None
+    w = h.shift(h.workspace('Synthetic frozen mandatory guard'), people=[])['workspace']
+    if policy:
+        with transaction(h.app.state.engine, write=True) as db:
+            row = db.get(m.Policy, policy['id'])
+            row.definition = {**row.definition, 'rule': {**row.definition['rule'], 'maximum': 0}}
+            row.revision += 1
+            db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    else:
+        policy = h.policy({'kind': 'max_duties', 'maximum': 0})
     job = run(h, w)
+    before = h.snapshot(w)
+    frozen_rule = next((row for row in before['policies'] if row['id'] == policy['id']), None)
+    if rule_change == 'tightened':
+        assert frozen_rule['definition']['rule']['maximum'] == 1
+    else:
+        assert frozen_rule is None
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Job, job['id']).input_snapshot['policies'] == before['policies']
     if non_rule_change:
-        h.command('coordinator', 'availability.record', {'person_id': h.seed['people'][-1],
+        h.command('coordinator', 'availability.record', {'person_id': job['result']['additions'][0]['participant']['person_id'],
             'kind': 'recorded_leave', 'start': '2026-10-04T00:00:00+03:00',
             'end': '2026-10-05T00:00:00+03:00', 'private_reason': 'Synthetic current person fact'})
     before = h.snapshot(w)
     reply = apply(h, w, job)
-    assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'unresolved'
-    assert reply['reconciliation']['validation_current']
     assert not rules_changed(reply['reconciliation']['changed_facts'])
-    assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
-    assert h.snapshot(w) == before
+    if non_rule_change:
+        assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'unresolved'
+        assert reply['reconciliation']['validation_current']
+        assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
+        assert h.snapshot(w) == before
+    else:
+        assert reply['reconciliation']['status'] == 'applied'
+        assert not reply.get('proposal_retained')
+        assert h.snapshot(w)['shifts'] != before['shifts']
+        assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['status'] == 'applied'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_frozen_non_safety_mandatory_rule_reaches_submit_and_approve(request, backend):
+    h = request.getfixturevalue(backend)
+    policy = h.policy({'kind': 'max_duties', 'maximum': 1})
+    draft = h.shift(h.workspace('Synthetic frozen mandatory review'))['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, policy['id'])
+        row.definition = {**row.definition, 'rule': {**row.definition['rule'], 'maximum': 0}}
+        row.revision += 1
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    assert h.lifecycle(draft, 'validate')['validation']['valid']
+    assert next(row for row in h.snapshot(draft)['policies'] if row['id'] == policy['id'])['definition']['rule']['maximum'] == 1
+    published = h.publish(draft)
+    assert published['workspace']['status'] == 'published'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_stricter_safety_rule_reaches_check_solver_apply_and_approval(request, backend):
+    h = request.getfixturevalue(backend)
+    policy = h.policy({'kind': 'min_rest', 'hours': 8})
+    person = h.seed['people'][0]
+    draft = h.shift(h.workspace('Synthetic strict safety source'), people=[person])['workspace']
+    draft = h.shift(draft, start='2026-10-04T22:00:00+03:00', end='2026-10-05T02:00:00+03:00', people=[])['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, policy['id'])
+        row.definition = {**row.definition, 'rule': {**row.definition['rule'], 'hours': 12}}
+        row.revision += 1
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    checked = h.snapshot(draft)
+    assert next(row for row in checked['policies'] if row['id'] == policy['id'])['definition']['rule']['hours'] == 12
+    first, second = sorted(checked['shifts'], key=lambda row: row['start'])
+    second['participants'] = [{**first['participants'][0], 'start': second['start'], 'end': second['end']}]
+    assert any(f['code'] == 'MIN_REST' and f['severity'] == 'error' for f in evaluate(checked)['findings'])
+    job = run(h, draft)
+    with transaction(h.app.state.engine) as db:
+        job_rule = next(row for row in db.get(m.Job, job['id']).input_snapshot['policies'] if row['id'] == policy['id'])
+    assert job_rule['definition']['rule']['hours'] == 12
+    assert all(row['participant']['person_id'] != person for row in job['result']['additions'] if row['shift_id'] == second['id'])
+    applied = apply(h, draft, job)
+    assert applied['reconciliation']['status'] == 'applied'
+    published = h.publish(applied['workspace'])
+    assert published['workspace']['status'] == 'published'
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

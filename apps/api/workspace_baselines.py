@@ -416,7 +416,7 @@ def _canonical(payload, included):
     return scoped_payload(payload, included)
 
 
-def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
+def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None,
                        validity_baseline=None):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
     def rows(value):
@@ -453,13 +453,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
     live_policies = [policy for policy in active_current_policies
-                     if (s.safety_rule(policy.get("definition") or {}) or include_mandatory
-                         and (policy.get("definition") or {}).get("severity") == "mandatory") and
+                     if s.safety_rule(policy.get("definition") or {}) and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
-    if include_mandatory:
-        replaced = {policy.get("id") for policy in live_policies}
-        frozen_policies = [policy for policy in frozen_policies
-                           if policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})]
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}

@@ -953,7 +953,7 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
@@ -996,14 +996,19 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 for key, ids in (("types", type_ids), ("locations", location_ids), ("services", service_ids), ("people", people_ids)):
                     saved = dict(saved_inputs.get(key) or {})
                     current = catalogue_inputs.get(key) or {}
-                    saved.update({ident: current[ident] for ident in ids if ident in current})
+                    for ident in ids:
+                        if ident in current:
+                            if key in {"locations", "services"}:
+                                saved.setdefault(ident, current[ident])
+                            else:
+                                saved[ident] = current[ident]
                     saved_inputs[key] = saved
                 shared_inputs = saved_inputs
             else:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=mandatory_rules, validity_baseline=validity_baseline)
+                                              validity_baseline=validity_baseline)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
@@ -1325,7 +1330,7 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
-    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'include_fairness', 'include_objectives',
+    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'include_fairness', 'include_objectives',
                                          'include_fairness_history'} or value is None
                                  for key, value in kwargs.items())
     if not supported or not (writer or state and not state['replay']):
@@ -1406,26 +1411,11 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     person_ids = {a["person_id"] for s in result["shifts"] for a in s["participants"]}
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
-    result["locations"] = {r.id: record(r) for r in db.scalars(select(m.Location).where(
-        m.Location.id.in_({s['location_id'] for s in result['shifts']})))}
-    service_ids = {sid for s in result["shifts"] for sid in s["service_ids"]}
-    result["services"] = {r.id: record(r) for r in db.scalars(select(m.Service).where(m.Service.id.in_(service_ids)))}
-    location_ids = set(result["locations"])
-    for location_id in list(location_ids):
-        row = db.get(m.Location, location_id)
-        while row and row.parent_id and row.parent_id not in result["locations"]:
-            row = db.get(m.Location, row.parent_id)
-            result["locations"][row.id] = record(row)
-    pool_ids = {d["resource_pool_id"] for shift in result["shifts"]
-                for d in shift["type_snapshot"]["definition"].get("resources", [])}
-    result["resource_pools"] = {pid: record(db.get(m.ResourcePool, pid)) for pid in pool_ids}
-    calendar_ids = {r["calendar_id"] for r in list(result["locations"].values()) + list(result["resource_pools"].values()) + list(result["services"].values()) if r.get("calendar_id")}
-    result["operating_calendars"] = {cid: record(db.get(m.OperatingCalendar, cid)) for cid in calendar_ids}
-    department_calendar_id = result['department']['operating_calendar_id']
-    if department_calendar_id in data.get('operating_calendars', {}):
-        result['operating_calendars'][department_calendar_id] = json_value(data['operating_calendars'][department_calendar_id])
-    from .services.date_sets import data as date_set_data
-    result['date_sets'] = date_set_data(db, [workspace.department_id])
+    result["locations"] = json_value(data.get("locations") or {})
+    result["services"] = json_value(data.get("services") or {})
+    result["resource_pools"] = json_value(data.get("resource_pools") or {})
+    result["operating_calendars"] = json_value(data.get("operating_calendars") or {})
+    result['date_sets'] = json_value(data.get('date_sets') or {})
     from packages.domain.fairness import offered_intervals
     from packages.domain.reports import METRIC_VERSION
     result["metric_version"] = METRIC_VERSION

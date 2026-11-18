@@ -136,6 +136,38 @@ def test_clinic_calendar_blocks_duties_and_is_preserved_in_publication(h):
         assert cal['id'] in snapshot['operating_calendars']
 
 
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_used_place_and_clinic_stay_frozen_in_draft_and_published_recheck(request, backend):
+    h = request.getfixturevalue(backend)
+    original_calendar = calendar(h)
+    location_id, service_id = h.seed['locations'][0], h.seed['services'][0]
+    service = next(r for r in h.get('admin', '/api/catalogues')['services'] if r['id'] == service_id)
+    service = update(h, 'services', service, calendar_id=original_calendar['id'])
+    draft = h.shift(h.workspace('Frozen used catalogue rows'))['workspace']
+    checked = h.snapshot(draft)
+    frozen_capacity = checked['locations'][location_id]['capacity']
+    closed_calendar = calendar(h, week=[])
+    location = next(r for r in h.get('admin', '/api/catalogues')['locations'] if r['id'] == location_id)
+    location = update(h, 'locations', location, capacity=frozen_capacity + 1)
+    service = update(h, 'services', service, calendar_id=closed_calendar['id'])
+    after = h.snapshot(draft)
+    assert after['locations'][location_id] == checked['locations'][location_id]
+    assert after['services'][service_id] == checked['services'][service_id]
+    assert h.lifecycle(draft, 'validate')['validation']['valid']
+    published = h.publish(draft)
+    path = '/api/publications/' + published['publication_id']
+    evidence = h.get('coordinator', path)['snapshot']
+    for key in ('locations', 'services', 'resource_pools', 'operating_calendars', 'date_sets'):
+        assert evidence[key] == after[key]
+    update(h, 'locations', location, capacity=frozen_capacity + 2)
+    update(h, 'services', service, calendar_id=None)
+    rechecked = h.snapshot(published['workspace'])
+    assert rechecked['locations'][location_id] == checked['locations'][location_id]
+    assert rechecked['services'][service_id] == checked['services'][service_id]
+    assert h.get('coordinator', path + '/coverage')['evaluation']['valid']
+    assert h.get('coordinator', path)['snapshot'] == evidence
+
+
 @pytest.mark.parametrize('change',[{'active':False},{'starts_on':'2026-10-05'},{'ends_on':'2026-10-04'}])
 def test_calendar_effective_lifecycle_is_consumed(h,change):
     cal=calendar(h,**change);attach(h,cal)

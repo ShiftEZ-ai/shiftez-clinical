@@ -31,7 +31,7 @@ def prepare(db, actor, command):
         return selected
     ai, ri = indexes('additions', value.addition_indexes), indexes('removals', value.removal_indexes)
     require(ai or ri, 'NO_ADDITIONS', 'Choose at least one suggestion to apply')
-    current = domain_snapshot(db, workspace, mandatory_rules=True)
+    current = domain_snapshot(db, workspace)
     frozen = job.input_snapshot
     selected = set(selected_session_ids(frozen))
     require(all(result['additions'][i]['shift_id'] in selected for i in ai)
