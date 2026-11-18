@@ -3570,18 +3570,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_override_database_check_has_only_a_lower_point_bound",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_planned_replacement_applies_new_override_and_preserves_published_skip",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_standing_wishes.py::test_submission_keeps_its_check_fresh_while_invalidating_neighbour_allocations[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
