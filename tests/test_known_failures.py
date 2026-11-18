@@ -68,6 +68,13 @@ def test_vanished_node_must_be_deleted_and_skipped_is_not_passed():
     with pytest.raises(ValueError, match="Vanished"):
         check(known, known, [{GREEN: "passed"}])
     assert check(listing(), known, [{GREEN: "passed"}])
+    other = "tests/test_other.py::test_other"
+    selection = {"tests/test_other.py"}
+    assert check(known, known, [{other: "passed"}] * 2, selected_files=selection)
+    with pytest.raises(ValueError, match="Vanished"):
+        check(known, known, [{GREEN: "passed"}] * 2, selected_files={"tests/test_sample.py"})
+    with pytest.raises(ValueError, match="New failures"):
+        check(known, known, [{other: "failed"}] * 2, selected_files=selection)
     with pytest.raises(ValueError, match="did not execute"):
         check(known, known, [{RED: "skipped"}])
 
@@ -242,7 +249,7 @@ def reports(tmp_path):
     for suite, row in plan["suites"].items():
         node = row["shards"][0]["files"][0] + "::test_red"
         for replica in plan["replicas"]:
-            folder = tmp_path / (suite + str(replica))
+            folder = tmp_path / f"ci-test-1-{suite}-1-{replica}"
             folder.mkdir()
             report = folder / "junit.xml"
             xml = ET.Element("testsuite")
@@ -264,7 +271,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path):
     plan = reports(tmp_path)
     runs = ratchet.collect_reports(plan, tmp_path, "fixture", "1")
     assert len(runs) == 2 and len(runs[0]) == 2
-    (tmp_path / "browser2/shard-receipt.json").unlink()
+    (tmp_path / "ci-test-1-browser-1-2/shard-receipt.json").unlink()
     with pytest.raises(ValueError, match="Missing shard"):
         ratchet.collect_reports(plan, tmp_path, "fixture", "1")
 
@@ -272,7 +279,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path):
 @pytest.mark.parametrize("fault", ["wrong-tree", "wrong-run", "changed-junit", "duplicate-shard"])
 def test_wrong_or_duplicate_execution_evidence_never_becomes_green(tmp_path, fault):
     plan = reports(tmp_path)
-    receipt = tmp_path / "unit1/shard-receipt.json"
+    receipt = tmp_path / "ci-test-1-unit-1-1/shard-receipt.json"
     value = json.loads(receipt.read_text())
     if fault == "wrong-tree":
         value["tree"] = "c" * 40
@@ -281,7 +288,7 @@ def test_wrong_or_duplicate_execution_evidence_never_becomes_green(tmp_path, fau
     elif fault == "changed-junit":
         (receipt.parent / "junit.xml").write_text("<testsuite/>")
     else:
-        duplicate = tmp_path / "duplicate"
+        duplicate = tmp_path / "ci-test-1-unit-1-1/reports"
         duplicate.mkdir()
         (duplicate / "shard-receipt.json").write_text(receipt.read_text())
     receipt.write_text(json.dumps(value))
@@ -388,7 +395,9 @@ def test_bootstrap_class_is_checked_against_the_exported_baseline_file(tmp_path,
 def test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py", ".github/scripts/node_census.py", "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
+    for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py",
+                 ".github/scripts/node_census.py", ".github/scripts/latest_reports.py",
+                 "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
         destination = repo / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
