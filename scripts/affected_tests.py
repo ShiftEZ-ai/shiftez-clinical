@@ -262,9 +262,10 @@ def ts_imports(text):
     return result
 
 
-def graph(root):
-    paths = sorted(p for top in ("apps", "packages", "scripts", "tests", "migrations", "support", ".github/scripts")
-                   for p in (root / top).rglob("*.py") if "__pycache__" not in p.parts)
+def graph(root, paths=None):
+    if paths is None:
+        paths = sorted(p for top in ("apps", "packages", "scripts", "tests", "migrations", "support", ".github/scripts")
+                       for p in (root / top).rglob("*.py") if "__pycache__" not in p.parts)
     signature = tuple((p.relative_to(root).as_posix(), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
     return _graph(root, signature)
 
@@ -419,6 +420,21 @@ def mentions(path, test, text, names=True):
             or (path.endswith(".ts") and (f"/assets/{Path(path).stem}.js" in text
                 or re.search(rf"\bimportBundle\(['\"]{re.escape(Path(path).stem)}\.js['\"]\)", text)))
             or (names and any(w in Path(test).stem for w in words)))
+
+
+def direct_test_owners(root, changed, tests):
+    """Use the PR head's tracked sources for direct imports and file references."""
+    tracked = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "*.py"]).decode()
+    sources = [root / name for name in tracked.split("\0") if name]
+    if any(source.is_symlink() or not source.is_file() for source in sources):
+        raise ValueError("Selector source inventory contains a missing or linked file")
+    reverse, texts, _ = graph(root, sources)
+    imports = set().union(*(reverse.get(path, ()) for path in changed))
+    test_texts = {test: texts[test] for test in tests}
+    return (imports & tests) | doc_tests(changed, test_texts) | {
+        test for test, content in test_texts.items()
+        if any(mentions(path, test, content, names=False) for path in changed)
+    }
 
 
 def web_graph():

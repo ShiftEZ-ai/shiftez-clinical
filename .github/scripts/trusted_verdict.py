@@ -14,6 +14,7 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
+from trusted_ci import PR_SMOKE, census_files, pr_scope, settings
 
 
 def git(*args):
@@ -29,9 +30,9 @@ def policy_context(data, kind, candidate):
     return branch, policy.commit(data["before"]) if kind == "push" and branch == "dev" else candidate
 
 
-def assert_inventory(plan, raw_inventory, counts):
+def assert_inventory(plan, raw_inventory, counts, scope=None):
     if plan.get("smoke") is not False or set(plan.get("suites", {})) != {"unit", "browser"}:
-        raise ValueError("Public verdict requires both full functional suites, never smoke")
+        raise ValueError("Public verdict requires both functional suites")
     selected = {"unit": [], "browser": []}
     for row in policy.paths(raw_inventory):
         metadata, _, raw_name = row.partition(b"\t")
@@ -42,12 +43,29 @@ def assert_inventory(plan, raw_inventory, counts):
             raise ValueError("Selected test must be a regular committed file")
         suite = "browser" if name.rsplit("/", 1)[-1].startswith("test_browser") else "unit"
         selected[suite].append(name)
+    partial = "selection" in plan
+    selected_files = set()
     for suite, expected in selected.items():
         shards = plan["suites"][suite]["shards"]
         actual = [path for row in shards for path in row["files"]]
-        if (len(shards) != counts[suite] or not expected or not all(row["files"] for row in shards)
-                or sorted(actual) != sorted(expected)):
+        count_ok = 1 <= len(shards) <= counts[suite] if partial else len(shards) == counts[suite]
+        files_ok = set(actual) <= set(expected) if partial else set(actual) == set(expected)
+        if not count_ok or not files_ok or len(actual) != len(set(actual)) or not all(row["files"] for row in shards):
             raise ValueError("Candidate plan omits, duplicates or misclassifies committed test files")
+        selected_files.update(actual)
+    if partial:
+        if scope is None or plan["replicas"] != [1, 2]:
+            raise ValueError("Partial selection requires an ordinary dev pull request and two replicas")
+        changed, deleted = scope
+        selection = plan["selection"]
+        required = PR_SMOKE | (changed & (set(selected["unit"]) | set(selected["browser"])))
+        if (set(selection) != {"reason", "deleted_test_files"}
+                or selection["deleted_test_files"] != sorted(deleted)
+                or selection["reason"] not in {"affected", "changed-tests-and-smoke"}
+                or not required <= selected_files
+                or selection["reason"] == "changed-tests-and-smoke" and selected_files != required):
+            raise ValueError("Partial selection disagrees with the PR scope or omits required test files")
+    return selected_files
 
 
 def required_producers(raw):
@@ -111,9 +129,15 @@ def main():
     source_tree = policy.tree(candidate)
     if plan["sha"] != candidate or plan["tree"] != source_tree or plan["base_sha"] != base:
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
-    assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
-                     {"unit": int(os.environ["UNIT_COUNT"]), "browser": int(os.environ["BROWSER_COUNT"])})
+    partial = "selection" in plan
+    scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), candidate)
+             if partial and kind == "pull_request" else None)
+    config = settings()
+    selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
+                                      {suite: config[suite + "_shards"] for suite in ("unit", "browser")}, scope)
     if policy.bootstrap(data, kind, base):
+        if partial:
+            raise ValueError("Bootstrap requires the full plan")
         sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
         import make_known_failures as maker
         bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags)
@@ -168,7 +192,7 @@ def main():
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
                 before_nodes=node_census.base_nodes(plan,reports,census_base,os.environ["GITHUB_RUN_ID"],
-                    os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,expected_files)
+                    os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files))
                 ledger=policy.read_file(base,"ci/removed-tests.json")
                 if ledger is None:raise ValueError("Target node-removal ledger is missing")
                 candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch=='dev' else ledger
@@ -188,7 +212,6 @@ def main():
             if os.getenv("GITHUB_STEP_SUMMARY"):
                 with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
                     summary.write("Reviewed skips=" + str(len(allowed_skips)) + "; observed SKIP=" + str(len(skipped)) + "\n")
-            config = policy.decode((TRUSTED / "ci/bootstrap-settings.json").read_bytes())
             sys.argv = [str(TRUSTED / "ci/make_known_failures.py"), "--plan", str(plan_path), "--reports", str(reports),
                         "--output", str(output), "--base-sha", base,
                         "--unstable-limit", str(config["unstable_limit"]),
@@ -197,6 +220,11 @@ def main():
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
             maker.main()
             verdict = policy.decode((output / "verdict.json").read_bytes())
+            if partial:
+                missing_skips = sorted(node for node in allowed_skips if node.split("::", 1)[0] not in selected_files)
+                verdict["not_observed"] = sorted(verdict["not_observed"] + missing_skips)
+                (output / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+                print("Listed nodes outside the PR selection (not observed): " + str(len(verdict["not_observed"])))
             if verdict.get("passed") is not True:
                 raise ValueError("Trusted known-failure comparison refused the evidence")
         finally:

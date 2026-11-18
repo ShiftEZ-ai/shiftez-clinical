@@ -146,26 +146,68 @@ class TwoObservationGateTests(unittest.TestCase):
 
     def test_plan_and_reader_use_two_replicas_on_every_event(self):
         import trusted_ci
-        durations = {"suites": {suite: {"files": {"tests/test_unit.py": 1}} for suite in ("unit", "browser")}}
-        for name in ("test_unit.py", "test_browser_unit.py"):
-            target = self.folder / "tests" / name
+        changed_test = "tests/test_changed.py"
+        direct_owner = "tests/test_direct.py"
+        unrelated = {"tests/test_other.py", "tests/test_browser_other.py"}
+        files = trusted_ci.PR_SMOKE | {changed_test, direct_owner} | unrelated
+        durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
+        for name in files:
+            target = self.folder / name
             target.parent.mkdir(exist_ok=True)
             target.write_text("def test_a(): pass\n")
+        head, base = "a" * 40, "b" * 40
         def source_git(*args):
-            return "tests/test_unit.py\ntests/test_browser_unit.py" if args[0] == "ls-files" else "a" * 40
+            return "\n".join(sorted(files)) if args[0] == "ls-files" else head
         previous = Path.cwd()
         try:
             os.chdir(self.folder)
-            for event in ("pull_request", "merge_group", "workflow_dispatch", "push"):
-                with self.subTest(event=event), patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}), \
+            cases = [("pull_request", "apps/api/settings_extra.py", [], "affected"),
+                     ("pull_request", "apps/api/settings_extra.py", ["full-ci"], None),
+                     ("pull_request", "scripts/tool.py", [], None),
+                     ("pull_request", "test_support/plugin.py", [], None),
+                     ("pull_request", "apps/api/broken.py", [], "changed-tests-and-smoke"),
+                     *((event, "", [], None) for event in ("merge_group", "workflow_dispatch", "push"))]
+            for event, path, labels, reason in cases:
+                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": "dev"},
+                                            "labels": [{"name": label} for label in labels]}}
+                def event_git(*args):
+                    if args[0] == "merge-base":
+                        return base.encode()
+                    return b"" if "--diff-filter=D" in args else (path + "\0" + changed_test + "\0").encode()
+                def selector(root, paths, inventory):
+                    self.assertEqual((root, paths, inventory), (self.folder, sorted([path, changed_test]), files))
+                    if path.endswith("broken.py"):
+                        raise RuntimeError("selector failed")
+                    return {direct_owner}
+                with self.subTest(event=event, path=path, labels=labels), \
+                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "TRUSTED_BOOTSTRAP": "false"}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
-                     patch.object(trusted_ci, "settings", return_value={"unit_shards": 1, "browser_shards": 1}), \
+                     patch.object(trusted_ci, "settings", return_value={"unit_shards": 3, "browser_shards": 2}), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
+                     patch.object(trusted_ci.subprocess, "check_output", return_value=head), \
+                     patch.object(trusted_ci.policy, "git", side_effect=event_git), \
+                     patch.object(trusted_ci.policy, "event", return_value=payload), \
+                     patch.object(trusted_ci.policy, "read_file", return_value=b"x = 1\n"), \
+                     patch.object(trusted_ci.policy, "control_inventory", return_value={"helpers": {"test_support/plugin.py"}, "product_imports": set()}), \
+                     patch.object(trusted_ci.runpy, "run_path", return_value={"direct_test_owners": selector}) as load_selector, \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    self.assertEqual(maker.context("a" * 40)["replicas"], [1, 2])
-                    self.assertEqual(trusted_ci.plan("a" * 40, False)["replicas"], [1, 2])
+                    self.assertEqual(maker.context(base)["replicas"], [1, 2])
+                    plan = trusted_ci.plan(base, False)
+                    self.assertEqual(plan["replicas"], [1, 2])
+                    actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
+                    if reason is None:
+                        self.assertNotIn("selection", plan)
+                        self.assertEqual(actual, files)
+                        load_selector.assert_not_called()
+                    else:
+                        self.assertEqual(plan["selection"], {"reason": reason, "deleted_test_files": []})
+                        expected = trusted_ci.PR_SMOKE | {changed_test}
+                        if reason == "affected":
+                            expected.add(direct_owner)
+                        self.assertEqual(actual, expected)
+                        self.assertEqual(trusted_ci.census_files(plan, files), expected)
         finally:
             os.chdir(previous)
 

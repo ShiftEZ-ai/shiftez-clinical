@@ -247,6 +247,15 @@ def pytest_runtest_makereport(item, call):
         omitted["suites"]["unit"]["shards"][0]["files"] = []
         with self.assertRaises(ValueError): verifier.assert_inventory(omitted, rows, {"unit": 1, "browser": 1})
         with self.assertRaises(ValueError): verifier.assert_inventory(plan, rows.replace(b"100644", b"120000", 1), {"unit": 1, "browser": 1})
+        partial = {**plan, "replicas": [1, 2], "selection": {"reason": "changed-tests-and-smoke", "deleted_test_files": []}}
+        rows += b"100644 blob " + b"c" * 40 + b"\ttests/test_unobserved.py\0"
+        with patch.object(verifier, "PR_SMOKE", {"tests/test_browser_a.py"}):
+            self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, ({"tests/test_a.py"}, set())),
+                             {"tests/test_a.py", "tests/test_browser_a.py"})
+            with self.assertRaisesRegex(ValueError, "ordinary dev pull request"):
+                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2})
+            with self.assertRaisesRegex(ValueError, "omits required test files"):
+                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, ({"tests/test_unobserved.py"}, set()))
 
     def test_computed_conftest_attack_refused(self):
         attack = b'''import sys
@@ -407,7 +416,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             folder = Path(temporary).resolve()
             trusted_root = folder / "trusted"
             (trusted_root / "ci").mkdir(parents=True)
-            (trusted_root / "ci/bootstrap-settings.json").write_text(json.dumps({"unstable_limit":80,"unstable_issue":1,"unstable_expires_on":"2099-01-01","cleanup_issue":1}))
+            config = {"unit_shards": 1, "browser_shards": 1, "unstable_limit": 80, "unstable_issue": 1,
+                      "unstable_expires_on": "2099-01-01", "cleanup_issue": 1}
             self.assertTrue(folder.is_relative_to(scratch_root))
             plan_file, reports, output = folder / "plan.json", folder / "reports", folder / "output"
             reports.mkdir()
@@ -446,6 +456,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                    "CANDIDATE_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch, "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
                    "UNIT_COUNT": "1", "BROWSER_COUNT": "1", "GITHUB_RUN_ID":"1", "GITHUB_RUN_ATTEMPT":"1"}
             with patch.object(node_census,"base_nodes",return_value={"tests/test_a.py::test_a","tests/test_browser_a.py::test_a"}), patch.object(node_census,"removed_nodes",return_value=set()), patch.object(node_census,"emit"), patch.object(verifier, "TRUSTED", trusted_root), patch.object(canaries, "verify_directory"), patch.object(sys, "argv", argv), patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, env), \
+                 patch.object(verifier, "settings", return_value=config), \
                  patch.dict(sys.modules, {"make_known_failures": maker}), patch.object(verifier, "git", side_effect=fake_git), \
                  patch.object(policy, "git", fake_git), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or trusted) as fetched, \
                  patch.object(policy, "accepted_dev_commit", return_value=base), \

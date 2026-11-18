@@ -18,8 +18,8 @@ jobs:
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
       unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
       browser_matrix: ${{ steps.plan.outputs.browser_matrix }}
-      unit_count: ${{ steps.select.outputs.unit_count }}
-      browser_count: ${{ steps.select.outputs.browser_count }}
+      unit_count: ${{ steps.plan.outputs.unit_count || steps.select.outputs.unit_count }}
+      browser_count: ${{ steps.plan.outputs.browser_count || steps.select.outputs.browser_count }}
       replicas: ${{ steps.plan.outputs.replicas }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
       census_base_sha: ${{ steps.context.outputs.census_base_sha }}
@@ -106,7 +106,7 @@ jobs:
       run: |
         python scripts/build_web.py
         python scripts/compiled_client.py stamp
-    - name: Plan all unit and browser files by committed duration
+    - name: Plan unit and browser shards by committed duration
       id: plan
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
@@ -339,6 +339,8 @@ jobs:
     - synchronize
     - reopened
     - ready_for_review
+    - labeled
+    - unlabeled
   merge_group:
     types:
     - checks_requested
