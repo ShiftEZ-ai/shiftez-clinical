@@ -258,7 +258,7 @@ def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser")):
     for suite, row in plan["suites"].items():
         node = row["shards"][0]["files"][0] + "::test_red"
         for replica in plan["replicas"]:
-            folder = tmp_path / (suite + str(replica))
+            folder = tmp_path / f"ci-test-1-{suite}-1-{replica}"
             folder.mkdir(parents=True)
             report = folder / "junit.xml"
             xml = ET.Element("testsuite")
@@ -292,18 +292,22 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
         with pytest.raises(ValueError, match=reason):
             check(known, known, split, group=True, recovered={RED: red}, product_errors={RED})
 
+    (tmp_path / "ci-test-1-browser-1-2/shard-receipt.json").unlink()
+    with pytest.raises(ValueError, match="Missing shard"):
+        collect()
+
     monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
     monkeypatch.setattr(ratchet, "at_revision", lambda revision: listing())
     group = tmp_path / "group"
     group_plan = reports(group, replicas=(1,), red_suites=("unit",))
     output = tmp_path / "verdict"
-    group_collect = partial(ratchet.collect_reports, group_plan, group, "fixture", "1", output)
+    group_collect = partial(ratchet.collect_reports, group_plan, group, "fixture", "2", output)
     with pytest.raises(ValueError, match="Missing merge-group retry evidence"):
         group_collect()
     without_retry = group_collect(listed={RED})
     assert without_retry[0][RED] == "failed"
     assert check(listing([RED]), listing([RED]), without_retry, group=True)
-    folder = group / "unit1"
+    folder = group / "ci-test-1-unit-1-1"
     receipt = folder / "shard-receipt.json"
     evidence = json.loads(receipt.read_text())
     retry = folder / "junit-retry.xml"
@@ -374,7 +378,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Missing or changed shard evidence"):
         group_collect()
     receipt.write_text(json.dumps(original))
-    (group / "browser1/shard-receipt.json").unlink()
+    (group / "ci-test-1-browser-1-1/shard-receipt.json").unlink()
     with pytest.raises(ValueError, match="Missing shard"):
         group_collect()
 
@@ -386,7 +390,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
 @pytest.mark.parametrize("fault", ["wrong-tree", "wrong-run", "changed-junit", "duplicate-shard"])
 def test_wrong_or_duplicate_execution_evidence_never_becomes_green(tmp_path, fault):
     plan = reports(tmp_path)
-    receipt = tmp_path / "unit1/shard-receipt.json"
+    receipt = tmp_path / "ci-test-1-unit-1-1/shard-receipt.json"
     value = json.loads(receipt.read_text())
     if fault == "wrong-tree":
         value["tree"] = "c" * 40
@@ -395,7 +399,7 @@ def test_wrong_or_duplicate_execution_evidence_never_becomes_green(tmp_path, fau
     elif fault == "changed-junit":
         (receipt.parent / "junit.xml").write_text("<testsuite/>")
     else:
-        duplicate = tmp_path / "duplicate"
+        duplicate = tmp_path / "ci-test-1-unit-1-1/reports"
         duplicate.mkdir()
         (duplicate / "shard-receipt.json").write_text(receipt.read_text())
     receipt.write_text(json.dumps(value))
@@ -502,7 +506,9 @@ def test_bootstrap_class_is_checked_against_the_exported_baseline_file(tmp_path,
 def test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py", ".github/scripts/node_census.py", "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
+    for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py",
+                 ".github/scripts/node_census.py", ".github/scripts/latest_reports.py",
+                 "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
         destination = repo / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)

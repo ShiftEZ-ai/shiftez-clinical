@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
 from canary_evidence import collection_error, failed_nodes, node as report_node, outcome as report_outcome, recovered_nodes, report_cases
+from latest_reports import planned_shards, producing_attempt
 
 KNOWN = "ci/known-failures.json"
 BASE_NODE = r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py::(?:[A-Za-z_][A-Za-z0-9_]*::)*test_[A-Za-z0-9_]+"
@@ -201,14 +202,12 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
             raise ValueError("Entry class disagrees with the frozen baseline input")
 
 
-def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None):
-    group = os.getenv("GITHUB_EVENT_NAME") == "merge_group" and not plan.get("smoke")
+def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False):
+    group = not historical_capture and os.getenv("GITHUB_EVENT_NAME") == "merge_group" and not plan.get("smoke")
     if group and listed is None:
         listed = listed_nodes(at_revision(plan["sha"]))
     recoveries = []
-    expected = {(suite, index, replica)
-                for suite, row in plan["suites"].items()
-                for index in range(1, len(row["shards"]) + 1) for replica in plan["replicas"]}
+    expected = planned_shards(plan)
     seen, runs = set(), {replica: {} for replica in plan["replicas"]}
     for path in sorted(directory.rglob("shard-receipt.json")):
         receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
@@ -216,7 +215,9 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
         if (receipt.get("schema") != 1 or type(receipt["shard"]) is not int or type(receipt["replica"]) is not int
                 or identity not in expected or identity in seen or receipt["sha"] != plan["sha"]
                 or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != digest(plan)
-                or receipt["run_id"] != run_id or receipt["run_attempt"] != run_attempt):
+                or receipt["run_id"] != run_id
+                or receipt["run_attempt"] != (run_attempt if historical_capture else
+                                              producing_attempt(directory, path, identity, run_attempt))):
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
         seen.add(identity)
         suite, index, replica = identity

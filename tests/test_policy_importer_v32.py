@@ -50,7 +50,7 @@ class PublicV32Cases(unittest.TestCase):
         for suite,row in self.plan["suites"].items():
             stem=row["shards"][0]["files"][0]
             for replica in self.plan['replicas']:
-                folder=self.reports/(suite+str(replica));folder.mkdir(exist_ok=True)
+                folder=self.reports/f"ci-test-1-{suite}-1-{replica}";folder.mkdir(exist_ok=True)
                 node=stem+"::test_case"
                 report=folder/"junit.xml"
                 outcome='<error message="synthetic setup error">synthetic</error>' if error and suite=="unit" else ''
@@ -239,15 +239,15 @@ class PublicV32Cases(unittest.TestCase):
         with self.assertRaises(ValueError):importer.validate_capture(self.capture,self.root)
 
     def test_stop2_duplicate_replica_is_refused(self):
-        self.write_reports();path=self.reports/"unit2/shard-receipt.json";data=json.loads(path.read_text());data["replica"]=1;path.write_text(json.dumps(data))
+        self.write_reports();path=self.reports/"ci-test-1-unit-1-2/shard-receipt.json";data=json.loads(path.read_text());data["replica"]=1;path.write_text(json.dumps(data))
         with self.assertRaises(ValueError):importer.import_runs(self.capture,self.plan,self.reports,self.root,maker)
 
     def test_stop2_missing_replica_is_refused(self):
-        self.write_reports();(self.reports/"unit2/shard-receipt.json").rename(self.reports/"unit2/held.json")
+        self.write_reports();(self.reports/"ci-test-1-unit-1-2/shard-receipt.json").rename(self.reports/"ci-test-1-unit-1-2/held.json")
         with self.assertRaises(ValueError):importer.import_runs(self.capture,self.plan,self.reports,self.root,maker)
 
     def test_stop2_wrong_run_receipt_is_refused(self):
-        self.write_reports();path=self.reports/"unit1/shard-receipt.json";data=json.loads(path.read_text());data["run_id"]="11";path.write_text(json.dumps(data))
+        self.write_reports();path=self.reports/"ci-test-1-unit-1-1/shard-receipt.json";data=json.loads(path.read_text());data["run_id"]="11";path.write_text(json.dumps(data))
         with self.assertRaises(ValueError):importer.import_runs(self.capture,self.plan,self.reports,self.root,maker)
 
     def test_stop2_wrong_root_tree_is_refused(self):
@@ -255,7 +255,7 @@ class PublicV32Cases(unittest.TestCase):
         with self.assertRaises(ValueError):importer.import_runs(self.capture,plan,self.reports,self.root,maker)
 
     def test_stop2_altered_junit_hash_is_refused(self):
-        self.write_reports();(self.reports/"unit1/junit.xml").write_text('changed')
+        self.write_reports();(self.reports/"ci-test-1-unit-1-1/junit.xml").write_text('changed')
         with self.assertRaises(ValueError):importer.import_runs(self.capture,self.plan,self.reports,self.root,maker)
 
     def test_stop2_root_error_has_own_class_and_replica_metadata(self):
@@ -329,14 +329,14 @@ TestReport.__init__ = conceal
         self.write_reports();expected={'tests/test_unit.py','tests/test_browser_x.py'}
         for suite,row in self.plan['suites'].items():
             for replica in (1,2):
-                folder=self.reports/(suite+str(replica));path=folder/'base-census.json'
+                folder=self.reports/f"ci-test-1-{suite}-1-{replica}";path=folder/'base-census.json'
                 data={'base_sha':'c'*40,'head_sha':self.root['sha'],'run_id':'10','run_attempt':'1','suite':suite,'shard':1,
                       'replica':replica,'files':row['shards'][0]['files'],'nodes':[row['shards'][0]['files'][0]+'::test_case']}
                 path.write_text(json.dumps(data));receipt=folder/'shard-receipt.json';value=json.loads(receipt.read_text())
                 value['base_census_sha256']=hashlib.sha256(path.read_bytes()).hexdigest();receipt.write_text(json.dumps(value))
         nodes=node_census.base_nodes(self.plan,self.reports,'c'*40,'10','1',maker.canonical_node,expected)
         self.assertEqual(len(nodes),2)
-        (self.reports/'unit1/base-census.json').write_text('{}')
+        (self.reports/'ci-test-1-unit-1-1/base-census.json').write_text('{}')
         with self.assertRaises(ValueError):node_census.base_nodes(self.plan,self.reports,'c'*40,'10','1',maker.canonical_node,expected)
 
     def test_class_owner_reason_are_required_and_bound(self):
