@@ -68,7 +68,7 @@ def status_metadata(db, job_id):
             'input_fingerprint': fingerprint}
 
 
-def complete_validation_delta(job, workspace):
+def complete_validation_delta(db, job, workspace):
     """Return the compact terminal-check envelope used by the planner settle path.
 
     The retained projection is the public validation result without private
@@ -77,16 +77,24 @@ def complete_validation_delta(job, workspace):
     """
     if job.kind != 'validation' or job.status != 'succeeded':
         return None
-    result = (job.result_summary or {}).get('result')
+    projection = job.result_summary or {}
+    result = projection.get('result')
     if not isinstance(result, dict):
+        return None
+    checked_revision = result.get('checked_revision')
+    if type(checked_revision) is not int:
         return None
     validation = result.get('validation') if isinstance(result.get('validation'), dict) and 'findings' not in result else result
     if not isinstance(validation, dict) or not isinstance(validation.get('findings'), list) or not isinstance(validation.get('coverage'), list):
         return None
+    from apps.api.snapshots import cheap_fingerprints
+    watermark = validation.get('fingerprint')
+    current = (workspace.status == 'draft' and workspace.archived_at is None and checked_revision == workspace.revision
+               and bool(watermark) and watermark == cheap_fingerprints(
+                   db, [workspace], checks={workspace.id: projection}).get(workspace.id))
     partial = bool(validation.get('scope') or validation.get('checking'))
-    return {'kind': 'complete_check', 'workspace_id': workspace.id, 'revision': workspace.revision,
-            'current_fingerprint': validation.get('fingerprint'), 'partial': partial,
-            'stale': False, 'validation': validation}
+    return {'kind': 'complete_check', 'workspace_id': workspace.id, 'revision': checked_revision,
+            'current_fingerprint': watermark, 'partial': partial, 'stale': not current, 'validation': validation}
 
 
 def result_stale(job, projection, current_fingerprint, source_digest, *, input_fingerprint=...):
