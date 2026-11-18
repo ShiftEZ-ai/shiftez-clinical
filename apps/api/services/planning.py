@@ -240,6 +240,10 @@ def archive(db, actor, command):
                           'allowed_actions': allowed_actions(db, actor, workspace)}}
 
 
+def _check_manifest(manifest):
+    return {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
+
+
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
                _overlap_output=None, final_compute=False):
@@ -333,7 +337,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
         result['score_dependencies'] = score_dependencies(department.generation_defaults)
-    result['input_manifest'] = {k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')}
+    result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
     result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
@@ -647,7 +651,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
             current_manifest = manifest(data)
             require(current_manifest['token'] == data['fingerprint'], 'RECONCILIATION_MISMATCH',
                     'The saved batch differs from the reviewed plan; the proposal is retained', 409)
-            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': {k: current_manifest[k] for k in ('format', 'token', 'components', 'dirty_hint')}}
+            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': _check_manifest(current_manifest)}
             from packages.domain.rota_summary import fix_list_context, remember_fix_list
             result['fix_list_context'] = fix_list_context(data)
             remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [])
@@ -2525,13 +2529,13 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         workspace.submitted_at = m.now()
         workspace.status = "submitted"
         workspace.return_note = None
-        # Submission changes preference reservations, but no other scheduling facts.
-        # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
-        workspace.submitted_fingerprint = (checked_data[0]['fingerprint'] if not checked_data[0]['wishes']
-                                           else fingerprint(db, workspace))
-        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint}
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
+        # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
+        data = domain_snapshot(db, workspace) if checked_data[0]['wishes'] else checked_data[0]
+        workspace.submitted_fingerprint = data['fingerprint']
+        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint,
+                                'input_manifest': _check_manifest(data['input_manifest'])}
     elif action == "approve":
         require(workspace.status == "submitted", "WORKFLOW_STATE", "Only a submitted candidate can be approved", 409)
         fp = validation[1]['fingerprint'] if validation is not None else fingerprint(db, workspace)
@@ -2653,6 +2657,13 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .generation_resume import clear_generation_resume
         clear_generation_resume(db, workspace_id=workspace.id)
     db.flush()
+    if action in {'submit', 'approve'} and (manifest := workspace.validation.get('input_manifest')):
+        # Review status changes stamp current sources even when the checked inputs are unchanged.
+        organisation = db.get(m.Organisation, actor.organisation_id)
+        dirty = {**manifest['dirty_hint'], 'input_revision': organisation.input_revision,
+                 'availability_revision': organisation.availability_revision}
+        if dirty != manifest['dirty_hint']:
+            workspace.validation = {**workspace.validation, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
     if action == "approve" and workspace.status == "approved" and db.get(m.Department, workspace.department_id).swap_auto_publish:
         swap = db.scalar(select(m.SwapRequest).where(m.SwapRequest.workspace_id == workspace.id))
         if swap:
