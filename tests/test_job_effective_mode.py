@@ -111,10 +111,14 @@ def test_job_detail_keeps_unfinished_score_for_capped_candidate(h):
         db.add(job)
         db.flush()
         job_id = job.id
-    result = h.get('coordinator', '/api/jobs/' + job_id)['job']['result']
-    assert result['score_completed'] is False and result['score'] is None
-    assert result['solver_status'] == 'FEASIBLE' and result['change_count'] == 1
-    assert 'summary' not in result
+    detail = h.get('coordinator', '/api/jobs/' + job_id)['job']['result']
+    jobs = h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'])['jobs']
+    compact = next(job['result'] for job in jobs if job['id'] == job_id)
+    for result in (detail, compact):
+        assert (result['status'], result['solver_status']) == ('candidate_feasible', 'FEASIBLE')
+        assert result['score_completed'] is False and result['score'] is None
+    assert compact['change_count'] == 1
+    assert 'score_saved' not in (compact.get('summary') or {})
 
 
 def test_job_result_metadata_keeps_the_applied_revision_for_undo_in_recent_runs():
