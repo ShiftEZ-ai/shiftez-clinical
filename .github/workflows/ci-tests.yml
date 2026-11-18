@@ -6,6 +6,7 @@ jobs:
     name: ${{ inputs.suite }}
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
@@ -13,6 +14,8 @@ jobs:
       PW_TRACE_DIR: .run/traces
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
       SUITE: ${{ inputs.suite }}
+      CI_UNIT_WORKERS: ${{ vars.CI_UNIT_WORKERS }}
+      CI_BROWSER_WORKERS: ${{ vars.CI_BROWSER_WORKERS }}
       SHARD_INDEX: ${{ inputs.shard }}
       UNIT_COUNT: ${{ inputs.unit_count }}
       BROWSER_COUNT: ${{ inputs.browser_count }}
@@ -87,7 +90,7 @@ jobs:
         submodules: false
         lfs: false
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'pull_request'
+      id: dependency-cache
       with:
         path: |-
           ~/.cache/pip
@@ -133,6 +136,8 @@ jobs:
             connections = db.execute('SHOW max_connections').fetchone()[0]
             if int(connections) < 100:
                 raise SystemExit('Postgres requires max_connections >= 100')
+            if not db.execute('SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user').fetchone()[0]:
+                raise SystemExit('Postgres must allow disposable worker databases')
         evidence = {'runner_environment': os.environ['HOSTED_KIND'], 'cpu': os.cpu_count(),
                     'platform': platform.platform(), 'postgres_connect_seconds': time.monotonic() - started,
                     'postgres_max_connections': int(connections), 'meminfo': Path('/proc/meminfo').read_text()}
@@ -155,7 +160,7 @@ jobs:
         if-no-files-found: error
         retention-days: 7
     - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'merge_group' || github.event_name == 'push'
+      if: (github.event_name == 'merge_group' || github.event_name == 'push') && inputs.suite == 'browser' && inputs.shard == 1 && inputs.replica == 1 && steps.dependency-cache.outputs.cache-hit != 'true'
       with:
         path: |-
           ~/.cache/pip
