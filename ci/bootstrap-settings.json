@@ -2,6 +2,7 @@
   "schema": 1,
   "unit_shards": 25,
   "browser_shards": 18,
+  "merge_group_shards": {"unit_shards": 17, "browser_shards": 20},
   "unstable_limit": 80,
   "unstable_issue": null,
   "unstable_expires_on": null,
