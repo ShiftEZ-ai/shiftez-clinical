@@ -631,6 +631,11 @@ def job_record(row, *, include_result=True, include_events=False, include_progre
         value['result'] = job_result_summary(result)
     else:
         result = value['result'] = job_result_metadata(result)
+        manifest = (result or {}).get('generation_manifest')
+        retained = manifest.get('result') if isinstance(manifest, dict) else None
+        if isinstance(retained, dict):
+            if (count := candidate_evidence_count(retained.get(CANDIDATE_EVIDENCE_REF))) is not None:
+                result['candidate_evidence_count'] = count
     if error_detail is not None:
         value['error_detail'] = error_detail
         if isinstance(value['result'], dict):

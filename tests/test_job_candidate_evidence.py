@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 from alembic import command
-from sqlalchemy import inspect, select
+from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.orm import Session
 
 from apps.api import models as m
@@ -144,3 +144,80 @@ def test_worker_completion_binds_evidence_under_its_lease(request, backend):
         assert list(db.scalars(stored)) == rows
     page = h.get('coordinator', f'/api/jobs/{job_id}/evidence?shift_id=clinic')
     assert page['candidates'] == rows and page['total'] == 2 and page['eligible'] == 1
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_worker_evidence_matches_insert_and_rolls_back(request, backend):
+    h = request.getfixturevalue(backend)
+    engine = h.app.state.engine
+    job_id = generation_job(h)
+    claim = retry_write(engine, claim_job)
+    rows = [
+        {'shift_id': 'clinic', 'person_id': 'first', 'exclusions': []},
+        {'shift_id': None, 'person_id': 'second', 'exclusions': [{'code': 'UNAVAILABLE',
+                                                               'detail': 'line\n\t\\ "\u2603"'}]},
+        {'person_id': 'third', 'exclusions': [], 'eligible': False},
+    ]
+    proposal = {'status': 'candidate_feasible', 'input_fingerprint': claim['input']['fingerprint'],
+                'additions': [], 'removals': [], 'candidate_evidence': rows}
+    evidence = m.JobCandidateEvidence
+    stored = select(evidence.ordinal, evidence.shift_id, evidence.payload).where(
+        evidence.job_id == job_id).order_by(evidence.ordinal)
+    with transaction(engine, write=True) as db:
+        job = db.get(m.Job, job_id)
+        before = job.result, job.input_snapshot
+        with db.begin_nested() as reference_write:
+            db.connection().execute(insert(evidence.__table__), [
+                {'job_id': job_id, 'ordinal': index, 'shift_id': row.get('shift_id'), 'payload': row}
+                for index, row in enumerate(rows)])
+            reference = db.execute(stored).all()
+            reference_write.rollback()
+
+    evidence_inserts = []
+
+    @event.listens_for(engine, 'before_cursor_execute')
+    def observe_insert(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.startswith('INSERT INTO job_candidate_evidence '):
+            evidence_inserts.append(statement)
+
+    def fail_after_finish(db):
+        assert finish_job(db, claim, proposal, None)
+        db.flush()
+        assert db.get(m.Job, job_id).status == 'succeeded'
+        assert db.execute(stored).all() == reference
+        raise RuntimeError('forced completion failure')
+
+    with pytest.raises(RuntimeError, match='forced completion failure'):
+        retry_write(engine, fail_after_finish)
+    with transaction(engine) as db:
+        job = db.get(m.Job, job_id)
+        assert job.status == 'running' and job.completed_at is None
+        assert (job.result, job.input_snapshot) == before
+        assert db.execute(stored).all() == []
+
+    assert retry_write(engine, lambda db: finish_job(db, claim, proposal, None))
+    with transaction(engine) as db:
+        job = db.get(m.Job, job_id)
+        actual = db.execute(stored).all()
+        assert actual == reference
+        assert actual == [(index, row.get('shift_id'), row) for index, row in enumerate(rows)]
+        expected_digest = digest([row.payload for row in reference])
+        assert job.result[CANDIDATE_EVIDENCE_REF]['digest'] == expected_digest
+        assert job.input_snapshot['generation_manifest']['result'][CANDIDATE_EVIDENCE_REF]['digest'] == expected_digest
+    assert len(evidence_inserts) == (2 if backend == 'h' else 0)
+
+
+def test_job_list_reports_stored_candidate_evidence_count(h):
+    engine = h.app.state.engine
+    job_id = generation_job(h)
+    claim = retry_write(engine, claim_job)
+    rows = [{'shift_id': 'clinic', 'person_id': str(index), 'exclusions': []} for index in range(2)]
+    proposal = {'status': 'candidate_feasible', 'input_fingerprint': claim['input']['fingerprint'],
+                'additions': [], 'removals': [], 'candidate_evidence': rows}
+    assert retry_write(engine, lambda db: finish_job(db, claim, proposal, None))
+
+    evidence = m.JobCandidateEvidence
+    with transaction(engine) as db:
+        stored_count = db.scalar(select(func.count()).select_from(evidence).where(evidence.job_id == job_id))
+    listed = next(job for job in h.get('coordinator', '/api/jobs')['jobs'] if job['id'] == job_id)
+    assert listed['result']['candidate_evidence_count'] == stored_count == len(rows)
