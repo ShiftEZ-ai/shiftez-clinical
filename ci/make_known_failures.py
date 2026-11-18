@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
-from canary_evidence import collection_error, node as report_node, outcome as report_outcome, recovered_nodes, report_cases
+from canary_evidence import collection_error, failed_nodes, node as report_node, outcome as report_outcome, recovered_nodes, report_cases
 
 KNOWN = "ci/known-failures.json"
 BASE_NODE = r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py::(?:[A-Za-z_][A-Za-z0-9_]*::)*test_[A-Za-z0-9_]+"
@@ -37,6 +37,14 @@ def canonical_node(node):
 def classes(data):
     return {kind: {row["node"] for row in data["fails"] + data["unstable"] if row["class"] == kind}
             for kind in ("baseline", "cleanup", "unstable", "baseline-error")}
+
+
+def listed_nodes(current):
+    return set().union(*classes(current).values()) if current else set()
+
+
+def retry_nodes(cases, listed):
+    return [node for node in failed_nodes(cases) if canonical_node(node) not in listed]
 
 
 def require_root_runs(runs):
@@ -193,8 +201,10 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
             raise ValueError("Entry class disagrees with the frozen baseline input")
 
 
-def collect_reports(plan, directory, run_id, run_attempt, output=None):
+def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None):
     group = os.getenv("GITHUB_EVENT_NAME") == "merge_group" and not plan.get("smoke")
+    if group and listed is None:
+        listed = listed_nodes(at_revision(plan["sha"]))
     recoveries = []
     expected = {(suite, index, replica)
                 for suite, row in plan["suites"].items()
@@ -219,9 +229,7 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None):
         for row in receipt["reports"]:
             report = path.parent / row["file"]
             cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
-            if group and row["exit_code"] == 1 and "retry" not in row:
-                raise ValueError("Missing merge-group retry evidence: " + row["file"])
-            recovered = recovered_nodes(report, row, cases)
+            recovered = recovered_nodes(report, row, retry_nodes(cases, listed) if group else ())
             for case in cases:
                 node = report_node(case)
                 if node.split("::")[0] not in files:
@@ -391,7 +399,7 @@ def product_error_nodes(directory, *, listed=frozenset(), recovered=None):
         for row in receipt["reports"]:
             report = receipt_path.parent / row["file"]
             cases = list(ET.parse(report).getroot().iter("testcase"))
-            recovered_raw = recovered_nodes(report, row, cases)
+            recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if "retry" in row else ())
             if recovered is not None:
                 recovered.update((canonical_node(report_node(case)), report_outcome(case))
                                  for case in cases if report_node(case) in recovered_raw)
@@ -507,10 +515,6 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
                 raise ValueError("Moving failures to unstable requires two full runs with different results")
     if group and base is not None:
         expected_replicas = 1
-    if group:
-        red = sorted({node for run in runs for node, outcome in run.items() if outcome in {"failed", "error"}})
-        if red:
-            raise ValueError("Tests failed after their merge-group retry: " + ", ".join(red))
     observed = set(runs[0])
     mixed_listed = mixed_listed_nodes(current, runs, recovered if group else ())
     problems = []
@@ -638,7 +642,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
                       if "selection" in plan else None)
-    listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
+    listed = listed_nodes(ctx["current"])
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):

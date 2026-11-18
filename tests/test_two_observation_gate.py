@@ -262,8 +262,8 @@ class TwoObservationGateTests(unittest.TestCase):
             events += [(event, owned, [], "dev", False, False)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events.append(("pull_request", owned, [], "dev", False, False))
-            for index, (event, path, labels, branch, deleted, partial) in enumerate(
-                    case for case in events if case[0] != "merge_group"):
+            events = [case for case in events if case[0] != "merge_group"]
+            for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
                     (self.folder / "tests/test_unreadable.py").mkdir()

@@ -84,14 +84,15 @@ def failed_nodes(cases):
     return sorted(node(case) for case in cases if outcome(case) in {"failed", "error"})
 
 
-def recovered_nodes(report, evidence, original):
+def recovered_nodes(report, evidence, failures):
     if "retry" not in evidence:
+        if failures:
+            raise ValueError("Missing merge-group retry evidence: " + report.name)
         return set()
     retry = evidence["retry"]
     cases = report_cases(retry_path(report, retry), retry)
-    failures = failed_nodes(original)
     if not failures or sorted(node(case) for case in cases) != failures:
-        raise ValueError("Retry must execute exactly the first-attempt failed nodes")
+        raise ValueError("Retry must execute exactly the unlisted first-attempt failed nodes")
     return {node(case) for case in cases if outcome(case) == "passed"}
 
 

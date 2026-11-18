@@ -290,7 +290,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
 
 
-def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, partial=False):
+def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, partial=False, listed=frozenset()):
     def attempt(selected, path, options, parallelism, before, *, partial=False):
         code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
         files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
@@ -298,10 +298,14 @@ def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, 
 
     first = attempt(targets, report, extra, workers, base_targets, partial=partial)
     if first["exit_code"] == 1 and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        from make_known_failures import retry_nodes
+
         original = canaries.report_cases(report, first)
-        path = report.with_name(report.stem + "-retry.xml")
-        first["retry"] = attempt(canaries.failed_nodes(original), path, [], "0", None)
-        canaries.recovered_nodes(report, first, original)
+        failures = retry_nodes(original, listed)
+        if failures:
+            path = report.with_name(report.stem + "-retry.xml")
+            first["retry"] = attempt(failures, path, [], "0", None)
+            canaries.recovered_nodes(report, first, failures)
     return first
 
 
@@ -344,6 +348,11 @@ def main():
     workers = os.getenv(f"CI_{args.suite.upper()}_WORKERS", "")
     if not policy.re.fullmatch(r"[1-8]", workers):
         workers = "4"
+    listed = frozenset()
+    if os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        import make_known_failures as maker
+
+        listed = maker.listed_nodes(maker.at_revision(candidate["sha"]))
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
@@ -365,7 +374,7 @@ def main():
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
         receipt["reports"].append(invocation_receipt(
             targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
-            base_targets, partial="selection" in candidate))
+            base_targets, partial="selection" in candidate, listed=listed))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 

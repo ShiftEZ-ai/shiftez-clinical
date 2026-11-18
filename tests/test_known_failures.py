@@ -42,6 +42,11 @@ def check(current, base, runs, **kwargs):
     return ratchet.evaluate(current, base, runs, today=TODAY, **kwargs)
 
 
+def test_merge_group_accepts_a_listed_failure_that_remains_red():
+    known = listing([RED])
+    assert check(known, known, [{RED: "failed", GREEN: "passed"}], group=True)
+
+
 def test_all_known_passes_and_new_failure_fails():
     known = listing([RED])
     assert check(known, known, [{RED: "failed", GREEN: "passed"}])
@@ -283,16 +288,21 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
     for red in ("failed", "error"):
         split = [{**runs[0], RED: "passed"}, {**runs[1], RED: red}]
         assert check(known, known, split, product_errors={RED})
-        with pytest.raises(ValueError, match="failed after their merge-group retry"):
+        reason = "New errors" if red == "error" else "New failures"
+        with pytest.raises(ValueError, match=reason):
             check(known, known, split, group=True, recovered={RED: red}, product_errors={RED})
 
     monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setattr(ratchet, "at_revision", lambda revision: listing())
     group = tmp_path / "group"
     group_plan = reports(group, replicas=(1,), red_suites=("unit",))
     output = tmp_path / "verdict"
     group_collect = partial(ratchet.collect_reports, group_plan, group, "fixture", "1", output)
     with pytest.raises(ValueError, match="Missing merge-group retry evidence"):
         group_collect()
+    without_retry = group_collect(listed={RED})
+    assert without_retry[0][RED] == "failed"
+    assert check(listing([RED]), listing([RED]), without_retry, group=True)
     folder = group / "unit1"
     receipt = folder / "shard-receipt.json"
     evidence = json.loads(receipt.read_text())
@@ -323,6 +333,8 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             with pytest.raises(ValueError, match="Collection error"):
                 group_collect()
         elif outcome == "passed":
+            with pytest.raises(ValueError, match="exactly the unlisted"):
+                group_collect(listed={RED})
             updated = group_collect()
             assert len(updated) == 1 and all(value == "passed" for value in updated[0].values())
             assert json.loads((output / "recovered-tests.json").read_text()) == [
@@ -353,7 +365,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
                 with pytest.raises(ValueError, match="Unexpected retry evidence"):
                     ratchet.recovered_nodes(retry.with_name("junit.xml"), evidence["reports"][0], [])
         else:
-            with pytest.raises(ValueError, match="Tests failed after their merge-group retry"):
+            with pytest.raises(ValueError, match="New failures outside the known-failure list"):
                 check(known, known, group_collect(), group=True)
 
     original = deepcopy(evidence)
