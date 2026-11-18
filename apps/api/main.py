@@ -3687,7 +3687,8 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get("/api/score-imports/{import_id}/check")
     def score_import_check(import_id: str, request: Request):
         from .services import score_check_api
-        with transaction(engine) as db:
+        # Refreshing the check writes gaps and inferred dates. Queue behind other writers before reading the import.
+        with transaction(engine, write=True) as db:
             actor = score_actor_for(request, db)
             return score_check_api.view_check(db, actor, scoped(db, m.ScoreCheckImportBatch, import_id, actor), settings)
 
