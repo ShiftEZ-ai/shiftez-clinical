@@ -159,6 +159,7 @@ jobs:
                     'postgres_max_connections': int(connections), 'meminfo': Path('/proc/meminfo').read_text()}
         Path('.run/reports/setup.json').write_text(json.dumps(evidence, indent=2) + '\n')
         PY
+        ( while :; do date +%s; cat /proc/loadavg; head -1 /proc/stat; cat /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory 2>/dev/null; sleep 15; done > .run/reports/cpu-samples.txt 2>&1 & )
         echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
         python scripts/compiled_client.py
     - name: Run the exact full-suite shard once

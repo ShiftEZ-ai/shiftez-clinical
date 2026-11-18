@@ -158,6 +158,15 @@ class ImporterV34Tests(unittest.TestCase):
         for name in ('ci.yml','ci-tests.yml','working-policy.yml'):
             doc=yaml.load((root/name).read_text(),Loader=yaml.BaseLoader)
             jobs = doc['jobs']
+            if name == 'ci-tests.yml':
+                setup = next(step for step in jobs['tests']['steps']
+                             if step.get('name') == 'Check Postgres and retain runner/setup evidence')
+                self.assertIn(
+                    '( while :; do date +%s; cat /proc/loadavg; head -1 /proc/stat; '
+                    'cat /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory 2>/dev/null; '
+                    'sleep 15; done > .run/reports/cpu-samples.txt 2>&1 & )',
+                    setup['run'].splitlines(),
+                )
             if name == 'ci.yml':
                 self.assertEqual(doc['concurrency']['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
                 self.assertIn("github.event_name == 'schedule' && 'ci-nightly'", doc['concurrency']['group'])
