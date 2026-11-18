@@ -237,7 +237,7 @@ export function openAssignment(shift:Row,assignment:string):boolean{
  *  of two letters or more is a word of the name. Then it says nothing more and is not repeated under the name. */
 export const spells=(code:string,name:string)=>{const words=new Set(name.toLowerCase().split(/[^\p{L}\p{N}]+/u)),own=code.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w=>w.length>1);
   return own.length>0&&own.every(w=>words.has(w));};
-export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;name:(id:string)=>string;code?:(id:string)=>string;refresh:()=>unknown;fresh?:boolean;person?:(p:Row)=>Node|null;
+export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;name:(id:string)=>string;code?:(id:string)=>string;refresh:()=>unknown;fresh?:boolean;kept?:boolean;person?:(p:Row)=>Node|null;
   /** false: the panel around it already says the double bookings. */clash?:boolean}){
   const box=el('div',{class:'wk-session'}),zone=ctx.me.organisation.timezone;
   const marks=[isClosed(shift)?statusChip('Closed'):'',shift.locked?statusChip('Locked'):''].filter(Boolean);
@@ -264,7 +264,9 @@ export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;nam
         partial?el('small',{class:'muted'},partial):''),...[o.person?.(p)].filter((n):n is Node=>!!n)];}):emptyLine('No people assigned'),key.root);
   // Its checks inline (not behind a disclosure): the findings of the rota's last check on this session.
   const found=((o.validation?.findings||[]) as Row[]).filter(f=>f.shift_id===shift.id);
-  box.append(el('h3',{class:'wk-h3'},'Checks'),!o.validation?el('p',{class:'muted'},'Not checked yet'):o.fresh===false?el('p',{class:'muted'},'The rota changed since the last check.'):
+  // While only the window is in (kept), the last check's findings show as such: nothing changed, the rest is loading.
+  box.append(el('h3',{class:'wk-h3'},'Checks'),!o.validation?el('p',{class:'muted'},'Not checked yet'):o.kept?el('div',{},el('p',{class:'muted'},'From the last check'),
+      found.length?issueList(found.map(f=>findingIssue(f,f.person_id?o.name(f.person_id):'')),{limit:12}):''):o.fresh===false?el('p',{class:'muted'},'The rota changed since the last check.'):
     found.length?issueList(found.map(f=>findingIssue(f,f.person_id?o.name(f.person_id):'')),{limit:12}):el('p',{class:'muted'},'Passes every check'));
   return box;
 }
