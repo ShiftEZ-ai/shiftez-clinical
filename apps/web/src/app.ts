@@ -7568,9 +7568,13 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // it was run), Change goes back to setup.
     const line=(parts:(string|Node)[],open:()=>void,label='Change')=>{const change=el('button',{type:'button',class:'link-button','aria-expanded':step===1?String(st().editing):null},label);
       change.addEventListener('click',open);return el('div',{class:'rl-done'},el('span',{class:'grow'},...parts),change);};
-    body.replaceChildren(...(step===1?[line(fillSummary(),()=>{st().editing=!st().editing;drawStep();},st().editing?'Done':'Change'),...(staleNote?[el('p',{class:'auto-stale',role:'status'},icon('alert'),staleNote)]:[]),
-        ...setupNotes,...(st().editing?[fill]:[]),priorities,...(active||st().starting?[el('p',{},button('Show run',showRun,'link-button'))]:review||feedback.querySelector('.auto-outcome')?[el('p',{},button('Back to the result',()=>{st().step=3;drawStep();},'link-button'))]:[])]
-      :[line(review?reviewedSummary(review):[...fillSummary(),cpSat?` · ${presetName()}`:''],()=>{st().step=1;st().editing=true;drawStep();}),feedback,history]));
+    if(step===1)body.replaceChildren(line(fillSummary(),()=>{st().editing=!st().editing;drawStep();},st().editing?'Done':'Change'),...(staleNote?[el('p',{class:'auto-stale',role:'status'},icon('alert'),staleNote)]:[]),
+        ...setupNotes,...(st().editing?[fill]:[]),priorities,...(active||st().starting?[el('p',{},button('Show run',showRun,'link-button'))]:review||feedback.querySelector('.auto-outcome')?[el('p',{},button('Back to the result',()=>{st().step=3;drawStep();},'link-button'))]:[]));
+    else{
+      const summary=line(review?reviewedSummary(review):[...fillSummary(),cpSat?` · ${presetName()}`:''],()=>{st().step=1;st().editing=true;drawStep();});
+      if(feedback.parentNode===body)body.firstChild!.replaceWith(summary);
+      else body.replaceChildren(summary,feedback,history);
+    }
     // The footer holds the one next move: Run; for a proposal Apply (Discard is a quiet link); for a run that stopped
     // because some places cannot be filled, Fill everything else.
     const n=review?changeCount(review.result):0;
@@ -7600,6 +7604,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   if(panel.isConnected)trackStatusFooter(document.querySelector<HTMLElement>('.app-footer'));
   let timer:number|undefined;
   let jobsKey='',loads=0,wasRunning='',queuedPolls=0,polling=false,known=!!st().step;
+  let cancelRun:{job:Row;row:HTMLElement;spacer:HTMLElement}|undefined;
   // A refresh that failed keeps the result on screen under one line, Retry inside; Apply waits for a fresh read (G-46).
   const failed=(e:unknown)=>{if(sessionChanged(e)||!panel.isConnected)return;
     // Nothing shown yet: the panel's wait ends in the failure, with Retry, never in a skeleton left loading (DL-045).
@@ -7718,7 +7723,10 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     if(gone()||mine!==loads)return;
     // Focus inside the run's progress or result stays on the same control across this redraw (WCAG 2.4.3).
     const had=feedback.contains(document.activeElement)?document.activeElement:null,keep=had?focusSpot(feedback,had):null;
-    feedback.replaceChildren();history.replaceChildren();feedback.inert=history.inert=false;feedback.removeAttribute('aria-busy');review=null;continuation=null;shortfall=null;let latestRun:Row|null=null;
+    // Keep Cancel mounted for this run so a status update cannot take away the press or its confirmation.
+    if(cancelRun?.job.id!==liveRunning?.id)cancelRun=undefined;
+    for(const node of [...feedback.childNodes])if(node!==cancelRun?.row)node.remove();
+    history.replaceChildren();feedback.inert=history.inert=false;feedback.removeAttribute('aria-busy');review=null;continuation=null;shortfall=null;let latestRun:Row|null=null;
     if(liveRunning){const running=liveRunning;
       // F-12: a run seen while the panel is open never moves the step the person is on (its own Run already went to
       // Review & apply); only a panel opened on nothing goes straight to the run. Earlier steps offer Show run.
@@ -7728,31 +7736,41 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // SX-20 (SW-16): one clock — the progress below says the time; the head says only the state.
       sub.textContent=`${w.name} · ${running.status==='queued'?'queued':'running'}`;
       // Filling everything else: the first run's reasons stay above its progress (SR-26).
-      if(!checkingRules)feedback.append(...continuedNotes(!!running.diagnostic_proposal));
+      const progress=document.createDocumentFragment();
+      if(!checkingRules)progress.append(...continuedNotes(!!running.diagnostic_proposal));
       // Issues first: what the run's checks found before the search (job.progress.precheck_issues), at once.
-      feedback.append(earlyIssues(running));
+      progress.append(earlyIssues(running));
       // Queued: no claim that a worker is alive or how long it takes; cancelling is always safe (CA-07).
       if(running.status==='queued'){const ops=allowed('system')&&tabsFor('system').some(t=>t.key==='operations');
-        feedback.append(el('p',{class:'muted'},`Queued. Cancelling leaves the draft unchanged.${ops?' ':' If it stays queued, ask an operator to check the scheduler.'}`,
+        progress.append(el('p',{class:'muted'},`Queued. Cancelling leaves the draft unchanged.${ops?' ':' If it stays queued, ask an operator to check the scheduler.'}`,
           ops?el('a',{href:'#system/operations',class:'link-button'},'Scheduler status'):''));}
-      feedback.append(checkingRules?el('p',{role:'status'},running.status==='queued'?'Waiting to start…':`Checking rules · ${elapsed}s elapsed`):generationProgress(running,elapsed,running.diagnostic_proposal,phoneQuery.matches,defaults),
+      progress.append(checkingRules?el('p',{role:'status'},running.status==='queued'?'Waiting to start…':`Checking rules · ${elapsed}s elapsed`):generationProgress(running,elapsed,running.diagnostic_proposal,phoneQuery.matches,defaults),
         // maintenance: edits made meanwhile no longer end the run; the finished proposal is checked against them (A4).
         ...(!checkingRules&&running.status==='running'?[el('p',{class:'muted auto-keep-working'},'You can keep working. Edits are checked against the result when it finishes.')]:[]),
-        ...(checkingRules?[el('progress',{'aria-label':'Rule check in progress'})]:[]),
-        // D76: a queued run offers only Cancel; Stop and keep best and more time once its search is running. Owner (7 Nov
-        // 2026): Stop and keep best is the primary (it keeps the best schedule for review); Cancel discards, so it is the
-        // same-button armed confirm; each says what it does in its "?"; Add time only when minutes can be added.
-        !checkingRules&&cpSat?(()=>{const stopping=!!running.search_control?.stop,searching=running.status==='running'&&!GENERATION_SEARCH_FINISHED_STAGES.includes(running.progress?.stage);
+        ...(checkingRules?[el('progress',{'aria-label':'Rule check in progress'})]:[]));
+      feedback.prepend(progress);
+      // D76: a queued run offers only Cancel; Stop and keep best and more time once its search is running. Owner (7 Nov
+      // 2026): Stop and keep best is the primary (it keeps the best schedule for review); Cancel discards, so it is the
+      // same-button armed confirm; each says what it does in its "?"; Add time only when minutes can be added.
+      if(!checkingRules&&cpSat){
+          const stopping=!!running.search_control?.stop,searching=running.status==='running'&&!GENERATION_SEARCH_FINISHED_STAGES.includes(running.progress?.stage);
           const room=addTimeRoom(running,maxMinutes,Number(defaults.search_minutes)),step=addTimeStep((me!.department as Row).display_settings?.generation_controls,room);
           const stop=button(stopping?'Keeping the best result…':'Stop and keep best',()=>confirmAction('Stop and keep best','Finish with the best proposal found. If none is ready yet, you can continue from the saved inputs; preparation that had not finished runs again.',async reason=>{await command('job.stop_keep_best',{reason},running.id);queuedPolls=0;await load();},'Stop and keep best'),'primary',{disabled:!editable||stopping,why:!editable?TERMS.cannotChangeRota:TERMS.keepBestStopped,'data-run-stop':''});
           // How much time to add is chosen per press, up to the run's ceiling (job.add_time takes any bounded amount); the
           // suggested step is the department's (Configuration › Auto-schedule & scoring › Timing).
           const add=editable&&searching&&!stopping&&room>=AUTO_SCHEDULE_LIMITS.minimum_minutes?button(`Add ${duration(step*60)}`,()=>{const more=timeField('extension_minutes',step,{label:'Time to add',max:room});
               confirmAction('Add search time',`Give this search more time (up to ${duration(room*60)}). Preparation and final checks do not use this time.`,async reason=>{await command('job.add_time',{minutes:more.value(),reason},running.id);queuedPolls=0;await load();},'Add time',more.wrap);},'ghost'):'';
-          const cancel=armed(button('Cancel',async()=>{await command('job.cancel',{reason:'Cancelled from the Auto-schedule panel'},running.id,running.revision);await load();},'ghost run-cancel',{disabled:!editable,why:TERMS.cannotChangeRota,'data-run-stop':'','aria-label':'Cancel auto-schedule'}),'Discard this run?');
-          return el('div',{class:'actions auto-run-actions'},...(running.status==='queued'?[]:[stop,helpButton('About Stop and keep best','Ends the search now and keeps the best schedule found so far for you to review. Nothing changes until you apply it.'),add]),
-            el('span',{class:'grow'}),cancel,helpButton('About Cancel','Stops the run and discards it. The draft stays as it is.'));})()
-        :el('div',{class:'actions'},button(checkingRules?'Cancel check':'Cancel auto-schedule',()=>confirmAction(checkingRules?'Cancel check':'Cancel auto-schedule','Keep the draft unchanged and discard this job’s result.',async reason=>{await command('job.cancel',{reason},running.id,running.revision);await load();},'Confirm',undefined,true),'secondary',{'data-run-stop':''})));
+          if(!cancelRun){
+            const state={job:running,row:el('div',{class:'actions auto-run-actions'}),spacer:el('span',{class:'grow'})};
+            const cancel=armed(button('Cancel',async()=>{await command('job.cancel',{reason:'Cancelled from the Auto-schedule panel'},state.job.id,state.job.revision);await load();},'ghost run-cancel',{disabled:!editable,why:TERMS.cannotChangeRota,'data-run-stop':'','aria-label':'Cancel auto-schedule'}),'Discard this run?');
+            state.row.append(state.spacer,cancel,helpButton('About Cancel','Stops the run and discards it. The draft stays as it is.'));
+            cancelRun=state;
+          }
+          const {row,spacer}=cancelRun;cancelRun.job=running;
+          while(row.firstChild!==spacer)row.firstChild!.remove();
+          if(running.status!=='queued')spacer.before(stop,helpButton('About Stop and keep best','Ends the search now and keeps the best schedule found so far for you to review. Nothing changes until you apply it.'),...(add?[add]:[]));
+          if(row.parentNode!==feedback)feedback.append(row);
+      }else feedback.append(el('div',{class:'actions'},button(checkingRules?'Cancel check':'Cancel auto-schedule',()=>confirmAction(checkingRules?'Cancel check':'Cancel auto-schedule','Keep the draft unchanged and discard this job’s result.',async reason=>{await command('job.cancel',{reason},running.id,running.revision);await load();},'Confirm',undefined,true),'secondary',{'data-run-stop':''})));
     }else if(latestRead){
       const latest=latestRead;latestRun=latest;
       const result=latest.result;
@@ -7888,7 +7906,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
           :button('Review',()=>inspectSchedulingJob(j),'ghost small',{'aria-label':`Review ${what} of ${stamp(j.created_at)}`}));})));
     jobsKey=nextKey;lastSchedulingBody={id:w.id,feedback:[...feedback.childNodes],history:[...history.childNodes]};
     known=true;drawStep();
-    if(keep)refocusSpot(feedback,keep);
+    if(keep&&document.activeElement!==had)refocusSpot(feedback,keep);
   };
   await load(initialJobs);  // the jobs just read above: no second request
   // Opening the panel reads again; a failure says so in the panel (failed), not only in a toast over a skeleton.

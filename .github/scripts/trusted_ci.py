@@ -25,10 +25,17 @@ PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_b
 
 def settings():
     data = policy.decode((TRUSTED / "ci/bootstrap-settings.json").read_bytes())
+    group_shards = data.pop("merge_group_shards", None)
     if (set(data) != {"schema", "unit_shards", "browser_shards", "unstable_limit", "unstable_issue",
                      "unstable_expires_on", "cleanup_issue"} or data["schema"] != 1
             or any(type(data[k]) is not int or data[k] < 1 for k in ("unit_shards", "browser_shards", "unstable_limit"))):
         raise ValueError("Protected bootstrap configuration is invalid")
+    if group_shards is not None:
+        if (not isinstance(group_shards, dict) or set(group_shards) != {"unit_shards", "browser_shards"}
+                or any(type(n) is not int or n < 1 for n in group_shards.values())):
+            raise ValueError("Protected merge-group shard counts are invalid")
+        if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+            data.update(group_shards)
     return data
 
 

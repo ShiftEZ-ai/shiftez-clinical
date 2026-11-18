@@ -1,16 +1,53 @@
 name: CI
 permissions:
   contents: read
+# Portfolio budget: 480 concurrent jobs total, with up to 6 merge groups building.
+# Delivery's admission lock enforces the budget and gives the owner first priority.
+# Manual pushes are rare and only from the owner account.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'schedule' && 'ci-nightly' || format('ci-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   PYTHON_VERSION: 3.13.5
   PIP_DISABLE_PIP_VERSION_CHECK: '1'
 jobs:
+  nightly-budget:
+    name: Nightly capacity
+    if: github.event_name == 'schedule' && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.budget.outputs.admitted }}
+    steps:
+    - name: Require GitHub-hosted execution
+      env:
+        HOSTED_KIND: ${{ runner.environment }}
+      working-directory: .
+      run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: refs/heads/dev
+        path: .trusted-controls
+        fetch-depth: 1
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Check available CI jobs
+      id: budget
+      working-directory: .
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -I .trusted-controls/.github/scripts/nightly_budget.py
   checks:
     name: Checks
-    if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    needs: nightly-budget
+    if: >-
+      always() && !cancelled() && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+      && (github.event_name != 'schedule' || needs['nightly-budget'].result == 'success'
+          && needs['nightly-budget'].outputs.admitted == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -81,12 +118,14 @@ jobs:
       id: context
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
     - name: Plan unit and browser shards by committed duration
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       id: plan
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
         MEASUREMENT: ${{ steps.select.outputs.measurement }}
       run: python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" plan --base-sha "$BASE_SHA" --measurement "$MEASUREMENT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       with:
         name: ci-plan-${{ github.run_attempt }}
         path: candidate/.run/reports/shard-plan.json
@@ -96,31 +135,84 @@ jobs:
     - name: README must remain empty, including the first root run
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/tests/test_readme_empty.py"
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      id: dependency-cache
       with:
         path: |-
-          ~/.cache/pip
-          ~/.npm
+          ${{ runner.temp }}/public-ci-wheels
+          ${{ runner.temp }}/public-ci-npm/_cacache
           ${{ runner.temp }}/runtime-archives
 
           ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
+        key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
     - name: Install the committed runtime pins
       run: |
         python3 .github/scripts/hosted_ci.py runtime --tool python
         python3 .github/scripts/hosted_ci.py runtime --tool node
+    - name: Prepare the hash-locked wheel downloads
+      env:
+        CACHE_HIT: ${{ steps.dependency-cache.outputs.cache-hit }}
+      run: |
+        wheels="$RUNNER_TEMP/public-ci-wheels"
+        if [ "$CACHE_HIT" != true ]; then
+          python3 -m venv "$RUNNER_TEMP/public-ci-venv"
+          "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip download --retries 3 --resume-retries 3 \
+            --require-hashes --only-binary=:all: --dest "$wheels" \
+            -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock \
+            -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
+        fi
+        {
+          printf 'PIP_NO_INDEX=1\nPIP_FIND_LINKS=%s\n' "$wheels"
+          printf 'npm_config_prefer_offline=true\nnpm_config_cache=%s/public-ci-npm\n' "$RUNNER_TEMP"
+        } >> "$GITHUB_ENV"
     - name: Install hash-locked dependencies
       run: |
         python3 -m venv "$RUNNER_TEMP/public-ci-venv"
         "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
         echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
+    - name: Prepare the locked Chromium bundle
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/public-ci-playwright
+      run: python -m playwright install --no-shell chromium
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && steps.dependency-cache.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          ${{ runner.temp }}/public-ci-wheels
+          ${{ runner.temp }}/public-ci-npm/_cacache
+          ${{ runner.temp }}/runtime-archives
+
+          ${{ runner.temp }}/public-ci-playwright
+        key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
+    - name: Archive the shared downloads
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      run: |
+        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-dependencies.tar" runtime-archives public-ci-wheels public-ci-npm/_cacache
+        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      with:
+        name: ci-dependencies-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-dependencies.tar
+        if-no-files-found: error
+        retention-days: 1
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      with:
+        name: ci-browser-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-browser.tar
+        if-no-files-found: error
+        retention-days: 1
     - name: Reject environment and status destination URLs
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
     - name: Build web assets and compiled client modules
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       run: |
         python scripts/build_web.py
         python scripts/compiled_client.py stamp
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       with:
         name: ci-web-${{ github.run_attempt }}
         path: candidate/apps/web/dist/
@@ -129,10 +221,12 @@ jobs:
   unit:
     name: Unit (${{ matrix.shard }}/${{ needs.checks.outputs.unit_count }}, run ${{ matrix.replica }})
     needs: checks
-    if: needs.checks.result == 'success'
+    if: >-
+      always() && !cancelled() && needs.checks.result == 'success'
+      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 34 || 10 }}
+      max-parallel: ${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.unit_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}
@@ -153,10 +247,12 @@ jobs:
   browser:
     name: Browser (${{ matrix.shard }}/${{ needs.checks.outputs.browser_count }}, run ${{ matrix.replica }})
     needs: checks
-    if: needs.checks.result == 'success'
+    if: >-
+      always() && !cancelled() && needs.checks.result == 'success'
+      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 24 || 8 }}
+      max-parallel: ${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.browser_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}
@@ -183,7 +279,9 @@ jobs:
     - static
     - unit
     - browser
-    if: always()
+    if: >-
+      always() && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      && (github.event_name != 'schedule' || needs.checks.result != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -242,7 +340,11 @@ jobs:
         retention-days: 7
   static:
     name: Static checks
-    if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    needs: checks
+    if: >-
+      always() && !cancelled() && needs.checks.result == 'success'
+      && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -253,7 +355,7 @@ jobs:
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: refs/heads/dev
+        ref: ${{ needs.checks.outputs.trusted_sha }}
         path: .trusted-controls
         fetch-depth: 0
         persist-credentials: false
@@ -295,15 +397,17 @@ jobs:
         persist-credentials: false
         submodules: false
         lfs: false
-    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        path: |-
-          ~/.cache/pip
-          ~/.npm
-          ${{ runner.temp }}/runtime-archives
-
-          ${{ runner.temp }}/public-ci-playwright
-        key: public-ci-${{ github.event_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json') }}
+        name: ci-dependencies-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/hosted-shared
+    - name: Use the shared hash-locked package downloads
+      run: |
+        tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/hosted-shared/ci-dependencies.tar"
+        {
+          printf 'PIP_NO_INDEX=1\nPIP_FIND_LINKS=%s/public-ci-wheels\n' "$RUNNER_TEMP"
+          printf 'npm_config_offline=true\nnpm_config_cache=%s/public-ci-npm\n' "$RUNNER_TEMP"
+        } >> "$GITHUB_ENV"
     - name: Install the committed runtime pins
       run: |
         python3 .github/scripts/hosted_ci.py runtime --tool python
@@ -349,6 +453,7 @@ jobs:
   push:
     branches:
     - preview
+    - dev
 defaults:
   run:
     working-directory: candidate

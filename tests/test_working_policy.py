@@ -527,7 +527,9 @@ class BootstrapControlTests(unittest.TestCase):
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
                 plan, upload = checks[context_index + 1:context_index + 3]
                 self.assertEqual(plan['id'], 'plan')
-                self.assertNotIn('if', plan)
+                cache_only_push = "(github.event_name != 'push' || github.ref != 'refs/heads/dev')"
+                self.assertEqual(plan['if'], cache_only_push)
+                self.assertEqual(upload['if'], cache_only_push)
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
                 self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
                 for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
