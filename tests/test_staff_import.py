@@ -108,6 +108,53 @@ def test_applied_import_cannot_overwrite_later_edits(h, later_edit):
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_staff_import_keeps_leavers_left_and_updates_active_people(request, database):
+    h = request.getfixturevalue(database)
+    _, _, programme = setup_catalogue(h)
+    leaver_id, current_id, *_ = h.seed['people']
+    people = {p['id']: p for p in catalogues(h)['people']}
+    leaver, current = people[leaver_id], people[current_id]
+    h.configure('programme_memberships', {
+        'person_id': leaver_id, 'programme_id': programme,
+        'starts_on': '2026-01-01', 'ends_on': '2026-04-01',
+    })
+    leaver = h.configure('people', {
+        'display_name': leaver['display_name'], 'staff_number': 'LEFT-IMPORT', 'active': False,
+    }, leaver_id, leaver['revision'])['record']
+    before = import_business_state(h)
+
+    credentials = dict(clinics='Minor injuries', skills='Suturing', skill_evidence='Synthetic evidence')
+    result = preview(h, csv_of(
+        row(display_name=leaver['display_name'], staff_number=leaver['staff_number'], title='Attempted update',
+            tags='Imported label', rank='Demo learners', rank_from='2026-10-01',
+            programme='Fellowship', programme_from='2026-10-01', programme_last_day='2027-09-30', **credentials),
+        row(display_name=current['display_name'], title='Imported title', **credentials)))
+    batch = result['batch']
+    reviewed = h.get('coordinator', '/api/staff-imports/' + batch['id'])
+    left, active = reviewed['rows']
+    assert left['person']['id'] == leaver_id and left['person']['action'] == 'left'
+    assert left['person']['left'] is True and left['person']['changes'] == {} and left['errors'] == {}
+    assert left['rank'] is None and left['programme'] is None
+    assert left['clinics']['items'] == left['skills']['items'] == []
+    assert active['person']['action'] == 'update' and 'left' not in active['person']
+    assert reviewed['summary']['people_pending'] == 1 and reviewed['summary']['credentials_pending'] == 2
+
+    applied = apply(h, 'coordinator', batch)
+    assert applied['applied']['updated_people'] == 1
+    applied = apply(h, 'credentialer', applied['batch'])
+    assert applied['applied']['eligibilities'] == applied['applied']['skills'] == 1
+    assert applied['batch']['status'] == 'applied'
+    after = import_business_state(h)
+    people = {p['id']: p for p in after['people']}
+    assert people[leaver_id] == next(p for p in before['people'] if p['id'] == leaver_id)
+    assert people[current_id]['active'] is True and people[current_id]['title'] == 'Imported title'
+    for kind in ('memberships', 'programme_memberships', 'eligibilities', 'capability_grants'):
+        assert [r for r in after[kind] if r['person_id'] == leaver_id] == [
+            r for r in before[kind] if r['person_id'] == leaver_id]
+    assert after['tags'] == before['tags'] and after['tag_members'] == before['tag_members']
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_applied_import_with_stale_revision_is_refused_without_writes(request, database):
     h = request.getfixturevalue(database)
     reviewed = preview(h, csv_of(row(display_name='Applied from another review')))

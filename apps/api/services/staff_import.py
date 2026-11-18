@@ -249,9 +249,6 @@ def plan(db, actor, source, known=None, *, on=None):
         if added:
             changes["tags"] = [value.get("tags") or [], (value.get("tags") or []) + added]
             value["tags"] = changes["tags"][1]
-        if person is not None and not person.active:
-            changes["active"] = [False, True]
-            value["active"] = True
         try:
             s.PersonInput.model_validate(value)
         except ValidationError as exc:
@@ -262,7 +259,6 @@ def plan(db, actor, source, known=None, *, on=None):
                 errors.setdefault(key, problem["msg"].removeprefix("Value error, "))
         if get("email") and get("work_email") and get("email") != get("work_email"):
             errors["work_email"] = "Use one work email address; email and work_email differ"
-        action = "new" if person is None else "update" if changes else "same"
         held = lambda cls: records[cls].get(person.id, []) if person else []  # noqa: E731
         # Rank from a date; other current ranks end that day (a move), like "Give a rank" on People.
         rank = None
@@ -332,8 +328,17 @@ def plan(db, actor, source, known=None, *, on=None):
             errors["skill_evidence"] = "Skills need verification evidence (at least 3 characters)"
         if len(evidence) > 500:
             errors["skill_evidence"] = "Evidence is limited to 500 characters"
+        left = person is not None and not person.active
+        if left:
+            # A staff import cannot rejoin a leaver or change their related records.
+            changes = {}
+            rank = programme = None
+            for part in granted.values():
+                part["items"] = []
+        action = "new" if person is None else "left" if left else "update" if changes else "same"
         out.append({"row_number": number, "data": data, "errors": errors,
-                    "person": {"id": person.id if person else None, "by": by, "action": action, "changes": changes},
+                    "person": {"id": person.id if person else None, "by": by, "action": action,
+                               "changes": changes, **({"left": True} if left else {})},
                     "rank": rank, "programme": programme, "clinics": granted["clinics"], "skills": granted["skills"]})
     return out
 
