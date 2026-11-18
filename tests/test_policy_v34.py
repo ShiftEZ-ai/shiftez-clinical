@@ -15,6 +15,7 @@ sys.path.insert(0,str(HELPERS))
 if not (HELPERS/'hosted_ci.py').is_file():sys.path.insert(0,str(HELPERS.parents[1]/'workflows-next/.github/scripts'))
 import cut_root_measurements as importer
 import working_policy as policy
+import nightly_budget
 
 class ImporterV34Tests(unittest.TestCase):
     def setUp(self):
@@ -73,6 +74,11 @@ class ImporterV34Tests(unittest.TestCase):
             changed=json.loads(json.dumps(new));changed['unstable'][0][field]=value
             self.assertFalse(policy.renewal_only(json.dumps(old).encode(),json.dumps(changed).encode()))
 
+    def test_nightly_requires_19_free_jobs(self):
+        for running, admitted in ((0, True), (101, True), (102, False), (120, False)):
+            with self.subTest(running=running):
+                self.assertEqual(nightly_budget.can_start(running), admitted)
+
     def test_pipeline_keeps_default_limits_until_measurement(self):
         # Lower limits require new measured runs in ci/hosted-durations.json.
         durations = Path(__file__).resolve().parents[1] / 'ci/hosted-durations.json'
@@ -89,9 +95,13 @@ class ImporterV34Tests(unittest.TestCase):
             doc=yaml.load((root/name).read_text(),Loader=yaml.BaseLoader)
             jobs = doc['jobs']
             if name == 'ci.yml':
+                self.assertEqual(doc['concurrency']['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
+                self.assertIn("github.event_name == 'schedule' && 'ci-nightly'", doc['concurrency']['group'])
+                self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
+                self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
                 limits = {
-                    'unit': "${{ github.event_name == 'merge_group' && 17 || 10 }}",
-                    'browser': "${{ github.event_name == 'merge_group' && 20 || 8 }}",
+                    'unit': "${{ github.event_name == 'merge_group' && 17 || github.event_name == 'schedule' && 8 || 10 }}",
+                    'browser': "${{ github.event_name == 'merge_group' && 20 || github.event_name == 'schedule' && 10 || 8 }}",
                 }
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')

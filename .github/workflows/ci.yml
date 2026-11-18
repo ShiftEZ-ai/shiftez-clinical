@@ -1,16 +1,53 @@
 name: CI
 permissions:
   contents: read
+# Portfolio budget: 2 merge groups x 39 jobs + 1 dev cache warmer = 79.
+# Delivery's admission lock counts building group jobs first and admits PR runs within the 41-job reserve.
+# Manual pushes are rare and only from the owner account.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'schedule' && 'ci-nightly' || format('ci-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   PYTHON_VERSION: 3.13.5
   PIP_DISABLE_PIP_VERSION_CHECK: '1'
 jobs:
+  nightly-budget:
+    name: Nightly capacity
+    if: github.event_name == 'schedule' && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.budget.outputs.admitted }}
+    steps:
+    - name: Require GitHub-hosted execution
+      env:
+        HOSTED_KIND: ${{ runner.environment }}
+      working-directory: .
+      run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: refs/heads/dev
+        path: .trusted-controls
+        fetch-depth: 1
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Check available CI jobs
+      id: budget
+      working-directory: .
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -I .trusted-controls/.github/scripts/nightly_budget.py
   checks:
     name: Checks
-    if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+    needs: nightly-budget
+    if: >-
+      always() && !cancelled() && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
+      && (github.event_name != 'schedule' || needs['nightly-budget'].result == 'success'
+          && needs['nightly-budget'].outputs.admitted == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -186,7 +223,7 @@ jobs:
     if: needs.checks.result == 'success' && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 17 || 10 }}
+      max-parallel: ${{ github.event_name == 'merge_group' && 17 || github.event_name == 'schedule' && 8 || 10 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.unit_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}
@@ -210,7 +247,7 @@ jobs:
     if: needs.checks.result == 'success' && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 20 || 8 }}
+      max-parallel: ${{ github.event_name == 'merge_group' && 20 || github.event_name == 'schedule' && 10 || 8 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.browser_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}
@@ -237,7 +274,9 @@ jobs:
     - static
     - unit
     - browser
-    if: always() && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+    if: >-
+      always() && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      && (github.event_name != 'schedule' || needs.checks.result != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
