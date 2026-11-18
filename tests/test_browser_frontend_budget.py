@@ -27,19 +27,20 @@ PLANNER_FIRST_MS = 2000 * SLOWER
 
 # Opens an address in-app (as the sidebar does) and answers when its page is loaded and painted (two frames).
 # page.evaluate has no timeout of its own: a page that is never drawn must fail here, within `limit` ms, not hang the shard.
+# A page change replaces #main (app.ts shell), so it is looked up afresh each time and the watch is on the body.
 OPEN = r"""([hash, view, selector, limit]) => {
-  const main = document.querySelector('#main'); main.removeAttribute('data-loaded-view');
-  const t0 = performance.now(), ready = () => main.getAttribute('data-loaded-view') === view && (!selector || main.querySelector(selector));
+  const main = () => document.querySelector('#main'); main().removeAttribute('data-loaded-view');
+  const t0 = performance.now(), ready = () => main()?.getAttribute('data-loaded-view') === view && (!selector || main().querySelector(selector));
   location.hash = hash;
   const drawn = (async () => {
     await new Promise(done => { if (ready()) return done(); const o = new MutationObserver(() => { if (ready()) { o.disconnect(); done(); } });
-      o.observe(main, {subtree: true, childList: true, attributes: true}); });
+      o.observe(document.body, {subtree: true, childList: true, attributeFilter: ['data-loaded-view']}); });
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     return performance.now() - t0;
   })();
   return Promise.race([drawn, new Promise((_, fail) => setTimeout(() => fail(new Error(
-    `${hash} not drawn within ${limit} ms: data-loaded-view=${main.getAttribute('data-loaded-view')}, ` +
-    `${selector || 'no selector'} ${selector && main.querySelector(selector) ? 'found' : 'missing'}`)), limit))]);
+    `${hash} not drawn within ${limit} ms: data-loaded-view=${main()?.getAttribute('data-loaded-view')}, ` +
+    `${selector || 'no selector'} ${selector && main()?.querySelector(selector) ? 'found' : 'missing'}`)), limit))]);
 }"""
 
 
