@@ -76,7 +76,7 @@ class ImporterV34Tests(unittest.TestCase):
             self.assertFalse(policy.renewal_only(json.dumps(old).encode(),json.dumps(changed).encode()))
 
     def test_nightly_requires_19_free_jobs(self):
-        for running, admitted in ((0, True), (101, True), (102, False), (120, False)):
+        for running, admitted in ((0, True), (461, True), (462, False), (480, False)):
             with self.subTest(running=running):
                 self.assertEqual(nightly_budget.can_start(running), admitted)
 
@@ -164,8 +164,8 @@ class ImporterV34Tests(unittest.TestCase):
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
                 limits = {
-                    'unit': "${{ github.event_name == 'merge_group' && 17 || github.event_name == 'schedule' && 8 || 10 }}",
-                    'browser': "${{ github.event_name == 'merge_group' && 20 || github.event_name == 'schedule' && 10 || 8 }}",
+                    'unit': "${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}",
+                    'browser': "${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}",
                 }
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')

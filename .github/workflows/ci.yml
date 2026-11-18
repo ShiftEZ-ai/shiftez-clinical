@@ -1,8 +1,8 @@
 name: CI
 permissions:
   contents: read
-# Portfolio budget: 2 merge groups x 39 jobs + 1 dev cache warmer = 79.
-# Delivery's admission lock counts building group jobs first and admits PR runs within the 41-job reserve.
+# Portfolio budget: 480 concurrent jobs total, with up to 6 merge groups building.
+# Delivery's admission lock enforces the budget and gives the owner first priority.
 # Manual pushes are rare and only from the owner account.
 concurrency:
   group: ${{ github.event_name == 'schedule' && 'ci-nightly' || format('ci-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
@@ -225,7 +225,7 @@ jobs:
       && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 17 || github.event_name == 'schedule' && 8 || 10 }}
+      max-parallel: ${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.unit_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}
@@ -251,7 +251,7 @@ jobs:
       && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name == 'merge_group' && 20 || github.event_name == 'schedule' && 10 || 8 }}
+      max-parallel: ${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}
       matrix:
         shard: ${{ fromJSON(needs.checks.outputs.browser_matrix) }}
         replica: ${{ fromJSON(needs.checks.outputs.replicas) }}

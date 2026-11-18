@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 
-JOB_LIMIT = 120
+JOB_LIMIT = 480
 NIGHTLY_JOBS = 19
 
 
