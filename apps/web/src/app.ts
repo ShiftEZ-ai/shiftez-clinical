@@ -1415,7 +1415,7 @@ function writeRoute(){
 // A background refresh (the live pulse) reads the server state but does not redraw under someone using the page: if a
 // menu, dialog or field opened while it read, it says so (refreshSkipped), the redraw is owed (redrawOwed, paid by the
 // next draw of any kind) and the pulse waits for them instead.
-let refreshForeground=false,refreshSkipped=false,redrawOwed=false;
+let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
@@ -1431,7 +1431,7 @@ function refresh(quiet=false,scopes?:Set<LiveScope>,changes?:LiveChange[],retry=
   forgetResolved();
   refreshScopes=scopes&&refreshScopes!==null?new Set([...refreshScopes||[],...scopes]):null;
   refreshChanges=scopes&&changes&&refreshChanges?[...refreshChanges,...changes]:null;
-  if(!quiet)refreshForeground=true;
+  if(!quiet)refreshForeground=pageStep();
   if(!retry)return refreshes.join();
   // A Retry reads the deferred lists afresh too (loadLists drops whichever answer is older).
   hydrating=null;return refreshes.retry();
@@ -1492,7 +1492,7 @@ const ME_SCOPES:LiveScope[]=['settings','access','catalogue','people'],LIST_SCOP
 async function refreshOnce(stale=()=>false){
   forgetReads(refreshScopes??null,refreshChanges);refreshChanges=[];  // maintenance/118: kept answers (api.ts keptRead) last across redraws until a change can alter them
   if(!me)return;accessRead=null;readAfresh();const saved=[...savedKinds];savedKinds.clear();const local=inPlace&&saved.length>0;inPlace=true;
-  const quiet=!refreshForeground;refreshForeground=false;refreshSkipped=false;
+  const from=refreshForeground,quiet=from===null;refreshForeground=null;refreshSkipped=false;
   const scopes=refreshScopes??null;refreshScopes=undefined;const touches=(of:LiveScope[])=>!scopes||of.some(s=>scopes.has(s));
   // Only draft edits since the last refresh, patched in place, on the Schedule: it redraws reading just the draft (the
   // session, lists in memory and the other counts cannot have changed). Anything else reads what it can affect.
@@ -1504,6 +1504,8 @@ async function refreshOnce(stale=()=>false){
     if(touches(LIST_SCOPES))await loadCatalogues();
     if(session!==sessionKey()||stale())return;
     refreshFailed=false;showConnection(true);void loadNavBadges(true,saved.length?saved:scopes?[]:undefined,scopes);
+    // A save can close its dialog before the follow-up reads finish. The page opened since then owns its draw.
+    if(!quiet&&pageStep()!==from)return;
     if(quiet&&readerBusy()){redrawOwed=true;refreshSkipped=true;return;}
     // Drawn from here on, by either path: an owed redraw is paid (else every pulse would refresh again).
     redrawOwed=false;
@@ -2258,7 +2260,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     ?{id:earlyId,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
   const savedViews=memo?.views?Promise.resolve(memo.views):fetchViews<PlannerSaved>('planner').catch(()=>[] as SavedView<PlannerSaved>[]);
   const listAhead=!memo&&!workspaceListOffset&&ahead?.id===workspaceId&&ahead.epoch===scheduleEpoch?ahead.list:null;
-  const page=planner?memo?.page||await (listAhead||get<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
+  // An automatic rota choice also writes the address. Wait for the current list instead of choosing from a kept reply.
+  const readList=workspaceId||draftNone||sourcePublication?get:background;
+  const page=planner?memo?.page||await (listAhead||readList<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
   const work:Row[]=[...page.workspaces];
   if(routeView){const saved=(await savedViews).find(x=>x.id===routeView);if(saved){applyPlannerView(saved.definition.planner,saved.definition.conditions,routeQuery);setTableColumns('planner-list',saved.definition);plannerViewId=saved.id;if(routeQuery.has('person'))schedFilters={...schedFilters,person_ids:[routeQuery.get('person')||'']};}routeView='';}
   // The Schedule's first opening this session shows its default view (the person's, else the department's), if chosen.
