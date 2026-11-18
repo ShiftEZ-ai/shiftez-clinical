@@ -368,11 +368,17 @@ def test_simplify_propose_reload_independent_activate_reload_undo(browser, live_
         expect(panel.get_by_role('button', name='Activate', exact=True)).to_have_count(0)
         expect(panel.get_by_role('button', name='Withdraw', exact=True)).to_be_visible()
         panel.get_by_role('button', name='Close panel', exact=True).click()
-        navigate(review, 'rules')
-        # The ⋯ menu lists Simplify rules once its conversions read lands (a slow runner opened it first).
-        with review.expect_response(lambda r: '/api/rules/catalogue/conversions' in r.url):
-            review.reload()
-        rules_action(review, 'Simplify rules · waiting for approval')
+        conversions = '**/api/rules/catalogue/conversions?include_history=true'
+        with holding(review) as held:
+            held.hold(conversions)
+            navigate(review, 'rules')
+            wait_held(review, held[conversions])
+            review.get_by_role('button', name=re.compile('^More rule actions')).click()
+            review.get_by_role('menuitem', name='Simplify rules', exact=True).focus()
+            held.release(conversions)
+            pending = review.get_by_role('menuitem', name='Simplify rules · waiting for approval', exact=True)
+            expect(pending).to_be_focused()
+            pending.click()
         review.locator('.rs-panel').get_by_role('button', name='Activate', exact=True).click()
         reason(review, 'Independently reviewed', 'Activate')
         expect(review.locator('#toast-tray')).to_contain_text('Rules simplified')
