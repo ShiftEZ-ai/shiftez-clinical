@@ -151,7 +151,7 @@ class ImporterV34Tests(unittest.TestCase):
 
         config = durations.with_name('bootstrap-settings.json')
         groups = json.loads(config.read_text(encoding='utf-8'))['merge_group_shards']
-        self.assertEqual(groups, {'unit_shards': 17, 'browser_shards': 20})
+        self.assertEqual(groups, {'unit_shards': 25, 'browser_shards': 30})
 
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'
