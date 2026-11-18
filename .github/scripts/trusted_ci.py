@@ -2,9 +2,12 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import runpy
 import secrets
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -17,14 +20,22 @@ import canary_evidence as canaries
 import hardening
 
 TRUSTED = Path(__file__).resolve().parents[2]
+PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
 
 
 def settings():
     data = policy.decode((TRUSTED / "ci/bootstrap-settings.json").read_bytes())
+    group_shards = data.pop("merge_group_shards", None)
     if (set(data) != {"schema", "unit_shards", "browser_shards", "unstable_limit", "unstable_issue",
                      "unstable_expires_on", "cleanup_issue"} or data["schema"] != 1
             or any(type(data[k]) is not int or data[k] < 1 for k in ("unit_shards", "browser_shards", "unstable_limit"))):
         raise ValueError("Protected bootstrap configuration is invalid")
+    if group_shards is not None:
+        if (not isinstance(group_shards, dict) or set(group_shards) != {"unit_shards", "browser_shards"}
+                or any(type(n) is not int or n < 1 for n in group_shards.values())):
+            raise ValueError("Protected merge-group shard counts are invalid")
+        if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+            data.update(group_shards)
     return data
 
 
@@ -43,6 +54,14 @@ def output(values):
             destination.write(key + "=" + str(value) + "\n")
 
 
+def require_pr_merge(data, git, candidate):
+    pr = data["pull_request"]
+    base, head = policy.commit(pr["base"]["sha"]), policy.commit(pr["head"]["sha"])
+    if (candidate != policy.commit(os.environ["GITHUB_SHA"])
+            or git("rev-list", "--parents", "-n", "1", candidate).decode().split() != [candidate, base, head]):
+        raise ValueError("PR candidate must be the event merge of the target base and head")
+
+
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
@@ -50,12 +69,67 @@ def select():
         if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
+    elif os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
+        candidate = policy.commit(data["pull_request"]["head"]["sha"])
     else:
-        candidate = policy.commit(data["pull_request"]["head"]["sha"] if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" else os.environ["GITHUB_SHA"])
+        candidate = policy.commit(os.environ["GITHUB_SHA"])
     config = settings()
     output({"candidate_sha": candidate, "measurement": str(measurement).lower(),
             "trusted_sha": subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip(),
             "unit_count": config["unit_shards"], "browser_count": config["browser_shards"]})
+
+
+def pr_scope(data, git, trusted_sha, candidate):
+    pr = data["pull_request"]
+    if pr["base"]["ref"] != "dev" or any(label["name"] == "full-ci" for label in pr["labels"]):
+        return None
+    base = policy.commit(pr["base"]["sha"])
+    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z")
+    changed = {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
+    if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
+           or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
+           for path in changed):
+        return None
+    inventory = policy.control_inventory(trusted_sha)
+    for path in sorted(changed):
+        before, after = policy.read_file(base, path), policy.read_file(candidate, path)
+        tier, _ = policy.tier(path, before, after, inventory)
+        if tier == 1 or path.rsplit("/", 1)[-1] == "conftest.py":
+            return None
+        if tier == 2 and not (
+            path.startswith(("apps/", "packages/")) and path.endswith((".py", ".ts", ".css"))
+            or ordinary_test_module(path, before, after, inventory)
+        ):
+            return None
+    return changed
+
+
+def ordinary_test_module(path, before, after, inventory):
+    """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
+    if (after is None or path in inventory["product_imports"]
+            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
+        return False
+    try:
+        if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
+            return False
+        return not (policy.python_controls(after) or policy.mechanisms(after) or policy.reporter_controls(after))
+    except (SyntaxError, ValueError):
+        return False
+
+
+def affected_files(changed, files):
+    required = PR_SMOKE | (changed & files)
+    if not PR_SMOKE <= files:
+        return None
+    if not changed:
+        return required
+    try:
+        selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
+        owners = selector["direct_test_owners"](sorted(changed), files)
+    except Exception as error:
+        print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
+        return None
+    return required | owners if isinstance(owners, set) and owners <= files else None
 
 
 def plan(base, measurement):
@@ -71,7 +145,8 @@ def plan(base, measurement):
         # Existing reader decides replica count from Git objects; no candidate Python import.
         sys.path.insert(0, str(TRUSTED / "ci"))
         import make_known_failures as maker
-        replicas = maker.context(base)["replicas"]
+        context = maker.context(base)
+        replicas = context["replicas"]
     durations = TRUSTED / "ci/hosted-durations.json"
     data = hosted.load_durations(durations)
     files = sorted(p for p in hosted.git("ls-files", "tests").splitlines()
@@ -81,15 +156,40 @@ def plan(base, measurement):
     result = {"schema": 1, "sha": candidate, "tree": candidate_tree, "base_sha": base,
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
+    selected_files = None
+    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+            and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
+        event = policy.event()
+        require_pr_merge(event, policy.git, candidate)
+        if not context["bootstrap"]:
+            trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
+            changed = pr_scope(event, policy.git, trusted_sha, candidate)
+            if changed is not None:
+                selected_files = affected_files(changed, set(files))
+    if selected_files is not None:
+        result["selection"] = {"reason": "affected"}
+        files = sorted(selected_files)
     for suite in ("unit", "browser"):
         selected = [p for p in files if Path(p).name.startswith("test_browser") == (suite == "browser")]
         seconds = data["suites"][suite]["files"]
-        result["suites"][suite] = {"shards": hosted.balance(selected, seconds, config[suite + "_shards"]),
+        count = config[suite + "_shards"]
+        if selected_files is not None:
+            median = statistics.median(seconds.values())
+            total = sum(seconds.get(path, median) for path in selected)
+            count = min(count, len(selected), max(1, math.ceil(total / 120)))
+        result["suites"][suite] = {"shards": hosted.balance(selected, seconds, count),
                                   "median_files": sorted(set(selected) - seconds.keys())}
     return result
 
 
-def invocation(targets, suite, report, extra, workers, base_targets=None):
+def census_files(plan, files):
+    if "selection" in plan:
+        scope = {path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
+        return set(files) & scope
+    return set(files)
+
+
+def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -117,7 +217,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None):
                     *selected,*([str(folder)] if flags['canaries'] else []),"-m",hosted.execution_marker(suite),"-c",str(project/"pyproject.toml"),
                     "--rootdir="+str(project),"--continue-on-collection-errors",*options]
         def collection_ok(code,cases):
-            if not flags['canaries']:return code==0 and not cases
+            if not flags['canaries']:return code in ((0, 5) if partial else (0,)) and not cases
             return code in (1,2) and bool(cases) and all(manifest['error'] in canaries.node(c) and canaries.outcome(c)=='error' for c in cases)
         command=pytest_command(Path.cwd(),targets,extra)
         env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parent), str(Path.cwd())]),
@@ -130,11 +230,13 @@ def invocation(targets, suite, report, extra, workers, base_targets=None):
             base_census=report.with_suffix(".base.collection.json")
             base_env={**env,"PYTHONPATH":os.pathsep.join([str(Path(__file__).resolve().parent),str(base_dir)]),
                       "TRUSTED_COLLECTION_OUTPUT":str(base_census.resolve())}
-            base_code=subprocess.call([*pytest_command(base_dir,base_targets,[]),"-n","0","--collect-only","--junitxml="+str(base_raw.resolve())],cwd=base_dir,env=base_env)
-            base_cases=list(ET.parse(base_raw).getroot().iter("testcase"))
-            if not collection_ok(base_code,base_cases):
-                raise ValueError("BASE COLLECTION ERROR: incomplete node census; baseline-error covers setup/runtime errors only")
-            base_nodes=[n for n in json.loads(base_census.read_text()) if not any(t in n for t in manifest.values())]
+            base_nodes = []
+            if base_targets:
+                base_code=subprocess.call([*pytest_command(base_dir,base_targets,[]),"-n","0","--collect-only","--junitxml="+str(base_raw.resolve())],cwd=base_dir,env=base_env)
+                base_cases=list(ET.parse(base_raw).getroot().iter("testcase"))
+                if not collection_ok(base_code,base_cases):
+                    raise ValueError("BASE COLLECTION ERROR: incomplete node census; baseline-error covers setup/runtime errors only")
+                base_nodes=[n for n in json.loads(base_census.read_text()) if not any(t in n for t in manifest.values())]
             ledger={"schema":1,"base_sha":policy.commit(os.environ["CENSUS_BASE_SHA"]),
                     "head_sha":hosted.git("rev-parse","HEAD"),"run_id":os.environ["GITHUB_RUN_ID"],
                     "run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],"suite":suite,
@@ -154,7 +256,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None):
                                 "--junitxml=" + str(raw)], env=env)
         if flags['canaries'] and code != 1:
             raise ValueError("Intentional FAIL/ERROR sentinels must produce pytest exit 1")
-        if not flags['canaries'] and code not in (0,1):raise ValueError('Pytest execution/collection did not complete')
+        if not flags['canaries'] and code not in ((0, 1, 5) if partial else (0, 1)):
+            raise ValueError('Pytest execution/collection did not complete')
         parsed = ET.parse(raw)
         cases=list(parsed.getroot().iter('testcase'))
         selected = canaries.verify_cases(cases,manifest,collected) if flags['canaries'] else [canaries.node(c) for c in cases]
@@ -211,6 +314,7 @@ def main():
         values = {"plan_sha256": seal, "replicas": json.dumps(candidate["replicas"]), "base_sha": candidate["base_sha"]}
         values.update({suite + "_matrix": json.dumps(list(range(1, len(candidate["suites"][suite]["shards"]) + 1)))
                        for suite in ("unit", "browser")})
+        values.update({suite + "_count": len(row["shards"]) for suite, row in candidate["suites"].items()})
         output(values)
         return
     if seal != args.plan_sha256 or args.replica not in candidate["replicas"] or args.suite is None:
@@ -237,9 +341,11 @@ def main():
             files=subprocess.check_output(["git","-C",str(base_dir),"ls-files","tests"],text=True).splitlines()
             files=sorted(p for p in files if policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)
                          and Path(p).name.startswith("test_browser")== (args.suite=="browser"))
+            files = sorted(census_files(candidate, files))
             count=len(candidate["suites"][args.suite]["shards"])
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
-        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers, base_targets)
+        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
+                          base_targets, partial="selection" in candidate)
         paths = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
         receipt["reports"].append({"file": name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in paths}})
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
