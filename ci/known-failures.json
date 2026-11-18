@@ -966,12 +966,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_overtime_volunteer.py::test_overtime_eligibility_recovers_from_a_failed_read_and_a_new_line",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_p2_groups.py::test_the_approver_reviews_by_group_on_a_phone_and_a_rejection_returns_the_rota[case-encibpahokhpnfnfecahjogkljbelhbedldcfhinchbloopjooadmjcbdnjenhlf]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
