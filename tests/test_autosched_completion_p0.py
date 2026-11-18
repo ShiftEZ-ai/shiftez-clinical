@@ -184,6 +184,39 @@ def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
     assert data == before
 
 
+def test_slow_default_completion_preserves_stopped_incumbent(h, clock, monkeypatch):
+    h.policy({'kind': 'restriction'}, severity='advisory')
+    data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
+    update, interrupted = {}, threading.Event()
+    control = SolverControl(search_control=lambda: update)
+    original = control.solve
+
+    def solve(solver, model, tier):
+        if tier is not None:
+            status = original(solver, model, tier)
+            update['stop'] = True
+            return status
+        assert solver.parameters.max_time_in_seconds == 60
+        assert control.stop_grace_seconds == 10
+        control.reserve_seconds = 2
+
+        def slow_solve(model, callback):
+            # This solve needs 11 seconds unless the controller gives it a shorter limit.
+            clock[0] += min(11, solver.parameters.max_time_in_seconds)
+            assert interrupted.wait(2)
+            return cp_model.UNKNOWN
+
+        monkeypatch.setattr(solver, 'solve', slow_solve)
+        monkeypatch.setattr(solver, 'stop_search', interrupted.set)
+        return original(solver, model, tier)
+
+    monkeypatch.setattr(control, 'solve', solve)
+    result = cp_sat.generate(data, 3, _control=control)
+    assert (result['status'], result['solver_status'], result['score_completed']) == ('candidate_feasible', 'FEASIBLE', False)
+    assert result['validation']['valid'] and result['additions']
+    assert control.completion_spent == 8
+
+
 def test_summary_trials_skip_decoration_without_changing_public_reasons(h, monkeypatch):
     workspace = h.shift(h.workspace(), people=[])['workspace']
     pid = h.seed['people'][0]

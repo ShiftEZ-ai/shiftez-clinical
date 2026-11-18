@@ -73,6 +73,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
         raise ValueError('Model capture requires feasibility-only compilation')
     if _on_objectives is not None and feasibility_only:
         raise ValueError('Objective capture requires full compilation')
+    stop_message = None
     try:
         if snapshot.get('planning_group_id') and snapshot.get('lookahead') == 'coupled' and not feasibility_only:
             from .group_generation import generate as group_generate, witness_progress
@@ -114,9 +115,9 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
                 'additions': [], 'removals': [], 'optimality_proven': False,
                 'solver_status': 'UNKNOWN', 'weighted_status': 'UNKNOWN'}
         if isinstance(exc, StopGraceExpired):
-            result = {**(control.validated_result or result), 'score_completed': False,
-                      'message': ('Stopped; final score not completed.' if control.validated_result else
-                                  'Stopped; canonical validation not completed. The incumbent remains available to resume.')}
+            result = {**(control.validated_result or result), 'score_completed': False}
+            stop_message = ('Stopped; final score not completed.' if control.validated_result else
+                            'Stopped; canonical validation not completed. The incumbent remains available to resume.')
             if control.validated_result is not None:
                 control.progress({**control.context, 'stage': 'ready', 'best_score': None,
                                   'shared_validation_passed': result['validation']['valid'],
@@ -124,12 +125,15 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
                                   'search_elapsed_seconds': control.search_spent,
                                   'phase_timings': control.timings()})
     result.setdefault('score_completed', False)
+    from .generation_outcome import SCORE_OPTIMISATION_UNFINISHED, generation_outcome, score_value, solver_status
     if control.stopped and result['status'] == 'candidate_feasible' and not result['score_completed']:
-        result['message'] = 'complete; score optimisation unfinished'
+        if not result.get('optimality_proven'):
+            stop_message = SCORE_OPTIMISATION_UNFINISHED
         if (saved := (result.get('summary') or {}).get('score_saved')) is not None:
             saved['score_completed'] = False
+    if stop_message:
+        result['message'] = ' '.join(filter(None, (result.get('message'), stop_message)))
     control.phase(None)
-    from .generation_outcome import generation_outcome, score_value, solver_status
     result['solver_status'] = solver_status(result)
     result['score'] = score_value(result)
     final_stop_reason = control.stop_reason
@@ -2371,16 +2375,20 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         return {**result, 'status': 'translation_error', 'additions': [], 'removals': [],
                 'optimality_proven': False, 'message': 'Solver and validation disagree; no changes can be applied.'}
     control.validated_result = {**result,
+        **({'warnings': result['warnings'].copy()} if 'warnings' in result else {}),
         'status': 'candidate_with_gaps' if diagnostic_proposal or not validation_ok else 'candidate_feasible',
         'first_solution_seconds': control.first_solution_seconds}
     if not feasibility_only:
         from .solver_diagnostics import explain_unmet_requirements
         result['allocation_diagnostics'] = explain_unmet_requirements(data, validation, tiers)
+        control.validated_result['allocation_diagnostics'] = result['allocation_diagnostics']
         if result['allocation_diagnostics']:
             result.setdefault('warnings', []).extend(dict.fromkeys(row['message'] for row in result['allocation_diagnostics']))
+            control.validated_result['warnings'] = result['warnings'].copy()
     if not feasibility_only:
         from .score import schedule_score
         result['objective_components'] = schedule_score(data, validation, options.model_dump(mode='json'), baseline=score_baseline)['components']
+        control.validated_result['objective_components'] = result['objective_components']
         def incumbent_value(expression):
             if isinstance(expression, int):
                 return expression
@@ -2394,6 +2402,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     control.check()
     from .wish_reasons import declined_wishes
     result['declined_wishes'] = declined_wishes(data, validation, evidence, preferences_applied=not feasibility_only)
+    control.validated_result['declined_wishes'] = result['declined_wishes']
     control.check()
     if not any(f['severity'] == 'error' and f['code'] not in permitted_deficits and not kept_finding(f)
                and citation_finding_key(f) not in locked_supervision_keys

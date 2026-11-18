@@ -3,6 +3,7 @@
 
 SOLVER_STATUSES = frozenset({'OPTIMAL', 'FEASIBLE', 'INFEASIBLE', 'UNKNOWN'})
 DIAGNOSTIC_PROPOSAL_MESSAGE = 'Incomplete diagnostic proposal. Review it; it is not a feasible operational rota.'
+SCORE_OPTIMISATION_UNFINISHED = 'complete; score optimisation unfinished'
 
 
 def solver_status(result):

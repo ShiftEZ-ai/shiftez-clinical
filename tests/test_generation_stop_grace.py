@@ -173,6 +173,7 @@ def test_stop_grace_expiry_keeps_checked_incumbent_without_score(h, monkeypatch,
     assert result['additions'] and result['score'] is None
     assert result['score_completed'] is False and not result['optimality_proven']
     assert result['search_stop']['reason'] == 'operator_stop'
+    assert {'allocation_diagnostics', 'objective_components', 'declined_wishes'} <= result.keys()
     after = deepcopy(data)
     for addition in result['additions']:
         next(s for s in after['shifts'] if s['id'] == addition['shift_id'])['participants'].append(addition['participant'])
@@ -226,22 +227,25 @@ def test_stop_interrupts_completion_without_solution_callbacks(stop_clock):
 
 
 def test_stop_grace_interrupts_completion_without_solution_callbacks(stop_clock):
-    interrupted = threading.Event()
-    control = solver_control.SolverControl(search_control=lambda: {'stop': True})
-    control.configure_stop_conditions(GenerationOptions(generation_stop_grace_seconds=1))
+    update, interrupted = {}, threading.Event()
+    control = solver_control.SolverControl(search_control=lambda: update)
+    control.configure_stop_conditions(GenerationOptions(generation_stop_grace_seconds=2))
     control.search_budget = 60
+    control.reserve_seconds = 1
     solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
 
     def solve(model, callback):
-        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its grace deadline'
+        update['stop'] = True
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cutoff'
         stop_clock[0] += 1
-        assert interrupted.wait(2), 'Stop grace did not interrupt score completion'
-        return cp_model.UNKNOWN
+        assert interrupted.wait(2), 'Completion spent the time reserved for validation'
+        return cp_model.FEASIBLE
 
     solver.solve = solve
-    with pytest.raises(solver_control.StopGraceExpired):
-        control.solve(solver, None, None)
+    assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.completion_spent == 1 < control.completion_budget
+    assert control.stop_deadline - stop_clock[0] == control.reserve_seconds
 
 
 @pytest.mark.parametrize('value', [0, 16, True, 1.5, '5'])
