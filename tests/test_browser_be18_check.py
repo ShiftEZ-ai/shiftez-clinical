@@ -89,12 +89,18 @@ def test_a_queued_check_nobody_starts_is_taken_over_by_the_page_once(h, browser,
     try:
         page.clock.install()
         sent = watch_takeover(page, held.append)  # the page's own check is held: its words can be read while it runs
-        navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
+        summary_url = live_server + '/api/workspaces/' + w['id'] + '/summary'
+        with page.expect_response(summary_url) as summary:
+            navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
         footer = page.locator('.app-footer')
         progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
         expect(progress).to_contain_text('Waiting to check')  # DL-018: queued, unchanged
+        assert summary.value.ok
+        summary.value.finished()
+        expect(footer.get_by_role('button', name='Cancel: waiting to check', exact=True)).to_be_visible()
         assert not sent
-        page.clock.run_for(BOUND)  # the page's clock, never real time
+        # Jumping with the worker summary in flight would expire its read deadline.
+        page.clock.fast_forward(BOUND)
         wait_held(page, held)
         expect(progress).to_contain_text('Checking the rota')  # DL-018: without a click
         expect(footer.get_by_role('button', name=re.compile('^Cancel: '))).to_have_count(0)  # the server cannot stop this one
