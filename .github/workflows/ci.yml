@@ -52,6 +52,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
+      artifact_attempt: ${{ github.run_attempt }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
       unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
       browser_matrix: ${{ steps.plan.outputs.browser_matrix }}
@@ -101,6 +102,64 @@ jobs:
         persist-credentials: false
         submodules: false
         lfs: false
+    - name: Install the trusted pinned Python for the policy guard
+      id: policy-python
+      if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      working-directory: .trusted-controls
+      # Its own folder and no PATH change: the later runtime step re-extracts runtime-python-<digest> in place.
+      run: |
+        python3 -I - <<'PY'
+        import json, os, sys
+        from pathlib import Path
+        sys.path.insert(0, ".github/scripts")
+        from hosted_ci import install_runtime
+        pins = json.loads(Path("requirements/ci-runtimes.json").read_text(encoding="utf-8"))
+        binary = install_runtime("python", pins["python"], Path(os.environ["RUNNER_TEMP"]) / "policy-guard")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("python=" + str(binary / "python3") + chr(10))
+        PY
+    - name: Enforce working policy before test fan-out
+      if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      working-directory: .trusted-controls
+      env:
+        POLICY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        "${{ steps.policy-python.outputs.python }}" -I - <<'PY'
+        import os
+        import subprocess
+        import sys
+
+        sys.path.insert(0, ".github/scripts")
+        import working_policy as policy
+
+        findings_report = policy.findings_report
+        audited_route = "Tier 1 control changes require the audited maintenance route"
+        audited = False
+
+        def check_findings(*args, **kwargs):
+            global audited
+            report = findings_report(*args, **kwargs)
+            if report["branch"] != "dev" or not report["tier1"] or os.getenv("TRUSTED_BOOTSTRAP") == "true":
+                return report
+            if any(row["path"] == policy.KNOWN for row in report["tier1"]):
+                old = policy.read_file(report["target_sha"], policy.KNOWN)
+                new = policy.read_file(report["candidate_tree"], policy.KNOWN)
+                if not policy.renewal_only(old, new):
+                    raise ValueError("Known-failures changes must only remove entries or renew expiry through review")
+            audited = True
+            # Keep the recorded findings and let the guard check the remaining policy rules.
+            return {**report, "tier1": []}
+
+        policy.findings_report = check_findings
+        try:
+            policy.guard()
+        except (ValueError, KeyError, TypeError, SyntaxError, subprocess.CalledProcessError) as error:
+            raise SystemExit("Working policy refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__)) from None
+        if audited:
+            print(audited_route)
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                summary.write("\n" + audited_route + ". Continuing Checks for audited maintenance.\n")
+        PY
     - name: Select the exact candidate from protected configuration
       id: select
       working-directory: .
@@ -237,6 +296,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
       census_base_sha: ${{ needs.checks.outputs.census_base_sha }}
@@ -263,6 +323,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
       census_base_sha: ${{ needs.checks.outputs.census_base_sha }}
@@ -313,9 +374,23 @@ jobs:
         lfs: false
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        name: ci-plan-${{ github.run_attempt }}
+        name: ci-plan-${{ needs.checks.outputs.artifact_attempt }}
         path: .candidate-evidence/plan
+    - name: Detect trusted report selection
+      id: reports
+      run: |
+        if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
+          echo 'mixed_attempts=true' >> "$GITHUB_OUTPUT"
+        fi
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: steps.reports.outputs.mixed_attempts == 'true'
+      with:
+        pattern: ci-test-*
+        path: .candidate-evidence/test-results
+        merge-multiple: false
+    # shortcut: transitional until the first run after merge; remove in the next CI window
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: steps.reports.outputs.mixed_attempts != 'true'
       with:
         pattern: ci-test-${{ github.run_attempt }}-*
         path: .candidate-evidence/test-results
@@ -328,6 +403,9 @@ jobs:
         BROWSER_COUNT: ${{ needs.checks.outputs.browser_count }}
       run: |
         python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
+        if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
+          python3 -I .trusted-verdict/.github/scripts/latest_reports.py .candidate-evidence/test-results --plan .candidate-evidence/plan/shard-plan.json
+        fi
         python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
     - name: Keep raw measurement or qualification evidence
       if: always()
@@ -399,7 +477,7 @@ jobs:
         lfs: false
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        name: ci-dependencies-${{ github.run_attempt }}
+        name: ci-dependencies-${{ needs.checks.outputs.artifact_attempt }}
         path: ${{ runner.temp }}/hosted-shared
     - name: Use the shared hash-locked package downloads
       run: |
