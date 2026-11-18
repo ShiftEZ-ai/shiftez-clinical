@@ -191,8 +191,8 @@ class PublicV32Cases(unittest.TestCase):
         with patch.dict(os.environ,{'GITHUB_EVENT_NAME':event}),patch.object(maker,'at_revision',return_value=None):
             self.assertEqual(maker.context(self.root['base_sha'])['replicas'],[1,2])
 
-    def test_ordinary_pull_request_uses_two_replicas(self):
-        self.check_event_replicas('pull_request',[1,2])
+    def test_ordinary_pull_request_uses_one_replica(self):
+        self.check_event_replicas('pull_request',[1])
 
     def test_merge_group_uses_two_replicas(self):
         self.check_event_replicas('merge_group',[1,2])
