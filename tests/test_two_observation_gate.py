@@ -78,13 +78,37 @@ class TwoObservationGateTests(unittest.TestCase):
         for tag in ("failure", "error"):
             with self.subTest(tag=tag):
                 self.report(tag, "ConnectionError: connection refused")
-                with self.assertRaisesRegex(ValueError, "Infrastructure"):
-                    maker.product_error_nodes(self.folder)
+                for event in ("pull_request", "push"):
+                    with patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}):
+                        with self.assertRaisesRegex(ValueError, "Infrastructure"):
+                            maker.product_error_nodes(self.folder)
+                with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
+                    self.assertEqual(maker.product_error_nodes(self.folder), {NODE} if tag == "error" else set())
+                    path = self.folder / "junit.xml"
+                    report = ET.parse(path)
+                    case = ET.SubElement(report.getroot(), "testcase",
+                                         classname="tests.test_product", name="test_b")
+                    ET.SubElement(case, "failure", message="ConnectionError: connection refused")
+                    report.write(path)
+                    with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                        maker.product_error_nodes(self.folder)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
-        with self.assertRaisesRegex(ValueError, "Infrastructure"):
-            maker.product_error_nodes(self.folder)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            with self.assertRaisesRegex(ValueError, "Infrastructure"):
+                maker.product_error_nodes(self.folder)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
+            classified = maker.product_error_nodes(self.folder)
+            self.assertEqual(classified, {NODE})
+            runs, _ = known_skips.comparison_runs([{NODE: "error"}, {NODE: "passed"}], set(),
+                                                  release=False, allowed_errors=classified)
+            self.assertTrue(maker.evaluate(self.current, self.current, runs, product_errors=classified))
+            with self.assertRaisesRegex(ValueError, "New errors.*test_a"):
+                self.evaluate(["error", "error"], product_errors=classified)
+            self.report("error", "error collecting tests/test_product.py")
+            with self.assertRaisesRegex(ValueError, "Collection error"):
+                maker.product_error_nodes(self.folder)
 
     def test_schema_error_with_product_frame_is_product(self):
         self.report("error", "sqlalchemy.exc.OperationalError: no such table: example")
@@ -143,6 +167,29 @@ class TwoObservationGateTests(unittest.TestCase):
                 self.assertTrue(self.evaluate([red, "passed"]))
                 with self.assertRaisesRegex(ValueError, "Stale passing"):
                     self.evaluate(["passed", "passed"])
+
+        summary = self.folder / "summary.md"
+        for event in ("pull_request", "workflow_dispatch", "merge_group", "push"):
+            with self.subTest(event=event), patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}):
+                stale_output = maker.stale_report_dir(self.folder)
+                if event in {"merge_group", "push"}:
+                    self.assertTrue(self.evaluate(["passed", "passed"], stale_output=stale_output))
+                else:
+                    with self.assertRaisesRegex(ValueError, "Stale passing"):
+                        self.evaluate(["passed", "passed"], stale_output=stale_output)
+
+        artifact = self.folder / "stale-report.json"
+        with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+            self.assertTrue(self.evaluate(["passed", "passed"], stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+            self.assertIn("- " + NODE, summary.read_text())
+            self.assertTrue(self.evaluate(["passed", "error"], stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [])
+            down = "tests/test_product.py::test_unlisted"
+            runs = [{NODE: "passed", down: "failed"}] * 2
+            with self.assertRaisesRegex(ValueError, "New failures.*test_unlisted"):
+                maker.evaluate(self.current, self.current, runs, stale_output=self.folder)
+            self.assertEqual(json.loads(artifact.read_text()), [NODE])
 
     def test_plan_and_reader_use_two_replicas_on_every_event(self):
         import trusted_ci
