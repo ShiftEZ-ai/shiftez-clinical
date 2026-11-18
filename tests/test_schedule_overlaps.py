@@ -220,9 +220,15 @@ def test_concurrent_replacements_of_one_rota_only_one_commits(h):
     def publish(w):
         barrier.wait()
         return h.client("coordinator").post("/api/commands", headers={"idempotency-key": str(uuid.uuid4())}, json={
-            "kind": "workspace.publish", "target_id": w["id"], "expected_revision": w["revision"], "payload": {"reason": "Race"}}).status_code
+            "kind": "workspace.publish", "target_id": w["id"], "expected_revision": w["revision"], "payload": {"reason": "Race"}})
     with ThreadPoolExecutor(max_workers=2) as pool:
-        assert sorted(pool.map(publish, candidates)) == [200, 409]
+        winner, loser = sorted(pool.map(publish, candidates), key=lambda response: response.status_code)
+    assert winner.status_code == 200, winner.text
+    assert loser.status_code in (409, 422), loser.text
+    if loser.status_code == 422:
+        error = loser.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED", loser.text
+        assert error["details"]["stale_approval"]["code"] == "STALE_APPROVAL", loser.text
     current = [p for p in h.get("coordinator", "/api/publications")["publications"] if p["current"]]
     assert len(current) == 2 and pub(h, pid)["effective_until"] in {"2026-10-08", "2026-10-09"}
 
