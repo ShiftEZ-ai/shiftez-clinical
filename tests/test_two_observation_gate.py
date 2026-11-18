@@ -93,6 +93,9 @@ class TwoObservationGateTests(unittest.TestCase):
                     report.write(path)
                     with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
                         maker.product_error_nodes(self.folder)
+                    with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
+                        with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                            maker.product_error_nodes(self.folder)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
@@ -196,6 +199,10 @@ class TwoObservationGateTests(unittest.TestCase):
             self.assertTrue(self.evaluate(["passed", "passed"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [NODE])
             self.assertIn("- " + NODE, summary.read_text())
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, recovered={NODE: "error"}, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [])
             self.assertTrue(self.evaluate(["passed", "error"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [])
             down = "tests/test_product.py::test_unlisted"
@@ -255,6 +262,7 @@ class TwoObservationGateTests(unittest.TestCase):
             events += [(event, owned, [], "dev", False, False)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events.append(("pull_request", owned, [], "dev", False, False))
+            events = [case for case in events if case[0] != "merge_group"]
             for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
@@ -308,6 +316,38 @@ class TwoObservationGateTests(unittest.TestCase):
                     else:
                         self.assertNotIn("selection", plan)
                         self.assertEqual(actual, files)
+
+    def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):
+        import trusted_ci
+        import trusted_verdict
+        import yaml
+
+        config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
+        for producer in ("static", "result"):
+            self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
+                          [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
+        event = self.folder / "schedule.json"
+        event.write_text("{}")
+        pin, default_sha = "a" * 40, "b" * 40
+        nightly = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": default_sha,
+                   "GITHUB_OUTPUT": str(self.folder / "output")}
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.subprocess, "check_output", return_value=pin + "\n"), \
+             patch.object(trusted_ci, "output") as selected:
+            trusted_ci.select()
+            self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.policy, "event", return_value={}), \
+             patch.object(trusted_ci.policy, "git", return_value=pin.encode()):
+            trusted_ci.policy.ci_context()
+            self.assertIn("base_sha=" + pin, Path(nightly["GITHUB_OUTPUT"]).read_text())
+            self.assertIn("release=false", Path(nightly["GITHUB_OUTPUT"]).read_text())
+        with patch.object(trusted_verdict, "git", return_value=pin.encode()):
+            self.assertEqual(trusted_verdict.policy_context({}, "schedule", pin), ("dev", pin))
+            with self.assertRaisesRegex(ValueError, "pinned dev"):
+                trusted_verdict.policy_context({}, "schedule", default_sha)
 
     def test_dispatch_and_push_fetch_the_measured_pr_before_reader(self):
         import test_working_policy as fixtures
