@@ -7,14 +7,16 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from apps.api import models as m
-from apps.api.db import make_engine, transaction
+from apps.api.db import make_engine, retry_write, transaction
 from apps.api.serialization import CANDIDATE_EVIDENCE_REF, CANDIDATE_EVIDENCE_VERSION, job_result_projection
 from apps.worker.generation_preparation import candidate_evidence_for_followup
+from apps.worker.main import claim_job, finish_job
 from migrations import safety
 from packages.domain.input_manifest import digest
 from scripts import manage
 from .conftest import postgres_database
 from .test_autosched_reuse_p0 import followup
+from .test_autoschedule_budget_worker import generation_job
 
 
 @pytest.fixture(params=['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)])
@@ -112,3 +114,33 @@ def test_followup_reuses_exact_evidence_in_both_formats(followup):
         row = db.get(m.JobCandidateEvidence, ('strict', 0))
         row.payload = {**row.payload, 'exclusions': []}
     assert candidate_evidence_for_followup(engine, claim) is None
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_worker_completion_binds_evidence_under_its_lease(request, backend):
+    h = request.getfixturevalue(backend)
+    job_id = generation_job(h)
+    engine = h.app.state.engine
+    claim = retry_write(engine, claim_job)
+    rows = [{'shift_id': 'clinic', 'person_id': 'selected', 'exclusions': []},
+            {'shift_id': 'clinic', 'person_id': 'unavailable', 'exclusions': [{'code': 'UNAVAILABLE'}]}]
+    proposal = {'status': 'candidate_feasible', 'input_fingerprint': claim['input']['fingerprint'],
+                'additions': [], 'removals': [], 'candidate_evidence': rows}
+    stored = select(m.JobCandidateEvidence.payload).where(m.JobCandidateEvidence.job_id == job_id).order_by(
+        m.JobCandidateEvidence.ordinal)
+    assert not retry_write(engine, lambda db: finish_job(db, {**claim, 'attempt': claim['attempt'] + 1}, proposal, None))
+    with transaction(engine) as db:
+        assert db.get(m.Job, job_id).status == 'running'
+        assert not db.scalars(stored).all()
+    assert retry_write(engine, lambda db: finish_job(db, claim, proposal, None))
+    assert not retry_write(engine, lambda db: finish_job(db, claim, proposal, None))
+    with transaction(engine) as db:
+        job = db.get(m.Job, job_id)
+        assert job.status == 'succeeded' and 'candidate_evidence' not in job.result
+        reference = {'version': CANDIDATE_EVIDENCE_VERSION, 'count': len(rows), 'digest': digest(rows)}
+        assert job.result[CANDIDATE_EVIDENCE_REF] == reference
+        manifest = job.input_snapshot['generation_manifest']['result']
+        assert manifest[CANDIDATE_EVIDENCE_REF] == reference and manifest['hash'] == digest(job.result)
+        assert list(db.scalars(stored)) == rows
+    page = h.get('coordinator', f'/api/jobs/{job_id}/evidence?shift_id=clinic')
+    assert page['candidates'] == rows and page['total'] == 2 and page['eligible'] == 1
