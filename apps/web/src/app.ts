@@ -1741,6 +1741,7 @@ async function renderPage(){
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
       body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
+      void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
       // Perf instrumentation (as rk-decorate): a page's render, start to drawn; requests included when it made any.
       // `keep`: a redraw of the page on screen (a save, a live update), which the PC measures read (PC-STEPS).
@@ -7614,7 +7615,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Back on the tab with a run going: read it at once instead of waiting out a slower poll.
   // One listener at a time: a redrawn panel replaces the previous one's, so an old panel (and the page around it) is not
   // kept alive by a tab that never changes visibility (perf SC-01).
-  const onVisible=()=>{if(!panel.isConnected)return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
+  // A panel in the page still being built (alive) is the one that will show: it reads too, or the wake-up is lost.
+  const onVisible=()=>{if(!alive(panel))return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
   if(panelVisibility)document.removeEventListener('visibilitychange',panelVisibility);
   panelVisibility=onVisible;document.addEventListener('visibilitychange',onVisible);
   // One polling chain: a newer load (panel opened, Retry, cancel) supersedes one still waiting for the server.
@@ -7631,7 +7633,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       review:()=>{st().open=true;st().step=3;target.hidden=false;document.querySelector('.auto-button')?.setAttribute('aria-expanded','true');jobsKey='';void load().catch(failed);},
       apply:editable&&changes&&currentGeneration(job,data)?async()=>{await applyJob(job);await refresh();}:null}:null);};
   // The live stream wakes a watched run at once (polling stays the fallback).
-  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(panel.isConnected&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
+  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(alive(panel)&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
   const finishShown=liveFinisher(st(),finishLive);
   const liveRead=async(id:string):Promise<Row>=>{const status=(await get('/api/jobs/'+id+'/status?events=true')).job as Row,
     job=DONE_JOB.includes(status.status)?(await get('/api/jobs/'+id)).job as Row:status,list=lastJobs!.jobs;
@@ -7685,7 +7687,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     watchPanelJob(liveRunning?.id||'');
     const searching=liveRunning?.status==='running';
     const watched=(!target.hidden||searching)&&!document.hidden,delay=!running?(watched?30000:0):!watched?30000:running.status==='queued'?[3000,10000,30000][Math.min(queuedPolls,3)-1]:searching&&Date.now()-streamSeen>=45_000?1000:3000;
-    if(delay)timer=window.setTimeout(()=>{if(panel.isConnected)void load().catch(failed);},delay);
+    if(delay)timer=window.setTimeout(()=>{if(alive(panel))void load().catch(failed);},delay);
     const compiler=response.generation_capability?.algorithm;
     const nextKey=JSON.stringify([jobs,running,compiler]);
     // A run that finishes while you work elsewhere (panel closed, another tab) says so once.
