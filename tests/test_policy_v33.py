@@ -79,22 +79,29 @@ class V33Tests(unittest.TestCase):
         with self.assertRaises(ValueError):privacy.check(yaml.safe_dump(doc))
     def test_workflow_cache_event_boundaries(self):
         workflows=HELPERS.parent/'workflows' if (HELPERS.parent/'workflows').is_dir() else HELPERS
-        checked=0
+        restores, saves, keys = set(), {}, set()
         for name in ('ci.yml','ci-tests.yml'):
             doc=yaml.load((workflows/name).read_text(),Loader=yaml.BaseLoader)
-            for job in doc['jobs'].values():
-                caches=[s for s in job.get('steps',[]) if s.get('uses','').startswith('actions/cache')]
-                if not caches:continue
-                checked+=1
-                self.assertEqual(len(caches),2)
-                self.assertEqual({s['uses'].split('@')[0] for s in caches},{'actions/cache/restore','actions/cache/save'})
-                for step in caches:
+            for job_name, job in doc['jobs'].items():
+                for step in (s for s in job.get('steps',[]) if s.get('uses','').startswith('actions/cache')):
                     self.assertIn('${{ github.event_name }}',step['with']['key'])
                     self.assertNotIn('restore-keys',step['with'])
+                    keys.add(step['with']['key'])
                     action=step['uses'].split('@')[0]
-                    expected="github.event_name == 'pull_request'" if action.endswith('/restore') else "github.event_name == 'merge_group' || github.event_name == 'push'"
-                    self.assertEqual(step['if'],expected)
-        self.assertEqual(checked,3)
+                    job_id = (name, job_name)
+                    if action == 'actions/cache/restore':
+                        self.assertNotIn(job_id, restores)
+                        self.assertNotIn('if', step)
+                        restores.add(job_id)
+                    else:
+                        self.assertEqual(action, 'actions/cache/save')
+                        self.assertNotIn(job_id, saves)
+                        saves[job_id] = step['if']
+        self.assertEqual(restores, {('ci.yml', 'checks'), ('ci.yml', 'static'), ('ci-tests.yml', 'tests')})
+        self.assertEqual(saves, {('ci-tests.yml', 'tests'): "(github.event_name == 'merge_group' || github.event_name == 'push') && "
+                                "inputs.suite == 'browser' && inputs.shard == 1 && inputs.replica == 1 && "
+                                "steps.dependency-cache.outputs.cache-hit != 'true'"})
+        self.assertEqual(len(keys), 1)
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')
