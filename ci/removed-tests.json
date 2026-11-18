@@ -3,6 +3,11 @@
   "removed": [],
   "removed_nodes": [
     {
+      "node": "tests/test_bulk_reverse_transitions.py::test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references",
+      "owner": "maintainer",
+      "reason": "Same test now runs on sqlite and postgresql (parametrized), so its node identity gains a case suffix; every assertion remains and it adds a check that preview leaves the input and availability revisions unchanged."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
