@@ -89,7 +89,7 @@ def plan(base, measurement):
     return result
 
 
-def invocation(targets, suite, report, extra, workers="4", base_targets=None):
+def invocation(targets, suite, report, extra, workers, base_targets=None):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -218,6 +218,9 @@ def main():
     shards = candidate["suites"][args.suite]["shards"]
     if type(args.shard) is not int or not 1 <= args.shard <= len(shards):
         raise ValueError("Invalid shard")
+    workers = os.getenv(f"CI_{args.suite.upper()}_WORKERS", "")
+    if not policy.re.fullmatch(r"[1-8]", workers):
+        workers = "4"
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
@@ -236,7 +239,7 @@ def main():
                          and Path(p).name.startswith("test_browser")== (args.suite=="browser"))
             count=len(candidate["suites"][args.suite]["shards"])
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
-        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else "4",base_targets)
+        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers, base_targets)
         paths = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
         receipt["reports"].append({"file": name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in paths}})
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
