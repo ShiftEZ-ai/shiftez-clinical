@@ -132,10 +132,10 @@ def main():
     config = settings()
     selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
                                       {suite: config[suite + "_shards"] for suite in ("unit", "browser")}, scope)
-    validate_selected_reports(plan, reports)
     if policy.bootstrap(data, kind, base):
         if partial:
             raise ValueError("Bootstrap requires the full plan")
+        validate_selected_reports(plan, reports)
         sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
         import make_known_failures as maker
         bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags)
@@ -185,6 +185,8 @@ def main():
             context = maker.context(base)
             if plan["replicas"] != context["replicas"]:
                 raise ValueError("Replica count differs from the trusted reader context")
+            # After the replica check, so the more specific refusal names a wrong replica count.
+            validate_selected_reports(plan, reports)
             runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
