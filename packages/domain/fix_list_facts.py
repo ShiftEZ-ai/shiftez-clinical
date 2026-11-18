@@ -195,6 +195,8 @@ def ordered_fixes(action, scope, evidence, *, safety, session_locks):
     codes = {row['code'] for row in evidence}
     supervision = bool(codes & {'SUPERVISION_GAP', 'SUPERVISION_PAIRING', 'ATTACHMENT_PAIRING', 'SUPERVISION_LEVEL'})
     cover = any((row.get('cause') or {}).get('eligible_people_basis') == 'potential_cover_known_records' for row in evidence)
+    if scope.get('classification') == DUTIES_DURING_APPROVED_LEAVE:
+        add('choose_cover')
     if action == 'open_line':
         add('open_line')
     # A lead gap is a role decision on an existing seat.  It must open the
@@ -205,8 +207,6 @@ def ordered_fixes(action, scope, evidence, *, safety, session_locks):
         sid = unlocked[0]
         key = next((row['finding_key'] for row in evidence if sid in row['shift_ids']), None)
         add('assign_supervisor' if supervision else 'assign', chosen_scope={**scope, 'shift_id': sid, 'finding_key': key})
-    if scope.get('classification') == DUTIES_DURING_APPROVED_LEAVE:
-        add(action)
     if count == 0 and (cover or supervision):
         add('open_eligibility')
     if count != 0 or not (cover or supervision):
