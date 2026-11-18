@@ -77,8 +77,10 @@ def test_publish_rechecks_every_approved_input_change_before_review_gate(h, monk
                 "findings": [*result["findings"], finding]}
 
     monkeypatch.setattr(planning, "evaluate", counted)
-    refused = h.lifecycle(workspace, "publish", status=409)
-    assert refused["error"]["code"] == "STALE_APPROVAL"
+    # A fresh mandatory finding takes precedence over stale review evidence.
+    refused = h.lifecycle(workspace, "publish", status=422)
+    assert refused["error"]["code"] == "VALIDATION_FAILED"
+    assert refused["error"]["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
     assert calls == [True]
     assert not h.get("coordinator", "/api/publications")["publications"]
 

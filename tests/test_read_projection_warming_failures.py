@@ -5,7 +5,7 @@ import json
 import time
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select, update
 
 from apps.api import models as m, snapshots
 from apps.api.db import transaction
@@ -97,6 +97,35 @@ def test_failed_projection_backoff_cpu_budget(backend, monkeypatch, caplog, stag
     state = test_failed_projection_backs_off_logs_once_and_recovers_after_input_change(
         backend, monkeypatch, caplog, stage, in_generator)
     assert state['cpu'] < 3, state['cpu']
+
+
+def test_sqlite_warmer_skips_a_stale_write_snapshot_without_marking_it_warm(h, monkeypatch, caplog):
+    workspace = h.shift(h.workspace())['workspace']
+    engine = h.app.state.engine
+    projection = m.WorkspaceReadProjection
+    key = (projection.workspace_id == workspace['id'], projection.kind.in_(('fingerprint', 'warm')))
+    with transaction(engine, write=True) as db:
+        db.add(m.ReadProjectionWarmCursor(key='workspaces'))
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+        db.execute(delete(projection).where(*key))
+
+    fingerprints = snapshots.fingerprints
+
+    def race(*args, **kwargs):
+        # Another connection commits after the warmer establishes its read snapshot.
+        with engine.begin() as writer:
+            writer.execute(update(m.ReadProjectionWarmCursor).where(m.ReadProjectionWarmCursor.key == 'workspaces')
+                           .values(after_id=workspace['id']))
+        return fingerprints(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(snapshots, 'fingerprints', race)
+        assert not warming.warm_one(engine)
+
+    with transaction(engine) as db:
+        assert not db.scalars(select(projection.kind).where(*key)).all()
+    assert any(record.message == 'read_projection_store_skipped' for record in caplog.records)
+    assert warming.warm_one(engine)
 
 
 def test_empty_and_missing_warming_inputs_do_not_spin(backend, monkeypatch):
