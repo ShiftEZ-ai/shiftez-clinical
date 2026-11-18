@@ -3408,18 +3408,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_submission_keeps_its_check_fresh_while_invalidating_neighbour_allocations[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_submission_keeps_its_check_fresh_while_invalidating_neighbour_allocations[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_supervision_pairing.py::test_named_supervision_requires_present_qualified_person_and_survives_amendment",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
