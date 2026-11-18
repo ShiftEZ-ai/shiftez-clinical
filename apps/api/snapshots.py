@@ -111,6 +111,7 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
         'urgency_reason', 'target_overrides', 'rule_adjustments', 'accepted_issues', 'archived_by',
         'archive_reason', 'archive_state', 'return_note', 'replaces_publication_id',
         'id', 'revision', 'created_at', 'department_id', 'validation'})),
+    ('planning_group_versions', m.PlanningGroupVersion, 'general', 'department', None, frozenset()),
     # Live stages that are part of the domain input even though they are not
     # copied into the shared catalogue projection above.
     ('organisation', m.Organisation, 'general', 'organisation', None, frozenset({'revision', 'input_revision', 'availability_revision'})),
