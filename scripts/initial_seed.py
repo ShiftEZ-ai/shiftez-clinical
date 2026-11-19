@@ -83,8 +83,9 @@ def load(engine, settings, version, reason):
         db.flush()
         # This operator bundle also runs inside predecessor release images: retain their own defaults.
         defaults = getattr(deployment_settings, "new_department_session_limits", dict)()
+        display = getattr(deployment_settings, "new_department_display_settings", dict)()
         department = m.Department(organisation_id=org.id, name=institution.department_name,
-                                  weekend_days=institution.weekend_days, **defaults)
+                                  weekend_days=institution.weekend_days, display_settings=display, **defaults)
         db.add(department)
         db.flush()
         try:

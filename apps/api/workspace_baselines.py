@@ -665,7 +665,8 @@ def generation_manifest(row, snapshot, *, job_id=None, requester_id=None, job=No
     payload = verify(row)
     info = projection(row)
     source_hashes = {source: group_hash(payload, source) for source in info["included_sources"]}
-    input_manifest = snapshot.get("input_manifest") or {}
+    from packages.domain.input_manifest import bind_generation_admission
+    input_manifest = bind_generation_admission(snapshot.get("input_manifest") or {}, snapshot)
     result = result or {}
     result_copy = {key: value for key, value in result.items() if key != "generation_manifest"}
     result_hash = snapshot_hash(result_copy) if result_copy else None

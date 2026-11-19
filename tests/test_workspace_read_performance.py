@@ -193,6 +193,35 @@ def test_rule_map_projection_hit_does_not_rebuild_snapshot(backend, monkeypatch)
     assert second['rules'] == first['rules'] and second['markers'] == first['markers']
 
 
+def test_rule_map_returns_uncached_data_when_projection_write_is_locked(backend, caplog):
+    h = backend
+    h.policy({'kind': 'minimum_cover', 'minimum': 2})
+    workspace = h.shift(h.workspace('Rule map projection'))['workspace']
+    path = f'/api/workspaces/{workspace["id"]}/rule-map'
+    expected = h.get('coordinator', path)
+    assert expected['rules']
+    engine = h.app.state.engine
+    projection = m.WorkspaceReadProjection
+    key = (projection.workspace_id == workspace['id'], projection.kind == 'rule_map')
+    with transaction(engine, write=True) as db:
+        db.execute(delete(projection).where(*key))
+
+    with engine.begin() as writer:
+        if engine.dialect.name == 'sqlite':
+            writer.exec_driver_sql('BEGIN IMMEDIATE')
+        else:
+            writer.exec_driver_sql('LOCK TABLE workspace_read_projections IN SHARE MODE')
+        actual = h.get('coordinator', path)
+        assert writer.scalar(select(projection.kind).where(*key)) is None
+
+    actual.pop('elapsed_ms')
+    expected.pop('elapsed_ms')
+    assert actual == expected
+
+    [warning] = [record for record in caplog.records if record.message == 'read_projection_store_skipped']
+    assert warning.error_code == 'OperationalError' and warning.exc_info is None
+
+
 def test_stale_summary_is_recomputed_once_without_replacing_clinical_evidence(backend, monkeypatch):
     h = backend
     freeze_clock(monkeypatch)
