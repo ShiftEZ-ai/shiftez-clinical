@@ -6,10 +6,11 @@ import uuid
 import pytest
 
 pytestmark = pytest.mark.usefixtures('score_check_enabled')
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from apps.api import models as m
-from apps.api.db import transaction
+from apps.api.db import WRITE_LOCK_KEY, transaction
+from apps.api.services import score_check_api
 from packages.contracts import schemas as s
 from .governance_support import identity
 from .test_score_check_ai import enable, profile
@@ -139,6 +140,23 @@ def test_frontend_check_flattens_confident_unknown_unsure_and_cells_and_can_undo
     result = decide(h, value, cell, {'kind': 'skip'})
     assert next(item for item in result['items'] if item['id'] == cell['id'])['decision']['kind'] == 'skip'
     assert current(h, value)['sources'][0]['unclear_cells'] == 0
+
+
+def test_frontend_check_refresh_holds_the_writer_lock(h, monkeypatch):
+    value = upload(h)
+    engine = h.app.state.engine
+    view_check = score_check_api.view_check
+
+    def check_with_competing_writer(db, *args):
+        if engine.dialect.name == 'postgresql':
+            with transaction(engine) as competing:
+                assert not competing.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'), {'key': WRITE_LOCK_KEY})
+        else:
+            assert db.connection().connection.driver_connection.in_transaction
+        return view_check(db, *args)
+
+    monkeypatch.setattr(score_check_api, 'view_check', check_with_competing_writer)
+    assert check(h, value)['import_id'] == value['id']
 
 
 def test_frontend_missing_decisions_gate_save_and_saved_workspace_uses_existing_writer(h):

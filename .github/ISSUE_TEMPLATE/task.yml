@@ -1,0 +1,13 @@
+name: Task
+description: Report a problem or request a change.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or change
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Expected result and checks
