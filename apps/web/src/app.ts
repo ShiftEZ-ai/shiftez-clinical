@@ -71,7 +71,7 @@ import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
-import {routingPage,reviewPanel,approvalDialog,decidesStep,SWAP_KIND_WORDS} from './governance.js';
+import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
@@ -2483,12 +2483,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return;const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
+      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
     if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
-      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
+      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
