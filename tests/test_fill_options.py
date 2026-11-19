@@ -109,6 +109,33 @@ def test_shared_safety_exclusions_keep_finding_detail(h):
     assert finding['detail'] == {'from_shift_id': source['shifts'][0]['id'], 'to_shift_id': target['id']}
 
 
+def test_late_weekly_hours_cap_blocks_fill_and_save_and_checks_retained_duty(h):
+    from tests.test_assignment_override_reason import payload
+
+    retained, candidate = h.seed['people'][:2]
+    draft = h.shift(h.workspace(), people=[retained])['workspace']
+    draft = h.shift(draft, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[])['workspace']
+    cap = h.policy({'kind': 'max_hours', 'hours': 1, 'window': 'week', 'include_overtime': True},
+                   workspace_id=draft['id'])
+    draft = h.lifecycle(draft, 'validate')['workspace']
+    detail = h.detail(draft)
+    target = next(shift for shift in detail['shifts'] if not shift['participants'])
+    rows = options(h, draft, target['id'])['candidates']
+    value = payload(h, draft, target, start=target['start'], end=target['end'], people=[candidate])
+    reply = h.command('coordinator', 'shift.update', value, revision=draft['revision'], status=(200, 422))
+    refused = (reply.get('error', {}).get('details') or {}).get('findings', [])
+    checked = detail['workspace']['validation']['findings']
+    cap_findings = lambda findings: {finding['person_id'] for finding in findings
+                                    if finding['code'] == 'MAX_HOURS' and finding['rule_id'] == cap['id']
+                                    and finding['severity'] == 'error'}
+    assert ([row['status'] for row in rows if row['status'] != 'blocked'],
+            cap_findings(refused), cap_findings(checked)) == ([], {candidate}, {retained})
+    assert rows and {row['person_id'] for row in rows} >= {candidate}
+    assert any(finding['code'] == 'MAX_HOURS' and finding['rule_id'] == cap['id']
+               for row in rows if row['person_id'] == candidate for finding in row['findings'])
+    assert not next(shift for shift in h.detail(draft)['shifts'] if shift['id'] == target['id'])['participants']
+
+
 def test_fill_options_need_a_draft_coordinator_and_an_open_session(h):
     w = h.workspace('Fill options access', '2026-10-04', '2026-10-11')
     w = h.shift(w)['workspace']
