@@ -139,7 +139,7 @@ def test_v2_list_hides_empty_and_ended_but_collection_filters_reach_both(browser
         rows = main.locator('li.rt-item')
         expect(rows).to_have_count(3)
         expect(rows.filter(has_text='Workload limit')).to_contain_text('2 lines')
-        main.get_by_role('button', name='All rules').click()
+        main.get_by_role('button', name='All rules', exact=True).click()
         expect(main.locator('li.rt-ln')).to_have_count(4)
         expect(main.locator('li.rt-ln').filter(has_text='duties per calendar week')).to_have_count(1)
         expect(main.locator('li.rt-ln').filter(has_text='scheduled hours in any 7 days')).to_have_count(1)

@@ -35,8 +35,8 @@ def test_rule_numbers_read_in_one_style_everywhere(browser, live_server, h, sche
         navigate(page, 'rules')
         main = page.locator('#main')
         main.get_by_role('button', name='Duties per month lines').click()
-        alex = main.locator('li.rt-ln').filter(has=page.locator('.rp.person')).locator('.rt-ln-num')
-        expect(alex).to_have_text('1↰ – 10')
+        alex = main.locator('li.rt-ln').filter(has=page.locator('.rp.person')).locator('.rt-ln-num .rule-num')
+        expect(alex).to_have_text('1↰ – 10 duties')  # the number and its measure read as one phrase
         plain(alex)
         expect(alex.locator('.rc-inh')).to_have_text('1↰')
         expect(alex.locator('.rc-inh')).to_have_css('font-style', 'normal')  # muted, not italic

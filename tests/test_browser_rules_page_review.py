@@ -119,7 +119,7 @@ def test_rules_page_rule_attention_is_line_scoped_and_rule_rows_never_say_overla
 
 def test_rules_page_usual_assignees_count_as_who_and_large_rule_meta_stays_one_line(browser, live_server, h):
     """Item 4: usual assignees are people, while the two largest seeded rows keep one readable meta line."""
-    flag(h)
+    populated_catalogue(h, large_scope=True)  # turns the catalogue on itself; a second flag(h) is refused as stale
     people = h.seed['people'][:3]
     services = h.seed['services'][:1]
     catalogue_rule(h, 'duties_per_month', [
@@ -127,7 +127,6 @@ def test_rules_page_usual_assignees_count_as_who_and_large_rule_meta_stays_one_l
             {'field': 'usual_assignee_ids', 'values': people}, {'field': 'service_ids', 'values': services}]}),
         line({'max': {'value': 4, 'level': 'mandatory'}}, where={'conditions': [
             {'field': 'usual_assignee_ids', 'values': [people[0]]}]})])
-    populated_catalogue(h, large_scope=True)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
     try:
         navigate(page, 'rules')
@@ -206,7 +205,7 @@ def test_future_and_ended_lines_are_plain_secondary_text(browser, live_server, h
         add_filter(pop)
         row = pop.locator('.cond-line').last
         current = row.get_by_label('Filter on', exact=True).evaluate('s => s.selectedOptions[0].textContent')
-        pick(page, row, None if current == 'Valid' else 'Valid', ['Ended'])
+        pick(page, row, None if current == 'Lines: Valid' else 'Lines: Valid', ['Ended'])
         page.keyboard.press('Escape')
         plain(ended['id'], 'Ended')
     finally:
@@ -227,7 +226,7 @@ def test_shadowed_attention_is_grouped_searchable_and_removes_the_right_line(bro
     h.command('admin', 'membership.update_dates', {'ends_on': day, 'reason': 'Split ranks for the rule fixture'},
               old_rank['id'], old_rank['revision'])
     h.command('admin', 'membership.create', {'person_id': member, 'category_id': h.seed['trainee_category'],
-                                             'starts_on': day, 'reason': 'Split ranks for the rule fixture'})
+                                             'starts_on': day})
     anchor = _workload_line(5)
     ranks = [_workload_line(value, who=_who('category_ids', [rank]))
              for value, rank in [(4, h.seed['category']), (3, h.seed['trainee_category'])]]

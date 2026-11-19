@@ -290,7 +290,7 @@ function sideCounts(lines:readonly RuleLine[],side:'who'|'where',names:Namer,non
 /** A rule row's one count line: "41 lines · 40 in force · who: everyone, 4 ranks, 30 people · where: all clinics,
  *  3 clinics"; "in force" only when it differs (the rule on). Counts the lines the list shows. */
 export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:boolean):string{
-  if(!lines.length)return 'No lines';
+  if(!lines.length)return 'no lines';
   const inForce=lines.filter(l=>effectiveOf(l,day)==='active').length;
   return [plural(lines.length,'line'),...(on&&inForce!==lines.length?[`${inForce} in force`]:[]),`who: ${sideCounts(lines,'who',names,'everyone')}`,`where: ${sideCounts(lines,'where',names,'all clinics')}`].join(' · ');
 }
@@ -588,9 +588,9 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   const inhOf=(id:string)=>(found?.inherited??(!changes()?e.inherited:undefined)??{})[id],from=sourceWords(()=>draft.lines,names);
   const marks=ruleViewKey();
   // each where's lines as an anchor and its exceptions (exceptionTree, as the Rules list): worked out once per draft.
-  let shapeAt=-1,shapeFound:unknown,shapes=new Map<string,{under:boolean;always:boolean;instead:string;at:number}>(),mixedLevels=false;
+  let shapeAt=-1,shapeFound:unknown,shapes=new Map<string,{under:boolean;always:boolean;instead:string;at:number}>();
   // Again for each draft and each check answer: what a line replaces comes with the check (its line_replaces).
-  const shapeOf=(l:RuleLine)=>{if(shapeAt!==draftVersion||shapeFound!==found){shapes=new Map();shapeAt=draftVersion;shapeFound=found;mixedLevels=ruleLevels(e,draft.lines).length>1;const by=new Map<string,RuleLine[]>();
+  const shapeOf=(l:RuleLine)=>{if(shapeAt!==draftVersion||shapeFound!==found){shapes=new Map();shapeAt=draftVersion;shapeFound=found;const by=new Map<string,RuleLine[]>();
       for(const x of draft.lines){const k=x.where?.conditions?.length?JSON.stringify(x.where):'';by.set(k,[...(by.get(k)||[]),x]);}
       for(const ls of by.values())exceptionTree(e,ls,x=>x).forEach((s,at)=>shapes.set(s.item.id,{under:s.under,always:s.always,instead:replacedWords(e,s.item,draft.lines,found?.line_replaces??(!changes()?e.line_replaces:undefined),draft.settings),at}));}
     return shapes.get(l.id);};
@@ -613,7 +613,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     ...(e.default_settings?.balance_goal?[{key:'measure',label:'Measure',text:goalCell,cell:goalCell}]:[]),
     {key:'days',label:'Days',class:'rc-col-narrow',text:r=>whenWords(e,r.line,draft.settings),cell:r=>whenWords(e,r.line,draft.settings),edit:edit(r=>daysEditor(r.line),(l,v)=>{l.weekdays=v;})},
     ...Object.keys(e.numbers).map(k=>({key:'n_'+k,label:numberLabel(e,k),num:k!=='apply',text:(r:LineRow)=>shownNumber(r.line,k,inhOf(r.line.id)),cell:(r:LineRow)=>{if(k==='apply'&&'apply' in (r.line.numbers||{})&&appliesWord(e)==='no duties')return el('span',{class:'rule-num'},marks.stamp(safetyLock()),' No duties');
-        const n=numberCell(r.line,k,inhOf(r.line.id),from,marks);shapeOf(r.line);if(!mixedLevels)for(const b of n.querySelectorAll('.rc-level'))b.remove();return n;},
+        // each cell keeps its strength, as its accessible name says it (only the Rules list says one strength once per rule).
+        return numberCell(r.line,k,inhOf(r.line.id),from,marks);},
       edit:edit((r,finish)=>numberEditor(e,k,r.line,finish),(l,v)=>setNumber(l,k,v))})),
     {key:'valid',label:'Valid',class:'rc-col-narrow',text:r=>validText(r.line),sort:r=>r.line.ends_on||'9999',cell:r=>validNode(r.line),
       edit:edit(r=>validEditor(r.line),(l,v)=>{l.starts_on=v.starts_on||null;l.ends_on=v.ends_on||null;})},
@@ -628,7 +629,9 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     {key:'person',label:'Person',hidden:true,cell:()=>'',facet:r=>g.person(r.line)},
     {key:'programme',label:'Programme',hidden:true,cell:()=>'',facet:r=>g.of(r.line.who,['programme_ids'],'No programme')},
     {key:'tag',label:'Tag',hidden:true,cell:()=>'',facet:r=>g.tags(r.line)},
-    {key:'clinic',label:'Clinic',hidden:true,ordered:true,cell:()=>'',facet:r=>g.of(r.line.where,['service_ids','location_ids','assignment_type_ids'],'All clinics')},
+    // Lines grouped by place: a line at two clinics is listed once, under its first (Filter still matches each clinic).
+    // shortcut: grouped under its first clinic, not its where as a whole as the Rules list does; upgrade with a where facet registered in the rule-line-db contract.
+    {key:'clinic',label:'Clinic',hidden:true,ordered:true,groupFirst:true,cell:()=>'',facet:r=>g.of(r.line.where,['service_ids','location_ids','assignment_type_ids'],'All clinics')},
     {key:'clinic_type',label:'Clinic type',hidden:true,cell:()=>'',facet:r=>g.clinicType(r.line)},
     {key:'building',label:'Building',hidden:true,cell:()=>'',facet:r=>g.building(r.line)},
     {key:'days_group',label:'Days',hidden:true,cell:()=>'',facet:r=>daysText(r.line)},

@@ -137,7 +137,10 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
             else:
                 held.append(route)
         page.route('**/api/rules/catalogue', route_handler)
-        navigate(page, 'rules')
+        # The page cannot finish loading while its catalogue read is held: open it from the navigation, not navigate().
+        if width < 720:
+            page.get_by_role('button', name='Menu', exact=True).click()
+        page.get_by_role('button', name='Rules', exact=True).click()
         wait_held(page, held)
         expect(page.locator('#main .loading.page-sk')).to_be_visible()
         expect(page.locator('#main .loading.page-sk')).not_to_have_class(re.compile(r'\bsk-wait\b'))
@@ -220,8 +223,12 @@ def test_rules_toolbar_sorts_rule_names_and_lines_by_who(browser, live_server, h
     try:
         navigate(page, 'rules')
         choose(page, 'Sort', 'Sort by', 'Name')
-        names = page.locator('.rt-item .rt-rule-link').all_inner_texts()
-        assert names == sorted(names, key=str.casefold), names
+        # The list is grouped (by question by default): Name sorts the rules within each group.
+        sections = page.locator('#main section.rt-q')
+        expect(sections.first).to_be_visible()
+        for section in sections.all():
+            names = section.locator('.rt-item .rt-rule-link').all_inner_texts()
+            assert names == sorted(names, key=str.casefold), names
         item = page.locator('.rt-item').filter(has=page.get_by_role('button', name='Duties per week lines', exact=True))
         item.get_by_role('button', name='Duties per week lines', exact=True).click()
         labels = item.locator('.rt-ln-who').all_inner_texts()

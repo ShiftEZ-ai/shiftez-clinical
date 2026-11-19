@@ -400,13 +400,13 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'}),
       // Its strength once (one badge when every number agrees, else Mandatory and Advisory): the shared level badges.
       marks.numbers(el('span',{class:'rt-levels'},...ruleLevels(e,shownLines).map(v=>levelBadge(v))),false),
-      // a rule the explainer can't word says so beside its name, in every grouping.
-      summaries.get(e.id)?.unexplained?unexplainedLine(TERMS.ruleUnexplainedShort):'',
+      // a rule the explainer can't word says so beside its name, in every grouping; by question in full (its check still applies).
+      summaries.get(e.id)?.unexplained?unexplainedLine(questionOf(e)?TERMS.ruleUnexplained:TERMS.ruleUnexplainedShort):'',
       // Off in words too (the switch's colour is never the only signal); a reader's On / Off badge already says it.
       canEdit&&!on?badge('Off','neutral','rt-off'):'',
       // Waiting on someone else is information, not a call to act: info with a clock.
       e.proposed?badge(WAITING,'info','rt-waiting-chip',{icon:'clock','data-rule-mark':'waiting'}):'',changes?badge(plural(changes,'change'),'info'):'',
-      att?badge(att,statusTone('attention'),'rt-att',{icon:'alert',as:'button',onclick:()=>{open('attention',{rule:[e.name]});},'data-rule-mark':'attention'}):'',picked);
+      att?badge(`⚠ ${att}`,statusTone('attention'),'rt-att',{as:'button',onclick:()=>{open('attention',{rule:[e.name]});},'data-rule-mark':'attention'}):'',picked);
     const meta=el('div',{class:'rt-meta'},ruleCounts(shownLines,names,data.day,on));
     const item=el('li',{class:'rt-item'+(d.on?'':' is-off'),'data-rule':e.id},
       el('div',{class:'rt-row'},canEdit?box(`Select ${e.name}`,shownLeaves(x),!editable(e)):el('span',{}),toggle,sw,el('div',{class:'rt-main'},title,meta)));
@@ -457,25 +457,25 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const num=numbersNode(l,e.inherited?.[l.id],from,mode||(noDuties?'No duties':appliesWord(e)));
     // 11: the number and its measure are one unbroken phrase; a strength follows the measure words, and only when the
     // rule's lines differ in strength (an inherited strength says nothing).
-    const levels=[...num.querySelectorAll<HTMLElement>('.rc-level')];for(const b of levels)b.remove();
+    const levels=[...num.querySelectorAll<HTMLElement>('.rc-level')];for(const b of levels){if(b.previousSibling?.textContent===' ')b.previousSibling.remove();b.remove();}
     // Measure and period read in the unit words ("duties per calendar week"), not columns of their own.
     // shortcut: the unit shown is the in-force rule's, so a draft that changes the unit shows the old unit here (its page shows the new); upgrade when the catalogue sends each line's effective unit (a server field).
     const unit=e.measures&&l.numbers.apply||mode?'':unitText(e,l,settingsOf(e))||unitWords(e,l);if(unit)num.append(el('small',{class:'muted'},' '+unit));
     // 12 + C1: a safety line (no duties, …) carries its lock.
-    if(noDuties||e.mixed_safety&&setsSafety(e,l))num.prepend(safetyLock(),' ');
+    const lock=noDuties||e.mixed_safety&&setsSafety(e,l)?[safetyLock(),' ']:[];
     marks.numbers(num);
     const after=[...(one?[]:levels.filter(b=>b.dataset.level!=='inherit')),...(instead?[el('small',{class:'muted rt-instead'},`(instead of ${instead})`)]:[])];
     const tail=after.length?marks.numbers(el('span',{class:'rt-ln-after'},...after.flatMap(x=>[' ',x])),false):'';
     // When: its days (only when not every day) and valid dates (only when set); blank otherwise.
     // every condition the resolver applies (a restriction's days, hours, window around leave) reads here.
-    const dayWords=whenWords(e,l,settingsOf(e)),when:Child[]=[dayWords!==everyDay?dayWords:'',validText(l)?validNode(l):''].filter(Boolean);
+    const dayWords=whenWords(e,l,settingsOf(e)),when:Child[]=[dayWords!==everyDay?dayWords:'',l.starts_on||l.ends_on?validNode(l):''].filter(Boolean);
     // Reach only when it is not a plain count: No one, Starts later, Ended.
     const reached=e.reach[l.id];
     return el('li',{class:'rt-ln'+(state?' rc-changed':''),'data-line':l.id},
       canEdit?box(`Select line ${n+1} of ${e.name}`,['l:'+l.id],!editable(e)):el('span',{}),
       el('span',{class:'rt-n','aria-label':`Line ${n+1}`},String(n+1)),
       el('span',{class:'rt-ln-who'},pills(ctx,l.who,names,'Everyone',o.openTag,'Who',2,marks)),
-      el('span',{class:'rt-ln-what'},el('span',{class:'rt-ln-when'},...when.flatMap((w,i)=>i?[' · ',w]:[w])),el('span',{class:'rt-ln-num'},num,tail),
+      el('span',{class:'rt-ln-what'},el('span',{class:'rt-ln-when'},...when.flatMap((w,i)=>i?[' · ',w]:[w])),el('span',{class:'rt-ln-num'},...lock,num,tail),
         el('span',{class:'rt-ln-flags'},state?badge(state,'info'):'',ov.some(o=>o.winner==null)?badge('⚠ Overlaps','warn'):'',days!==null&&days>=0&&days<=RULE_ENDING_DAYS?badge(`⚠ Ends in ${plural(days,'day')}`,'warn'):'',
           reached===0?reachNode(reached,l,data.day):'')),
       el('span',{class:'rt-ln-open'},button('↗',()=>go(`rules/${e.id}/${l.id}`),'',{class:'icon-button bare','aria-label':`Open line ${n+1} of ${e.name}`,'data-tip':'Open in the rule'})));

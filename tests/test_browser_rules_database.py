@@ -45,7 +45,7 @@ def test_lines_selected_across_rules_change_together_and_an_approver_approves(br
         rules_by_family(h, page)  # Group: Family (Question, A–F, is the default)
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='All rules').click()
+        main.get_by_role('button', name='All rules', exact=True).click()
         expect(page.locator('.topbar .page-actions')).to_have_attribute('data-fitted', '1')
         main.get_by_label('Select line 1 of Duties per week').check()
         main.get_by_label('Select line 1 of People per session').check()
@@ -181,9 +181,9 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         main = page.locator('#main')
-        # RU-02 counts lines: the inherits issue names Alex's line and the Everyone line, the ending issue its own line.
-        # F-R1: said once, on the saved-view button (one warning icon), not again in the footer.
-        expect(main.locator('button.dt-saved .dt-view-warn')).to_have_text('3 lines need attention')
+        # RU-02 counts lines: the inherits issue names Alex's line and the Everyone line (the ending issue is
+        # acknowledged above). F-R1: said once, on the saved-view button (one warning icon), not again in the footer.
+        expect(main.locator('button.dt-saved .dt-view-warn')).to_have_text('2 lines need attention')
         expect(main.locator('button.dt-saved .dt-view-warn svg')).to_have_count(1)
         expect(page.locator('.app-footer')).not_to_contain_text('need attention')
         main.locator('button.dt-saved').click()
@@ -237,7 +237,7 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
         main = page.locator('#main')
         main.get_by_role('button', name='Duties per month lines').click()
         alex = main.locator('li.rt-ln').filter(has=page.locator('.rp.person'))
-        expect(alex.locator('.rt-ln-num')).to_have_text('1↰ – 10')
+        expect(alex.locator('.rt-ln-num .rule-num')).to_have_text('1↰ – 10 duties')  # the number and its measure, one phrase
         expect(alex.locator('.rc-inh')).to_have_attribute('data-tip', 'Inherited from Everyone · All clinics')
         main.locator('li.rt-item').get_by_role('button', name='Duties per month', exact=True).click()
         row = main.locator('tr[data-row]').filter(has_text='Alex line')

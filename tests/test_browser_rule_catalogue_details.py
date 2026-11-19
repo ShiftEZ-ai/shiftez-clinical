@@ -63,7 +63,7 @@ def test_select_all_picks_lines_so_rule_on_never_switches_on_an_empty_rule(brows
         bar = page.locator('.selection-bar:not([hidden])')
         lines = sum(len(e['rule']['definition']['rule']['lines']) for e in with_lines)
         expect(bar).to_contain_text(f"{len(with_lines)} rule{'s' if len(with_lines) > 1 else ''} · {lines} lines")  # never the empty ones
-        expect(main.locator('.rt-q .rt-picked')).to_have_count(0)  # the family's tri-state box says it
+        expect(main.locator('.rt-qhead .rt-picked')).to_have_count(0)  # the family's tri-state box says it
     finally:
         context.close()
 

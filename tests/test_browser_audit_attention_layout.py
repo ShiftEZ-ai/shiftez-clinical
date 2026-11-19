@@ -124,7 +124,8 @@ def test_issue_facts_and_collection_spacing_in_both_issue_views(browser, live_se
                 expect(choices.filter(has_text=re.compile('acknowledge', re.I))).to_have_count(0)
                 expect(choices.filter(has_text=re.compile('^Let it end$'))).to_have_count(1)
                 if label == 'Acknowledged':
-                    expect(choices.filter(has_text=re.compile('^Keep lines$'))).to_have_count(1)
+                    # A person line outranking a rank line is an ordered exception, never an overlap to acknowledge.
+                    expect(choices.filter(has_text=re.compile('^Keep lines$'))).to_have_count(0)
             if role == 'auditor':
                 expect(page.locator('.rt-issues input[type=checkbox]')).to_have_count(0)
                 expect(page.locator('.rt-best > button, .rt-fixes button, .rt-acked button')).to_have_count(0)

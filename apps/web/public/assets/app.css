@@ -2226,7 +2226,8 @@ th .bulk-check,td>.bulk-check{margin:0}
 .dt-tool.dt-saved{max-width:min(440px,100%)}
 .dt-view-warn{flex:none;display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:var(--r-full);background:var(--warn-soft);color:var(--warn-text);font-size:11.5px;font-weight:600}
 .dt-view-warn .icon{width:12px;height:12px}
-@media(max-width:720px){.dt-toolbar>.dt-saved>.dt-tool-label{flex:0 0 auto;max-width:60%}.dt-toolbar>.dt-saved>.dt-view-warn{flex:0 1 auto;min-width:0;overflow:hidden}
+/* Only a view with a warning keeps its name whole and shrinks the warning; a plain name still shrinks with an ellipsis. */
+@media(max-width:720px){.dt-toolbar>.dt-saved:has(>.dt-view-warn:not(:empty))>.dt-tool-label{flex:0 0 auto;max-width:60%}.dt-toolbar>.dt-saved>.dt-view-warn{flex:0 1 auto;min-width:0;overflow:hidden}
   .dt-view-warn-words{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .menu-item.warn>.icon:first-child{color:var(--warn-text)}
 .dt-pop-foot{display:flex;justify-content:flex-end;border-top:1px solid var(--line);margin:8px -8px -8px;padding:6px 8px}

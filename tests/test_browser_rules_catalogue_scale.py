@@ -96,7 +96,7 @@ def test_ticking_or_opening_one_rule_leaves_the_other_rows_as_they_are(browser, 
         assert first.evaluate('row => row.isConnected && row.dataset.kept === "yes"'), 'a tick redrew the table'
         assert other.evaluate('row => row.isConnected')
         # The rule's tri-state box follows the tick in place.
-        expect(main.locator('li.rt-item').filter(has_text='Duties per week').locator('input.bulk-check')).to_have_js_property('indeterminate', True)
+        expect(main.locator('li.rt-item').filter(has_text='Duties per week').locator('.rt-row > input.bulk-check')).to_have_js_property('indeterminate', True)
     finally:
         context.close()
 

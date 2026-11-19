@@ -149,7 +149,7 @@ def test_rules_page_strength_is_after_measure_and_inherited_is_silent(browser, l
         expect(item.locator(f'li[data-line="{month["id"]}"] .rt-ln-num .rule-num')).to_have_text(re.compile(r'^\S.* duties per calendar month$'))
         inherited_row = item.locator(f'li[data-line="{inherited["id"]}"]')
         expect(inherited_row.locator('.rt-ln-after .rc-level')).to_have_count(0)
-        navigate(page, 'rules/duty_spacing')
+        navigate(page, 'rules')  # the rule's strength badges are on the Rules list, not its own page
         safety_item = _open(page, 'Rest between duties')
         expect(safety_item.locator('.rt-ln-num .rc-level')).to_have_count(0)
         expect(safety_item.locator('.rt-levels .rc-level')).to_have_count(1)
@@ -213,7 +213,7 @@ def test_rules_page_rule_page_fits_at_1440_with_checks_and_exception_text(browse
                     assert cells.first.evaluate('e=>getComputedStyle(e).whiteSpace') == 'normal'
             assert table_scroll.locator('td[data-col^="n_"] .rule-num').count() > 0
             assert table_scroll.locator('td[data-col^="n_"] .rule-num').first.evaluate('e=>getComputedStyle(e).whiteSpace') == 'nowrap'
-            expect(table_scroll.locator('thead')).to_contain_text('Duties per calendar week')
+            expect(table_scroll.locator('tbody')).to_contain_text('Duties per calendar week')  # one Measure column, its cells one phrase
             expect(table_scroll.locator('thead')).not_to_contain_text('Period')
             pair_row = table_scroll.locator(f'tr[data-row][data-line="{pair[1]["id"]}"]')
             expect(pair_row.locator('.rt-instead')).to_contain_text('instead of')
@@ -273,12 +273,12 @@ def test_rules_page_pills_follow_condition_fields(browser, live_server, h):
         expect(item.locator('.rt-ln-who').filter(has_text='Alex Morgan').locator('.rp.person')).to_have_count(1)
         assert item.locator('.rt-ln-who .rp.all').count() >= 1
         expect(item.locator('.rt-ln-who').filter(has_text='#Exception pill tag').locator('.tag-ref')).to_have_count(1)
-        duty_pill = item.locator('.rt-item:has(button[aria-label="Workload limit lines"]) .rt-lines .rt-wh .rp.dotted')
+        duty_pill = item.locator('.rt-lines .rt-wh .rp.dotted')
         expect(duty_pill).to_have_count(1)
         expect(duty_pill).to_contain_text(duty_name)
         expect(duty_pill.locator('.lg-swatch[class*="duty-"]')).to_have_count(1)
         assert 'brown' not in (duty_pill.get_attribute('class') or '')
-        usual_pill = item.locator('.rt-item:has(button[aria-label="Workload limit lines"]) .rt-lines .rt-wh .rp.person').filter(has_text='Jordan Lee')
+        usual_pill = item.locator('.rt-lines .rt-wh .rp.person').filter(has_text='Jordan Lee')
         expect(usual_pill).to_have_class(re.compile(r'\brp person\b'))
         expect(page.locator('.view-legend')).not_to_contain_text('Duty type')
     finally:
@@ -314,7 +314,7 @@ def test_rules_page_opened_lines_use_the_applied_seven_track_grid(browser, live_
                 starts:['.bulk-check','.rt-n','.rt-ln-who','.rt-ln-when','.rt-ln-num','.rt-ln-flags','.rt-ln-open']
                     .map(s=>r.querySelector(s)?.getBoundingClientRect().left)
             }))
-        }})''')
+        }}''')
         assert info['columns'] != 'none' and info['tracks'] == 7, info
         assert info['rows'] and all(row['grid'] == 'subgrid' for row in info['rows']), info
         lefts = [row['left'] for row in info['rows'] if row['left'] is not None]

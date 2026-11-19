@@ -9,7 +9,7 @@ import pytest
 from playwright.sync_api import expect
 
 from .governance_support import identity
-from .test_browser import add_filter, browser, live_server, navigate, sign_in, press_escape  # noqa: F401
+from .test_browser import add_filter, browser, choose, live_server, navigate, sign_in, press_escape  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot, weekly
 
 pytestmark = pytest.mark.browser
@@ -498,6 +498,8 @@ def test_an_excluded_tag_reads_not_and_groups_as_combined_filters(browser, live_
     try:
         navigate(page, 'rules/duties_per_week')
         expect(page.locator(f'#main [data-row="{lines[0]["id"]}"] .tag-chip')).to_contain_text('not #Night')
+        # A rule's page groups its lines by place; grouped by who kind, a who of a group reads Combined filters.
+        choose(page.locator('#main'), 'Group', 'Group by', 'Who kind')
         expect(page.locator('#main').get_by_text('Combined filters', exact=True)).to_have_count(1)
         expect(page.locator('#main').get_by_text('Everyone', exact=True)).to_have_count(0)
     finally:

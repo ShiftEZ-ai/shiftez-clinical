@@ -510,9 +510,12 @@ def test_a_people_table_cell_never_hides_its_limits_behind_a_bare_number(browser
     try:
         page.route(re.compile(r'.*/api/rules-explained\?group_by=question.*'), lambda route: route.fulfill(json=projection))
         navigate(page, 'rules')
-        table = page.locator('#main').get_by_role('table', name='Workload per person')
-        expect(table.get_by_role('row', name=re.compile('^Consultant')).get_by_role('cell')).to_have_text([worded])  # as sent
-        expect(table).not_to_contain_text('at most 2 duties')
+        # The one-row Rules list has no people table (one row per rule; a rule's lines open under it), so no bare
+        # display can show there.
+        main = page.locator('#main')
+        expect(main.locator(f'li.rt-item[data-rule="{entry["id"]}"]')).to_be_visible()
+        expect(main.get_by_role('table', name='Workload per person')).to_have_count(0)
+        expect(main).not_to_contain_text('at most 2 duties')
     finally:
         context.close()
 
