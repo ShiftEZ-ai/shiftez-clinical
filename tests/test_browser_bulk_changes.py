@@ -7,6 +7,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from apps.api.settings import Settings
+
 from .test_browser import department_tab, add_filter, browser, live_server, sign_in, navigate, expect_loaded, toolbar, condition, close_popover, sort_direction, holding  # noqa: F401
 from .test_browser import whole_list
 
@@ -1714,6 +1716,9 @@ def retype_selected(page, h, kinds, count):
     row.locator('.bulk-value select').select_option(label=kinds[1]['name'])
     submit(page)
     panel(page).get_by_role('button', name=f'Apply ready rows ({count}) → Results').click()
+    # One command applies them all: on a loaded runner it takes longer than a locator's default, up to the server's
+    # own write budget. Wait for the panel's Applying status to end, then for the toast it ends with.
+    expect(panel(page).locator('.bulk-progress')).to_have_count(0, timeout=Settings().command_write_budget_ms)
     expect(page.locator('.toast', has_text=re.compile(rf'^{count} .* changed'))).to_be_visible()
     return {r['id'] for r in leave_rows(h) if r['leave_type_id'] == kinds[1]['id']}
 

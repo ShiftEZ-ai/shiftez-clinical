@@ -874,7 +874,10 @@ def automatically_publish(db, row):
         with db.begin_nested():
             return automatic_lifecycle(db, actor, row, "publish")
     except Problem as exc:
-        event(db, actor, row, "publish_refused", exc.message, {"code": exc.code, "message": exc.message})
+        detail = {"code": exc.code, "message": exc.message}
+        if isinstance(exc.details, dict) and exc.details.get('stale_approval'):
+            detail['stale_approval'] = True
+        event(db, actor, row, "publish_refused", exc.message, detail)
         return {}
 
 

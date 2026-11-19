@@ -8,6 +8,7 @@ from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
 from .test_browser_rule_catalogue import bar_action, catalogue_rule, flag, line, selection
+from .test_rule_catalogue_conflicts import lines_for
 
 pytestmark = pytest.mark.browser
 
@@ -21,17 +22,15 @@ def monthly(h):
     a = h.seed['people'][0]
     rank = {'conditions': [{'field': 'category_ids', 'values': [h.seed['category']]}]}
     dates = {'starts_on': '2026-10-01', 'ends_on': '2027-01-01'}
-    catalogue_rule(h, 'duties_per_month', [line({'min': n(2), 'max': n(5)}, **dates), line({'min': n(1)}, who=rank, **dates),
+    return catalogue_rule(h, 'duties_per_month', [line({'min': n(2), 'max': n(5)}, **dates), line({'min': n(1)}, who=rank, **dates),
                                            line({'max': n(3)}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, **dates)])
 
 
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_needs_attention_words_and_the_selection_count(browser, live_server, h, width, scheme):
     flag(h)
-    monthly(h)
-    # Its overlap was acknowledged when proposed (shared acknowledgements): taken back, it needs attention again.
-    overlap = [x['fingerprint'] for x in h.get('coordinator', '/api/rules/catalogue')['attention'] if x['kind'] == 'overlap']
-    h.command('coordinator', 'rule.unacknowledge', {'fingerprints': overlap})
+    _, groups = lines_for(h, 'tag and rank')
+    catalogue_rule(h, 'duties_per_month', groups)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
     try:
         page.emulate_media(color_scheme=scheme)
@@ -39,16 +38,15 @@ def test_needs_attention_words_and_the_selection_count(browser, live_server, h, 
         main = page.locator('#main')
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
-        issue = main.locator('tr.rt-issue').filter(has_text='gives way')
-        # Each winner with the numbers it takes; "its other numbers" only when the line has others.
-        expect(issue).to_contain_text('Line 1 gives way to line 2 on its min, and to line 3 on its max, for 3 people')
+        issue = main.locator('tr.rt-issue').filter(has_text='both apply')
+        expect(issue).to_contain_text('Line 1 and line 2 both apply to 1 person: the stricter number binds')
         expect(issue).not_to_contain_text('other numbers')
         if width < 720:  # a phone scrolls the table sideways rather than crushing the sentence to a word a line
             assert issue.locator('td').nth(3).bounding_box()['width'] >= 200
         # A picked issue that a search hides is still picked: the bar's count and its action agree.
         issue.locator('input.bulk-check').check()
         main.get_by_role('searchbox', name='Search issues').fill('zzz')
-        expect(selection(page)).to_contain_text('Overlap')
+        expect(selection(page)).to_contain_text('Both apply')
         bar_action(page, 'Acknowledge')  # in ⋯ More on a phone
         page.get_by_role('dialog', name='Acknowledge 1 issue').get_by_role('button', name='Acknowledge', exact=True).click()
         expect(page.locator('.toast').filter(has_text='1 issue acknowledged for everyone.')).to_be_visible()
@@ -58,17 +56,23 @@ def test_needs_attention_words_and_the_selection_count(browser, live_server, h, 
 
 def test_the_check_says_which_numbers_give_way_and_remove_lines_asks_twice(browser, live_server, h):
     flag(h)
-    monthly(h)
+    saved = monthly(h)['definition']['rule']['lines']
+    checked = h.get('coordinator', '/api/rules/catalogue/duties_per_month/detail')['check']
+    [replacement] = checked['overlaps']
+    assert replacement['line_id'] == saved[0]['id']
+    assert replacement['numbers'] == ['max', 'min'] and replacement['people'] == 3
+    assert checked['line_replaces'] == {
+        row['id']: [{'replaced_line_id': saved[0]['id'], 'numbers': [number]}]
+        for row, number in zip(saved[1:], ('min', 'max'))
+    }
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules/duties_per_month')
         main = page.locator('#main')
-        everyone = main.locator('tr[data-row]').first
-        everyone.get_by_role('button', name='⚠ Gives way').click()
-        pop = page.get_by_role('dialog', name='Two lines cover the same people')
-        expect(pop).to_contain_text('on its max and min for 3 people today')
-        expect(pop).not_to_contain_text('no longer applies')  # number by number: never the whole line
-        page.keyboard.press('Escape')
+        everyone = main.locator(f'tr[data-line="{saved[0]["id"]}"]')
+        expect(everyone.locator('.rc-overlap')).to_have_count(0)
+        expect(everyone).not_to_contain_text('no longer applies')
+        expect(main.locator('.rc-checkbar')).to_be_empty()
         everyone.locator('input.bulk-check').check()
         remove = selection(page).get_by_role('button', name='Remove lines')
         remove.click()  # armed: the first press asks

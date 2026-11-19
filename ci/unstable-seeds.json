@@ -22,7 +22,6 @@
     "tests/test_browser_overflow_roles.py::test_department_scale",
     "tests/test_browser_people_forms.py::test_ending_a_rank_says_so_with_undo",
     "tests/test_browser_people_merged.py::test_department_scale_people_open_fast_with_one_request",
-    "tests/test_browser_perf.py::test_phone_agenda_draws_findings_once",
     "tests/test_browser_perf.py::test_resolve_queue_reads_each_sessions_findings_once",
     "tests/test_browser_planner.py::test_idle_planner_poll_preserves_input_and_detects_real_changes",
     "tests/test_browser_pwa.py::test_worker_registers_under_csp_and_shows_a_visible_alert_for_every_push",

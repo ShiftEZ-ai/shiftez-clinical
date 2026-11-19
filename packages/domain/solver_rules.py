@@ -4,6 +4,7 @@ These checks establish compatibility, not feasibility of a particular rota.
 The public field catalogue comes from the existing canonical schemas.
 """
 from fractions import Fraction
+import json
 
 from pydantic import ValidationError
 from packages.contracts.schemas import PolicyDefinition, GenerationOptions, GENERATION_SCOPE_CAPABILITY
@@ -14,7 +15,7 @@ from .rule_serialization import stored_definition
 # 35: bind shared working-day quota amounts to generated proposals.
 # 36: preserve mandatory quota minima and exclude conflicted supervision from proposals.
 # 38: retain supported probing to avoid false infeasibility in weighted fairness models.
-COMPILER_VERSION = 'cp-sat-39'
+COMPILER_VERSION = 'cp-sat-40'
 PLANNING_LIMITS = {'max_sessions': 1500, 'max_people': 500, 'max_period_days': 31}
 
 
@@ -45,17 +46,19 @@ def definition_issues(definition, *, historical=False):
             return [{'field': 'definition.rule.kind', 'code': 'UNSUPPORTED_SOLVER_RULE',
                      'message': 'Automatic scheduling does not support this rule.'}]
     try:
-        # Preserve validation of model-level context without rebuilding already validated catalogue lines.
-        value = PolicyDefinition.model_validate(definition if isinstance(definition, PolicyDefinition) else raw,
-                                                context={'historical': historical})
+        if historical:
+            from .rule_lines import _valid
+            raw = _valid(json.dumps(raw, sort_keys=True, default=str), stored_goal=False,
+                         resolved_catalogue_line=False)
+        else:
+            raw = PolicyDefinition.model_validate(definition if isinstance(definition, PolicyDefinition) else raw,
+                                                  context={'historical': historical}).model_dump(mode='json')
     except ValidationError as error:
         return [{'field': '.'.join(['definition', *map(str, e['loc'])]),
                  'code': 'INVALID_RULE_DEFINITION', 'message': e['msg']}
                 for e in error.errors(include_input=False, include_url=False)]
-    if value.rule.kind == 'catalogue':
+    if raw['rule']['kind'] == 'catalogue':
         from .rule_lines import expand, issues
-        if value is not definition:
-            raw = value.model_dump(mode='json')
         found = issues(raw)
         if found:
             return found
@@ -63,7 +66,7 @@ def definition_issues(definition, *, historical=False):
         return [{**issue, 'field': f"definition.rule.lines.{c['template_line']['line']}" + issue['field'].removeprefix('definition')}
                 for c in expand({'id': '', 'definition': {**raw, 'rule': {**raw['rule'], 'on': True}}}, outrank=False)
                 for issue in _precision(c['definition']['rule'])]
-    return _precision(value.rule.model_dump(mode='json'))
+    return _precision(raw['rule'])
 
 
 def _precision(rule):

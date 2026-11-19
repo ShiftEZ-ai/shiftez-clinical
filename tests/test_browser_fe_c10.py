@@ -105,7 +105,7 @@ def test_a_new_line_picked_from_the_rules_list_opens_in_its_editor(browser, live
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.locator('tr.rt-rule').filter(has_text='Duties per week').get_by_role('button', name='Open Duties per week').click()
+        main.locator('li.rt-item').filter(has_text='Duties per week').get_by_role('button', name='Duties per week lines').click()
         main.get_by_role('button', name='+ New line in Duties per week', exact=True).click()
         page.get_by_role('combobox', name='Search New line').fill('Continuity clinic')
         page.get_by_role('option', name=re.compile('^Continuity clinic')).first.click()
