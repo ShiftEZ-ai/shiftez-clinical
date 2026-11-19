@@ -18,7 +18,7 @@ from packages.domain.assignment_override import assignment_reason_allowed, ZERO_
 
 from apps.api import models as m, snapshots
 from apps.api.auth import require_role, person_access, current_roles
-from apps.api.errors import require
+from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
 from apps.api.snapshots import (domain_snapshot, fingerprint, publication_snapshot,
                                 shift_record, workspace_content, workspace_shifts)
@@ -2483,6 +2483,23 @@ def validation_stamp(db, workspace):
             workspace.content_revision, workspace.status, workspace.archived_at)
 
 
+def _publication_approval(db, workspace, fp):
+    """Check the recorded approval after the final publication validation."""
+    if workspace.review_snapshot:
+        reviews.require_complete(db, workspace, current_fingerprint=fp)
+        return
+    approval = db.scalar(select(m.Approval).where(
+        m.Approval.workspace_id == workspace.id,
+        m.Approval.content_revision == workspace.content_revision,
+        m.Approval.fingerprint == fp,
+    ).order_by(m.Approval.created_at.desc(), m.Approval.seq.desc()))
+    require(approval is not None, 'STALE_APPROVAL', reviews.STALE_APPROVAL_MESSAGE, 409)
+    approver_identity = db.get(m.Identity, approval.approved_by)
+    require(not approver_identity.disabled and 'approver' in current_roles(
+        db, approval.approved_by, workspace.department_id),
+        'APPROVER_REVOKED', 'The approving authority is no longer active; obtain a new review', 409)
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2602,16 +2619,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         swap_request = swaps.validate_publication(db, workspace)
         # Publication mutates duties, availability and ledgers, never these raw configuration rows.
         # Each transaction acquires them independently; post-publication snapshots still read current history.
-        shared = shared_inputs if shared_inputs is not None else snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
-        acquired = validation[1] if validation is not None else domain_snapshot(db, workspace, shared_inputs=shared)
-        fp = acquired['fingerprint']
         own, checked_data = [], []
         # Publication remains the final safety boundary: revalidate verifies the
-        # acquired fingerprint and current evaluator contract under the writer.
-        # A complete approved check is reusable, so the writer need not repeat
-        # the full rota evaluation; stale evidence falls back to a fresh check.
-        result = revalidate(db, workspace, own, data_out=checked_data,
-                            include_internal=True, reuse=True, acquired_data=acquired)
+        # current inputs after pending writes have been flushed inside the writer.
+        # shortcut: publication runs one complete check under the writer, so other writes wait for it; upgrade: verify input revision stamps after flush and reuse the approved check when unchanged.
+        result = revalidate(db, workspace, own, data_out=checked_data, include_internal=True)
         # The fresh data drives the immutable publication evidence below.
         acquired = checked_data[0]
         fp = acquired['fingerprint']
@@ -2619,17 +2631,23 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # Revalidate before reading the review receipt.  A stale approval must
         # still run the current evaluator so publication can never bypass a
         # newly introduced mandatory finding.
-        if workspace.review_snapshot:
-            reviews.require_complete(db, workspace, current_fingerprint=fp)
-        else:
-            # v0.1 approved candidates retain their immutable legacy evidence, but not a stale pass.
-            approval = db.scalar(select(m.Approval).where(m.Approval.workspace_id == workspace.id,
-                        m.Approval.content_revision == workspace.content_revision, m.Approval.fingerprint == fp).order_by(m.Approval.created_at.desc(), m.Approval.seq.desc()))
-            require(approval is not None, "STALE_APPROVAL", reviews.STALE_APPROVAL_MESSAGE, 409)
-            approver_identity = db.get(m.Identity, approval.approved_by)
-            require(not approver_identity.disabled and "approver" in current_roles(db, approval.approved_by, actor.department_id),
-                    "APPROVER_REVOKED", "The approving authority is no longer active; obtain a new review", 409)
-        acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
+        approval_error = None
+        try:
+            _publication_approval(db, workspace, fp)
+        except Problem as error:
+            if error.code != 'STALE_APPROVAL':
+                raise
+            approval_error = error
+        try:
+            acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
+        except Problem as error:
+            if error.code == 'VALIDATION_FAILED' and approval_error is not None:
+                error.details = {**(error.details or {}), 'stale_approval': {
+                    'code': approval_error.code, 'message': approval_error.message,
+                    'details': approval_error.details}}
+            raise
+        if approval_error is not None:
+            raise approval_error
         preparation = db.info.get('_planning_preparation')
         if preparation is not None and not preparation['replay']:
             from .published_changes import change_list, draft_changes
@@ -2668,7 +2686,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         same_window = superseded is None or (superseded.starts_on, superseded.ends_on) == (workspace.starts_on, workspace.ends_on)
         ledger_data = checked_data[0] if same_window and not (materialized_absences or workspace.replaces_publication_id
                                                              or trimmed or effective_until) else None
-        on_publish(db, publication, trimmed, own_shifts=own, data=ledger_data, shared_inputs=shared)
+        on_publish(db, publication, trimmed, own_shifts=own, data=ledger_data, shared_inputs=shared_inputs)
         swaps.published(db, actor, swap_request, publication.id, value.reason)
         from .published_changes import on_published
         person_changes = on_published(db, actor, workspace, publication, value.reason)
