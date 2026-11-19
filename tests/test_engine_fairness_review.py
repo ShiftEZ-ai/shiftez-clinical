@@ -148,10 +148,13 @@ def test_catalogue_goal_lines_keep_their_own_history():
     data = world([], first='2026-10-11', last='2026-10-18')
     data['policies'] = [catalogue]
     goals = f.balance_goals(data)
-    ledger = f.ledger_facts(world([duty(1, 4, [A])], first='2026-10-01', last='2026-10-11'))
+    published = world([duty(1, 4, [A])], first='2026-10-01', last='2026-10-11')
+    ledger = f.ledger_facts(published)
+    publication = SimpleNamespace(id=uid(300), starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 11),
+        effective_until=None, snapshot={'shifts': published['shifts']})
 
-    db = SimpleNamespace(execute=lambda _query: [(key, pid, other, day, value)
-                                                for pid, other, key, day, value in ledger])
+    db = SimpleNamespace(scalar=lambda _query: publication.starts_on, scalars=lambda _query: iter([publication]),
+        execute=lambda _query: [(key, pid, day, value) for pid, other, key, day, value in ledger])
     data['fairness_history'] = service.history(db, data, goals)
     reports = {goal['definition']['rule']['metric']: f.goal_report(data, goal) for goal in goals}
     assert {metric: next(row['prior'] for row in report['people'] if row['person_id'] == A)
