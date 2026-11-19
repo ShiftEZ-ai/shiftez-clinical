@@ -233,6 +233,7 @@ def place_extra_cover(h, draft, duty_type, person, day, status=200):
 
 
 def test_late_mandatory_quotas_bind_a_new_run_and_draft_edit(h):
+    from apps.api.workspace_baselines import latest, verify
     from apps.worker.main import process_one
 
     duty_type = extra_type(h)
@@ -258,7 +259,12 @@ def test_late_mandatory_quotas_bind_a_new_run_and_draft_edit(h):
     assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['person_id'] == person
                for f in rejected['error']['details']['findings'])
     submitted = h.lifecycle(draft, 'submit')['workspace']
-    assert not {general['id'], cap['id']} & {p['id'] for p in h.snapshot(submitted)['policies']}
+    # #945 on dev: review reads live zero limits; the recorded baseline stays immutable
+    with transaction(h.app.state.engine) as db:
+        captured = verify(latest(db, submitted['id']))
+    assert not {general['id'], cap['id']} & {p['id'] for p in captured['policies']}
+    live_zero, = [p for p in h.snapshot(submitted)['policies'] if p.get('_source_policy_id', p['id']) == cap['id']]
+    assert live_zero['_live_zero'] and live_zero['definition']['rule']['amount'] == 0
     approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
     assert h.lifecycle(approved, 'publish')['publication_id']
 

@@ -248,7 +248,7 @@ def _mandatory_recheck_policy(policy):
 
 def _overlay_zero_limits(frozen, current, safety_ids=()):
     """Overlay live zero ceilings without relaxing frozen draft obligations."""
-    # shortcut: two live overlays (zero-limit and general mandatory) agree by test; fold into one after v0.1.0 (#1006)
+    # shortcut: a captured zero is suppressed only when its projection or legacy scope equals live, else it binds twice (stricter, never looser); fold into one overlay after v0.1.0 (#1006)
     def newest(rows):
         result = {}
         for row in sorted(rows, key=lambda item: (item.get("revision", 0),
@@ -300,7 +300,7 @@ def _strict_value(kind, field, left, right):
     raise ValueError(f"Cannot numerically merge safety slot {kind}.{field}")
 
 
-def _strictest_policy(frozen, live, kind):
+def _strictest_policy(frozen, live, kind, *, include_mandatory=False):
     """Resolve one live safety revision without losing a differently scoped obligation."""
     frozen_active = frozen.get("status") == "active" and frozen.get("active", True)
     live_active = live.get("status") == "active" and live.get("active", True)
@@ -357,6 +357,19 @@ def _strictest_policy(frozen, live, kind):
         frozen_rule = (merged.get("definition") or {}).get("rule") or {}
         live_rule = (live.get("definition") or {}).get("rule") or {}
         entry = catalogue_entry(live_rule.get("id"), live_rule.get("catalogue_version", 1)) or {}
+        if include_mandatory and entry:
+            prior = {line["id"]: line.get("numbers") or {} for line in frozen_rule.get("lines") or []}
+            changed = {(line.get("_source_identity", line["id"]), key) for line in live_rule.get("lines") or []
+                       for key, number in (line.get("numbers") or {}).items()
+                       if prior[line["id"]][key].get("value") != number.get("value")}
+            if changed:
+                from packages.domain.rule_lines import expand
+
+                for copy in expand(live, outrank=False):
+                    definition, template = copy["definition"], copy["template_line"]
+                    if (definition["severity"] == "mandatory" and definition["rule"]["kind"] not in LIVE_SAFETY_KINDS
+                            and any((template["id"], key) in changed for key in template["slot"].split("+"))):
+                        return [frozen, _distinct_live_policy(live)]
 
         def line_key(line):
             return (line.get("where"), line.get("who"), tuple(line.get("weekdays") or ()),
@@ -760,7 +773,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                           or include_mandatory and s.safety_rule(grouped_rows[0].get("definition") or {})))
             if safety:
                 base = grouped_rows.pop(0)
-                grouped_rows = _strictest_policy(base, policy, kind)
+                grouped_rows = _strictest_policy(base, policy, kind, include_mandatory=include_mandatory)
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)

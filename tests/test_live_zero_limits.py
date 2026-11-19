@@ -291,6 +291,7 @@ def overtime_draft(h):
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_nonzero_live_overtime_cap_stays_out(request, backend):
+    # This name predates the 19 Nov ruling that positive mandatory caps bind drafts.
     from apps.api.snapshots import domain_snapshot
 
     h = request.getfixturevalue(backend)
