@@ -7,7 +7,7 @@ from playwright.sync_api import expect
 
 from apps.worker.main import process_one
 from .test_browser import auto_setup, auto_result, wait_run_created, browser, live_server, navigate, open_rota, open_scheduling, pick_view, sign_in, wait_held  # noqa: F401
-from .test_browser_cp_sat import cp_server, _apply  # noqa: F401
+from .test_browser_cp_sat import cp_server, _apply, _check_after_apply, _joins  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -234,12 +234,21 @@ def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_serv
         open_scheduling(page)
         panel = page.locator('#auto-panel')
         _proposal(page, h, panel)
-        _apply(page, h, panel, 'Apply 1 change')
+        joined = _joins(page)
+        panel.get_by_role('button', name='Apply 1 change', exact=True).click()
         toast = page.locator('.toast').filter(has_text='Suggestions applied')
         expect(toast).to_be_visible()
+        toast.dispatch_event('mouseenter')  # Pause the toast while both rota checks settle.
+        settled = page.locator('.app-footer .fix-pills:not(.fix-stale):not(:has([data-check-line], .fix-checking))')
+        _check_after_apply(page, h, w['id'], joined)
+        expect(settled).to_be_visible()
         # The applied run keeps its Undo in Recent runs, under the rota check that follows Apply (BE-18).
+        joined = _joins(page)
         press(panel.locator('.run-list').get_by_role('button', name=re.compile('^Undo Auto-schedule ')))
         expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+        # Let the page join and finish the check before recording commands from the stale Undo.
+        _check_after_apply(page, h, w['id'], joined)
+        expect(settled).to_be_visible()
         commands = []
         page.on('request', lambda r: commands.append(r.post_data_json.get('kind')) if r.url.endswith('/api/commands') else None)
         press(toast.get_by_role('button', name='Undo', exact=True))
