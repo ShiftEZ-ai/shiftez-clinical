@@ -354,9 +354,7 @@ def test_changing_a_condition_date_set_preserves_its_entry_selection_until_expli
         page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
         dialog = page.get_by_role('dialog')
         dialog.get_by_label('Reason', exact=True).fill('Change the parent set without broadening the named selection')
-        acknowledgement = dialog.get_by_role('checkbox', name='I have read which lines give way and that is intended', exact=True)
-        if acknowledgement.count():
-            acknowledgement.check()
+        expect(dialog.get_by_role('checkbox', name='I have read which lines give way and that is intended', exact=True)).to_have_count(0)
         with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.post_data_json.get('kind') == 'rule.propose') as refused:
             dialog.get_by_role('button', name='Propose', exact=True).click()
         proposed_line = next(item for item in refused.value.request.post_data_json['payload']['lines'] if item['id'] == named_line['id'])
@@ -378,9 +376,7 @@ def test_changing_a_condition_date_set_preserves_its_entry_selection_until_expli
         panel.get_by_role('button', name='Keep change', exact=True).click()
         panel.get_by_role('button', name='Close panel', exact=True).click()
         page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
-        acknowledgement = page.get_by_role('dialog').get_by_role('checkbox', name='I have read which lines give way and that is intended', exact=True)
-        if acknowledgement.count():
-            acknowledgement.check()
+        expect(page.get_by_role('dialog').get_by_role('checkbox', name='I have read which lines give way and that is intended', exact=True)).to_have_count(0)
         reason(page, 'Explicitly replace the unavailable entry selection', 'Propose')
         proposed = next(e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['id'] == 'duties_per_week')['proposed']
         replacement = next(item for item in proposed['definition']['rule']['lines'] if item['id'] == named_line['id'])

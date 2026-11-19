@@ -34,7 +34,12 @@ def test_cancel_queued_auto_schedule_leaves_the_draft_unchanged(browser, cp_serv
         # Owner (7 Nov 2026): Cancel discards the run, so it is the same-button confirm (armed, solid red), no dialog.
         expect(panel.get_by_role('button', name='Cancel auto-schedule', exact=True)).to_be_visible()
         cancel = panel.locator('.run-cancel')
+        progress = panel.get_by_role('progressbar', name='Auto-schedule progress')
         cancel.click()
+        expect(cancel).to_have_class(re.compile(r'\barmed\b'))
+        old_progress = progress.element_handle()
+        page.evaluate("job => window.dispatchEvent(new CustomEvent('jobs-changed', {detail: [job]}))", job['id'])
+        page.wait_for_function('previous => !previous.isConnected', arg=old_progress)
         expect(cancel).to_have_class(re.compile(r'\barmed\b'))
         expect(cancel).to_have_accessible_name('Discard this run? Cancel auto-schedule')
         expect(page.get_by_role('dialog')).to_have_count(0)

@@ -131,7 +131,9 @@ def _time(db, workspace):
         m.Job.department_id == workspace.department_id, m.Job.kind == 'generation').order_by(m.Job.created_at, m.Job.id)))
     measured = [row for row in runs if row.started_at is not None and row.completed_at is not None]
     seconds = sum(max(0, (aware(row.completed_at) - aware(row.started_at)).total_seconds()) for row in measured)
-    revisions = {(row.result or {}).get('applied_content_revision') for row in runs if row.status == 'applied'} - {None}
+    from apps.api.serialization import job_result_with_reconciliation
+    revisions = {(job_result_with_reconciliation(row, row.result) or {}).get('applied_content_revision')
+                 for row in runs if row.status == 'applied'} - {None}
     changes = list(db.scalars(select(m.ChangeSet).where(m.ChangeSet.workspace_id == workspace.id)
                              .order_by(m.ChangeSet.created_at, m.ChangeSet.id)))
     applied = [row for row in changes if row.resulting_content_revision in revisions and not row.undone]
