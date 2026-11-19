@@ -38,6 +38,12 @@ def write_shard(reports, plan, shard, attempt, *, red=False):
     return folder
 
 
+@pytest.fixture(autouse=True)
+def no_ci_event(monkeypatch):
+    """These readers are tested without retry semantics; the hosted job's own event must not select them."""
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
+
 @pytest.fixture
 def plan():
     return {"sha": "a" * 40, "tree": "b" * 40, "base_sha": "c" * 40, "replicas": [1],
