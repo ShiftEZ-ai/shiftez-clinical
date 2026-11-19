@@ -152,6 +152,9 @@ def test_staff_import_keeps_leavers_left_and_updates_active_people(request, data
         assert [r for r in after[kind] if r['person_id'] == leaver_id] == [
             r for r in before[kind] if r['person_id'] == leaver_id]
     assert after['tags'] == before['tags'] and after['tag_members'] == before['tag_members']
+    # Auto-schedule draws only active people from the draft snapshot, so the leaver is never scheduled.
+    people_in_draft = h.snapshot(h.workspace())['people']
+    assert people_in_draft[leaver_id]['active'] is False and people_in_draft[current_id]['active'] is True
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
