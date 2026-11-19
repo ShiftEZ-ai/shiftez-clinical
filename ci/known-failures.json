@@ -2028,12 +2028,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_manual_supervision_staffing.py::test_dated_grant_change_rejects_preview_and_old_client_never_bypasses_check",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_named_solver_conflicts.py::test_worker_and_api_retain_strict_proof_beside_a_diagnostic_proposal",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
