@@ -217,14 +217,96 @@ def allocation_weight(policy, strengths):
 
 
 def overtime_cap_ids(data):
-    """Required overtime limits in force, including the source names retained by grouped rules."""
-    if '_overtime_cap_ids' in data:
-        return data['_overtime_cap_ids']
-    caps = [p for p in data['policies'] if p['status'] == 'active' and p.get('active', True)
-            and (p['definition']['rule']['kind'] == 'block_quota' and p['definition']['rule']['comparison'] in {'maximum', 'range'}
-                 or p['definition']['rule']['kind'] in {'forbidden_transition', 'max_consecutive_weekends'})
-            and p['definition']['severity'] == 'mandatory']
-    return {p['id'] for p in caps} | {i for p in caps for i in p['definition'].get('merged_ids') or []}
+    """Required overtime limits in force, resolved without mutating caller-owned input."""
+    policies = data.get('policies') or []
+
+    from .rule_lines import expand
+    from packages.contracts.rule_catalogue import CATALOGUE_MAPPING
+
+    def is_cap(policy):
+        rule, definition = policy['definition']['rule'], policy['definition']
+        return (policy.get('status') == 'active' and policy.get('active', True)
+                and definition.get('severity') == 'mandatory'
+                and (rule['kind'] == 'block_quota' and rule.get('comparison') in {'maximum', 'range'}
+                     or rule['kind'] in {'forbidden_transition', 'max_consecutive_weekends'}))
+
+    originals = list((data.get('_overtime_originals') or {}).values()) or list(policies)
+    if data.get('_overtime_originals'):
+        resolved = policies
+    else:
+        local = {**data, 'policies': list(originals)}
+        resolved = active_rules(list(originals), context=local)
+    rows = originals
+    by_id = {p['id']: p for p in rows}
+    by_catalogue = defaultdict(list)
+    catalogue_by_source = defaultdict(set)
+
+    def lineage_row(policy):
+        return ((policy.get('status') == 'active' and policy.get('active', True))
+                or (policy.get('status') == 'retired' and policy.get('approved_by')))
+
+    def add_catalogue_lineage(key, ident):
+        if not ident:
+            return
+        policy = by_id.get(ident)
+        if policy is not None and lineage_row(policy):
+            by_catalogue[key].append(ident)
+
+    for policy in rows:
+        rule = policy.get('definition', {}).get('rule', {})
+        if rule.get('kind') == 'catalogue' and lineage_row(policy):
+            by_catalogue[(policy.get('department_id'), rule.get('id'))].append(policy['id'])
+    for binding in data.get('source_bindings') or []:
+        binding = binding.get('data', binding)
+        source = binding.get('source') or {}
+        source_rule = (source.get('definition') or {}).get('rule') or {}
+        source_catalogue_id = binding.get('source_catalogue_id') or source_rule.get('id')
+        entry_id = CATALOGUE_MAPPING.get(source_catalogue_id, source_catalogue_id)
+        if not entry_id:
+            continue
+        department_id = binding.get('department_id') or source.get('department_id')
+        key = (department_id, entry_id)
+        if binding.get('source_policy_id'):
+            catalogue_by_source[binding['source_policy_id']].add(key)
+        add_catalogue_lineage(key, binding.get('source_policy_id'))
+        for destination in binding.get('destinations') or []:
+            if destination.get('kind') == 'policy':
+                add_catalogue_lineage(key, destination.get('id'))
+
+    roots = []
+    for policy in resolved:
+        if policy.get('status') != 'active' or not policy.get('active', True):
+            continue
+        rule = policy['definition']['rule']
+        if rule.get('kind') == 'catalogue':
+            roots.extend((copy, policy) for copy in expand(policy) if is_cap(copy))
+        elif is_cap(policy):
+            roots.append((policy, by_id.get(policy['id'], policy)))
+
+    ids, queued = set(), []
+    catalogue_keys = set()
+    for policy, source in roots:
+        queued.append(policy['id'])
+        queued.extend(policy['definition'].get('merged_ids') or [])
+        queued.append(policy['definition'].get('replaces_id'))
+        source_rule = source.get('definition', {}).get('rule', {})
+        if source_rule.get('kind') == 'catalogue':
+            catalogue_keys.add((source.get('department_id'), source_rule.get('id')))
+        catalogue_keys.update(catalogue_by_source.get(source.get('id') or policy.get('id'), ()))
+    for key in catalogue_keys:
+        queued.extend(by_catalogue.get(key, ()))
+    while queued:
+        ident = queued.pop()
+        if not ident or ident in ids:
+            continue
+        ids.add(ident)
+        policy = by_id.get(ident)
+        if policy is None:
+            continue
+        definition = policy.get('definition') or {}
+        queued.extend(definition.get('merged_ids') or [])
+        queued.append(definition.get('replaces_id'))
+    return ids
 
 
 def allocation_index(data, first, last):
@@ -545,7 +627,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         return {"status": "unsupported_size", "algorithm_version": ALGORITHM_VERSION,
                 "message": "Narrow the planning period or employee scope to the published bounds", "capability_manifest": MANIFEST}
     # Every rule as the checks read it: a catalogue rule's lines are the kinds they write.
-    data['policies'] = active_rules(data['policies'], context=data)
+    raw_policies = list(data['policies'])
+    data['policies'] = active_rules(raw_policies, context=data)
+    data['_overtime_originals'] = {p['id']: p for p in raw_policies}
     leadership.prepare(data)
     unsupported = [p["kind"] for p in data['policies'] if p["kind"] not in MANIFEST["supported_rule_kinds"]]
     if unsupported:
@@ -902,7 +986,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                     loads = [p.get('supervisor_person_id') for p in shift['participants']]
                     balanced = levelled_order(pairings, loads) if level else list(pairings)
                     pairings.sort(key=lambda supervisor_id: (supervisor_id not in attached, attached.get(supervisor_id) != 'required',
-                        balanced.index(supervisor_id),
+                        balanced.index(supervisor_id) if level else 0,
                         -allocation_settings(data, shift, pid, supervisor_id, history=history[pid],
                                              candidate_overtime=overtime)[0], supervisor_id))
                 for other, prior in displaced:
@@ -966,7 +1050,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         name_leads()
         pair_attached(data, shifts, added, removals, period)
     for cache in ('_scope_interval_cache', '_policy_applies_cache', '_policy_applies_people', '_allocation_match_cache', '_person_rows', '_person_dates_cache', '_line_index_cache', '_bucket_keys_cache', '_workload_matches_cache', '_quota_cache', '_counted_policies', '_workload_normalization_cache'):
-        data.pop(cache)
+        data.pop(cache, None)
+    if hasattr(data, '_fair_share_measurement_cache'):
+        del data._fair_share_measurement_cache
     validation = evaluate(data)
     unexpected = [f for f in finding_observations(validation) if f['severity'] == 'error'
         and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM', 'ATTACHMENT_PAIRING'}

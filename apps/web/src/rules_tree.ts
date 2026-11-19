@@ -243,7 +243,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
         get:()=>({filters:s.filters,conditions:s.conditions}),set:n=>{s.filters=n.filters;s.conditions=n.conditions;changed();},
         // The view's own filter (a saved view's, or Waiting for approval's): not counted, and Show all keeps it.
         baseline:()=>{const a=saved.find(x=>x.id===viewId);return a?{filters:a.definition.filters||{},conditions:a.definition.conditions||null}:{filters:on()?.label===WAITING?{state:[WAITING]}:{},conditions:null};}}),
-      group:{options:attention?[{key:'kind',label:'Issue'}]:[...(byQuestion?[{key:'question',label:'Question'}]:[]),{key:'family',label:'Family'}],value:()=>attention?(s.group===''?'':'kind'):grouping(),set:k=>{s.group=k||'';changed();},active:()=>s.group===''},
+      group:{options:attention?[{key:'kind',label:'Issue'}]:[...(byQuestion?[{key:'question',label:'Question'}]:[]),{key:'family',label:'Family'}],value:()=>attention?(s.group===''?'':'kind'):grouping(),set:k=>{s.group=k||'';changed();}},  // in use = a grouping applied (the shared default), so the phone's Group dot shows it
       sort:attention?undefined:{options:[{key:'name',label:'Name'},{key:'reach',label:'Reach'},{key:'lines',label:'Lines'},
         ...columns.filter(c=>c.key in LINE_SORT).map(c=>({key:c.key,label:`Lines by ${c.label.toLowerCase()}`}))],value:()=>s.sort,set:v=>{s.sort=v;s.then_sort=[];changed();},defaultLabel:'Catalogue order',active:()=>!!s.sort,
         then:{value:()=>s.then_sort,set:k=>{s.sort=k[0]||null;s.then_sort=k.slice(1);changed();}}},
