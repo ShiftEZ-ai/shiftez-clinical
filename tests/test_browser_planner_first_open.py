@@ -1,6 +1,7 @@
 """The Planner's first open at department scale (163 people, 768 sessions): the week is drawn from the rota's compact
-detail and that week's sessions and findings, inert (Auto-schedule says it waits), before the rota's whole detail
-(megabytes) lands; then it is drawn whole and usable. Bytes and time to each are printed (FIRST_OPEN)."""
+detail and that week's sessions and findings, read-only (data-reading: its writes held, Auto-schedule says it waits;
+D59 no longer makes it inert, so it is read meanwhile), before the rota's whole detail (megabytes) lands; then it is drawn
+whole and usable. Bytes and time to each are printed (FIRST_OPEN)."""
 import json
 import time
 from collections import Counter
@@ -40,14 +41,14 @@ def test_the_planner_draws_a_department_week_before_the_whole_rota_and_then_whol
         started = time.monotonic()
         # The address alone: navigate() waits for the page to be loaded, which is the whole rota.
         page.evaluate("key => { location.hash = key; }", f"schedule/week/2026-10-11?edit={w['id']}")
-        # The window: drawn and inert (a Week chip is [data-shift]); Auto-schedule waits for the whole rota (e7d1d6ba5).
-        expect(page.locator('#schedule-view[inert] [data-shift]').first).to_be_attached(timeout=PAGE_LOAD_MS)
+        # The window: drawn and read-only (a Week chip is [data-shift]); Auto-schedule waits for the whole rota (e7d1d6ba5).
+        expect(page.locator('#schedule-view[data-reading] [data-shift]').first).to_be_attached(timeout=PAGE_LOAD_MS)
         first = time.monotonic()
         wait_held(page, held)  # the read ahead asked for it: released now, read once (below)
         held.pop().continue_()
         page.unroute(whole_read)  # after continuing: unrouting first would continue the held route itself
         # Then the whole rota: usable, with its own health.
-        expect(page.locator('#schedule-view:not([inert]) [data-shift]').first).to_be_visible(timeout=PAGE_LOAD_MS)
+        expect(page.locator('#schedule-view:not([data-reading]) [data-shift]').first).to_be_visible(timeout=PAGE_LOAD_MS)
         whole = time.monotonic()
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
         expect(page.get_by_text('Loading the whole rota…')).to_have_count(0)
@@ -99,8 +100,8 @@ def test_the_window_draws_the_same_open_places_and_short_days_as_the_whole_rota(
         navigate(page, 'home')
         page.route(whole_read, lambda route: held.append(route))  # the whole rota waits until the window is read
         page.evaluate("key => { location.hash = key; }", f"schedule/week/2026-10-04?edit={w['id']}")
-        expect(page.locator('#schedule-view[inert] [data-session]').first).to_be_attached(timeout=PAGE_LOAD_MS)
-        expect(page.locator('#schedule-view[inert] .pchip.gap').first).to_be_attached()
+        expect(page.locator('#schedule-view[data-reading] [data-session]').first).to_be_attached(timeout=PAGE_LOAD_MS)
+        expect(page.locator('#schedule-view[data-reading] .pchip.gap').first).to_be_attached()
         for _ in range(600):  # bounded: two frames a round
             if held:
                 break
@@ -111,7 +112,7 @@ def test_the_window_draws_the_same_open_places_and_short_days_as_the_whole_rota(
         held.pop().continue_()
         page.unroute(whole_read)  # after continuing: unrouting first would continue the held route itself
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
-        expect(page.locator('#schedule-view:not([inert]) .pchip.gap').first).to_be_visible()
+        expect(page.locator('#schedule-view:not([data-reading]) .pchip.gap').first).to_be_visible()
         assert page.evaluate(DRAWN) == window
     finally:
         context.close()
