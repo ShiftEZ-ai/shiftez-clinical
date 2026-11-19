@@ -4,7 +4,8 @@ from .fairness import AWAY
 from .time import aware, overlaps
 
 REASON_ALLOWED_AVAILABILITY = AWAY | {'protected_time'}
-ZERO_LIMIT_FINDING_CODES = frozenset({'QUOTA_ABOVE_MAXIMUM', 'MAX_DUTIES', 'MAX_HOURS'})
+ZERO_LIMIT_FINDING_CODES = frozenset({'QUOTA_ABOVE_MAXIMUM', 'MAX_DUTIES', 'MAX_HOURS',
+                                     'CONSECUTIVE_DAYS', 'CONSECUTIVE_WEEKENDS'})
 
 
 def _mandatory_zero_limit(finding):

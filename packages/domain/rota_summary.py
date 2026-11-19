@@ -518,21 +518,21 @@ def fix_list_effect_projection(before_data, before_validation, after_data, after
             'fix_list_delta': fix_list_delta(phases[0]['fix_list'], phases[1]['fix_list'])}
 
 
-def remember_fix_list(previous, current, *, submitted=False, accepted_issues=()):
+def remember_fix_list(previous, current, *, submitted=False, accepted_issues=(), summary_cache=None):
     """Persist only derived ID receipts in the existing check JSON; edits retain their normal Undo."""
     from zoneinfo import ZoneInfo
-    before = rota_summary(previous, accepted_issues=accepted_issues)['fix_list'] if previous else None
+    before = rota_summary(previous, accepted_issues=accepted_issues, cache=summary_cache)['fix_list'] if previous else None
     at = current['evaluated_at']
     day = aware(at).astimezone(ZoneInfo((current.get('fix_list_context') or {}).get('timezone', 'UTC'))).date().isoformat()
     state = (previous or {}).get('fix_list_state') or {}
     since = state.get('since')
     reset_since = submitted or not since or since.get('day') != day
     if reset_since:
-        ids_after = rota_summary(current, accepted_issues=accepted_issues)['fix_list']['causes']
+        ids_after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']['causes']
         since = {'at': at, 'day': day, 'ids': [c['id'] for c in ids_after]}
     current['fix_list_state'] = {'previous_ids': [c['id'] for c in (before or {'causes': []})['causes']], 'since': since}
     # Reset needs a second pass so the stored delta carries the state-aware `since` receipt.
-    after = rota_summary(current, accepted_issues=accepted_issues)['fix_list']
+    after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']
     current['fix_list_delta'] = fix_list_delta(before, after)
     return current
 
@@ -828,13 +828,24 @@ def blocking_without_open_places(findings, deficits, legacy_open):
         finding_observations({'findings': [f]}) if o['severity'] == 'error') for f in findings)
 
 
-def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False):
+def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False, cache=None):
     """A place is one required person on a session, filled throughout its required intervals.
 
     Count a session once: peak required cover and greatest coverage deficit across
     its intervals, including scoped/skill requirements. Non-staffing safety issues remain separate.
     Issues count findings, rather than affected sessions or people.
     """
+    if cache is not None:
+        from copy import deepcopy
+        from .input_manifest import digest
+        from .validation import INTERNAL_CHECK_KEYS
+        value = {key: item for key, item in (validation or {}).items()
+                 if key not in INTERNAL_CHECK_KEYS | {'fix_list_delta', '_command_scope'}}
+        accepted = sorted(accepted_issues) if isinstance(accepted_issues, (set, frozenset)) else accepted_issues
+        key = digest([bool(validation), value, shifts, accepted, compact])
+        if key not in cache:
+            cache[key] = rota_summary(validation, shifts, accepted_issues, compact=compact)
+        return deepcopy(cache[key])
     check = normalized_check(validation) or {}
     from .validation import finding_observations
     sessions, deficits, legacy_open = {}, {}, {}

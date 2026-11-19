@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from PIL import Image, ImageOps
 from sqlalchemy import func, select, update
+from sqlalchemy.orm import defer
 
 from apps.api import live, models as m
 from apps.api.auth import current_roles, require_role
@@ -392,26 +393,27 @@ def queue_test(db, actor, command, settings):
     return {'status': 'queued', 'installation_id': install.id, 'outbox_id': child.id}
 
 
-def icon_inputs(db):
+def current_icons(db, *, render_missing=False):
     value = branding.settings(db)
     source_id = value.get('emblem_image_id')
-    source = db.get(m.BrandingImage, source_id) if source_id else None
-    content = source.content if source else (Path(__file__).resolve().parents[3] / 'apps/web/public/assets/brand/emblem.png').read_bytes()
-    digest = hashlib.sha256(content).hexdigest()
+    uploaded = db.get(m.BrandingImage, source_id, options=[defer(m.BrandingImage.content)]) if source_id else None
+    content = None
+    if uploaded is None:
+        content = (Path(__file__).resolve().parents[3] / 'apps/web/public/assets/brand/emblem.png').read_bytes()
+    digest = uploaded.sha256 if uploaded else hashlib.sha256(content).hexdigest()
     profile = {**s.PWA_ICON_PROFILE, 'background': value['icon_background'],
                'fill': value['icon_fill'], 'maskable_fill': value['maskable_fill']}
     profile_id = hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()[:40]
-    return value, source_id, content, digest, profile_id
-
-
-def render_icons(db):
-    value, source_id, content, digest, profile_id = icon_inputs(db)
-    artifacts = list(db.scalars(select(m.BrandingIconArtifact).where(m.BrandingIconArtifact.source_sha256 == digest,
-        m.BrandingIconArtifact.profile == profile_id)))
-    present = {(a.purpose, a.width): a for a in artifacts}
-    for purpose, size in s.PWA_ICON_PROFILE['variants']:
-        if (purpose, size) in present:
-            continue
+    A = m.BrandingIconArtifact
+    artifacts = list(db.scalars(select(A).options(defer(A.content)).where(
+        A.source_sha256 == digest, A.profile == profile_id)))
+    present = {(a.purpose, a.width) for a in artifacts}
+    missing = [variant for variant in s.PWA_ICON_PROFILE['variants'] if variant not in present]
+    if missing and not render_missing:
+        return None
+    if missing and uploaded is not None:
+        content = uploaded.content
+    for purpose, size in missing:
         with Image.open(io.BytesIO(content)) as original:
             source = ImageOps.exif_transpose(original).convert('RGBA')
             fill = value['maskable_fill'] if purpose == 'maskable' else value['icon_fill']
@@ -445,25 +447,20 @@ def render_icons(db):
     return value, artifacts
 
 
-def manifest(db, origin):
-    value, artifacts = render_icons(db)
+def manifest(value, artifacts):
     # Relative same-origin URLs preserve the old effective root identity; Host is never consulted.
     return s.PwaManifest(name=value['app_name'], short_name=value['short_name'], theme_color=value['theme_color'],
         background_color=value['background_color'], icons=[{'src': '/api/pwa/icons/' + a.id + '.png',
             'sizes': f'{a.width}x{a.height}', 'purpose': a.purpose} for a in sorted(artifacts, key=lambda a: (a.purpose, a.width)) if a.purpose != 'apple']).model_dump(mode='json')
 
 
-def icon(db, artifact_id):
-    row = db.get(m.BrandingIconArtifact, artifact_id)
+def icon(db, artifact_id, *, include_content=True):
+    options = () if include_content else (defer(m.BrandingIconArtifact.content),)
+    row = db.get(m.BrandingIconArtifact, artifact_id, options=options)
     require(row is not None, 'NOT_FOUND', 'Icon not found', 404)
     if row.source_image_id:
-        branding.published_image(db, row.source_image_id)
+        branding.published_image(db, row.source_image_id, include_content=False)
     return row
-
-
-def active_icon(db, purpose):
-    return next(a for a in render_icons(db)[1] if a.purpose == purpose)
-
 
 
 def resume_provider(db, actor, command):
