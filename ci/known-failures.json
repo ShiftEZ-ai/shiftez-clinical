@@ -1794,12 +1794,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_engine_fairness_review.py::test_catalogue_goal_lines_keep_their_own_history",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_engine_fairness_review.py::test_fairness_intervals_split_at_catalogue_selector_source_dates",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3055,12 +3049,6 @@
     {
       "class": "baseline",
       "node": "tests/test_solver_rule_checks.py::test_capability_metadata_readers_do_not_gain_unsaved_policy_check_permission[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_generic_share_uses_nested_conditions_and_frozen_published_history",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
