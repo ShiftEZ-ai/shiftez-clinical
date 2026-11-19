@@ -84,7 +84,6 @@ class V33Tests(unittest.TestCase):
             doc=yaml.load((workflows/name).read_text(),Loader=yaml.BaseLoader)
             for job_name, job in doc['jobs'].items():
                 for step in (s for s in job.get('steps',[]) if s.get('uses','').startswith('actions/cache')):
-                    self.assertIn('${{ github.event_name }}',step['with']['key'])
                     self.assertNotIn('restore-keys',step['with'])
                     keys.add(step['with']['key'])
                     action=step['uses'].split('@')[0]
@@ -97,11 +96,16 @@ class V33Tests(unittest.TestCase):
                         self.assertEqual(action, 'actions/cache/save')
                         self.assertNotIn(job_id, saves)
                         saves[job_id] = step['if']
-        self.assertEqual(restores, {('ci.yml', 'checks'), ('ci.yml', 'static'), ('ci-tests.yml', 'tests')})
-        self.assertEqual(saves, {('ci-tests.yml', 'tests'): "(github.event_name == 'merge_group' || github.event_name == 'push') && "
-                                "inputs.suite == 'browser' && inputs.shard == 1 && inputs.replica == 1 && "
+        self.assertEqual(restores, {('ci.yml', 'checks')})
+        self.assertEqual(saves, {('ci.yml', 'checks'): "github.event_name == 'push' && github.ref == 'refs/heads/dev' && "
                                 "steps.dependency-cache.outputs.cache-hit != 'true'"})
-        self.assertEqual(len(keys), 1)
+        self.assertEqual(keys, {"public-ci-${{ runner.os }}-${{ runner.arch }}-"
+                                "${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', "
+                                "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
+        doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertIn('dev', doc['on']['push']['branches'])
+        for job in ('unit', 'browser', 'static', 'result'):
+            self.assertIn("(github.event_name != 'push' || github.ref != 'refs/heads/dev')", doc['jobs'][job]['if'])
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')

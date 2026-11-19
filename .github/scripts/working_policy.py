@@ -2,6 +2,7 @@
 import argparse
 import ast
 import difflib
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
@@ -124,6 +125,15 @@ def renewal_only(before_raw, after_raw, *, today=None):
         if previous>=current:return False
         changed=True
     return changed
+
+
+def review_required(changed_paths):
+    """Load the pre-landing review patterns from the trusted checkout."""
+    source = Path(__file__).resolve().parents[2] / "ci/review_required_paths.txt"
+    patterns = [line.partition("#")[0].strip() for line in source.read_text(encoding="utf-8").splitlines()]
+    if not any(patterns):
+        raise ValueError("Review-required path list is empty")
+    return any(fnmatchcase(path, pattern) for path in changed_paths for pattern in patterns if pattern)
 
 
 def protected(path):
@@ -421,8 +431,18 @@ def event():
     return data
 
 
-def fetch(ref, expected=None):
-    git("fetch", "--no-tags", "origin", ref)
+def fetch(ref, expected=None, *, allow_missing=False):
+    try:
+        git("fetch", "--no-tags", "origin", ref)
+    except subprocess.CalledProcessError:
+        if allow_missing:
+            try:
+                git("ls-remote", "--exit-code", "--refs", "origin", ref)
+            except subprocess.CalledProcessError as probe:
+                if probe.returncode == 2:
+                    return None
+                raise
+        raise
     actual = commit(git("rev-parse", "FETCH_HEAD").decode().strip())
     if expected is not None and actual != expected:
         raise ValueError("Ref advanced; require a fresh event")
@@ -523,11 +543,12 @@ def guard():
         report = findings_report(branch, base, head, candidate, rows, source, candidate_sha)
         if report["tier1"] and not initial:
             raise ValueError("Tier 1 control changes require the audited maintenance route")
-        preview = fetch("refs/heads/preview")
-        preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
-        incoming = set(git("rev-list", head, "--not", base).splitlines())
-        if preview_merges & incoming:
-            raise ValueError("Preview merge history may not enter dev")
+        preview = fetch("refs/heads/preview", allow_missing=True)
+        if preview is not None:
+            preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
+            incoming = set(git("rev-list", head, "--not", base).splitlines())
+            if preview_merges & incoming:
+                raise ValueError("Preview merge history may not enter dev")
     if initial:
         policy_base = head
     receipts = {}
@@ -554,6 +575,8 @@ def ci_context():
     elif kind == "merge_group":
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
+    elif kind == "schedule":
+        branch, base = "dev", commit(git("rev-parse", "HEAD").decode().strip())
     else:
         branch, base = os.environ["GITHUB_REF"].removeprefix("refs/heads/"), commit(git("rev-parse", "HEAD").decode().strip())
     if branch not in {"dev", "preview", "main"}:
