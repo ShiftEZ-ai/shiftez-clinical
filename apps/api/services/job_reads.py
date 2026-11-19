@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 
 from apps.api import models as m
 from apps.api.serialization import effective_input_fingerprint, job_read_metadata, job_result_projection
+from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation
 
 
 def job_stamp(db, *, department_id=None, workspace_id=None):
@@ -17,7 +18,7 @@ def job_stamp(db, *, department_id=None, workspace_id=None):
 def metadata(job, *, load_legacy=True):
     projection = job.read_metadata
     if projection is None:
-        projection = job_read_metadata(job.input_snapshot, job.result) if load_legacy else {'input_snapshot': {}, 'result': None}
+        projection = job_read_metadata(job.input_snapshot, job_result_with_reconciliation(job, job.result)) if load_legacy else {'input_snapshot': {}, 'result': None}
     # Missing retained context is unknown, not a request to reload the frozen input blob.
     return {**projection, 'input_snapshot': {'run_context': None, **projection['input_snapshot']}}
 
@@ -242,10 +243,10 @@ def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
 
 def reconciliation_page(db, job_id, section, offset, limit):
     """Receipt ID, count and rows come from one statement's MVCC snapshot."""
-    path = ('reconciliation', section)
-    source = m.Job.result[path]
+    receipt, _, _ = job_reconciliation_columns()
+    source = receipt[section]
     if db.bind.dialect.name == 'sqlite':
-        entries = func.json_each(m.Job.result, '$.reconciliation.' + section).table_valued('key', column('value', JSON))
+        entries = func.json_each(source).table_valued('key', column('value', JSON))
         candidate, ordinal = entries.c.value, cast(entries.c.key, Integer)
     else:
         array = case((func.json_typeof(source) == 'array', source), else_=literal([], JSON))
@@ -256,5 +257,5 @@ def reconciliation_page(db, job_id, section, offset, limit):
     aggregate = (func.json_group_array(func.json(page.c.value)) if db.bind.dialect.name == 'sqlite' else
                  func.coalesce(func.json_agg(aggregate_order_by(page.c.value, page.c.ordinal)), literal([], JSON)))
     values = select(type_coerce(aggregate, JSON)).select_from(page).scalar_subquery()
-    return db.execute(select(m.Job.result['reconciliation', 'id'].as_string(), func.json_array_length(source), values).where(
+    return db.execute(select(receipt['id'].as_string(), func.json_array_length(source), values).where(
         m.Job.id == job_id)).one()
