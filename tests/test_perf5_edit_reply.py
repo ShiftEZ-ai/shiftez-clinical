@@ -464,11 +464,11 @@ def test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions(bac
     assert checks == [True]
     assert len(evaluated) == 1
     assert not any(row.name == 'rota.api' and row.getMessage() == 'unhandled_error' for row in caplog.records)
-    # One read for drift detection, then writer admission and fresh final validation.
-    assert acquisitions.count(('_snapshot_inputs', False)) == 1
-    assert acquisitions.count(('_snapshot_inputs', True)) == 2
-    assert acquisitions.count(('_domain_snapshot', False)) == 1
-    assert acquisitions.count(('_domain_snapshot', True)) == 2
+    # Publish acquires inputs only after flush inside the writer.
+    assert acquisitions.count(('_snapshot_inputs', False)) == 0
+    assert acquisitions.count(('_snapshot_inputs', True)) == 1
+    assert acquisitions.count(('_domain_snapshot', False)) == 0
+    assert acquisitions.count(('_domain_snapshot', True)) == 1
     with transaction(h.app.state.engine) as db:
         published = db.get(m.Publication, result.json()['publication_id'])
         assert published.fingerprint == published.validation['fingerprint'] == evaluated[0]
@@ -484,16 +484,20 @@ def test_publish_rejects_inputs_changed_after_read_basis(backend, monkeypatch):
     h = backend
     w = h.lifecycle(h.shift(h.workspace())['workspace'], 'submit')['workspace']
     w = h.lifecycle(w, 'approve', 'approver')['workspace']
-    original = planning.domain_snapshot
-    def changed(db, *a, **kw):
-        result = original(db, *a, **kw)
-        if not db.connection().info.get('rota_write'):
+    from apps.api import commands
+    original, changed_inputs = commands.expected, []
+    def changed(row, revision):
+        result = original(row, revision)
+        if row.id == w['id'] and not changed_inputs:
             with transaction(h.app.state.engine, write=True) as writer:
                 writer.get(m.Location, h.seed['locations'][0]).capacity += 1
+            changed_inputs.append(True)
         return result
-    monkeypatch.setattr(planning, 'domain_snapshot', changed)
+    monkeypatch.setattr(commands, 'expected', changed)
     result = h.lifecycle(w, 'publish', status=409)
-    assert result['error']['code'] == 'STALE_INPUTS'
+    # Scheduling-only drift retains the actual approval refusal of the previous publish path.
+    assert result['error']['code'] == 'STALE_APPROVAL'
+    assert changed_inputs == [True]
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Workspace, w['id']).status == 'approved'
         assert db.scalar(select(m.Publication.id).where(m.Publication.workspace_id == w['id'])) is None
