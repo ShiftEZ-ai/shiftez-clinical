@@ -13,11 +13,12 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import hosted_ci as hosted
 import working_policy as policy
 import canary_evidence as canaries
 import hardening
+import make_known_failures as maker
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
@@ -64,18 +65,22 @@ def require_pr_merge(data, git, candidate):
 
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+    kind = os.environ["GITHUB_EVENT_NAME"]
+    trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
     if measurement:
-        if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
+        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
-    elif os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
+    elif kind == "schedule":
+        candidate = policy.commit(trusted_sha)
+    elif kind == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") == "true":
         candidate = policy.commit(data["pull_request"]["head"]["sha"])
     else:
         candidate = policy.commit(os.environ["GITHUB_SHA"])
     config = settings()
     output({"candidate_sha": candidate, "measurement": str(measurement).lower(),
-            "trusted_sha": subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip(),
+            "trusted_sha": trusted_sha,
             "unit_count": config["unit_shards"], "browser_count": config["browser_shards"]})
 
 
@@ -143,8 +148,6 @@ def plan(base, measurement):
         replicas = [1]
     else:
         # Existing reader decides replica count from Git objects; no candidate Python import.
-        sys.path.insert(0, str(TRUSTED / "ci"))
-        import make_known_failures as maker
         context = maker.context(base)
         replicas = context["replicas"]
     durations = TRUSTED / "ci/hosted-durations.json"
@@ -203,9 +206,13 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             functions = folder / ("test_" + secrets.token_hex(20) + ".py")
             error = folder / (manifest["error"] + ".py")
             marker = "pytestmark = pytest.mark.browser\n" if suite == "browser" else ""
-            functions.write_text("import pytest\n" + marker
+            timing = targets == [hosted.TIMING_NODE]
+            timeout_setup = "from threading import Event\n" if timing else ""
+            timeout_marker = "@pytest.mark.timeout(1)\n" if timing else ""
+            failure = "    Event().wait(5)\n" if timing else "    assert False\n"
+            functions.write_text("import pytest\n" + marker + timeout_setup
                 + "def " + manifest["passed"] + "():\n    assert True\n"
-                + "def " + manifest["failed"] + "():\n    assert False\n"
+                + timeout_marker + "def " + manifest["failed"] + "():\n" + failure
                 + "def " + manifest["skipped"] + "():\n    pytest.skip('trusted sentinel')\n", encoding="utf-8")
             error.write_text("raise RuntimeError('trusted collection sentinel')\n", encoding="utf-8")
         raw = report.with_suffix(".raw.xml")
@@ -215,7 +222,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
         def pytest_command(project, selected, options):
             return [sys.executable,"-m","pytest","-p","hosted_ci","-p","sentinel_plugin","-q",
                     *selected,*([str(folder)] if flags['canaries'] else []),"-m",hosted.execution_marker(suite),"-c",str(project/"pyproject.toml"),
-                    "--rootdir="+str(project),"--continue-on-collection-errors",*options]
+                    "--rootdir="+str(project),"--continue-on-collection-errors",
+                    "--timeout=600","--timeout-method=signal","-o","faulthandler_timeout=540",*options]
         def collection_ok(code,cases):
             if not flags['canaries']:return code in ((0, 5) if partial else (0,)) and not cases
             return code in (1,2) and bool(cases) and all(manifest['error'] in canaries.node(c) and canaries.outcome(c)=='error' for c in cases)
@@ -260,7 +268,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             raise ValueError('Pytest execution/collection did not complete')
         parsed = ET.parse(raw)
         cases=list(parsed.getroot().iter('testcase'))
-        selected = canaries.verify_cases(cases,manifest,collected) if flags['canaries'] else [canaries.node(c) for c in cases]
+        selected = canaries.verify_cases(cases, manifest, collected, allow_empty=partial) if flags['canaries'] else [canaries.node(c) for c in cases]
         if not flags['canaries'] and flags['node_census'] and sorted(selected)!=sorted(collected):
             raise ValueError('Reported nodes differ from trusted collection')
         for parent in parsed.getroot().iter():
@@ -284,6 +292,23 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
                       "sentinels": manifest, "raw_sha256": canaries.sha(raw), "collection_sha256": canaries.sha(census)}
             report.with_suffix(".canaries.json").write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
+
+
+def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
+    def attempt(selected, path, options, parallelism, before, *, partial=False):
+        code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
+        files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
+        return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
+
+    first = attempt(targets, report, extra, workers, base_targets, partial=partial)
+    if first["exit_code"] == 1 and maker.retry_run(candidate):
+        original = canaries.report_cases(report, first)
+        failures = maker.retry_nodes(original, listed)
+        if failures:
+            path = report.with_name(report.stem + "-retry.xml")
+            first["retry"] = attempt(failures, path, [], "0", None)
+            canaries.recovered_nodes(report, first, failures, allow_retry=True)
+    return first
 
 
 def main():
@@ -325,6 +350,9 @@ def main():
     workers = os.getenv(f"CI_{args.suite.upper()}_WORKERS", "")
     if not policy.re.fullmatch(r"[1-8]", workers):
         workers = "4"
+    listed = frozenset()
+    if maker.retry_run(candidate):
+        listed = maker.listed_nodes(maker.at_revision(candidate["sha"]))
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
@@ -344,10 +372,9 @@ def main():
             files = sorted(census_files(candidate, files))
             count=len(candidate["suites"][args.suite]["shards"])
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
-        code = invocation(targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
-                          base_targets, partial="selection" in candidate)
-        paths = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
-        receipt["reports"].append({"file": name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in paths}})
+        receipt["reports"].append(invocation_receipt(
+            targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
+            base_targets, candidate=candidate, partial="selection" in candidate, listed=listed))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 

@@ -84,7 +84,8 @@ class TwoObservationGateTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "Infrastructure"):
                             maker.product_error_nodes(self.folder)
                 with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-                    self.assertEqual(maker.product_error_nodes(self.folder), {NODE} if tag == "error" else set())
+                    retry = maker.retry_run({"replicas": [1]})
+                    self.assertEqual(maker.product_error_nodes(self.folder, allow_retry=retry), {NODE} if tag == "error" else set())
                     path = self.folder / "junit.xml"
                     report = ET.parse(path)
                     case = ET.SubElement(report.getroot(), "testcase",
@@ -92,7 +93,23 @@ class TwoObservationGateTests(unittest.TestCase):
                     ET.SubElement(case, "failure", message="ConnectionError: connection refused")
                     report.write(path)
                     with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                        maker.product_error_nodes(self.folder)
+                        maker.product_error_nodes(self.folder, allow_retry=retry)
+                    with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
+                        with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                            maker.product_error_nodes(self.folder, allow_retry=retry)
+
+    def test_pr_recovery_cannot_hide_multiple_infrastructure_failures(self):
+        self.report("error", "ConnectionError: connection refused")
+        path = self.folder / "junit.xml"
+        report = ET.parse(path)
+        case = ET.SubElement(report.getroot(), "testcase", classname="tests.test_product", name="test_b")
+        ET.SubElement(case, "failure", message="ConnectionError: connection refused")
+        report.write(path)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            retry = maker.retry_run({"replicas": [1]})
+            with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
+                with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
+                    maker.product_error_nodes(self.folder, allow_retry=retry)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
@@ -100,7 +117,8 @@ class TwoObservationGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Infrastructure"):
                 maker.product_error_nodes(self.folder)
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-            classified = maker.product_error_nodes(self.folder)
+            retry = maker.retry_run({"replicas": [1]})
+            classified = maker.product_error_nodes(self.folder, allow_retry=retry)
             self.assertEqual(classified, {NODE})
             runs, _ = known_skips.comparison_runs([{NODE: "error"}, {NODE: "passed"}], set(),
                                                   release=False, allowed_errors=classified)
@@ -109,7 +127,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 self.evaluate(["error", "error"], product_errors=classified)
             self.report("error", "error collecting tests/test_product.py")
             with self.assertRaisesRegex(ValueError, "Collection error"):
-                maker.product_error_nodes(self.folder)
+                maker.product_error_nodes(self.folder, allow_retry=retry)
 
     def test_schema_error_with_product_frame_is_product(self):
         self.report("error", "sqlalchemy.exc.OperationalError: no such table: example")
@@ -127,6 +145,18 @@ class TwoObservationGateTests(unittest.TestCase):
         for runs in ([{NODE: "failed"}], [{NODE: "failed"}, {}], [{NODE: "failed"}, {NODE: "skipped"}]):
             with self.subTest(runs=runs), self.assertRaises(ValueError):
                 maker.evaluate(self.current, self.current, runs)
+
+    def test_single_replica_pr_refuses_and_reports_new_red_outcomes(self):
+        self.assertTrue(self.evaluate(["passed"], expected_replicas=1))
+        for outcome, reason in (("failed", "New failures"), ("error", "New errors")):
+            with self.subTest(outcome=outcome):
+                with self.assertRaisesRegex(ValueError, reason + ".*" + NODE) as refused:
+                    self.evaluate([outcome], expected_replicas=1, product_errors={NODE})
+                self.assertNotIn("complete replica", str(refused.exception))
+                self.assertEqual(maker.report_outside(self.current, [{NODE: outcome}], self.folder), [])
+                report = json.loads((self.folder / "outside-observations.json").read_text())
+                self.assertEqual(report["observations"][0]["observations"], [outcome])
+                self.assertEqual(report["observations"][0]["red_count"], 1)
 
     def test_main_release_remains_strict_for_single_sighting(self):
         for outcome in ("failed", "error"):
@@ -184,6 +214,10 @@ class TwoObservationGateTests(unittest.TestCase):
             self.assertTrue(self.evaluate(["passed", "passed"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [NODE])
             self.assertIn("- " + NODE, summary.read_text())
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, recovered={NODE: "error"}, stale_output=self.folder))
+            self.assertEqual(json.loads(artifact.read_text()), [])
             self.assertTrue(self.evaluate(["passed", "error"], stale_output=self.folder))
             self.assertEqual(json.loads(artifact.read_text()), [])
             down = "tests/test_product.py::test_unlisted"
@@ -192,7 +226,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 maker.evaluate(self.current, self.current, runs, stale_output=self.folder)
             self.assertEqual(json.loads(artifact.read_text()), [NODE])
 
-    def test_plan_and_reader_use_two_replicas_on_every_event(self):
+    def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci
         owner = "tests/test_quick_owner.py"
         owned = "apps/api/quick_fixture.py"
@@ -240,8 +274,10 @@ class TwoObservationGateTests(unittest.TestCase):
                       (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
                       (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
             events = [("pull_request", *case) for case in cases]
-            events += [(event, owned, [], "dev", False, False) for event in ("merge_group", "workflow_dispatch", "push")]
+            events += [(event, owned, [], "dev", False, False)
+                       for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events.append(("pull_request", owned, [], "dev", False, False))
+            events = [case for case in events if case[0] != "merge_group"]
             for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
@@ -281,10 +317,11 @@ class TwoObservationGateTests(unittest.TestCase):
                          "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    self.assertEqual(maker.context(base)["replicas"], [1, 2])
+                    replicas = [1] if event == "pull_request" else [1, 2]
+                    self.assertEqual(maker.context(base)["replicas"], replicas)
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["sha"], candidate)
-                    self.assertEqual(plan["replicas"], [1, 2])
+                    self.assertEqual(plan["replicas"], replicas)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
@@ -294,6 +331,38 @@ class TwoObservationGateTests(unittest.TestCase):
                     else:
                         self.assertNotIn("selection", plan)
                         self.assertEqual(actual, files)
+
+    def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):
+        import trusted_ci
+        import trusted_verdict
+        import yaml
+
+        config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
+        for producer in ("static", "result"):
+            self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
+                          [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
+        event = self.folder / "schedule.json"
+        event.write_text("{}")
+        pin, default_sha = "a" * 40, "b" * 40
+        nightly = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": default_sha,
+                   "GITHUB_OUTPUT": str(self.folder / "output")}
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.subprocess, "check_output", return_value=pin + "\n"), \
+             patch.object(trusted_ci, "output") as selected:
+            trusted_ci.select()
+            self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
+        with patch.dict(os.environ, nightly), \
+             patch.object(trusted_ci.policy, "event", return_value={}), \
+             patch.object(trusted_ci.policy, "git", return_value=pin.encode()):
+            trusted_ci.policy.ci_context()
+            self.assertIn("base_sha=" + pin, Path(nightly["GITHUB_OUTPUT"]).read_text())
+            self.assertIn("release=false", Path(nightly["GITHUB_OUTPUT"]).read_text())
+        with patch.object(trusted_verdict, "git", return_value=pin.encode()):
+            self.assertEqual(trusted_verdict.policy_context({}, "schedule", pin), ("dev", pin))
+            with self.assertRaisesRegex(ValueError, "pinned dev"):
+                trusted_verdict.policy_context({}, "schedule", default_sha)
 
     def test_dispatch_and_push_fetch_the_measured_pr_before_reader(self):
         import test_working_policy as fixtures

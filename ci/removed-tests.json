@@ -11,6 +11,16 @@
       "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
+    },
+    {
+      "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
+      "owner": "maintainer",
+      "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
+      "owner": "maintainer",
+      "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
     }
   ]
 }
