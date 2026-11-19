@@ -503,13 +503,20 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
         expected_score = schedule_score(data, expected)
     assert data == original_data
 
-    observed, caches, sources = {}, {}, {}
+    observed, memos, sources = {}, {}, {}
+    used_memos = set()
+
     def checked(context, shift):
         cache = context.get('_line_index_cache')
-        if cache is not None and id(cache) not in caches:
-            assert 'effective_type_definitions' not in cache
-            caches[id(cache)] = cache
+        if cache is not None:
+            # Fair share can wrap the line index while keeping the same memo.
+            memo = cache.get('effective_type_definitions')
+            assert memo is None or id(memo) in memos
         result = memoised(context, shift)
+        if cache is not None:
+            memo = cache['effective_type_definitions']
+            memos[id(memo)] = memo
+            used_memos.add(id(memo))
         if cache is not None and id(result) not in observed:
             observed[id(result)] = result, deepcopy(result)
             for source in (shift['type_snapshot']['definition'],
@@ -523,16 +530,17 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
         assert any(value.get('requirements') and value.get('supervision') for value, _ in observed.values())
         assert all(value == before for value, before in observed.values())
         assert all(value == before for value, before in sources.values())
-        for cache in caches.values():
-            for issued, current, value in cache.get('effective_type_definitions', {}).values():
+        for memo in memos.values():
+            for issued, current, value in memo.values():
                 assert value == observed[id(value)][1]
 
     _replace_definition_readers(monkeypatch, memoised, checked)
     actual = evaluate(data)
-    first_caches = set(caches)
+    first_memos = used_memos.copy()
     assert actual == expected
+    used_memos.clear()
     assert evaluate(data) == actual
-    assert set(caches) - first_caches  # Fresh evaluations never inherit the prior memo.
+    assert first_memos and used_memos and first_memos.isdisjoint(used_memos)
     assert schedule_score(data, actual) == expected_score
     unchanged()
     assert data == original_data
@@ -545,7 +553,10 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
     unchanged()
     run = prepared['data']
     assert run['_line_index_cache']['effective_type_definitions']
-    assert evaluate(run) == evaluate(run)
+    with monkeypatch.context() as oracle:
+        _replace_definition_readers(oracle, checked, _uncached_effective_type_definition)
+        expected_run = evaluate({**run, '_line_index_cache': {}})
+    assert evaluate(run) == evaluate(run) == expected_run
     unchanged()
     # Scheduling admits drafts; issued contexts above still get full preparation.
     if mode == 'draft':
@@ -557,8 +568,28 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
     assert '_line_index_cache' not in fresh
     assert actual['fingerprint'] == expected['fingerprint'] == data['fingerprint'] == fresh['fingerprint']
     assert actual['findings'] == expected['findings']
+
+    changed = {**data, 'types': dict(data['types']), '_line_index_cache': {}}
+    shift = next(s for s in changed['shifts'] if s['assignment_type_id'] == type_id)
+    before = checked(changed, shift)
+    # Runs read immutable definitions. A revised type replaces the definition object.
+    typ = changed['types'][type_id]
+    definition = deepcopy(typ['definition'])
+    definition['requirements'][0]['minimum'] = 4
+    changed['types'][type_id] = {**typ, 'definition': definition, 'revision': typ['revision'] + 1}
+    after = checked(changed, shift)
+    assert after == _uncached_effective_type_definition(changed, shift)
+    assert after['requirements'][0]['minimum'] == 4
+    assert after != before
+    with monkeypatch.context() as oracle:
+        _replace_definition_readers(oracle, checked, _uncached_effective_type_definition)
+        expected_changed = evaluate({**changed, '_line_index_cache': {}})
+    assert evaluate(changed) == expected_changed
+    unchanged()
+    assert data == original_data
+
     request.node.user_properties.append(('effective_definition_oracle', json.dumps({
         'mode': mode, 'fingerprint': actual['fingerprint'],
         'findings_sha256': sha256(json.dumps(actual['findings'], sort_keys=True).encode()).hexdigest(),
         'score_sha256': sha256(json.dumps(expected_score, sort_keys=True).encode()).hexdigest(),
-        'guarded_definitions': len(observed), 'run_caches': len(caches)})))
+        'guarded_definitions': len(observed), 'run_caches': len(memos)})))
