@@ -87,7 +87,7 @@ def test_the_schedule_filter_opens_at_its_first_filter(browser, live_server, h):
         page.locator('.planner-toolbar').get_by_role('button', name='Filter', exact=True).click()
         # SR-06: the two Only switches sit above the shared condition builder; the first of them is the first filter.
         first = page.locator('.popover').last.get_by_label('Only sessions with open places', exact=True)
-        expect(first).to_be_focused()  # not the last checkbox, which scrolled a tall panel past the first filter
+        expect(first).to_be_focused()  # not the last checkbox (it scrolled a tall panel past the first filter), nor a hidden Clear all
         assert page.evaluate("[...document.querySelectorAll('.popover')].pop().scrollTop") == 0
     finally:
         context.close()
