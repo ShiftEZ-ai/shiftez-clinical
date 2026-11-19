@@ -1498,7 +1498,8 @@ def adjusted_rules(policy, entries):
     for entry in sorted(entries, key=lambda r: bool(r.get('line_id'))):
         if policy is None:
             break
-        source_id = policy.get('_source_policy_id', policy['id']) if policy.get('_live_zero') else policy['id']
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
         if entry['policy_id'] == source_id:
             policy = adjusted_rule(policy, entry)
     return policy

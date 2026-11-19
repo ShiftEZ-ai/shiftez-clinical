@@ -72,7 +72,8 @@ def policy_group_tiers(policies):
         if tier is None:
             scope = policy['definition']['scope']
             tier = 3 if named_people(scope) else 1 if person_free(scope) else 2
-        source_id = policy.get('_source_policy_id', policy['id']) if policy.get('_live_zero') else policy['id']
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
         tiers[source_id, line.get('line'), line.get('slot')] = tier
     return tiers
 
@@ -1553,8 +1554,9 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                      **{k: line[k] for k in ('line', 'slot') if k in line},
                      **({'count_bucket': rule['count_bucket']} if 'count_bucket' in rule else {})}
             rule = rule['id']
-        if policy and policy.get('_live_zero'):
+        if policy and (policy.get('_live_zero') or policy.get('_live_mandatory_recheck')):
             rule = policy.get('_source_policy_id', policy['id'])
+        if policy and policy.get('_live_zero'):
             message += f' (current department rule {rule})'
             extra = {**(extra or {}), 'live_zero': True}
         leave_classification = (causes.leave_classification(person, shift)

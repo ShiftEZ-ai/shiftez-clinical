@@ -650,7 +650,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                     for policy in live_policies]
         # A partly filtered policy still needs the captured numbers for the excluded slots.
         replaced = {policy["id"] for policy, projected in filtered if projected is policy}
-        live_policies = [projected if projected is policy else _distinct_live_policy(projected)
+        live_policies = [projected if projected is policy else
+                         _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
                          for policy, projected in filtered if projected is not None]
         frozen_policies = [policy for policy in frozen_policies
                            if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
@@ -717,7 +718,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     # Apply can carry a positive replacement alongside a stricter captured zero.
     if include_mandatory:
         retained_ids = {policy["id"] for policy in frozen_policies}
-        live_policies = [_distinct_live_policy(policy) if policy["id"] in retained_ids
+        live_policies = [_distinct_live_policy({**policy, "_live_mandatory_recheck": True}) if policy["id"] in retained_ids
                          and policy["id"] not in current_safety_ids else policy for policy in live_policies]
     result["policies"] += live_leadership
     result["policies"] += [policy for policy in live_policies if policy not in live_leadership]
@@ -769,11 +770,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     live_exceptions = current.get("exceptions") or []
     result["exceptions"] = [row for row in frozen_exceptions if row.get("policy_id") in safety_ids]
     result["exceptions"] += [row for row in live_exceptions if row.get("policy_id") not in safety_ids]
-    zero_aliases = {(policy["_source_policy_id"], policy["revision"]): policy["id"]
-                    for policy in result["policies"] if policy.get("_live_zero")
-                    and policy["_source_policy_id"] != policy["id"]}
+    aliases = {}
+    for policy in result["policies"]:
+        if policy.get("_live_zero") or policy.get("_live_mandatory_recheck"):
+            source_id = policy["_source_policy_id"]
+            if source_id != policy["id"]:
+                aliases.setdefault((source_id, policy["revision"]), []).append(policy["id"])
     result["exceptions"] += [{**row, "policy_id": alias} for row in live_exceptions
-                             if (alias := zero_aliases.get((row.get("policy_id"), row.get("policy_revision"))))]
+                             for alias in aliases.get((row.get("policy_id"), row.get("policy_revision")), ())]
     result["scheduling_facts"] = current.get("scheduling_facts", result.get("scheduling_facts", []))
     result["people"] = {ident: dict(row) for ident, row in (current.get("people") or {}).items()}
     result["_live_safety_staleness"] = {

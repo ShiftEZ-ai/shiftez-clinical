@@ -429,6 +429,23 @@ def test_rota_adjustment_reaches_live_zero_copy(h):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_apply_recheck_keeps_approved_adjustment_for_live_replacement(h):
+    from apps.api.snapshots import domain_snapshot
+
+    source = h.policy({'kind': 'max_duties', 'maximum': 0})
+    draft = h.shift(h.workspace('Synthetic adjusted prohibition'), people=[])['workspace']
+    tighten(h, source, {'kind': 'max_duties', 'maximum': 1})
+    draft = h.command('coordinator', 'workspace.rule_adjust', {'policy_id': source['id'],
+        'mode': 'set', 'amount': 2, 'reason': 'Synthetic adjustment for the tested rota'},
+        draft['id'], draft['revision'])['workspace']
+    with transaction(h.app.state.engine) as db:
+        data = domain_snapshot(db, db.get(m.Workspace, draft['id']), mandatory_rules=True)
+    limits = [row for row in data['policies'] if row.get('_source_policy_id', row['id']) == source['id']]
+    assert len(limits) == 2
+    assert all(row['rota_adjusted'] and row['definition']['rule']['maximum'] == 2 for row in limits)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_scoped_rota_adjustment_reaches_live_zero_only_for_its_person_and_dates(h):
     from .test_rule_catalogue_api import approve, line, propose
 
