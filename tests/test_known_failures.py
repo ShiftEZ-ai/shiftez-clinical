@@ -29,6 +29,12 @@ make_candidate = partial(ratchet.candidate_list, cleanup_cap=10, root_evidence_s
                          root_runs=ROOT_RUNS, cleanup_issue=123)
 
 
+@pytest.fixture(autouse=True)
+def no_ci_event(monkeypatch):
+    """Tests choose their event explicitly; the hosted job's own GITHUB_EVENT_NAME must not leak in."""
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
+
 def listing(fails=(), unstable=(), cleanup=(), cap=10):
     rows = ([{"node": node, "class": "baseline"} for node in fails]
             + [{"node": node, "class": "cleanup", "issue": 123} for node in cleanup])
