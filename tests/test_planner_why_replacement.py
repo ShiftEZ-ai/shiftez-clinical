@@ -218,3 +218,4 @@ def test_why_unassigned_leave_uses_the_typed_disclosure_contract(h, mode):
             expected['note'] = note
         assert all(finding['leave'] == expected for finding in findings)
     assert (note in json.dumps(result)) == (mode == 'details')
+# Include this file in hosted supervision and team-lead qualification.

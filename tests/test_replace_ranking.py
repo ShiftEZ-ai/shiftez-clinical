@@ -679,3 +679,4 @@ def test_a_50_issue_replace_ranks_once_per_preview_within_budget(replace_ranking
 def test_a_50_issue_replace_ranking_time(replace_ranking_measurement):
     *_, elapsed = replace_ranking_measurement
     assert elapsed < python_budget(1), f'{elapsed:.2f} CPU s'
+# Include this file in hosted supervision and team-lead qualification.

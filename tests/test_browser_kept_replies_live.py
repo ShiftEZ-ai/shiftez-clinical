@@ -102,3 +102,4 @@ def test_a_held_pulse_forgets_kept_replies_when_it_is_applied(browser, live_serv
     finally:
         context.close()
         planner.context.close()
+# Include this file in hosted supervision and team-lead qualification.

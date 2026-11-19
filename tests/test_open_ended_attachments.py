@@ -169,3 +169,4 @@ def test_postgres_attachment_upgrade_preserves_rows_and_guards(pg):
         Operations(MigrationContext.configure(bind)).alter_column('mentorships', 'ends_on', existing_type=sa.Date(), nullable=False)
         importlib.import_module('migrations.versions.0070_open_ended_attachments').upgrade()
     assert_migrated_attachment_guards(engine, saved)
+# Include this file in hosted supervision and team-lead qualification.

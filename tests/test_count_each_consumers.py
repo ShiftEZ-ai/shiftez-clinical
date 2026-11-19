@@ -496,3 +496,4 @@ def test_zero_supervision_capacity_is_enforced_by_both_schedulers(h, locked):
                        for a in cp_sat.get('additions', []))
     greedy_result = greedy(copy.deepcopy(data), 10)
     assert greedy_result['status'] != 'candidate_feasible'
+# Include this file in hosted supervision and team-lead qualification.

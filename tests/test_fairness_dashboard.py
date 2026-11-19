@@ -580,3 +580,4 @@ def test_goal_audience_label_uses_the_configured_condition_group():
     policy = {'definition': {'scope': {'conditions': {'match': 'all', 'conditions': [
         {'field': 'category_ids', 'op': 'any', 'values': ['consultant']}]}}}}
     assert _goal_audience_label(data, policy) == 'Consultants'
+# Include this file in hosted supervision and team-lead qualification.

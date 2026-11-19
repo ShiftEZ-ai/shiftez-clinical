@@ -145,3 +145,4 @@ def test_fair_share_line_pools_its_groups(browser, live_server, h, width, theme)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

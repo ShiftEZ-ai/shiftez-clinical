@@ -283,3 +283,4 @@ def test_pooled_gap_is_counted_once_but_each_peer_can_repair_it():
                            'detail': {'required': 3, 'available': 2, 'affected_shift_ids': ['anchor', 'peer']}}]}
     assert rota_summary(check)['places_open'] == 1
     assert session_open_places(check, 'anchor') == session_open_places(check, 'peer') == 1
+# Include this file in hosted supervision and team-lead qualification.

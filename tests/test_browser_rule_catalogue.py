@@ -679,3 +679,4 @@ def test_a_rule_page_discards_its_unproposed_changes(browser, live_server, h):
         expect(page.locator('.app-footer')).not_to_contain_text('not yet proposed')
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

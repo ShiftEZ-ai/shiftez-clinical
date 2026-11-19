@@ -831,3 +831,4 @@ def test_exchange_refusal_is_said_at_once_and_save_does_not_ask_again(browser, l
         shot(page, 'exchange-refusal-1440-light', full_page=False)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

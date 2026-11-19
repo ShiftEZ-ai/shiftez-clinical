@@ -995,3 +995,4 @@ def test_extra_cover_feasibility_and_unknown_search_never_claim_optimality(h, mo
     assert unknown['status'] == 'needs_more_time'
     assert unknown['additions'] == unknown['removals'] == []
     assert not unknown.get('optimality_proven', False)
+# Include this file in hosted supervision and team-lead qualification.

@@ -533,3 +533,4 @@ def test_untracked_primitive_and_inconsistent_history_fail_closed(h):
             conversion_plan(db,SimpleNamespace(department_id=typ['department_id']),'2026-10-04')
         assert failure.value.code=='LEAD_HISTORY_MISMATCH'
         assert list(db.scalars(select(m.TypeLeadOwnership)))==[]
+# Include this file in hosted supervision and team-lead qualification.

@@ -391,3 +391,4 @@ def test_rule_results_are_current_exact_sources_and_unavailable_lines_do_not_fal
         expect(menu.get_by_role("option")).to_have_count(0)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

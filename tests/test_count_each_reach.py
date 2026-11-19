@@ -425,3 +425,4 @@ def test_counted_reach_is_bounded_at_department_scale_cpu_budget(department_coun
     budget = 30 if coverage.Coverage.current() else 6
     print(f'counted reach: {elapsed:.3f} CPU s for 1000 rules, 150 people')
     assert elapsed < budget, (elapsed, budget)
+# Include this file in hosted supervision and team-lead qualification.

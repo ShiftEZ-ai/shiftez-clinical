@@ -150,3 +150,4 @@ def test_people_mark_trainees_with_and_without_their_supervisor(browser, live_se
         shot(page, 'people-pairs')
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

@@ -24,3 +24,4 @@ def test_department_lead_turns_reuse_rules_and_preserve_source(monkeypatch):
         shift['participants'][0]['team_lead'] = False
     calls.clear()
     assert leadership.lead_turn_pairs(data) == set() and not calls
+# Include this file in hosted supervision and team-lead qualification.

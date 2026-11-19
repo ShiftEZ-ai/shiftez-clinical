@@ -270,3 +270,4 @@ def test_fairness_filters_and_announcement_audiences_read_tags_as_members(h):
     # The overview (one viewer, many notices) reads the same way.
     assert row['id'] in [i['id'] for i in h.get('staff', '/api/content')['items']]
     assert row['id'] not in [i['id'] for i in h.get('colleague', '/api/content')['items']]
+# Include this file in hosted supervision and team-lead qualification.

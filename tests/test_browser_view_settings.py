@@ -700,3 +700,4 @@ def test_list_default_views_personal_then_department(browser, live_server, h):
         expect(toolbar(bar, "Saved views").get_by_role("menuitem", name="Set as department default")).to_have_count(0)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

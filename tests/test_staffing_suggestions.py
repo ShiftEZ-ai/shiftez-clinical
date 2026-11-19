@@ -298,3 +298,4 @@ def test_replacement_keeps_configured_fixed_supervisor_and_lead_flags(h):
     result=ask(h,w,sh,replace_assignment_id=sh['participants'][0]['id'])
     assert result['slot']['fixed'] and result['slot']['team_lead']
     assert result['slot']['supervisor_person_id']==h.seed['people'][2]
+# Include this file in hosted supervision and team-lead qualification.

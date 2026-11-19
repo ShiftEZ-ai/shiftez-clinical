@@ -890,3 +890,4 @@ def test_a_replaced_proposal_is_not_ready_on_home(browser, live_server, h):
         expect(page.locator('#auto-panel')).to_be_visible()
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

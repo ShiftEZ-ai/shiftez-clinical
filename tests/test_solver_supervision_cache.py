@@ -202,3 +202,4 @@ def test_greedy_rebuilds_supervision_after_removing_a_competing_reservation(h):
     assert any(a["shift_id"] == first["id"] and a["participant"]["person_id"] == trainee
                and a["participant"]["supervisor_person_id"] == supervisor for a in result["additions"]), result
     assert data == original
+# Include this file in hosted supervision and team-lead qualification.

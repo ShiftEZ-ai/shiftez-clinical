@@ -103,3 +103,4 @@ def test_participant_options_are_inline_and_saves_still_book_the_whole_duty(brow
         assert saved['participants'][0]['segments'] == []
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

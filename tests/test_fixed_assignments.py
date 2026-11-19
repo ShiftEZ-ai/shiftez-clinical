@@ -31,3 +31,4 @@ def test_fixed_people_survive_copy_and_allow_trainee_additions(h):
     assert len(result['additions']) == 2
     assert all(p['participant']['person_id'] == trainee for p in result['additions'])
     assert all(p['participant']['supervisor_person_id'] == supervisor for p in result['additions'])
+# Include this file in hosted supervision and team-lead qualification.

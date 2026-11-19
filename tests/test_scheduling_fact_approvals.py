@@ -579,3 +579,4 @@ def test_pending_converted_target_uses_current_goal_metric_after_parent_edit(h):
     assert item["goal_period"]["kind"] == "rolling"
     assert read(h, id=pending["id"])["item"] == item
     assert attention(h)["scheduling_facts"]["sample"] == [item]
+# Include this file in hosted supervision and team-lead qualification.

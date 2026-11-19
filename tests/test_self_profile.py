@@ -99,3 +99,4 @@ def test_foreign_organisation_person_binding_is_not_read(h):
 def test_self_profile_limit_is_explicit_instead_of_silently_truncating(h, facts, monkeypatch):
     monkeypatch.setattr(self_profile, 'LIMIT', 1)
     assert h.get('staff', '/api/me/profile', status=409)['error']['code'] == 'PROFILE_LIMIT'
+# Include this file in hosted supervision and team-lead qualification.

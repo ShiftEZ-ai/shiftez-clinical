@@ -535,3 +535,4 @@ def test_why_is_read_only_for_reviewers_and_refuses_bad_requests(h):
     why(h, w, ['00000000-0000-4000-8000-000000000000'], status=404)
     why(h, w, [sid], person_id='00000000-0000-4000-8000-000000000000', status=404)
     why(h, {**w, 'revision': w['revision'] + 5}, [sid], status=409)
+# Include this file in hosted supervision and team-lead qualification.

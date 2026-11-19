@@ -415,3 +415,4 @@ def test_counted_solver_goals_keep_same_day_clinics_separate():
     solver.parameters.max_time_in_seconds = 1
     assert solver.solve(model) == cp_model.OPTIMAL
     assert solver.objective_value == 0
+# Include this file in hosted supervision and team-lead qualification.

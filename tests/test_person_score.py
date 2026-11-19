@@ -555,3 +555,4 @@ def test_person_score_active_opportunities_department_query_and_time_budget_cpu_
     *_, elapsed = person_score_opportunities_scale
     record_property('score_read_seconds', elapsed)
     assert elapsed < python_budget(1), elapsed
+# Include this file in hosted supervision and team-lead qualification.

@@ -170,3 +170,4 @@ def test_programme_lead_phone_attachment_picker_done_preserves_dirty_close(brows
         assert h.get('programme_lead', '/api/catalogues')['mentorships'] == before
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

@@ -741,3 +741,4 @@ def test_person_schedule_reads_rotations_older_than_the_catalogue(browser, live_
             expect(section(panel, 'Rotations')).to_contain_text(text)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

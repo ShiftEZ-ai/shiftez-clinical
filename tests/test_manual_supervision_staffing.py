@@ -371,3 +371,4 @@ def test_supervision_trial_work_counts(h, monkeypatch):
         Path(path).write_text(json.dumps({'candidates': len(candidates), 'supervisors': 2, 'canonical_checks': dict(counts)}, indent=2)+'\n')
     assert counts['full'] <= 1 + len(candidates)
     assert counts['partial'] > 0
+# Include this file in hosted supervision and team-lead qualification.
