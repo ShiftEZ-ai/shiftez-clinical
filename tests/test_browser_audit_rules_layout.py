@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, navigate, sign_in, wait_held, fonts_ready  # noqa: F401
+from .test_browser import browser, live_server, navigate, sign_in, wait_held, fonts_ready, toolbar, choose  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot
 from .rules_support import rules_by_family
 
@@ -49,7 +49,7 @@ FACTS = r'''selector => {
   const rows=document.querySelectorAll(selector);
   const failures=[];let facts=0,dates=0;
   for(const row of rows){
-    for(const cell of row.querySelectorAll('.rt-who,.rt-where,[data-col=who],[data-col=where]')){
+    for(const cell of row.querySelectorAll('.rt-who,.rt-where,.rt-ln-who,[data-col=who],[data-col=where]')){
       const bounds=cell.getBoundingClientRect();
       const nodes=[...cell.querySelectorAll('.pill-item>*,.pill-more')].map(n=>({text:n.textContent,r:n.getBoundingClientRect()})).filter(n=>n.r.width&&n.r.height);
       facts+=nodes.length;
@@ -120,177 +120,142 @@ def position(scroll):
     return scroll.evaluate('e=>({x:e.scrollLeft,y:e.scrollTop})')
 
 
-def watch_native_scroll(scroll):
-    # Observe before the input: the first changed pixel does not mean its native animation has finished.
-    scroll.evaluate('''e=>{
-        const s=e.__auditNativeScroll={before:{x:e.scrollLeft,y:e.scrollTop},lastX:e.scrollLeft,
-            stableFrames:0,moved:false,settled:false,scrollends:0,wheel:[]};
-        const ended=()=>s.scrollends++;
-        const wheeled=event=>{
-            const input={deltaX:event.deltaX,deltaY:event.deltaY};s.wheel.push(input);
-            queueMicrotask(()=>input.defaultPrevented=event.defaultPrevented);
-        };
-        e.addEventListener('scrollend',ended);e.addEventListener('wheel',wheeled);
-        const start=performance.now();
-        function tick(){
-            const x=e.scrollLeft;s.after={x,y:e.scrollTop};s.moved ||= x!==s.before.x;
-            s.stableFrames=x===s.lastX?s.stableFrames+1:0;s.lastX=x;
-            s.settled=s.moved&&s.stableFrames>=8;s.elapsed=performance.now()-start;
-            if(s.settled||s.elapsed>5000){
-                s.timedOut=!s.settled;e.removeEventListener('scrollend',ended);e.removeEventListener('wheel',wheeled);
-            }else requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-    }''')
-
-
-def settled_native_scroll(page, scroll):
-    page.wait_for_function('''()=>{
-        const s=document.querySelector('.rt-scroll').__auditNativeScroll;
-        return s.settled||s.timedOut;
-    }''')
-    result = scroll.evaluate('e=>e.__auditNativeScroll')
-    assert result['settled'], result
-    assert result['after']['y'] == result['before']['y'], result
-    return result
-
-
-def wrap(page, label):
-    page.locator('.rt-scroll thead').get_by_role('button', name=label, exact=True).click()
-    page.get_by_role('menuitemcheckbox', name='Wrap this column', exact=True).click()
-
-
 # Wrapping and scroll depend on width and height, never on theme (no colour is read): each width once, the tall desktop,
 # and both themes across them.
 @pytest.mark.parametrize('width,scheme,height', [(1440, 'light', 900), (1100, 'dark', 900), (390, 'light', 900),
                                                 (1440, 'dark', 1700)])
 def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, h, width, scheme, height):
-    rank_count, clinic_count = populated_catalogue(h, large_scope=True)
+    """opened lines stay readable, keep their place, and reveal complete facts."""
+    rank_count, _ = populated_catalogue(h, large_scope=True)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': height})
     try:
         page.emulate_media(color_scheme=scheme)
-        # A shown skeleton exercises the shared reveal animation, including its retained final state.
-        held = []
-        page.route('**/api/rules/catalogue', lambda route: held.append(route))
+        held, released = [], False
+        def route_handler(route):
+            if released:
+                route.continue_()
+            else:
+                held.append(route)
+        page.route('**/api/rules/catalogue', route_handler)
+        # The page cannot finish loading while its catalogue read is held: open it from the navigation, not navigate().
         if width < 720:
             page.get_by_role('button', name='Menu', exact=True).click()
         page.get_by_role('button', name='Rules', exact=True).click()
         wait_held(page, held)
-        skeleton = page.locator('#main .loading.page-sk')
-        expect(skeleton).to_be_visible()
-        expect(skeleton).not_to_have_class(re.compile(r'\bsk-wait\b'))
-        page.route('**/api/rules/catalogue', lambda route: route.continue_())
+        expect(page.locator('#main .loading.page-sk')).to_be_visible()
+        expect(page.locator('#main .loading.page-sk')).not_to_have_class(re.compile(r'\bsk-wait\b'))
+        released = True
         for route in held:
             route.continue_()
+        main = page.locator('#main')
         expect(page.locator('#main[data-loaded-view=rules]')).to_have_count(1)
-        expect(page.locator('.rt.fade-in')).to_have_count(1)
-        expect(page.locator('#main [role=alert]')).to_have_count(0)
-        page.get_by_role('button', name='Expand all rules', exact=True).click()
-        expect(page.locator('.rt-line')).to_have_count(25)  # 24 authored lines plus seeded workload.
-        rows = page.locator('.rt-line').filter(has=page.get_by_role('checkbox', name=re.compile(r'^Select line \d+ of Duties per week$')))
-        expect(rows).to_have_count(24)
-        assert_facts(page, '.rt-line')
-        single = rows.last.locator('.rt-who')
-        expect(single.locator('.pill-more')).to_have_count(0)
-        expect(single.locator('.rp')).to_have_attribute('title', LONG_RANK)
-        assert single.locator('.rp').evaluate('e=>e.scrollWidth>e.clientWidth'), 'the single long label needs truncation'
-        scroll = page.locator('.rt-scroll')
+        expect(main.locator('.rt.fade-in')).to_have_count(1)
+        expect(main.locator('[role=alert]')).to_have_count(0)
+        expect(main.locator('.rt-scroll')).to_be_visible()
+        all_rules = main.locator('.rt-lhead').get_by_role('button', name='All rules', exact=True)
+        all_rules.click()
+        lines = main.locator('.rt-ln')
+        expect(lines).to_have_count(25)
+        authored = lines.filter(has=page.get_by_role('checkbox', name=re.compile(r'^Select line \d+ of Duties per week$')))
+        expect(authored).to_have_count(24)
+        assert_facts(page, '.rt-ln')
+        long = lines.filter(has=page.locator(f'.rt-ln-who .rp[title="{LONG_RANK}"]')).last
+        expect(long).to_be_visible()
+        # Who never overlaps the line's other cells: beside it on a desktop, below it on a phone. (.rt-ln-what only groups
+        # them, display:contents on a desktop, so it has no box of its own; a Locator is no evaluate argument either.)
+        overlaps = long.evaluate('''row => {const who=row.querySelector('.rt-ln-who').getBoundingClientRect();
+            return [...row.querySelectorAll('.rt-ln-when,.rt-ln-num,.rt-ln-flags,.rt-ln-open')].map(n=>({cls:n.className,r:n.getBoundingClientRect()}))
+              .filter(({r})=>r.width&&r.height&&Math.min(who.right,r.right)-Math.max(who.left,r.left)>1&&Math.min(who.bottom,r.bottom)-Math.max(who.top,r.top)>1)
+              .map(({cls})=>cls);}''')
+        assert not overlaps, f'Who overlaps the next line cell: {overlaps}'
+        expect(long.locator('.pill-more')).to_have_count(0)
+        scroll = main.locator('.rt-scroll')
         size = scroll.evaluate('e=>({height:e.clientHeight,total:e.scrollHeight,width:e.clientWidth,wide:e.scrollWidth})')
         assert size['height'] < size['total'], size
-        # A long collection uses the available Rules pane, including a tall desktop, while its scrollbar stays above
-        # the footer. This checks the reading outcome rather than encoding a percentage-height CSS implementation.
+        scroll.evaluate('e=>e.scrollTop=e.scrollHeight')
+        # The list's last row (as the table's last tbody row was): the last group's last item. All rules opens the empty
+        # rules too, so the last line (.rt-ln) is not the bottom of the list.
+        expect(main.locator('.rt-scroll section.rt-q').last.locator(':scope > .rt-list > li').last).to_be_in_viewport()
         fit = scroll.evaluate('''e => {const main=document.querySelector('#main'),r=e.getBoundingClientRect(),
             m=main.getBoundingClientRect(),f=document.querySelector('.app-footer').getBoundingClientRect(),
             key=e.closest('.rt')?.querySelector(':scope > .view-legend:not([hidden])'),
             padding=parseFloat(getComputedStyle(main).paddingBottom),
             bottom=key?key.getBoundingClientRect().top:Math.min(m.bottom,f.top,innerHeight);
-            return {top:r.top,bottom:r.bottom,availableBottom:bottom,padding,viewport:innerHeight};}''')
-        # The Rules key sits under the table (one legend, eb8635b6d; DESIGN.md: a view's key stays visible): the list
-        # reaches the key, else the pane's padding above the footer.
+            return {bottom:r.bottom,availableBottom:bottom,padding};}''')
         assert fit['bottom'] <= fit['availableBottom'] + 1, fit
         assert fit['availableBottom'] - fit['bottom'] <= fit['padding'] + 2, fit
-        scroll.evaluate('e => e.scrollTop=e.scrollHeight')
-        expect(page.locator('.rt-table tbody tr').last).to_be_in_viewport()
-        scroll.evaluate('e => e.scrollTop=0')
-        overflowing = size['wide'] > size['width']
-        if width < 1440:
-            assert overflowing, size
-        # +N is an actual reachable control and exposes the complete collection.
-        more = rows.first.locator('.rt-who .pill-more')
-        # Its name says the hidden pills' kind (all ranks here), never "more Who".
+        more = lines.locator('.pill-more').first
         expect(more).to_have_accessible_name(re.compile(rf'^\d+ more ranks?: show all {rank_count}$'))
         more.click()
         all_who = page.get_by_role('dialog', name='All Who', exact=True)
         expect(all_who.locator('ol li')).to_have_count(rank_count)
         page.keyboard.press('Escape')
         expect(all_who).to_have_count(0)
-        # Reading a middle row and ticking it does not snap back to the start after the redraw.
-        # On a tall viewport line 12 is already visible, so establish actual table scroll before selecting it.
-        scroll.evaluate('e => e.scrollTop=Math.min(e.clientHeight/2,e.scrollHeight-e.clientHeight)')
         selected = page.get_by_role('checkbox', name='Select line 12 of Duties per week', exact=True)
-        selected.scroll_into_view_if_needed()
-        selected.focus()
+        # Scrolled, with line 12 in view at any viewport height: its row just below the top of the list's own box.
+        selected.evaluate('''c => {const s=c.closest('.rt-scroll'),row=c.closest('li');
+            const top=row.getBoundingClientRect().top-s.getBoundingClientRect().top+s.scrollTop;
+            s.scrollTop=Math.max(1,Math.min(top-8,s.scrollHeight-s.clientHeight));}''')
+        expect(selected).to_be_in_viewport()
         before = position(scroll)
         assert before['y'] > 0, before
-        page.keyboard.press('Space')
+        selected.check()
         expect(selected).to_be_checked()
         assert position(scroll) == before
-        # The shared footer observer reserves the selection bar's actual height after it appears.
-        expect(page.get_by_role('toolbar', name='Selected rules and lines', exact=True)).to_be_visible()
-        page.wait_for_function('''() => {
-            const table=document.querySelector('.rt-scroll'),bar=document.querySelector('#main .selection-bar:not([hidden])');
-            return table.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top;
-        }''')
-        # The native horizontal scrollbar is at the bounded viewport's bottom, reachable mid-list.
-        scroll.scroll_into_view_if_needed()
-        scroll.focus()
-        if overflowing:
-            expect(scroll).to_be_focused()
-            watch_native_scroll(scroll)
-            page.keyboard.press('ArrowRight')
-            keyboard = settled_native_scroll(page, scroll)
-            assert keyboard['after']['x'] > keyboard['before']['x'], keyboard
-            rect = scroll.bounding_box()
-            page.mouse.move(rect['x'] + min(rect['width'] - 20, 160), rect['y'] + rect['height'] / 2)
-            # Wait for the preceding keyboard animation, then prove the opposite mouse input independently.
-            watch_native_scroll(scroll)
-            page.mouse.wheel(-180, 0)
-            mouse = settled_native_scroll(page, scroll)
-            assert mouse['wheel'] and mouse['wheel'][0] == {
-                'deltaX': -180, 'deltaY': 0, 'defaultPrevented': False}, mouse
-            assert mouse['after']['x'] < mouse['before']['x'], mouse
-        end = scroll.evaluate('e=>e.getBoundingClientRect().bottom')
-        assert end <= height, end
-        shot(page, f'rules-layout-middle-{width}-{height}-{scheme}')
-        # Header menus remain sticky while reading the middle of the table. Wrapping preserves that position.
-        scroll.evaluate('e=>e.scrollLeft=0')
-        page.locator('.rt-scroll thead').get_by_role('button', name='Rule / who', exact=True).click()
-        before = position(scroll)
-        page.get_by_role('menuitemcheckbox', name='Wrap this column', exact=True).click()
-        assert position(scroll) == before
-        expect(rows.first.locator('.rt-who.dt-wrap .pill-more')).to_be_hidden()
-        assert single.locator('.rp').evaluate('e=>e.scrollWidth<=e.clientWidth'), 'wrapping reveals the full single label'
-        assert_facts(page, '.rt-line')
-        wrap(page, 'Where')
-        expect(rows.first.locator('.rt-where.dt-wrap .pill-item')).to_have_count(clinic_count)
-        wrap(page, 'Valid')
-        assert_facts(page, '.rt-line')
-        assert_readable_wrapped_scope(rows.first, '.rt-where', clinic_count, scroll)
-        shot(page, f'rules-layout-wrapped-{width}-{scheme}')
-        wrap(page, 'Where')
-        expect(rows.first.locator('.rt-where .pill-more')).to_be_visible()
-        # A changed result set deliberately starts at the first row.
+        bar = page.get_by_role('toolbar', name='Selected rules and lines', exact=True)
+        expect(bar).to_be_visible()
+        assert scroll.bounding_box()['y'] + scroll.bounding_box()['height'] <= bar.bounding_box()['y'] + 1
+        rule_count = main.locator('.rt-item').count()
         page.get_by_role('searchbox', name='Search rules').fill('Duties per week')
-        expect(page.locator('.rt-rule')).to_have_count(1)  # the search applies once typing pauses (RU-3)
+        expect(main.locator('.rt-item')).to_have_count(1)
         assert position(scroll)['y'] == 0
+        page.get_by_role('searchbox', name='Search rules').fill('')
+        expect(main.locator('.rt-item')).to_have_count(rule_count)
+        assert position(scroll)['y'] == 0
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    finally:
+        context.close()
+
+
+def test_rules_toolbar_sorts_rule_names_and_lines_by_who(browser, live_server, h):
+    """the one-row Rules list keeps the toolbar Sort control, including the line-by-who order."""
+    flag(h)
+    categories = h.get('admin', '/api/catalogues')['categories']
+    first = next(row for row in categories if row['id'] == h.seed['category'])
+    h.configure('categories', {'name': 'Zulu rank', 'starts_on': first['starts_on']}, first['id'], first['revision'])
+    alpha = h.configure('categories', {'name': 'Alpha rank', 'starts_on': '2026-01-01'})['record']['id']
+    catalogue_rule(h, 'duties_per_week', [
+        line({'max': {'value': 5, 'level': 'mandatory'}}, who={'conditions': [{'field': 'category_ids', 'values': [h.seed['category']]}]}),
+        line({'max': {'value': 6, 'level': 'mandatory'}}, who={'conditions': [{'field': 'category_ids', 'values': [alpha]}]}),
+    ])
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
+    try:
+        navigate(page, 'rules')
+        choose(page, 'Sort', 'Sort by', 'Name')
+        # The list is grouped (by question by default): Name sorts the rules within each group.
+        sections = page.locator('#main section.rt-q')
+        expect(sections.first).to_be_visible()
+        for section in sections.all():
+            names = section.locator('.rt-item .rt-rule-link').all_inner_texts()
+            assert names == sorted(names, key=str.casefold), names
+        item = page.locator('.rt-item').filter(has=page.get_by_role('button', name='Duties per week lines', exact=True))
+        item.get_by_role('button', name='Duties per week lines', exact=True).click()
+        labels = item.locator('.rt-ln-who').all_inner_texts()
+        assert labels == ['Alpha rank', 'Zulu rank'], labels
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('width,scheme,height', [(1440, 'light', 900), (1440, 'dark', 1700)])
+def test_rule_detail_page_keeps_dates_wrapped_scope_and_bulk_bar(browser, live_server, h, width, scheme, height):
+    """The one-row Rules list leaves the rule detail table's 17 layout guards intact."""
+    _, clinic_count = populated_catalogue(h, large_scope=True)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': height})
+    try:
+        page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules/duties_per_week')
-        if width < 720:
-            page.get_by_role('button', name='View settings', exact=True).click()
-            page.get_by_role('radio', name='Table', exact=True).click()
-            page.keyboard.press('Escape')
         detail = page.locator('.dt-table tbody tr[data-row]')
         expect(page.locator('.rule-valid').first).to_be_visible()
-        # The shared rule detail renderer keeps the same complete dates, too.
         assert_facts(page, '.dt-table tbody tr[data-row]')
         detail_scroll = page.locator('.dt-body>.table-scroll')
         for label in ['Who', 'Where', 'Valid']:
@@ -299,7 +264,6 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
         expect(detail.first.locator('[data-col=where] .pill-more')).to_be_hidden()
         assert_facts(page, '.dt-table tbody tr[data-row]')
         assert_readable_wrapped_scope(detail.first, '[data-col=where]', clinic_count, detail_scroll)
-        # The detail table uses the remaining pane too, leaving its New line action above the footer.
         fit = detail_scroll.evaluate('''e => {const main=document.querySelector('#main'),r=e.getBoundingClientRect(),
             m=main.getBoundingClientRect(),f=document.querySelector('.app-footer').getBoundingClientRect(),
             add=main.querySelector('.rc-add').getBoundingClientRect();
@@ -309,25 +273,24 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
         assert fit['bottom'] <= fit['actionTop'] + 1, fit
         assert fit['actionBottom'] <= fit['availableBottom'] + 1, fit
         assert fit['availableBottom'] - fit['actionBottom'] <= fit['padding'] + 2, fit
-        shot(page, f'rule-detail-wrapped-{width}-{scheme}')
-        detail_scroll.evaluate('e => {e.scrollTop=e.scrollHeight;e.scrollLeft=0;}')
+        detail_scroll.evaluate('e=>{e.scrollTop=e.scrollHeight;e.scrollLeft=0;}')
         expect(detail.last).to_be_in_viewport()
-        expect(page.get_by_role('button', name='New line: a person, rank, clinic or #tag', exact=True)).to_be_in_viewport()
-        assert page.locator('#main').evaluate('e=>e.scrollTop') == 0, 'the table owns scrolling, not the Rules page'
+        new_line = page.get_by_role('button', name='New line: a person, rank, clinic or #tag', exact=True)
+        expect(new_line).to_be_in_viewport()
+        assert page.locator('#main').evaluate('e=>e.scrollTop') == 0
         detail.last.locator('.bulk-check').check()
         expect(page.get_by_role('toolbar', name='Bulk actions', exact=True)).to_be_visible()
         page.wait_for_function('''() => {
             const table=document.querySelector('[data-table=rule-line-db]>.dt-body>.table-scroll'),
-                add=document.querySelector('#main .rc-add'),bar=document.querySelector('#main .selection-bar:not([hidden])'),
-                limit=bar.getBoundingClientRect().top;
-            return table.getBoundingClientRect().bottom <= limit && add.getBoundingClientRect().bottom <= limit;
+                add=document.querySelector('#main .rc-add'),bar=document.querySelector('#main .selection-bar:not([hidden])');
+            return table.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top &&
+                add.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top;
         }''')
         detail_scroll.evaluate('e=>e.scrollTop=e.scrollHeight')
         expect(detail.last.locator('.bulk-check')).to_be_checked()
         expect(detail.last).to_be_in_viewport()
-        assert detail.last.evaluate('e=>e.getBoundingClientRect().bottom<=e.closest(".table-scroll").getBoundingClientRect().bottom'), 'the last line remains above the selection bar'
-        expect(page.get_by_role('button', name='New line: a person, rank, clinic or #tag', exact=True)).to_be_in_viewport()
-        shot(page, f'rule-detail-selected-{width}-{height}-{scheme}')
+        assert detail.last.evaluate('e=>e.getBoundingClientRect().bottom<=e.closest(".table-scroll").getBoundingClientRect().bottom')
+        expect(new_line).to_be_in_viewport()
     finally:
         context.close()
 
@@ -416,92 +379,68 @@ def test_pending_rule_proposal_keeps_all_changes_and_lines_reachable_on_phone(br
         context.close()
 
 
-def test_search_keeps_horizontal_scroll_and_row_actions_capture_immediate_native_scroll(browser, live_server, h):
+def test_search_keeps_vertical_scroll_and_row_actions_on_the_rules_list(browser, live_server, h):
     populated_catalogue(h)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': 1100, 'height': 900})
     try:
         navigate(page, 'rules')
-        page.get_by_role('button', name='Expand all rules', exact=True).click()
+        page.locator('#main .rt-lhead').get_by_role('button', name='All rules', exact=True).click()
         scroll = page.locator('.rt-scroll')
-        # The scroll event need not have fired before a row action in the same JavaScript task.
+        total_rules = page.locator('.rt-item').count()
         immediate = scroll.evaluate('''e=>{
-            e.scrollLeft=80;e.scrollTop=180;
-            const before={x:e.scrollLeft,y:e.scrollTop};
-            e.querySelector('.rt-line .bulk-check').click();
-            const next=document.querySelector('.rt-scroll');
-            return {before,after:{x:next.scrollLeft,y:next.scrollTop}};
+            e.scrollTop=180;
+            const box=e.querySelector('.rt-ln .bulk-check'), before={x:e.scrollLeft,y:e.scrollTop};
+            box.click();
+            return {before,after:{x:e.scrollLeft,y:e.scrollTop},checked:box.checked};
         }''')
-        assert immediate['before']['x'] > 0 and immediate['before']['y'] > 0, immediate
-        assert immediate['after'] == immediate['before'], immediate
-        expect(page.locator('.rt-line .bulk-check').first).to_be_checked()
-        # An ordinary native scroll (including one initiated programmatically) feeds the result-scope cache.
-        before = scroll.evaluate('''e=>new Promise(resolve=>{
-            e.addEventListener('scroll',()=>resolve({x:e.scrollLeft,y:e.scrollTop}),{once:true});
-            e.scrollTo({left:0,top:0,behavior:'instant'});
-            e.scrollTo({left:120,top:220,behavior:'instant'});
-        })''')
-        assert before['x'] > 0 and before['y'] > 0, before
-        rules = page.locator('.rt-rule').count()
+        assert immediate['before']['y'] > 0 and immediate['after'] == immediate['before'], immediate
+        selected = page.locator('.rt-ln .bulk-check').first
+        expect(selected).to_be_checked()
+        assert scroll.evaluate('e=>e.scrollLeft') == 0
         page.get_by_role('searchbox', name='Search rules').fill('Duties per week')
-        expect(page.locator('.rt-rule')).to_have_count(1)  # the search applies once typing pauses (RU-3)
-        assert position(scroll) == {'x': before['x'], 'y': 0}
+        expect(page.locator('.rt-item')).to_have_count(1)
+        assert position(scroll) == {'x': 0, 'y': 0}
         page.get_by_role('searchbox', name='Search rules').fill('')
-        expect(page.locator('.rt-rule')).to_have_count(rules)
-        assert position(scroll) == {'x': before['x'], 'y': 0}
+        expect(page.locator('.rt-item')).to_have_count(total_rules)
+        assert position(scroll) == {'x': 0, 'y': 0}
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     finally:
         context.close()
 
 
 @pytest.mark.parametrize('role', ['admin', 'auditor'])
-def test_switching_rule_and_issue_columns_starts_at_their_identifying_facts(browser, live_server, h, role):
+def test_switching_rule_and_issue_views_starts_at_their_identifying_facts(browser, live_server, h, role):
     populated_catalogue(h, ends_on='2026-10-20')
     ending = next(x for x in h.get('coordinator', '/api/rules/catalogue')['attention'] if x['kind'] == 'ending')
     h.command('coordinator', 'rule.acknowledge', {'fingerprints': [ending['fingerprint']], 'note': 'Same issue columns fixture'})
     context, page = sign_in(browser, live_server, role, {'width': 390, 'height': 844})
     try:
-        rules_by_family(h, page, role)  # the family list (Question A–F with its people tables is the default, 9f01206c2)
+        rules_by_family(h, page, role)
         navigate(page, 'rules')
-        page.get_by_role('button', name='Expand all rules', exact=True).click()
-        expect(page.locator('.rt-line')).to_have_count(25)  # Seeded workload remains visible beside the 24 dated lines.
         scroll = page.locator('#main .rt-scroll')
+        assert scroll.evaluate('e=>e.scrollLeft') == 0
 
         def view(label):
-            page.locator('#main .rt > .dt-toolbar').get_by_role('button', name=re.compile('^Saved views')).click()
-            page.get_by_role('menu', name='Saved views', exact=True).get_by_role(
-                'menuitemradio', name=re.compile('^' + re.escape(label) + r'\b')).click()
+            page.locator('#main .dt-saved').click()
+            page.get_by_role('menuitemradio', name=re.compile('^' + re.escape(label) + r'\b')).click()
 
-        def scroll_right():
-            result = scroll.evaluate('''e=>new Promise(resolve=>{
-                e.addEventListener('scroll',()=>resolve(e.scrollLeft),{once:true});
-                e.scrollTo({left:e.scrollWidth,top:0,behavior:'instant'});
-            })''')
-            assert result > 0
-            return result
-
-        scroll_right()
         view('Needs attention')
         expect(page.locator('.rt-issue').first).to_be_visible()
-        assert position(scroll) == {'x': 0, 'y': 0}
+        assert position(scroll)['y'] == 0
         expect(page.locator('.rt-issue .rt-rule-link').first).to_be_in_viewport()
         expect(page.locator('.rt-iline .rt-n').first).to_be_in_viewport()
-        before = scroll_right()
-        # Both issue views share columns, so changing only the result set keeps x.
+        scroll.evaluate('e=>e.scrollLeft=e.scrollWidth')
+        x = position(scroll)['x']
+        assert x > 0, position(scroll)
         view('Acknowledged')
         expect(page.locator('.rt-issue').first).to_be_visible()
-        acknowledged_x = position(scroll)['x']
-        assert acknowledged_x == min(before, scroll.evaluate('e=>e.scrollWidth-e.clientWidth'))
-        assert acknowledged_x > 0
+        assert position(scroll)['x'] == x
         view('Needs attention')
-        assert position(scroll)['x'] == acknowledged_x
+        assert position(scroll)['x'] == x
         view('All rules')
-        expect(page.locator('.rt-line')).to_have_count(25)
-        assert position(scroll) == {'x': 0, 'y': 0}
-        # The rule column starts in view horizontally; a Question group's people table (9f01206c2) may sit above the first
-        # rule row on a phone, so its vertical place is not what this view switch is about.
-        link = page.locator('.rt-rule .rt-rule-link').first
-        expect(link).to_be_attached()
-        assert link.evaluate('''e=>{const s=e.closest('.rt-scroll').getBoundingClientRect(),r=e.getBoundingClientRect();
-            return r.left>=s.left-1&&r.left<s.right;}'''), 'the rule column starts at the left of the list'
+        expect(page.locator('.rt-scroll')).to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+        expect(page.locator('.rt-item .rt-rule-link').first).to_be_attached()
     finally:
         context.close()
 
@@ -540,7 +479,8 @@ def test_three_digit_line_numbers_stay_whole_in_rules_and_issue_views(browser, l
     flag(h)
     today = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
     future = today + timedelta(days=365)
-    # Separate real validity periods avoid duplicates or artificial DOM numbering. The ending line is genuinely 141.
+    # Separate real validity periods avoid duplicates or artificial DOM numbering. The ending line is genuinely 141;
+    # the Rules-list rail exception is a recorded design exception.
     lines = [line({'max': {'value': 5, 'level': 'mandatory'}},
                   starts_on=str(future + timedelta(days=n)), ends_on=str(future + timedelta(days=n + 1)))
              for n in range(140)]
@@ -554,7 +494,6 @@ def test_three_digit_line_numbers_stay_whole_in_rules_and_issue_views(browser, l
     try:
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
-        page.get_by_role('button', name='Expand all rules', exact=True).click()
 
         def whole_number(number):
             expect(number).to_have_text('141')
@@ -568,8 +507,6 @@ def test_three_digit_line_numbers_stay_whole_in_rules_and_issue_views(browser, l
                     overlapsNext:!!next&&text.right>next.left};
             }''')
             assert result == {'fragments': 1, 'clipped': False, 'contained': True, 'overlapsNext': False}, result
-
-        whole_number(page.locator(f'.rt-line[data-line="{ending_line["id"]}"] .rt-rail .rt-n'))
 
         def view(label):
             page.locator('#main button.dt-saved').click()

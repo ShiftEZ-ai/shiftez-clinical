@@ -136,17 +136,17 @@ def test_v2_list_hides_empty_and_ended_but_collection_filters_reach_both(browser
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        rows = main.locator('tr.rt-rule')
+        rows = main.locator('li.rt-item')
         expect(rows).to_have_count(3)
         expect(rows.filter(has_text='Workload limit')).to_contain_text('2 lines')
-        main.get_by_role('button', name='Expand all rules').click()
-        expect(main.locator('tr.rt-line')).to_have_count(4)
-        expect(main.locator('tr.rt-line').filter(has_text='duties per calendar week')).to_have_count(1)
-        expect(main.locator('tr.rt-line').filter(has_text='scheduled hours in any 7 days')).to_have_count(1)
-        expect(main.locator('tr.rt-line').filter(has_text='duties per day')).to_have_count(0)
+        main.get_by_role('button', name='All rules', exact=True).click()
+        expect(main.locator('li.rt-ln')).to_have_count(4)
+        expect(main.locator('li.rt-ln').filter(has_text='duties per calendar week')).to_have_count(1)
+        expect(main.locator('li.rt-ln').filter(has_text='scheduled hours in any 7 days')).to_have_count(1)
+        expect(main.locator('li.rt-ln').filter(has_text='duties per day')).to_have_count(0)
         shot(page, 'catalogue', width, theme)
         collection_filter(page, main, 'Lines: Valid', 'Ended')
-        expect(main.locator('tr.rt-line').filter(has_text='duties per day')).to_have_count(1)
+        expect(main.locator('li.rt-ln').filter(has_text='duties per day')).to_have_count(1)
         main.get_by_role('button', name=re.compile('^Filter')).click()
         page.locator('.dt-pop').get_by_role('button', name='Clear all filters', exact=True).click()
         page.keyboard.press('Escape')
@@ -154,7 +154,7 @@ def test_v2_list_hides_empty_and_ended_but_collection_filters_reach_both(browser
         expect(rows.filter(has_text='Days in a row')).to_have_count(1)
         expect(rows.filter(has_text='Workload limit')).to_have_count(0)
         page.reload()
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Days in a row')).to_have_count(1)
+        expect(page.locator('#main li.rt-item').filter(has_text='Days in a row')).to_have_count(1)
         page.get_by_role('button', name='Add rule', exact=True).first.click()
         picker = page.get_by_role('dialog', name='Add rule', exact=True)
         expect(picker.get_by_role('option', name=re.compile('^Days in a row'))).to_be_visible()
@@ -174,14 +174,14 @@ def test_empty_catalogue_and_filtered_empty_keep_the_shared_controls(browser, li
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-rule')).to_have_count(0)
+        expect(main.locator('li.rt-item')).to_have_count(0)
         expect(page.get_by_role('button', name='Add rule', exact=True).first).to_be_visible()
         collection_filter(page, main, 'Availability', 'Empty')
-        expect(main.locator('tr.rt-rule')).not_to_have_count(0)
+        expect(main.locator('li.rt-item')).not_to_have_count(0)
         main.get_by_role('searchbox', name='Search rules', exact=True).fill('No such synthetic rule')
         expect(main.get_by_text('No matching rules', exact=True)).to_be_visible()
         main.get_by_role('searchbox', name='Search rules', exact=True).fill('')
-        expect(main.locator('tr.rt-rule')).not_to_have_count(0)
+        expect(main.locator('li.rt-item')).not_to_have_count(0)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     finally:
         context.close()
@@ -294,7 +294,7 @@ def test_role_permissions_on_catalogue_and_person_facts(browser, live_server, h,
         if role == 'staff':
             expect(page.get_by_text('Restricted page', exact=True)).to_be_visible()
         else:
-            expect(page.locator('#main tr.rt-rule')).to_have_count(3)
+            expect(page.locator('#main li.rt-item')).to_have_count(3)
             editable = role in {'admin', 'coordinator'}
             if editable:
                 expect(page.get_by_role('button', name='Add rule', exact=True).first).to_be_visible()
@@ -368,12 +368,21 @@ def test_simplify_propose_reload_independent_activate_reload_undo(browser, live_
         expect(panel.get_by_role('button', name='Activate', exact=True)).to_have_count(0)
         expect(panel.get_by_role('button', name='Withdraw', exact=True)).to_be_visible()
         panel.get_by_role('button', name='Close panel', exact=True).click()
-        navigate(review, 'rules')
-        rules_action(review, 'Simplify rules · waiting for approval')
+        conversions = '**/api/rules/catalogue/conversions?include_history=true'
+        with holding(review) as held:
+            held.hold(conversions)
+            navigate(review, 'rules')
+            wait_held(review, held[conversions])
+            review.get_by_role('button', name=re.compile('^More rule actions')).click()
+            review.get_by_role('menuitem', name='Simplify rules', exact=True).focus()
+            held.release(conversions)
+            pending = review.get_by_role('menuitem', name='Simplify rules · waiting for approval', exact=True)
+            expect(pending).to_be_focused()
+            pending.click()
         review.locator('.rs-panel').get_by_role('button', name='Activate', exact=True).click()
         reason(review, 'Independently reviewed', 'Activate')
         expect(review.locator('#toast-tray')).to_contain_text('Rules simplified')
-        expect(review.locator('#main tr.rt-rule').filter(has_text='Workload limit')).to_have_count(1)
+        expect(review.locator('#main li.rt-item').filter(has_text='Workload limit')).to_have_count(1)
         assert h.get('auditor', '/api/rules/catalogue/conversions')['records'][0]['status'] == 'active'
         # The ⋯ menu lists Simplify rules once its conversions read lands (a slow runner opened it first).
         with review.expect_response(lambda r: '/api/rules/catalogue/conversions' in r.url):

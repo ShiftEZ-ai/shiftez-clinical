@@ -1,5 +1,5 @@
-"""The rule catalogue end to end: a rule turned on, a line added, checked as you edit (an overlap acknowledged in its
-popover), proposed, approved by another person on the rule's page with its line changes, read by the rule map, and
+"""The rule catalogue end to end: a rule turned on, a line added, checked as you edit (the replacement is shown),
+proposed, approved by another person on the rule's page with its line changes, read by the rule map, and
 undone (retiring brings back the version before). The admin's move of the rules in force into the catalogue."""
 import re
 
@@ -37,7 +37,7 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
         page.locator('.topbar').get_by_role('button', name='Propose 2 changes').click()
         expect(page.get_by_role('dialog')).to_contain_text('Duties per week · 2 changes')
         reason(page, 'Weekly cap', 'Propose')
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Duties per week')).to_contain_text('Waiting for approval')
+        expect(page.locator('#main li.rt-item').filter(has_text='Duties per week')).to_contain_text('Waiting for approval')
         navigate(review, 'rules/duties_per_week')
         waiting = review.locator('.rc-waiting')
         # Only what is not zero (U-20); a rule not in force yet says its activation turns it on (8df451143).
@@ -48,7 +48,7 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
         check_and_approve_in_panel(review, h, w, entry(h, 'duties_per_week')['proposed'], 'Add a line for everyone · turns the rule on')
         expect(review.locator('.rc-summary')).to_contain_text('On')  # an approver reads On, not a switch (U-19)
 
-        # Add a line for one person: the check as you edit marks the overlap; its popover explains it.
+        # Add a line for one person and read the resolved replacement as you edit.
         navigate(page, 'rules/duties_per_week')
         main = page.locator('#main')
         main.get_by_role('button', name='New line: a person, rank, clinic or #tag').click()
@@ -60,18 +60,25 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
         panel.get_by_role('button', name='Keep change').click()
         panel.get_by_role('button', name='Close panel', exact=True).click()
         alex = main.locator('tr').filter(has_text='Alex Morgan')
-        flag_button = alex.get_by_role('button', name='⚠ Overlaps')
-        flag_button.click()
-        pop = page.get_by_role('dialog', name='Two lines cover the same people')
-        expect(pop).to_contain_text('“Everyone at all clinics · Sun–Sat · ≤ 5 · Mandatory · Always” gives way to “Alex Morgan at all clinics · Sun–Sat · ≤ 3 · Mandatory · Always” on its max for 1 person today')  # D8/maintenance: a new person line takes the strength of the line it overrides
-        pop.get_by_role('button', name='That is right').click()
-        expect(alex.get_by_role('button', name='✓ Overlap seen')).to_be_visible()
-        shot(page, 'overlap-acknowledged')
+        expect(alex.locator('.rt-instead')).to_contain_text('(instead of ≤ 5')
+        expect(alex).to_contain_text('3 Mandatory')  # The person line takes the strength it overrides.
+        expect(alex.locator('.rc-overlap')).to_have_count(0)
+        shot(page, 'ordered-override-checked')
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog')
-        expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)  # acknowledged already
+        expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
         reason(page, 'Alex returns from leave', 'Propose')
         expect(main.locator('.rc-waiting')).to_contain_text('Alex Morgan')
+        proposal = entry(h, 'duties_per_week')['proposed']
+        broad, personal = proposal['definition']['rule']['lines']
+        [replacement] = proposal['check']['overlaps']
+        assert replacement['line_id'] == broad['id'] and replacement['winner_ids'] == [personal['id']]
+        assert replacement['numbers'] == ['max'] and replacement['people'] == 1
+        for part, maximum in ((broad, 5), (personal, 3)):
+            assert part['numbers']['max'] == {'value': maximum, 'level': 'mandatory'}
+            assert not (part.get('where') or {}).get('conditions')
+            assert set(part.get('weekdays', range(7))) == set(range(7))
+            assert not part.get('starts_on') and not part.get('ends_on')
         expect(main.locator('.rc-waiting').get_by_role('button', name='Review and approve')).to_have_count(0)  # the proposer withdraws, never approves
         expect(main.locator('.rc-waiting').get_by_role('button', name='Withdraw')).to_be_visible()
 
