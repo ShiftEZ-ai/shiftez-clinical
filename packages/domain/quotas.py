@@ -368,7 +368,9 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
             'presence': windows, 'credits': credits}
 
 
-def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None, contribution_cache=None):
+def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None,
+                    contribution_cache=None, evaluation_ids=False):
+    """Report source policy IDs; internal consumers can match rows to exact evaluation copies."""
     policies = [policy for policy in (data['_quota_policies'] if '_quota_policies' in data else applicable_policies(data))
                 if (policy_ids is None or policy['id'] in policy_ids)
                 and (line_id is None or (policy.get('template_line') or {}).get('id') == line_id)]
@@ -421,6 +423,9 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
     from .validation import category_scope_ids, named_people
     for policy in sorted(policies, key=lambda p: p["id"]):
         data.get('_check_budget', lambda: None)()
+        policy_id = policy["id"]
+        if not evaluation_ids and (policy.get("_live_zero") or policy.get("_live_mandatory_recheck")):
+            policy_id = policy.get("_source_policy_id", policy_id)
         rule, scope = policy["definition"]["rule"], policy["definition"]["scope"]
         try:
             a, b = period_bounds(policy, report["timezone"])
@@ -465,7 +470,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             unresolved("QUOTA_SCOPE_LIMIT", "Quota subject/report bound exceeded (2,000 people per rule; 10,000 rows); no truncated certification", policy)
             continue
         if not subjects:
-            report["empty_policy_ids"].append(policy["id"])
+            report["empty_policy_ids"].append(policy_id)
         for pid in sorted(subjects):
             data.get('_check_budget', lambda: None)()
             # Assignment-only trial cache: targets, exceptions, bounds and report completeness stay fresh below.
@@ -533,7 +538,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             elif delta < -1e-9 and comparison in {"minimum", "target"}:
                 state = "below_" + comparison
             exc = exception_for(data, policy, pid, a, b) if state not in {"met", "unresolved"} else None
-            row = {"policy_id": policy["id"], "policy_revision": policy["revision"], "policy_name": policy["name"],
+            row = {"policy_id": policy_id, "policy_revision": policy["revision"], "policy_name": policy["name"],
                    "person_id": pid, "display_name": data["people"][pid]["display_name"],
                    "starts_on": rule["starts_on"], "ends_on": rule["ends_on"], "metric": metric,
                    "comparison": comparison, "amount": amount, "actual": round(actual, 4),

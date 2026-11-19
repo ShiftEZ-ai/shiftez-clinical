@@ -223,6 +223,28 @@ def test_zero_overlay_uses_only_the_latest_active_zero_revision(change):
     assert _overlay_zero_limits([zero], [latest]) == [zero]
 
 
+def test_captured_quota_default_still_excludes_a_person_with_a_live_zero_line():
+    from apps.api.workspace_baselines import _overlay_zero_limits
+    from packages.domain.conditions import active_rules
+    from packages.domain.solver_resume import pack, unpack
+    from packages.domain.validation import named_people
+
+    row = policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+                  'metric': 'duties', 'comparison': 'maximum', 'amount': 3})
+    row['definition']['per_person'] = [{'person_id': 'staff-a', 'amount': 0},
+                                       {'person_id': 'staff-b', 'amount': 1}]
+    policies = _overlay_zero_limits([row], [row])
+    assert unpack(pack(policies), None) == policies
+    default, positive, zero = active_rules(policies)
+    assert active_rules([default, positive, zero]) == [default, positive, zero]
+    assert default['definition']['scope']['conditions']['conditions'] == [
+        {'field': 'person_ids', 'op': 'none', 'values': ['staff-a', 'staff-b']}]
+    for copy, index, person, amount in ((positive, 1, 'staff-b', 1), (zero, 0, 'staff-a', 0)):
+        assert copy['template_line']['line'] == index
+        assert named_people(copy['definition']['scope']) == {person}
+        assert copy['definition']['rule']['amount'] == amount
+
+
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 @pytest.mark.parametrize('scope_kind', ['rank', 'programme', 'tag'])
 def test_live_zero_scope_requires_reason_and_keeps_the_blocking_finding(request, backend, scope_kind):
@@ -699,8 +721,8 @@ def test_only_the_live_zero_quota_clamps_counts_to_policy_validity(request, back
                         people=[pid])['workspace']
     tighten(h, source, {**rule, 'amount': 0})
     validation = evaluate(h.snapshot(draft))
-    assert {row['amount']: row['actual'] for row in validation['quota_report']['rows']
-            if row['person_id'] == pid} == {3: 3, 0: 1}
+    assert {(row['policy_id'], row['amount']): row['actual'] for row in validation['quota_report']['rows']
+            if row['person_id'] == pid} == {(source['id'], 3): 3, (source['id'], 0): 1}
     assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['rule_id'] == source['id']
                and f['severity'] == 'error' for f in validation['findings'])
 

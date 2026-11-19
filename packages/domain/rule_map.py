@@ -738,7 +738,7 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
     quotas = None
     if loaded and any(c['definition']['rule']['kind'] == 'block_quota' for c in counted):
         quotas = evaluate_quotas(view, lambda *args, **kwargs: None, ancestor_ids, exception_for,
-                                 policy_ids={c['id'] for c in copies}, line_id=line_id)
+                                 policy_ids={c['id'] for c in copies}, line_id=line_id, evaluation_ids=True)
     scope_people, session_cache, path_cache, count_cache, goal_cache, out = {}, {}, {}, {}, {}, {}
     clinic_grants = {department_id: _clinic_grants(view, department_id) for department_id in {copy['department_id'] for copy in counted}}
     comparison_groups = None

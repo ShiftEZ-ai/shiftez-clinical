@@ -102,6 +102,11 @@ def _with_catalogue_numbers(line, numbers):
     return projected
 
 
+def _indexed_catalogue_lines(lines):
+    return [line if source_index == index else {**line, "_source_index": line.get("_source_index", source_index)}
+            for index, (source_index, line) in enumerate(lines)]
+
+
 def _zero_limit_policy(policy):
     """Return the mandatory at-most-zero part of a policy, if it has one."""
     definition = policy.get("definition") or {}
@@ -116,12 +121,16 @@ def _zero_limit_policy(policy):
         if not lines:
             return deepcopy({**policy, "definition": definition}) if default_zero and not definition.get("listed_only") else None
         field = s.line_field(definition)
-        zeros = [line for line in lines if _ceiling(s.line_rule(rule, line, field)) == 0]
+        zeros = [(index, line) for index, line in enumerate(lines)
+                 if _ceiling(s.line_rule(rule, line, field)) == 0]
         listed = definition.get("listed_only") or not default_zero
         if not zeros and listed:
             return None
-        return {**deepcopy(policy), "definition": {**deepcopy(definition), "per_person": deepcopy(zeros),
-                                                     "listed_only": listed}}
+        projected = {**deepcopy(policy), "definition": {
+            **deepcopy(definition), "per_person": [deepcopy(line) for _, line in zeros], "listed_only": listed}}
+        if rule.get("kind") == "block_quota":
+            projected["_quota_line_indices"] = [index for index, _ in zeros]
+        return projected
 
     from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
     entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
@@ -151,7 +160,7 @@ def _zero_limit_policy(policy):
         for index in donors - zeros.keys():
             zeros[index] = {**_project_maximum(entry, rule, source[index]), "_source_default_only": True}
     return {**deepcopy(policy), "_zero_max_projection": True, "definition": {**deepcopy(definition),
-        "rule": {**deepcopy(rule), "lines": [zeros[index] for index in sorted(zeros)]}}}
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(sorted(zeros.items()))}}}
 
 
 def _project_maximum(entry, rule, line):
@@ -178,7 +187,8 @@ def _without_positive_overtime_cap(policy):
     if not entry or "max" not in entry["numbers"]:
         return policy
     lines = []
-    for line in rule.get("lines") or []:
+    original = rule.get("lines") or []
+    for index, line in enumerate(original):
         numbers = line.get("numbers") or {}
         maximum = (numbers.get("max") or {}).get("value")
         if (maximum is not None and maximum > 0
@@ -186,14 +196,15 @@ def _without_positive_overtime_cap(policy):
                 and _settings(rule, line).get("block_quota", {}).get("overtime") == "only"):
             number_map = {key: value for key, value in numbers.items() if key != "max"}
             if number_map:
-                lines.append(_with_catalogue_numbers(line, number_map))
+                lines.append((index, _with_catalogue_numbers(line, number_map)))
         else:
-            lines.append(line)
-    if len(lines) == len(rule.get("lines") or []) and lines == rule.get("lines"):
+            lines.append((index, line))
+    if [line for _, line in lines] == original:
         return policy
     if not lines:
         return None
-    return {**policy, "definition": {**policy["definition"], "rule": {**rule, "lines": lines}}}
+    return {**policy, "definition": {**policy["definition"],
+                                    "rule": {**rule, "lines": _indexed_catalogue_lines(lines)}}}
 
 
 def _without_zero_limit(policy, covered_by):
@@ -212,16 +223,23 @@ def _without_zero_limit(policy, covered_by):
         return deepcopy(policy)
     if rule.get("kind") != "catalogue":
         field = s.line_field(definition)
-        lines = [line for line in definition.get("per_person") or []
+        original = definition.get("per_person") or []
+        lines = [(index, line) for index, line in enumerate(original)
                  if _ceiling(s.line_rule(rule, line, field)) != 0]
         listed = definition.get("listed_only", False) or _ceiling(rule) == 0
         if listed and not lines:
             return None
-        return {**policy, "definition": {**definition, "per_person": lines, "listed_only": listed}}
+        retained = {**policy, "definition": {
+            **definition, "per_person": [line for _, line in lines], "listed_only": listed}}
+        if rule.get("kind") == "block_quota" and len(lines) < len(original):
+            # A captured quota's default still excludes people with their own block.
+            retained["_quota_template_people"] = sorted({line["person_id"] for line in original if line.get("person_id")})
+            retained["_quota_line_indices"] = [index for index, _ in lines]
+        return retained
     live_lines = {line.get("id"): line for line in
                   ((covered_by.get("definition") or {}).get("rule") or {}).get("lines") or []}
     lines = []
-    for line in rule.get("lines") or []:
+    for index, line in enumerate(rule.get("lines") or []):
         live = live_lines.get(line.get("id")) or {}
         covered = ({key: value for key, value in line.items() if key != "numbers"} ==
                    {key: value for key, value in live.items() if key != "numbers"}
@@ -231,11 +249,11 @@ def _without_zero_limit(policy, covered_by):
                    if not (covered and key == "max" and number.get("value") == 0 and
                            number.get("level", "mandatory") == "mandatory")}
         if numbers:
-            lines.append(_with_catalogue_numbers(line, numbers))
+            lines.append((index, _with_catalogue_numbers(line, numbers)))
     if not lines:
         return None
     return {**deepcopy(policy), "definition": {**deepcopy(definition),
-        "rule": {**deepcopy(rule), "lines": lines}}}
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(lines)}}}
 
 
 def _mandatory_recheck_policy(policy):

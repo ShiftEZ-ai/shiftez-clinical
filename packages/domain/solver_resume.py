@@ -16,8 +16,9 @@ PREPARATION_FORMAT = 11
 SEMANTIC_PREPARATION_KEYS = frozenset({
     '_allocation_strengths', '_catalogue_v2_materialized', '_catalogue_sources',
     '_count_scope', '_quota_full_window', '_protected_interval',
+    '_live_zero', '_live_mandatory_recheck', '_quota_line_indices', '_quota_template_people', '_zero_max_projection',
     '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
-    '_source_default_only', '_source_identity', '_source_index',
+    '_source_default_only', '_source_identity', '_source_index', '_source_policy_id',
     '_solver_provenance',
     '_v2_source', '_v2_source_lines', '_v2_source_default', '_v2_row_indices',
     '_v2_row_templates', '_v2_changed_scope', '_v2_changed_dates', '_v2_setting_edits',

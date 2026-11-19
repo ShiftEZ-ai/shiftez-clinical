@@ -21,7 +21,7 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
     findings = []
     def record(code, message, **detail):
         findings.append({'code': code, 'message': message, **detail})
-    report = evaluate_quotas(empty, record, ancestor_ids, exception_for)
+    report = evaluate_quotas(empty, record, ancestor_ids, exception_for, evaluation_ids=True)
     if report is None:
         return []
     if not report['complete']:

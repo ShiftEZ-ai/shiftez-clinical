@@ -14,6 +14,7 @@ from packages.domain.validation import (INTERNAL_CHECK_KEYS, evaluate, ancestor_
 from packages.domain.resources import date_set_closes, resource_intervals
 from packages.domain.date_sets import DateSetRangeError, prepare_date_sets
 from packages.domain.rule_map import NUMBERS, adjustable, rule_number, weakens_safety
+from packages.domain.rule_serialization import stored_definition
 from packages.domain.assignment_override import assignment_reason_allowed, ZERO_LIMIT_FINDING_CODES
 
 from apps.api import models as m, snapshots
@@ -1453,8 +1454,12 @@ def adjusted_rule(policy, entry):
     else:
         field = ADJUSTABLE[rule['kind']]
         rule[field] = int(amount) if isinstance(rule[field], int) and float(amount).is_integer() else amount
-    result = {**policy, "definition": s.PolicyDefinition.model_validate(definition).model_dump(mode="json"), "rota_adjusted": True}
+    raw = stored_definition(definition) if rule['kind'] == 'catalogue' else definition
+    validated = s.PolicyDefinition.model_validate(raw).model_dump(mode="json")
+    result = {**policy, "definition": validated, "rota_adjusted": True}
     if rule['kind'] == 'catalogue':
+        for line, source in zip(validated['rule']['lines'], rule['lines'], strict=True):
+            line.update((key, value) for key, value in source.items() if key.startswith('_'))
         from packages.domain.rule_lines import expand as expand_rule
         expand_rule(result)  # Catalogue v1 numbers are validated by their resolved primitive schemas.
     return result
