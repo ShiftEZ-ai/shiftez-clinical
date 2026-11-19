@@ -12,15 +12,7 @@ from .test_browser_cp_sat import cp_server, _apply  # noqa: F401
 pytestmark = pytest.mark.browser
 
 
-@pytest.fixture(autouse=True)
-def _throttled_held_apply(request, monkeypatch):
-    # Temporary proof: the held Apply runs on a 4x slower CPU, as on a loaded runner.
-    if request.node.originalname == 'test_held_apply_keeps_review_and_live_strip_without_success_or_undo':
-        monkeypatch.setenv('PW_CPU_THROTTLE', '4')
-
-
-@pytest.mark.parametrize('_repeat', range(20))  # temporary proof: 20 throttled runs
-def test_held_apply_keeps_review_and_live_strip_without_success_or_undo(browser, cp_server, h, _repeat):
+def test_held_apply_keeps_review_and_live_strip_without_success_or_undo(browser, cp_server, h):
     w = h.shift(h.workspace('Held Apply is not a save'), people=[])['workspace']
     target = h.detail(w)['shifts'][0]
     job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation',
