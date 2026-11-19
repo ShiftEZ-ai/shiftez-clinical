@@ -431,7 +431,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         return JSONResponse({"status": "unavailable"}, status_code=503)
         except SQLAlchemyError:
             return JSONResponse({"status": "unavailable"}, status_code=503)
-        return {"status": "ready", "warm": app.state.process_warmed}
+        return {"status": "ready", "warm": "failed"} if app.state.process_warmed == "failed" else {"status": "ready"}
 
     @app.get("/health/ready")
     async def ready():

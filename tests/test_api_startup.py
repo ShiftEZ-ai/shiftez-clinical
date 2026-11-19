@@ -63,7 +63,7 @@ def test_readiness_waits_for_warmup(h, monkeypatch):
                 assert (await client.get('/health/live')).status_code == 200
                 release.set()
                 await asyncio.wait_for(started.wait(), 60)
-                assert (await client.get('/health/ready')).json() == {'status': 'ready', 'warm': 'done'}
+                assert (await client.get('/health/ready')).json() == {'status': 'ready'}
             finally:
                 release.set()
                 finish.set()
