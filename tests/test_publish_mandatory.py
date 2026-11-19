@@ -100,13 +100,33 @@ def test_publish_refuses_a_late_mandatory_cap(rota, monkeypatch, activation):
     assert h.get('coordinator', '/api/publications')['publications'] == []
 
 
-def test_publish_with_no_late_mandatory_rule(rota):
+def test_publish_with_no_late_mandatory_rule(rota, monkeypatch):
     h, draft = rota
     submitted = h.lifecycle(draft, 'submit')['workspace']
     approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
-    stored = review_evidence(h, approved)
+    _, approved_check, *review = review_evidence(h, approved)
+    published_at = freeze_clock(monkeypatch, aware('2026-10-04T00:01:00+03:00'))
     assert h.lifecycle(approved, 'publish')['publication_id']
-    assert review_evidence(h, approved) == ('published', *stored[1:])
+    status, published_check, *recorded_review = review_evidence(h, approved)
+    assert status == 'published' and recorded_review == review
+    assert published_check['evaluated_at'] == published_at.isoformat() != approved_check['evaluated_at']
+    assert published_check['fingerprint'] == approved_check['fingerprint']
+
+
+def test_publish_with_an_unbreached_late_mandatory_cap(rota):
+    h, draft = rota
+    cap = activate_cap(h, draft, amount=2)
+    current = h.lifecycle(draft, 'validate')['validation']
+    assert current['valid']
+    row, = [row for row in current['quota_report']['rows'] if row['policy_id'] == cap['id']]
+    assert row['actual'] == row['amount'] == 2
+
+    submitted = h.lifecycle(draft, 'submit')['workspace']
+    approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
+    assert h.lifecycle(approved, 'publish')['publication_id']
+    _, stored, *_ = review_evidence(h, approved)
+    assert stored['fingerprint'] == approved['submitted_fingerprint']
+    assert all(row['policy_id'] != cap['id'] for row in (stored.get('quota_report') or {}).get('rows', []))
 
 
 def test_publish_with_a_late_cap_and_an_approved_specific_line(rota):

@@ -2658,9 +2658,9 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # Each transaction acquires them independently; post-publication snapshots still read current history.
         # The writer flushes pending writes before revalidating current mandatory rules.
         # shortcut: a late mandatory rule can require two checks under the writer; upgrade: reuse complete frozen evidence when its inputs still match.
-        result, acquired, current = review_gate_check(db, workspace)
+        checked, acquired, current = review_gate_check(db, workspace)
         fp = acquired['fingerprint']
-        result = {key: value for key, value in result.items() if key not in INTERNAL_CHECK_KEYS}
+        result = {key: value for key, value in checked.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
         # still run the current evaluator so publication can never bypass a
         # newly introduced mandatory finding.
@@ -2694,6 +2694,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 # Unsent changes need successor checks later in this handler; ordinary publication has no more pure work.
                 from .planning_preparation import RollbackPreparation
                 raise RollbackPreparation()
+        workspace.validation = checked
         result['gap_acknowledgements'] = acknowledged_gaps.audit_rows(workspace)
         result['review_items'] = acknowledged_gaps.review_items(workspace)
         result['review_item_decisions'] = (workspace.validation or {}).get('review_item_decisions', [])
