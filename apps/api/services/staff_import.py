@@ -166,8 +166,10 @@ def match_people(db, actor, lines, people=None):
     return {"matches": matches, "unmatched": unmatched, "ambiguous": ambiguous}
 
 
-def plan(db, actor, source, known=None, *, on=None):
-    """The current plan for each source row: what applying would change now. Read-only."""
+def plan(db, actor, source, known=None, *, on=None, revivable=frozenset()):
+    """The current plan for each source row: what applying would change now. Read-only.
+
+    revivable: people this batch added whose undo switched them off; applying the batch again switches them back on."""
     known = known or {}
     on = on or today(db, actor.department_id)
     people = list(db.scalars(select(m.Person).where(m.Person.organisation_id == actor.organisation_id)))
@@ -249,6 +251,9 @@ def plan(db, actor, source, known=None, *, on=None):
         if added:
             changes["tags"] = [value.get("tags") or [], (value.get("tags") or []) + added]
             value["tags"] = changes["tags"][1]
+        if person is not None and not person.active and person.id in revivable:
+            changes["active"] = [False, True]
+            value["active"] = True
         try:
             s.PersonInput.model_validate(value)
         except ValidationError as exc:
@@ -328,7 +333,7 @@ def plan(db, actor, source, known=None, *, on=None):
             errors["skill_evidence"] = "Skills need verification evidence (at least 3 characters)"
         if len(evidence) > 500:
             errors["skill_evidence"] = "Evidence is limited to 500 characters"
-        left = person is not None and not person.active
+        left = person is not None and not person.active and person.id not in revivable
         if left:
             # A staff import cannot rejoin a leaver or change their related records.
             changes = {}
@@ -368,11 +373,17 @@ def finished_parts(batch):
     return sorted(parts)
 
 
+def revivable_people(batch):
+    """People this batch added and its own undo switched off (not leavers)."""
+    return frozenset(i["id"] for a in (batch.applied or {}).get("applications", []) if a.get("undone")
+                     for i in a.get("people_created", []))
+
+
 def reviewed_plan(db, actor, batch):
     """Bind the displayed result and its actual matching/reference inputs, not only the CSV batch."""
     on = today(db, actor.department_id)
     known = {r["row_number"]: r.get("person_id") for r in batch.rows}
-    rows = plan(db, actor, [(r["row_number"], r["data"]) for r in batch.rows], known, on=on)
+    rows = plan(db, actor, [(r["row_number"], r["data"]) for r in batch.rows], known, on=on, revivable=revivable_people(batch))
     waiting = credential_waiting_rows(batch)
     people_finished = "people" in finished_parts(batch)
     for row in rows:
@@ -545,7 +556,7 @@ def apply(db, actor, command):
     batch.rows = [{**r, "person_id": known.get(r["row_number"]) or r.get("person_id")} for r in batch.rows]
     batch.applied = {"applications": [*batch.applied.get("applications", []), *applications]}
     db.flush()
-    left = summary(plan(db, actor, [(r["row_number"], r["data"]) for r in batch.rows], known))
+    left = summary(plan(db, actor, [(r["row_number"], r["data"]) for r in batch.rows], known, revivable=revivable_people(batch)))
     finished = finished_parts(batch)
     batch.status = "applied" if ("people" in finished or not left["people_pending"]) and \
         ("credentials" in finished or not left["credentials_pending"]) else "partly_applied"

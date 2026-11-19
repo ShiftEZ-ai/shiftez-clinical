@@ -256,6 +256,24 @@ def test_zero_change_credentials_part_is_finished_and_can_be_undone(h):
     assert apply(h, 'credentialer', undone['batch'])['batch']['status'] == 'partly_applied'
 
 
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_reapplying_an_undone_import_switches_its_own_people_back_on(request, database):
+    h = request.getfixturevalue(database)
+    batch = apply(h, "coordinator", preview(h, csv_of(row(display_name="Undo then return")))["batch"])["batch"]
+    added = next(p for p in catalogues(h)["people"] if p["display_name"] == "Undo then return")
+    assert added["active"] is True
+    undone = h.command("coordinator", "staff_import.undo", {"reason": "Undo import"}, batch["id"], batch["revision"])["batch"]
+    assert next(p for p in catalogues(h)["people"] if p["id"] == added["id"])["active"] is False
+    # The person this batch added is not a leaver: reviewing the same batch offers to switch them back on.
+    reviewed = h.get("coordinator", "/api/staff-imports/" + batch["id"])
+    (planned,) = reviewed["rows"]
+    assert planned["person"]["id"] == added["id"] and planned["person"]["action"] == "update"
+    assert "left" not in planned["person"] and planned["person"]["changes"]["active"] == [False, True]
+    assert reviewed["summary"]["people_pending"] == 1
+    assert apply(h, "coordinator", undone)["batch"]["status"] == "applied"
+    assert next(p for p in catalogues(h)["people"] if p["id"] == added["id"])["active"] is True
+
+
 def test_undone_import_can_be_reapplied_with_current_revision_and_fingerprint(h):
     reviewed = preview(h, csv_of(row(display_name="Undo and re-apply")))
     batch = apply(h, "coordinator", reviewed["batch"])["batch"]
