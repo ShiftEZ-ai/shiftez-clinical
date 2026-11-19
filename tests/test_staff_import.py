@@ -108,6 +108,56 @@ def test_applied_import_cannot_overwrite_later_edits(h, later_edit):
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_staff_import_keeps_leavers_left_and_updates_active_people(request, database):
+    h = request.getfixturevalue(database)
+    _, _, programme = setup_catalogue(h)
+    leaver_id, current_id, *_ = h.seed['people']
+    people = {p['id']: p for p in catalogues(h)['people']}
+    leaver, current = people[leaver_id], people[current_id]
+    h.configure('programme_memberships', {
+        'person_id': leaver_id, 'programme_id': programme,
+        'starts_on': '2026-01-01', 'ends_on': '2026-04-01',
+    })
+    leaver = h.configure('people', {
+        'display_name': leaver['display_name'], 'staff_number': 'LEFT-IMPORT', 'active': False,
+    }, leaver_id, leaver['revision'])['record']
+    before = import_business_state(h)
+
+    credentials = dict(clinics='Minor injuries', skills='Suturing', skill_evidence='Synthetic evidence')
+    result = preview(h, csv_of(
+        row(display_name=leaver['display_name'], staff_number=leaver['staff_number'], title='Attempted update',
+            tags='Imported label', rank='Demo learners', rank_from='2026-10-01',
+            programme='Fellowship', programme_from='2026-10-01', programme_last_day='2027-09-30', **credentials),
+        row(display_name=current['display_name'], title='Imported title', **credentials)))
+    batch = result['batch']
+    reviewed = h.get('coordinator', '/api/staff-imports/' + batch['id'])
+    left, active = reviewed['rows']
+    assert left['person']['id'] == leaver_id and left['person']['action'] == 'left'
+    assert left['person']['left'] is True and left['person']['changes'] == {} and left['errors'] == {}
+    assert left['rank'] is None and left['programme'] is None
+    assert left['clinics']['items'] == left['skills']['items'] == []
+    assert active['person']['action'] == 'update' and 'left' not in active['person']
+    assert reviewed['summary']['people_pending'] == 1 and reviewed['summary']['credentials_pending'] == 2
+
+    applied = apply(h, 'coordinator', batch)
+    assert applied['applied']['updated_people'] == 1
+    applied = apply(h, 'credentialer', applied['batch'])
+    assert applied['applied']['eligibilities'] == applied['applied']['skills'] == 1
+    assert applied['batch']['status'] == 'applied'
+    after = import_business_state(h)
+    people = {p['id']: p for p in after['people']}
+    assert people[leaver_id] == next(p for p in before['people'] if p['id'] == leaver_id)
+    assert people[current_id]['active'] is True and people[current_id]['title'] == 'Imported title'
+    for kind in ('memberships', 'programme_memberships', 'eligibilities', 'capability_grants'):
+        assert [r for r in after[kind] if r['person_id'] == leaver_id] == [
+            r for r in before[kind] if r['person_id'] == leaver_id]
+    assert after['tags'] == before['tags'] and after['tag_members'] == before['tag_members']
+    # Auto-schedule draws only active people from the draft snapshot, so the leaver is never scheduled.
+    people_in_draft = h.snapshot(h.workspace())['people']
+    assert people_in_draft[leaver_id]['active'] is False and people_in_draft[current_id]['active'] is True
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_applied_import_with_stale_revision_is_refused_without_writes(request, database):
     h = request.getfixturevalue(database)
     reviewed = preview(h, csv_of(row(display_name='Applied from another review')))
@@ -204,6 +254,24 @@ def test_zero_change_credentials_part_is_finished_and_can_be_undone(h):
     assert undone['reverted'] == 0
     assert h.get('credentialer', '/api/staff-imports/' + batch['id'])['batch']['finished_parts'] == []
     assert apply(h, 'credentialer', undone['batch'])['batch']['status'] == 'partly_applied'
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_reapplying_an_undone_import_switches_its_own_people_back_on(request, database):
+    h = request.getfixturevalue(database)
+    batch = apply(h, "coordinator", preview(h, csv_of(row(display_name="Undo then return")))["batch"])["batch"]
+    added = next(p for p in catalogues(h)["people"] if p["display_name"] == "Undo then return")
+    assert added["active"] is True
+    undone = h.command("coordinator", "staff_import.undo", {"reason": "Undo import"}, batch["id"], batch["revision"])["batch"]
+    assert next(p for p in catalogues(h)["people"] if p["id"] == added["id"])["active"] is False
+    # The person this batch added is not a leaver: reviewing the same batch offers to switch them back on.
+    reviewed = h.get("coordinator", "/api/staff-imports/" + batch["id"])
+    (planned,) = reviewed["rows"]
+    assert planned["person"]["id"] == added["id"] and planned["person"]["action"] == "update"
+    assert "left" not in planned["person"] and planned["person"]["changes"]["active"] == [False, True]
+    assert reviewed["summary"]["people_pending"] == 1
+    assert apply(h, "coordinator", undone)["batch"]["status"] == "applied"
+    assert next(p for p in catalogues(h)["people"] if p["id"] == added["id"])["active"] is True
 
 
 def test_undone_import_can_be_reapplied_with_current_revision_and_fingerprint(h):

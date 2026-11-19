@@ -123,8 +123,8 @@ def plan(policies, labels=None, week_start=0, held=()):
                 into.append({**p, 'definition': normal(p['definition']), '_ids': [p['id']], '_shapes': []})
             except ValueError:
                 continue
-    caps = {p['id'] for p in policies if is_cap(p)}
-    caps |= {i for p in policies if is_cap(p) for i in p['definition'].get('merged_ids') or []}
+    from .generation import overtime_cap_ids
+    caps = overtime_cap_ids({'policies': policies})
     ctx = {'caps': caps, 'week_start': week_start, 'people': list(labels.get('people', {}).values()),
            'words': [n for kind in ('people', 'programmes', 'services') for n in labels.get(kind, {}).values()]}
     problems, made = [], 0

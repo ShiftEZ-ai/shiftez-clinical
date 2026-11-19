@@ -16,6 +16,7 @@ import make_known_failures as maker
 import known_skips
 
 NODE = "tests/test_product.py::test_a"
+STALE_SHA = "a" * 40
 
 
 class TwoObservationGateTests(unittest.TestCase):
@@ -190,6 +191,7 @@ class TwoObservationGateTests(unittest.TestCase):
                     self.assertEqual(report["listed_unstable"][0]["test_file"], "tests/test_product.py")
         self.assertEqual(maker.encoded(self.current), before)
 
+    @patch.dict(os.environ, {"GITHUB_RUN_ID": "17"})
     def test_listed_green_twice_is_stale_and_red_twice_is_allowed(self):
         for kind, red in (("baseline", "failed"), ("baseline-error", "error")):
             self.current["fails"] = [{"node": NODE, "class": kind}]
@@ -204,27 +206,29 @@ class TwoObservationGateTests(unittest.TestCase):
             with self.subTest(event=event), patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}):
                 stale_output = maker.stale_report_dir(self.folder)
                 if event in {"merge_group", "push"}:
-                    self.assertTrue(self.evaluate(["passed", "passed"], stale_output=stale_output))
+                    self.assertTrue(self.evaluate(["passed", "passed"], stale_output=stale_output, stale_sha=STALE_SHA))
                 else:
                     with self.assertRaisesRegex(ValueError, "Stale passing"):
                         self.evaluate(["passed", "passed"], stale_output=stale_output)
 
         artifact = self.folder / "stale-report.json"
         with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
-            self.assertTrue(self.evaluate(["passed", "passed"], stale_output=self.folder))
-            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+            report = {"run_id": "17", "sha": STALE_SHA, "nodes": [NODE]}
+            output = {"stale_output": self.folder, "stale_sha": STALE_SHA}
+            self.assertTrue(self.evaluate(["passed", "passed"], **output))
+            self.assertEqual(json.loads(artifact.read_text()), report)
             self.assertIn("- " + NODE, summary.read_text())
-            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, stale_output=self.folder))
-            self.assertEqual(json.loads(artifact.read_text()), [NODE])
-            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, recovered={NODE: "error"}, stale_output=self.folder))
-            self.assertEqual(json.loads(artifact.read_text()), [])
-            self.assertTrue(self.evaluate(["passed", "error"], stale_output=self.folder))
-            self.assertEqual(json.loads(artifact.read_text()), [])
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, **output))
+            self.assertEqual(json.loads(artifact.read_text()), report)
+            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, recovered={NODE: "error"}, **output))
+            self.assertEqual(json.loads(artifact.read_text()), {**report, "nodes": []})
+            self.assertTrue(self.evaluate(["passed", "error"], **output))
+            self.assertEqual(json.loads(artifact.read_text()), {**report, "nodes": []})
             down = "tests/test_product.py::test_unlisted"
             runs = [{NODE: "passed", down: "failed"}] * 2
             with self.assertRaisesRegex(ValueError, "New failures.*test_unlisted"):
-                maker.evaluate(self.current, self.current, runs, stale_output=self.folder)
-            self.assertEqual(json.loads(artifact.read_text()), [NODE])
+                maker.evaluate(self.current, self.current, runs, **output)
+            self.assertEqual(json.loads(artifact.read_text()), report)
 
     def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci

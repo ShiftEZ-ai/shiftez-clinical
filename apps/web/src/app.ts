@@ -1518,7 +1518,7 @@ async function refreshOnce(stale=()=>false){
     // error and keeps the stale banner.
     const related=routeParts.indexOf('related'),inPlace=related>=0?await refreshRelated(routeParts[related+1]):undefined;
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
-    foregroundRender=!quiet;await renderPage();}
+    foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
     // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
     if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
@@ -1628,12 +1628,16 @@ function keepFocus(old:Element,swap:()=>void){
 /** What a page kept on screen while the next one loads may not be used: a Configuration section's pane (its nav stays
  *  live), else everything kept. */
 const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pane')||kept;
-async function renderPage(){
+/** `live`: a background refresh's redraw (a live update); it gives way to someone who began using the page while it read
+ *  (at the swap, below), as refreshOnce does before it starts. */
+async function renderPage(live=false){
+  const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
+  const quiet=live&&!waited;
   // SW3-A-24: leaving the Schedule closes the auto-schedule panel; it no longer opens by itself on the next visit.
   if(changedPage&&renderedView==='schedule')schedulingSettings.open=schedulingSettings.editing=false;
   // D-139: a panel editing a rota (Add session) closes, or asks, once the page shows another rota or leaves the Schedule.
@@ -1681,6 +1685,10 @@ async function renderPage(){
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
   const previous=changedPage||!(view==='configuration'||view==='schedule'&&schedSubPage()||!waited)?[]:[...document.querySelector('#main')?.childNodes||[]];
+  // A live update's redraw reads while that page stays usable, so someone may open a filter or a dialog on it meanwhile.
+  // What the frame shows for it (title, actions, footer status) is kept, so the redraw can give way at the swap (below).
+  const frameShown=quiet&&!keep&&previous.length?{title:document.querySelector('.topbar .page-title'),actions:[...document.querySelector('.topbar .page-actions')?.childNodes||[]],
+    status:[...document.querySelector('.app-footer .page-status')?.childNodes||[]],leave:leaving}:null;
   // The same page already on screen: if this read fails at the server or the connection, it stays (with the stale banner).
   const shownBefore=!changedPage&&!keep&&document.querySelector('#main')?.getAttribute('data-loaded-view')===view&&document.querySelector('#main')?.getAttribute('data-loaded-tab')===(routeParts[0]||'')?[...document.querySelector('#main')!.childNodes]:[];
   const sk=keep||previous.length?null:pageSkeleton();
@@ -1745,6 +1753,11 @@ async function renderPage(){
   await (waited?track(building):building).finally(()=>{openingPage(false);window.removeEventListener('projection-updating',updating);});
   // A skeleton that showed stays its 400 ms, then the page fades in; one that never showed gives way at once.
   const shown=serial===renderSerial&&await settle(waiting);
+  // Someone began using the page while this live update read (refreshOnce's rule, checked again now): the page stays as
+  // it is, with its popover or dialog open, and the update is owed (onPulse replays it once they are done).
+  if(serial===renderSerial&&frameShown&&readerBusy()){if(frameShown.title)document.querySelector('.topbar .page-title')?.replaceWith(frameShown.title);
+    document.querySelector('.topbar .page-actions')?.replaceChildren(...frameShown.actions);document.querySelector('.app-footer .page-status')?.replaceChildren(...frameShown.status);
+    leaveCheck=frameShown.leave;main.setAttribute('data-loaded-view',view);main.setAttribute('data-loaded-tab',routeParts[0]||'');buildingPage(null);redrawOwed=refreshSkipped=true;return;}
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);

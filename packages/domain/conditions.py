@@ -1451,6 +1451,7 @@ def _narrowed(policy, lines, **dates):
 def resolved_rule_context(data):
     """The complete runtime rule context, including catalogue lines, facts and mandatory caps."""
     context = with_tags(dict(data))
+    context.setdefault('_overtime_originals', {p['id']: p for p in context.get('policies') or []})
     context['policies'] = active_rules(context.get('policies', []), context=context)
     return context
 

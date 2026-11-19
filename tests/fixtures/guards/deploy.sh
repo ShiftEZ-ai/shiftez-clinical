@@ -1,17 +1,17 @@
 plan=$(dc run --rm -T migrate python scripts/manage.py check-migrations "${confirm[@]}") || exit 1
-APP_BACKUP_CMD=${APP_BACKUP_CMD:-infra/production/ops.sh backup}
-: "${APP_BACKUP_CMD:=sudo systemctl start rota-backup.service}"
+ROTA_BACKUP_CMD=${ROTA_BACKUP_CMD:-infra/production/ops.sh backup}
+: "${ROTA_BACKUP_CMD:=sudo systemctl start rota-backup.service}"
 phase verified-backup
 if [ "$pending" != 0 ]; then
   log "stopping writers before the migration backup"
   dc stop api worker
 fi
 
-if [ "${APP_SKIP_BACKUP:-no}" = yes ] && [ "$pending" = 0 ]; then
-  log "backup skipped (APP_SKIP_BACKUP=yes, no schema change)"
+if [ "${ROTA_SKIP_BACKUP:-no}" = yes ] && [ "$pending" = 0 ]; then
+  log "backup skipped (ROTA_SKIP_BACKUP=yes, no schema change)"
 else
-  log "verified backup before $pending pending migration(s) ($APP_BACKUP_CMD)"
-  if ! $APP_BACKUP_CMD; then
+  log "verified backup before $pending pending migration(s) ($ROTA_BACKUP_CMD)"
+  if ! $ROTA_BACKUP_CMD; then
     log "BACKUP FAILED - no migration ran; the schema is unchanged"
     if [ "$pending" != 0 ] && [ -n "$previous" ]; then
       log "restarting the previous image $previous"
@@ -39,8 +39,8 @@ fi
 log "migrating with the new image"
 phase migration
 migration_options=()
-if [ -n "${APP_DEPLOY_OPERATION_DIR:-}" ]; then
-  budget=${APP_MIGRATION_TIMEOUT_SECONDS:-3600}
+if [ -n "${ROTA_DEPLOY_OPERATION_DIR:-}" ]; then
+  budget=${ROTA_MIGRATION_TIMEOUT_SECONDS:-3600}
   [[ "$budget" =~ ^[0-9]+$ && "$budget" -ge 60 && "$budget" -le 5400 ]] || { log 'Invalid migration budget (60..5400 seconds)'; exit 1; }
   migration_options=(-e "PGOPTIONS=-c transaction_timeout=${budget}s")
 fi
