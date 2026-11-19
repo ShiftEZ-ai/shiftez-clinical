@@ -244,13 +244,14 @@ def archive(db, actor, command):
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
-               _overlap_output=None, final_compute=False, mandatory_rules=True):
+               _overlap_output=None, final_compute=False, mandatory_rules=True, current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
     # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
     department = db.get(m.Department, workspace.department_id)
     data = acquired_data if acquired_data is not None else domain_snapshot(
-        db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules)
+        db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules,
+        current_mandatory=current_mandatory)
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
                   complete_check(workspace.validation, data, department.generation_defaults)):
@@ -2529,6 +2530,19 @@ def _publication_approval(db, workspace, fp):
         'APPROVER_REVOKED', 'The approving authority is no longer active; obtain a new review', 409)
 
 
+def review_gate_check(db, workspace, *, reuse=False):
+    """Check current mandatory rules and retain the frozen basis for review and publication evidence."""
+    current = []
+    result = revalidate(db, workspace, data_out=current, include_internal=True, reuse=reuse, store=False,
+                        mandatory_rules=False, current_mandatory=True)
+    if not current[0].get('_mandatory_overlay_changed'):
+        return result, current[0], None
+    frozen = []
+    checked = revalidate(db, workspace, data_out=frozen, include_internal=True, reuse=reuse, store=False,
+                         mandatory_rules=False)
+    return checked, frozen[0], (result, current[0])
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2592,21 +2606,15 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         has_session = db.scalar(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id).limit(1)) is not None
         if prerequisite := submission_prerequisite(int(has_session)):
             require(False, prerequisite['code'], prerequisite['message'], 422, prerequisite)
-        checked_data = []
-        if validation is None:
-            # Reuse requires the current evaluator, complete evidence and exact canonical inputs.
-            result = revalidate(db, workspace, data_out=checked_data, include_internal=True, reuse=True, mandatory_rules=False)
-        else:
-            result, data = validation
-            checked_data.append(data)
-            workspace.validation = result
-        acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason)
+        result, data, current = review_gate_check(db, workspace, reuse=True) if validation is None else validation
+        acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
+                                 current=current[0] if current is not None else None)
         swaps.validate_publication(db, workspace)
-        workspace.validation = {**result, "wishes": checked_data[0]["wishes"]}
+        workspace.validation = {**result, "wishes": data["wishes"]}
         from packages.domain.rota_summary import remember_fix_list
         remember_fix_list(result, workspace.validation, submitted=True)
         from .wishes import _applied_reasons
-        receipt = _applied_reasons(db, workspace, checked_data[0], checked_data[0]['wishes'])
+        receipt = _applied_reasons(db, workspace, data, data['wishes'])
         if receipt is not None:
             workspace.validation = {**workspace.validation, 'wish_receipt': receipt}
         workspace.review_snapshot = reviews.resolve_route(db, workspace)
@@ -2615,7 +2623,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         workspace.return_note = None
         # Submission changes preference reservations, but no other scheduling facts.
         # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
-        workspace.submitted_fingerprint = (checked_data[0]['fingerprint'] if not checked_data[0]['wishes']
+        workspace.submitted_fingerprint = (data['fingerprint'] if not data['wishes']
                                            else fingerprint(db, workspace))
         workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint}
         from .published_changes import on_reviewed
@@ -2648,13 +2656,9 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         swap_request = swaps.validate_publication(db, workspace)
         # Publication mutates duties, availability and ledgers, never these raw configuration rows.
         # Each transaction acquires them independently; post-publication snapshots still read current history.
-        own, checked_data = [], []
-        # Publication remains the final safety boundary: revalidate verifies the
-        # current inputs after pending writes have been flushed inside the writer.
-        # shortcut: publication runs one complete check under the writer, so other writes wait for it; upgrade: verify input revision stamps after flush and reuse the approved check when unchanged.
-        result = revalidate(db, workspace, own, data_out=checked_data, include_internal=True)
-        # The fresh data drives the immutable publication evidence below.
-        acquired = checked_data[0]
+        # The writer flushes pending writes before revalidating current mandatory rules.
+        # shortcut: a late mandatory rule can require two checks under the writer; upgrade: reuse complete frozen evidence when its inputs still match.
+        result, acquired, current = review_gate_check(db, workspace)
         fp = acquired['fingerprint']
         result = {key: value for key, value in result.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
@@ -2668,6 +2672,9 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 raise
             approval_error = error
         try:
+            if current is not None:
+                live_result = {key: value for key, value in current[0].items() if key not in INTERNAL_CHECK_KEYS}
+                acknowledged_gaps.require_accepted(workspace, live_result, reviewed=True)
             acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
         except Problem as error:
             if error.code == 'VALIDATION_FAILED' and approval_error is not None:
@@ -2677,6 +2684,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
             raise
         if approval_error is not None:
             raise approval_error
+        focus = set(acquired['focus_ids'])
+        own = [row for row in acquired['shifts'] if row['id'] in focus]
         preparation = db.info.get('_planning_preparation')
         if preparation is not None and not preparation['replay']:
             from .published_changes import change_list, draft_changes
@@ -2696,7 +2705,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
                                     effective_until=effective_until,
-                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=checked_data[0]),
+                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)
         db.flush()
@@ -2713,7 +2722,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # With no new availability or changed issued window, final writer-checked inputs remain
         # exact. Ledger rebuilding still refreshes canonical history after removing the predecessor.
         same_window = superseded is None or (superseded.starts_on, superseded.ends_on) == (workspace.starts_on, workspace.ends_on)
-        ledger_data = checked_data[0] if same_window and not (materialized_absences or workspace.replaces_publication_id
+        ledger_data = acquired if same_window and not (materialized_absences or workspace.replaces_publication_id
                                                              or trimmed or effective_until) else None
         on_publish(db, publication, trimmed, own_shifts=own, data=ledger_data, shared_inputs=shared_inputs)
         swaps.published(db, actor, swap_request, publication.id, value.reason)
