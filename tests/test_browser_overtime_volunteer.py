@@ -278,20 +278,3 @@ def test_editing_an_older_overtime_offer_keeps_it_whenever_free(browser, live_se
         context.close()
     proposed = h.get('coordinator', f'/api/people/{person}/scheduling-facts')['proposed']
     assert [f['data']['line']['settings']['allocation_overtime'].get('volunteer_required') for f in proposed] == [False]
-
-
-# PROOF (temporary, removed before merge): the two eligibility tests 20 times each on a 4x slower page CPU (open_app reads
-# PW_CPU_THROTTLE for every page it opens). The tests themselves stay as they are.
-@pytest.fixture
-def throttled(monkeypatch):
-    monkeypatch.setenv("PW_CPU_THROTTLE", "4")
-
-
-@pytest.mark.parametrize("_repeat", range(20))
-def test_proof_eligibility_recovers_throttled(browser, live_server, h, throttled, _repeat):
-    test_overtime_eligibility_recovers_from_a_failed_read_and_a_new_line(browser, live_server, h)
-
-
-@pytest.mark.parametrize("_repeat", range(20))
-def test_proof_open_dialog_gains_overtime_throttled(browser, live_server, h, throttled, _repeat):
-    test_a_new_request_opened_before_eligibility_lands_gains_the_overtime_kind(browser, live_server, h)
