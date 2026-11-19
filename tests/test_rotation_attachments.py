@@ -8,6 +8,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import record
+from apps.api.services import planning
 from tests.test_alpha_calendar import programme
 from tests.test_attachments import END, START, people, setup
 from tests.test_residency import lead_of, other_programme
@@ -377,6 +378,43 @@ def test_manual_save_returns_and_persists_the_attached_supervisor_and_undo_resto
                        reply['workspace']['id'], paired['workspace']['revision'])
     assert supervisor(undone['shifts'][0], trainee) == b
     assert supervisor(h.detail(undone['workspace'])['shifts'][0], trainee) == b
+
+
+def test_manual_resave_refuses_a_supervisor_grant_revoked_during_preparation(h, monkeypatch):
+    trainee, other_supervisor, attached_supervisor, typ = setup(h, 'preferred')
+    assigned = people(trainee, other_supervisor, attached_supervisor, paired=other_supervisor)
+    saved = h.shift(h.workspace(), typ=typ, people=assigned)
+    workspace = saved['workspace']
+    shift = saved['shifts'][0]
+    payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
+    payload.update(workspace_id=workspace['id'], shift_id=shift['id'],
+                   participants=people(trainee, other_supervisor, attached_supervisor))
+    original = planning.command_compute
+    revoked = []
+
+    def compute_with_revocation(db, kind, data, compute, **kwargs):
+        if kind != 'edit_admission':
+            return original(db, kind, data, compute, **kwargs)
+
+        def revoke_after_check():
+            result = compute()
+            assert not db.in_transaction()
+            with transaction(h.app.state.engine, write=True) as other:
+                grant = other.scalars(select(m.CapabilityGrant).where(
+                    m.CapabilityGrant.person_id == attached_supervisor,
+                    m.CapabilityGrant.capability_id == h.seed['supervisor_capability'])).one()
+                grant.revoked = True
+            revoked.append(True)
+            return result
+
+        return original(db, kind, data, revoke_after_check, **kwargs)
+
+    monkeypatch.setattr(planning, 'command_compute', compute_with_revocation)
+    error = h.command('coordinator', 'shift.update', payload, revision=workspace['revision'], status=409)['error']
+    assert revoked == [True] and error['code'] == 'STALE_INPUTS' and error['details']['recoverable']
+    detail = h.detail(workspace)
+    assert detail['workspace']['revision'] == workspace['revision']
+    assert supervisor(detail['shifts'][0], trainee) == other_supervisor
 
 
 @pytest.mark.parametrize('required_blocked', [False, True])
