@@ -56,3 +56,13 @@ def test_the_shard_evidence_upload_is_retried_once():
     assert retry["if"] == "always() && steps.evidence.outcome == 'failure'" and "continue-on-error" not in retry
     assert retry["uses"] == first["uses"]
     assert {**first["with"], "overwrite": "true"} == retry["with"]
+
+
+def test_pull_request_checks_run_the_pipeline_tests_as_a_merge_group():
+    jobs = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
+    step = next(step for step in jobs["static"]["steps"] if step.get("name") == "Pipeline tests under the merge-group event")
+    assert step["if"] == "github.event_name == 'pull_request'"
+    assert "GITHUB_EVENT_NAME=merge_group python -m pytest" in step["run"]
+    pattern = step["run"].split("grep -lE '", 1)[1].split("'", 1)[0]
+    for module in ("make_known_failures", "trusted_ci", "trusted_verdict", "canary_evidence", "latest_reports", "working_policy"):
+        assert module in pattern.split("|")
