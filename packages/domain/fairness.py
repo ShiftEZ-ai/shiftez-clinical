@@ -204,7 +204,7 @@ def offered_intervals(data, first, last, people=None):
     Index person records once; facts never rescan the department for each person or day.
     """
     from .conditions import active_rules, with_tags
-    from .rule_groups import is_cap
+    from .generation import overtime_cap_ids
     from .rule_lines import expand, fact_policy
     from .validation import index_person_rows, named_people, person_in_scope, person_rows, scope_intervals
 
@@ -250,8 +250,7 @@ def offered_intervals(data, first, last, people=None):
                 if a < end and start < b]
 
     rules = context['policies']
-    caps = {key for policy in rules if is_cap(policy)
-            for key in [policy['id'], *(policy['definition'].get('merged_ids') or [])]}
+    caps = overtime_cap_ids(data)
     for policy in rules:
         if (policy['definition']['rule']['kind'] != 'allocation_overtime'
                 or policy['definition']['rule'].get('volunteer_required', False)
