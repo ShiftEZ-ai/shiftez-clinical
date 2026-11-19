@@ -495,7 +495,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
         target = base if branch == "dev" else "9" * 40
-        payload = {"before": base, "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
+        payload = {"before": base, "repository": {"full_name": "ShiftEZ-ai/shiftez-clinical"},
+                   "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
         plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": list(replicas),
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
@@ -574,7 +575,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
-            def compare():
+            def compare(**stale_options):
+                self.assertEqual(set(stale_options), {"stale_lookup"} if event == "pull_request" and branch == "dev" else set())
                 self.assertEqual(json.loads(Path(policy.KNOWN).read_text()), after)
                 self.assertEqual(json.loads(Path("ci/frozen-baseline-failures.json").read_text()), [] if real_reader else {"origin": base})
                 self.assertNotIn(str(reports), sys.path)
