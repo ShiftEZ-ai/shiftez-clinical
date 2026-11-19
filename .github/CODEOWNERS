@@ -1,0 +1,12 @@
+# Changes to these paths merge only after a review by the code owners.
+/.github/                       @ShiftEZ-ai/maintainers
+/ci/                            @ShiftEZ-ai/maintainers
+/infra/                         @ShiftEZ-ai/maintainers
+/tests/conftest.py              @ShiftEZ-ai/maintainers
+/tests/quarantine.json          @ShiftEZ-ai/maintainers
+/tests/quarantine.py            @ShiftEZ-ai/maintainers
+/requirements/*.lock            @ShiftEZ-ai/maintainers
+/requirements/ci-runtimes.json  @ShiftEZ-ai/maintainers
+/package-lock.json              @ShiftEZ-ai/maintainers
+/pyproject.toml                 @ShiftEZ-ai/maintainers
+/package.json                   @ShiftEZ-ai/maintainers
