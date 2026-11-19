@@ -735,12 +735,14 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
   if(filterBtn){const f=spec.filter!;pop(filterBtn,'Filter',(panel,close)=>{
     // The popover starts with what is active: "Active · 9 of 43 people" and Clear all. Rules of the builder below are
     // its rows (each with its own ⋯ › Remove); only entries without a row (a link's filter) are listed with ×.
-    const label=el('span',{class:'dt-pop-label'}),list=el('ul',{class:'dt-active-list',hidden:true});
+    // Clear all stays the same element while values change (a redraw under the pointer); the list is in the popover only
+    // while it has entries, so an empty one is never there (a hidden one still counts as shown).
+    const label=el('span',{class:'dt-pop-label'}),list=el('ul',{class:'dt-active-list'});
     const clear=el('button',{type:'button',class:'button ghost small dt-clear','aria-label':'Clear all filters'},'Clear all');
-    const head=el('div',{class:'dt-active'},el('div',{class:'dt-active-head'},label,clear),list);
+    const head=el('div',{class:'dt-active'},el('div',{class:'dt-active-head'},label,clear));
     clear.addEventListener('click',()=>{f.clear();draw();refocus();});panel.append(head);
     const changed=()=>{sync();const n=f.count(),act=(f.active?.()||[]).filter(a=>!a.row);head.hidden=!(n>0||f.any?.());
-      label.textContent=`Active · ${f.result?.()||n||''}`.replace(/ · $/,'');list.hidden=!act.length;
+      label.textContent=`Active · ${f.result?.()||n||''}`.replace(/ · $/,'');if(act.length)head.append(list);else list.remove();
       list.replaceChildren(...act.map(a=>{
         const x=el('button',{type:'button',class:'icon-button bare','aria-label':`Remove filter ${a.name}: ${a.value}`},icon('close'));
         x.addEventListener('click',()=>{a.remove();draw();refocus();});
