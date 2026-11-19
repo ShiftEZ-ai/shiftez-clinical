@@ -7,7 +7,7 @@ import {readFailed,alive} from './dom.js';  // a failed read: refused (403) or a
 import {skeleton} from './loading.js';
 import {statusLabel,footerStatus,el,icon,button,armed,badge,note,notify,plural,field,area,select,multi,check,withIcon,iconButton,sectionHead,formDialog,confirmAction,
   dateUnits,formatDate,formatTime,formatDay,toLocal,statusBadge,weekdayOptions,labelOf,phoneQuery,showDialog,grants,type IconName,emptyLine} from './dom.js';
-import {get,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta} from './api.js';
+import {get,background,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta} from './api.js';
 import {dateRange,dateList,lastDayIncluded} from './date_picker.js';
 import {dataTable,openFiltered,tableFilters,tableFiltered,tableAsOf,tableSearch,tableSearchOptions,tableSort,tableServerConditions,type RowAction} from './table_view.js';
 import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -447,7 +447,8 @@ function overtimeEligibility(ctx:Context,fresh=false){
   if(!ctx.me.person_id||!ctx.permits(CAPABILITY.STAFF))return Promise.resolve(null);
   if(!fresh&&eligibility?.key===sessionKey())return eligibility.value;
   const today=toLocal(new Date().toISOString(),ctx.me.organisation.timezone).slice(0,10);
-  const mine:{key:number;value:Promise<Eligibility|null>}={key:sessionKey(),value:get<Eligibility>(
+  // A background read: never a kept page reply from the last visit (api.ts keptReads), which may predate a new line.
+  const mine:{key:number;value:Promise<Eligibility|null>}={key:sessionKey(),value:background<Eligibility>(
     `/api/requests/overtime-eligibility?starts_on=${today}&ends_on=${addDays(today,92)}`).then(e=>{
       for(const r of [...e.choices?.services||[],...e.choices?.assignment_types||[]])choiceNames.set(r.id,r.name);return e;})
     .catch(()=>{if(eligibility===mine)eligibility=null;return null;})};
