@@ -122,13 +122,16 @@ def test_rules_page_flags_fit_and_mixed_safety_lines_stay_apart(browser, live_se
         expect(item.locator('.rt-instead')).to_have_count(1)
         expect(item.locator(f'li[data-line="{pair[1]["id"]}"] .rt-instead')).to_contain_text('instead of')
         if width == 390:
-            wrapped = [row.locator('.rt-ln-flags') for row in item.locator('.rt-ln-flags').all()
-                       if row.locator('.badge').count() > 1]
-            if wrapped:
-                assert any(x.bounding_box()['height'] > x.locator('.badge').first.bounding_box()['height'] for x in wrapped)
+            # A line's flags may wrap, and stay inside the line (two that fit side by side need not break).
+            several = [flags for flags in item.locator('.rt-ln-flags').all() if flags.locator('.badge').count() > 1]
+            assert several, 'the fixture has a line with two flags'
+            for flags in several:
+                assert flags.evaluate('e => getComputedStyle(e).flexWrap') == 'wrap'
+                box, line_box = flags.bounding_box(), flags.locator('xpath=ancestor::li[contains(@class,"rt-ln")][1]').bounding_box()
+                assert box['x'] + box['width'] <= line_box['x'] + line_box['width'] + 1, (box, line_box)
         navigate(page, 'rules/workload_limit')
         rows = page.locator('[data-table=rule-line-db] tr[data-row]')
-        apply_row = rows.filter(has=page.locator(f'[data-line="{apply_line["id"]}"]'))
+        apply_row = rows.and_(page.locator(f'[data-line="{apply_line["id"]}"]'))  # the row itself carries data-line
         expect(apply_row.locator('[data-col="n_apply"] .rule-num')).to_contain_text('No duties')
         expect(apply_row.locator('.rk-lockmark[aria-label^="Safety line"]')).to_have_count(1)
         expect(apply_row.locator('.rt-always-word')).to_have_text('Always applies')
@@ -204,7 +207,13 @@ def test_rules_page_rule_page_fits_at_1440_with_checks_and_exception_text(browse
                 header = table_scroll.locator('thead').get_by_role('button', name=label, exact=True)
                 if header.count():
                     header.click()
-                    page.get_by_role('menuitemcheckbox', name='Wrap this column', exact=True).click()
+                    wrap = page.get_by_role('menuitemcheckbox', name='Wrap this column', exact=True)
+                    # A switch saved with the view: the second pass finds it on and must leave it on.
+                    if wrap.get_attribute('aria-checked') != 'true':
+                        wrap.click()
+                    else:
+                        page.keyboard.press('Escape')
+                    expect(table_scroll.locator(f'td[data-col="{label.lower()}"].dt-wrap').first).to_be_attached()
             size = table_scroll.evaluate('e=>({width:e.clientWidth,scroll:e.scrollWidth})')
             assert size['scroll'] <= size['width'] + 1, (nav, size)
             for badge in table_scroll.locator('td[data-col=check] .badge').all():
