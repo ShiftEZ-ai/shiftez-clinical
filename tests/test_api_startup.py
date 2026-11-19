@@ -1,10 +1,91 @@
 """Application startup and shutdown run around context-managed test clients."""
 import asyncio
 from dataclasses import replace
+from threading import Event
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from apps.api import live
 from apps.api.main import create_app
+from apps.api.services import read_projection_warming
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+def test_first_home_uses_warm_session_selects(h):
+    cookies = h.client('coordinator').cookies
+    app = create_app(h.settings)
+    statements = []
+
+    @event.listens_for(app.state.engine, 'before_cursor_execute')
+    def capture(_connection, _cursor, sql, _parameters, context, _many):
+        statements.append((sql, context.cache_hit.name))
+
+    try:
+        with TestClient(app, base_url=h.settings.public_origin, cookies=cookies) as client:
+            assert all(sql.split()[0] in {'SELECT', 'SET'} for sql, _ in statements)
+            for _ in range(2):
+                statements.clear()
+                assert client.get('/api/home').status_code == 200
+                session_lookups = [hit for sql, hit in statements
+                                   if sql.startswith('SELECT') and 'WHERE sessions.token_hash =' in sql]
+                assert session_lookups == ['CACHE_HIT', 'CACHE_HIT']
+    finally:
+        app.state.engine.dispose()
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+def test_readiness_waits_for_warmup(h, monkeypatch):
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        entered, release, started = asyncio.Event(), Event(), asyncio.Event()
+        finish = asyncio.Event()
+        warm_process = read_projection_warming.warm_process
+
+        def held(engine):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(60)
+            warm_process(engine)
+
+        async def serve():
+            async with h.app.router.lifespan_context(h.app):
+                started.set()
+                await finish.wait()
+
+        monkeypatch.setattr(read_projection_warming, 'warm_process', held)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=h.app), base_url=h.settings.public_origin) as client:
+            server = asyncio.create_task(serve())
+            try:
+                await asyncio.wait_for(entered.wait(), 60)
+                assert not started.is_set()
+                assert (await client.get('/health/ready')).status_code == 503
+                assert (await client.get('/health/live')).status_code == 200
+                release.set()
+                await asyncio.wait_for(started.wait(), 60)
+                assert (await client.get('/health/ready')).status_code == 200
+            finally:
+                release.set()
+                finish.set()
+                await server
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+def test_failed_warmup_is_logged_and_refuses_requests(h, monkeypatch, caplog):
+    def fail(engine):
+        raise RuntimeError('Synthetic warm-up failure')
+
+    monkeypatch.setattr(read_projection_warming, 'warm_process', fail)
+    with TestClient(h.app, base_url=h.settings.public_origin) as client:
+        for path in ('/health/ready', '/health/service', '/api/home'):
+            response = client.get(path)
+            assert response.status_code == 503
+            assert response.json() == {'status': 'unavailable'}
+        assert client.get('/health/live').status_code == 200
+    assert [(entry.levelname, entry.error_code) for entry in caplog.records
+            if entry.message == 'api_process_warmup_failed'] == [('ERROR', 'RuntimeError')]
 
 
 def test_live_updates_start_before_requests_and_stop_on_exit(h, monkeypatch):

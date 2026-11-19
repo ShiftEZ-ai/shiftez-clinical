@@ -68,6 +68,7 @@ from .services import reviews, swaps, planner_tools, availability, operations as
 from .services import table_views, availability_patterns, independence, monitors
 from .services import collection_filters
 from .services import auth_configuration
+from .services import home as home_service, read_projection_warming, workspace_detail
 from .services.catalogue_version import department_version
 from . import live as live_updates
 
@@ -190,6 +191,19 @@ def create_app(settings: Settings | None = None, engine=None):
     oidc_browser_cookie = "__Host-rota_oidc_browser" if secure else "rota_oidc_browser"
     oidc_reauth_cookie = "__Host-rota_oidc_reauthenticate" if secure else "rota_oidc_reauthenticate"
     oidc_logout_cookie = "__Host-rota_oidc_logout" if secure else "rota_oidc_logout"
+
+    def schema_ready(db):
+        db.execute(text("SELECT 1"))
+        return list(db.scalars(text("SELECT version_num FROM alembic_version"))) == [schema_revision]
+
+    def warm_worker():
+        with transaction(engine) as db:
+            if not schema_ready(db):
+                log.error("api_process_warmup_failed", extra={"error_code": "SCHEMA_UNAVAILABLE"})
+                return False
+        read_projection_warming.warm_process(engine)
+        return True
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import asyncio
@@ -212,14 +226,21 @@ def create_app(settings: Settings | None = None, engine=None):
                 signal.signal(sig, on_shutdown)
                 previous_handlers[sig] = previous
         try:
+            try:
+                app.state.process_warmed = await background_io(warm_worker)
+            except Exception as exc:
+                app.state.process_warmed = False
+                log.error("api_process_warmup_failed", extra={"error_code": type(exc).__name__})
             yield
         finally:
+            app.state.process_warmed = None
             for sig, previous in previous_handlers.items():
                 signal.signal(sig, previous)
             live.detach(asyncio.get_running_loop())
 
     app = FastAPI(title="Rota", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.engine, app.state.settings = engine, settings
+    app.state.process_warmed = None
     from .memory import MemoryReclamationMiddleware
     app.add_middleware(MemoryReclamationMiddleware, threshold_mb=settings.memory_reclaim_threshold_mb)
     app.add_middleware(BodyLimitMiddleware, maximum=settings.max_body_bytes)
@@ -244,6 +265,8 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        if app.state.process_warmed is False and request.url.path not in {"/health/live", "/health/ready", "/health/service"}:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         correlation = secrets.token_hex(12)
         request.state.correlation_id = correlation
         refresh_correlation = request.headers.get("x-refresh-correlation-id", "")[:128]
@@ -397,11 +420,11 @@ def create_app(settings: Settings | None = None, engine=None):
         return {"status": "alive", "version": __version__}
 
     def readiness(service=False):
+        if not app.state.process_warmed:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         try:
             with transaction(engine) as db:
-                db.execute(text("SELECT 1"))
-                versions = list(db.scalars(text("SELECT version_num FROM alembic_version")))
-                if versions != [schema_revision]:
+                if not schema_ready(db):
                     return JSONResponse({"status": "unavailable"}, status_code=503)
                 if service:
                     from .services.operations import worker_state
@@ -1240,16 +1263,14 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get("/api/home")
     def home_summary(request: Request):
         """Home: role-scoped counts and short lists of what needs this person (services/home.py)."""
-        from .services.home import home
         with transaction(engine) as db:
-            return home(db, actor_for(request, db), settings=settings)
+            return home_service.home(db, actor_for(request, db), settings=settings)
 
     @app.get('/api/home/rotas', response_model=s.HomeRotaList)
     def home_rotas(request: Request, start: s.date, end: s.date,
                    limit: int = Query(100, ge=1, le=100), offset: int = Query(0, ge=0, le=1_000_000)):
-        from .services.home import rota_strip
         with transaction(engine) as db:
-            return rota_strip(db, actor_for(request, db), start, end, limit, offset)
+            return home_service.rota_strip(db, actor_for(request, db), start, end, limit, offset)
 
     @app.get("/api/integrations/github", response_model=s.GithubIntegrationStatus)
     def github_integration_status(request: Request):
@@ -2461,7 +2482,6 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
                           query: s.WorkspacePartQuery = Depends()):
-        from .services import workspace_detail
         from .services.conditional_reads import conditional_json, conditional_response, revision_etag
         from .services.workspace_reads import fast_etag
         with transaction(engine) as db:
@@ -2504,7 +2524,6 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_role(actor, "coordinator", "approver", "programme_lead", "auditor")
             if view == 'compact':
-                from .services.workspace_detail import compact
                 from .services.conditional_reads import conditional_json, conditional_response, revision_etag
                 from .services.workspace_reads import fast_etag
                 workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
@@ -2514,7 +2533,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 if isinstance(cached, Response):
                     return cached
                 response.headers.update(cached)
-                return conditional_json(request, s.WorkspaceCompactDetail.model_validate(compact(db, actor, workspace)), actor,
+                return conditional_json(request, s.WorkspaceCompactDetail.model_validate(workspace_detail.compact(db, actor, workspace)), actor,
                                         tag=tag)
             from .services.conditional_reads import conditional_response
             from .services.workspace_reads import fast_etag
