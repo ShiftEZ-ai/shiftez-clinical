@@ -473,6 +473,11 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
 
+    def test_main_refuses_a_recovery_from_an_earlier_attempt(self):
+        with self.assertRaisesRegex(ValueError, "Release/known-skip execution contains a failure or error"):
+            self.exercise_verdict_materialization("main", recovered={"tests/test_a.py::test_a": "failed"})
+        self.exercise_verdict_materialization("dev", recovered={"tests/test_a.py::test_a": "failed"})
+
     def test_isolated_guard_imports_siblings_from_another_directory(self):
         with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as folder:
             event=Path(folder)/'event.json';event.write_text('{}')
@@ -490,7 +495,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
     def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request",
-                                         old_base_pr=False, replicas=(1,)):
+                                         old_base_pr=False, replicas=(1,), recovered=None):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
@@ -557,7 +562,11 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             maker.retry_run = retry_run
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
-            maker.collect_reports = lambda *a, **kw: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
+            def collect(*a, evidence=None, **kw):
+                if recovered and evidence is not None:
+                    evidence.recovered.update(recovered)
+                return [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
+            maker.collect_reports = collect
             maker.product_error_nodes = lambda *a, **kw: set()
             maker.mixed_listed_nodes = lambda *a: set()
             maker.outside_observations = lambda *a: []

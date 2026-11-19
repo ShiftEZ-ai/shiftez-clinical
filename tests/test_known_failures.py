@@ -350,8 +350,9 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             assert json.loads((output / "recovered-tests.json").read_text()) == [
                 {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
             ]
-            recovered = {}
-            ratchet.product_error_nodes(group, recovered=recovered, allow_retry=True)
+            collected = ratchet.ReportEvidence()
+            group_collect(evidence=collected)
+            recovered = collected.recovered
             assert recovered == {RED: "failed"}
             assert check(listing(), listing(), updated, group=True, recovered=recovered)
             summary = output / "summary.md"

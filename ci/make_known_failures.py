@@ -225,16 +225,20 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
     expected = planned_shards(plan)
     seal = digest(plan)
 
-    def read_shard(path, root):
+    def read_shard(path, root, *, earlier=False):
         receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         identity = (receipt["suite"], receipt["shard"], receipt["replica"])
         if (receipt.get("schema") != 1 or type(receipt["shard"]) is not int or type(receipt["replica"]) is not int
                 or identity not in expected or receipt["sha"] != plan["sha"]
-                or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != seal
-                or receipt["run_id"] != run_id):
+                or receipt["tree"] != plan["tree"] or receipt["run_id"] != run_id):
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
         attempt = run_attempt if historical_capture else producing_attempt(root, path, identity, run_attempt)
         if receipt["run_attempt"] != attempt:
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        if receipt["plan_sha256"] != seal:
+            # "Re-run all jobs" replans from the moved dev tip; an older plan's outcomes are not comparable.
+            if earlier:
+                return None
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
         suite, index, _ = identity
         files = plan["suites"][suite]["shards"][index - 1]["files"]
@@ -289,7 +293,10 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
             if identity not in expected or not 1 <= attempt < latest[identity]:
                 raise ValueError("Earlier shard evidence differs from the artifact identity or attempt")
             for path in folder.rglob("shard-receipt.json"):
-                _, _, outcomes, _ = read_shard(path, archive)
+                observed = read_shard(path, archive, earlier=True)
+                if observed is None:
+                    continue
+                _, _, outcomes, _ = observed
                 if (identity, attempt) in seen:
                     raise ValueError("Duplicate shard artifact attempt: " + folder.name)
                 seen.add((identity, attempt))
@@ -446,7 +453,7 @@ def outside_observations(current, runs, exceptions=frozenset()):
              "red_count": sum(run.get(node) in {"failed", "error"} for run in runs)} for node in sorted(outside)]
 
 
-def product_error_nodes(directory, *, listed=frozenset(), recovered=None, allow_retry=False):
+def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False):
     """Classify individual errors after the producer and report checks."""
     infrastructure = re.compile(r"connection refused|could not connect|server closed the connection|connection reset|could not translate host|temporary failure in name resolution|no route to host|network is unreachable|too many connections|remaining connection slots|password authentication failed|database is locked|database is busy|deadlock detected|no space left on device|out of memory|browser executable.*(?:missing|exist)|ECONNREFUSED|permission denied", re.I)
     product_types = {"AssertionError", "AttributeError", "KeyError", "NameError", "TypeError", "ValueError", "IndexError", "LookupError", "ZeroDivisionError", "NotImplementedError", "IntegrityError", "ProgrammingError", "DataError"}
@@ -459,9 +466,6 @@ def product_error_nodes(directory, *, listed=frozenset(), recovered=None, allow_
             cases = list(ET.parse(report).getroot().iter("testcase"))
             recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if allow_retry and "retry" in row else (),
                                             allow_retry=allow_retry)
-            if recovered is not None:
-                recovered.update((canonical_node(report_node(case)), report_outcome(case))
-                                 for case in cases if report_node(case) in recovered_raw)
             for case in cases:
                 error = case.find("error")
                 element = error if error is not None else case.find("failure")

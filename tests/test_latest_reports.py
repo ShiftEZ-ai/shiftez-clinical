@@ -232,7 +232,7 @@ def test_missing_earlier_report_is_unobserved(plan, current, rerun, has_artifact
     assert maker.evaluate(current, current, runs, group=True, merge_group=True, recovered=evidence.recovered)
 
 
-@pytest.mark.parametrize("field", ["plan_sha256", "sha", "tree", "run_id", "run_attempt"])
+@pytest.mark.parametrize("field", ["sha", "tree", "run_id", "run_attempt"])
 def test_earlier_report_refuses_foreign_binding(plan, rerun, field):
     reports, _, _, observe = rerun
     receipt = write_shard(reports, plan, 1, 1) / "shard-receipt.json"
@@ -242,6 +242,20 @@ def test_earlier_report_refuses_foreign_binding(plan, rerun, field):
     write_shard(reports, plan, 1, 2)
     with pytest.raises(ValueError, match="incorrectly bound"):
         observe()
+
+
+def test_earlier_report_from_an_older_plan_is_unobserved(plan, current, rerun):
+    """Re-run all jobs replans from the moved dev tip; only the plan seal differs, so attempt 1 is unobserved."""
+    reports, _, summary, observe = rerun
+    receipt = write_shard(reports, plan, 1, 1, red=True) / "shard-receipt.json"
+    data = json.loads(receipt.read_bytes())
+    data["plan_sha256"] = "0" * len(data["plan_sha256"])
+    receipt.write_text(json.dumps(data), encoding="utf-8")
+    write_shard(reports, plan, 1, 2)
+    runs, evidence, outside = observe()
+    assert {"suite": "unit", "shard": 1, "replica": 1, "attempt": 1} in outside["unobserved_attempts"]
+    assert NODE not in evidence.recovered
+    assert "unobserved attempt | unit | shard 1 | replica 1 | attempt 1" in summary.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("attempt", [2, 3])
