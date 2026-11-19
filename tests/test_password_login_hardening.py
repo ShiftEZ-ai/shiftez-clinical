@@ -212,7 +212,7 @@ def test_correct_password_reports_sign_in_busy_during_credential_edit_and_retry_
             with transaction(engine) as db:
                 events = list(db.scalars(select(m.AuthLoginEvent)))
                 assert [event.outcome for event in events] == ["SIGN_IN_BUSY"]
-                keys = auth.login_keys(USERNAME, "testclient")
+                keys = auth.login_keys(USERNAME, "testclient", settings)
                 consecutive, account_delay = auth.login_account_bucket_keys(USERNAME, settings)
                 pair_delay = auth.digest("login-delay:" + keys[2])
                 pair_key, _ = counter_key("login-pair", keys[2], settings.password_login_window_seconds, auth.now())
@@ -365,7 +365,7 @@ def test_throttled_password_spray_has_bounded_cpu_and_never_hashes(h, monkeypatc
     pin_login_clock(monkeypatch)
     engine = h.app.state.engine
     with transaction(engine, write=True) as db:
-        key, ends = counter_key('login-address', auth.login_keys('unknown', 'testclient')[1],
+        key, ends = counter_key('login-address', auth.login_keys('unknown', 'testclient', h.settings)[1],
                                 h.settings.password_login_window_seconds, auth.now())
         db.add(m.RateLimit(key_hash=key, hits=h.settings.password_login_address_limit, expires_at=ends))
     monkeypatch.setattr(identity_store.AutheliaUsersFile, 'verify_credential', lambda *_: pytest.fail('Throttled requests cannot hash'))

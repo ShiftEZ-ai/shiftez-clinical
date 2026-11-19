@@ -131,7 +131,17 @@ jobs:
       if: inputs.suite == 'browser'
       run: |
         tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/hosted-shared/ci-browser.tar"
-        python -m playwright install-deps chromium
+        # A stalled package mirror once held this step to the 60-min job limit. Measured over 8,858 runs:
+        # p99.9 81 s, max 319 s, so each attempt gets 600 s and apt retries its own requests.
+        printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' 'Acquire::https::Timeout "60";' \
+          | sudo tee /etc/apt/apt.conf.d/80-ci-retries > /dev/null
+        for attempt in 1 2 3; do
+          # A killed attempt can leave dpkg half-configured; repair it so the retry fails only on the mirror.
+          if [ "$attempt" != 1 ]; then sudo dpkg --configure -a || true; fi
+          timeout --kill-after=30 600 python -m playwright install-deps chromium && break
+          if [ "$attempt" = 3 ]; then echo "Browser system dependencies did not install in 3 attempts"; exit 1; fi
+          echo "::warning::Browser system dependency install attempt $attempt failed or stalled; retrying"
+        done
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: ci-web-${{ inputs.artifact_attempt }}
@@ -165,7 +175,10 @@ jobs:
     - name: Run the exact planned shard once
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
     - name: Retain first-attempt reports and failure evidence
+      id: evidence
       if: always()
+      # A transient artifact-service timeout must not discard a finished shard; the next step retries once.
+      continue-on-error: true
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
@@ -176,6 +189,19 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
+    - name: Retry the evidence upload once
+      if: always() && steps.evidence.outcome == 'failure'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
+        path: |-
+          candidate/.run/reports/
+          candidate/.run/traces/
+          candidate/.run/api-logs/
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7
+        overwrite: true
 'on':
   workflow_call:
     inputs:

@@ -31,15 +31,12 @@ function find(entries:Entry[],l:ScoreReviewLine):{entry:Entry|null;rule:RuleLine
 const slotOf=(l:ScoreReviewLine,r:RuleLine)=>l.slot&&r.numbers[l.slot]?l.slot:Object.keys(r.numbers).find(k=>r.numbers[k]?.level!=null)||Object.keys(r.numbers)[0];
 const words=(r:RuleLine|null,label:ScoreReviewHooks['label'])=>r?[conditionsSummary(r.who,label)||'Everyone',conditionsSummary(r.where,label)].filter(Boolean).join(' · '):'';
 
-/** One governed proposal changing one line (its tier, or its Fair share weight), with a reason; overlaps approved with
- *  the rule are acknowledged again as they stand (the change does not move them). */
+/** One governed proposal changing one line (its tier, or its Fair share weight), with a reason. */
 async function proposeLine(e:Entry,lineId:string,change:(r:RuleLine)=>void,reason:string){
   const lines=JSON.parse(JSON.stringify(linesOf(e))) as RuleLine[],target=lines.find(x=>x.id===lineId);if(!target)throw new Error('This line changed meanwhile. Reload the page.');
   change(target);
   const body={on:isOn(e),lines,settings:settingsOf(e),seen:linesOf(e).map(x=>x.id)};
-  return propose(e,body,reason).catch(err=>{
-    if(err instanceof ApiError&&err.code==='OVERLAPS_UNACKNOWLEDGED'&&Array.isArray(err.details))return propose(e,body,reason,(err.details as {line_id:string}[]).map(o=>o.line_id),false);
-    throw err;});
+  return propose(e,body,reason);
 }
 
 export async function scoreReview(hooks:ScoreReviewHooks,reload:()=>void):Promise<HTMLElement>{
