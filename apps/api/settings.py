@@ -9,12 +9,18 @@ from typing import Literal
 from urllib.parse import urlparse
 from pydantic import ValidationError
 from .data_crypto import data_key_from_secret  # noqa: F401  the one key parser (GitHub and mailbox secrets)
-from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, SESSION_IDLE_MINUTES_MIN,
+from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, DisplaySettingsInput,
+                                        SESSION_IDLE_MINUTES_MIN,
                                         SESSION_IDLE_MINUTES_DEFAULT, SESSION_MAX_HOURS_DEFAULT,
                                         valid_feedback_github_repo)
 
 # The compose health check allows a two-minute file age; keep configurable worker waits at half that window.
 WORKER_IDLE_MAX_SECONDS = 60
+
+
+def new_department_display_settings() -> dict[str, bool]:
+    """A new department stores the default Rules page; departments created before it store none and keep theirs."""
+    return {"rule_catalogue": DisplaySettingsInput.model_fields["rule_catalogue"].default}
 
 
 def new_department_session_limits() -> dict[str, int | None]:
