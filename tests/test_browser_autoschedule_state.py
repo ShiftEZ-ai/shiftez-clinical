@@ -6,8 +6,8 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.worker.main import process_one
-from .test_browser import auto_setup, auto_result, wait_run_created, browser, live_server, navigate, open_rota, open_scheduling, pick_view, sign_in, wait_held  # noqa: F401
-from .test_browser_cp_sat import cp_server, _apply, _check_after_apply, _joins  # noqa: F401
+from .test_browser import auto_setup, auto_result, wait_run_created, browser, live_server, navigate, open_rota, open_scheduling, pick_view, sign_in, wait_held, wait_until  # noqa: F401
+from .test_browser_cp_sat import cp_server, _apply, _joins  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -219,6 +219,18 @@ def _proposal(page, h, panel):
     expect(panel.get_by_role('region', name='Review')).to_be_visible(timeout=15000)
 
 
+def _finish_rota_check(page, h, workspace_id, joined):
+    check = next(j for j in h.get('coordinator', '/api/jobs?workspace_id=' + workspace_id)['jobs']
+                 if j['kind'] == 'validation' and j['status'] == 'queued')
+    status_url = f"/api/jobs/{check['id']}/status"
+    # The page has joined this job before the worker takes it, so its next read can see it finish.
+    wait_until(page, lambda: any(r.url.endswith(status_url) for r in joined),
+               'The page did not join the rota check', seconds=15)
+    with page.expect_response(lambda r: r.url.endswith(status_url) and r.ok
+                              and r.json()['job']['status'] == 'succeeded'):
+        assert h.process_jobs()
+
+
 @pytest.fixture(autouse=True)
 def _throttle_stale_undo(request, monkeypatch):
     if request.node.originalname == 'test_an_undo_already_used_is_refused_once_without_not_saved':
@@ -246,16 +258,13 @@ def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_serv
         toast = page.locator('.toast').filter(has_text='Suggestions applied')
         expect(toast).to_be_visible()
         toast.dispatch_event('mouseenter')  # Pause the toast while both rota checks settle.
-        settled = page.locator('.app-footer .fix-pills:not(.fix-stale):not(:has([data-check-line], .fix-checking))')
-        _check_after_apply(page, h, w['id'], joined)
-        expect(settled).to_be_visible()
+        _finish_rota_check(page, h, w['id'], joined)
         # The applied run keeps its Undo in Recent runs, under the rota check that follows Apply (BE-18).
         joined = _joins(page)
         press(panel.locator('.run-list').get_by_role('button', name=re.compile('^Undo Auto-schedule ')))
         expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
         # Let the page join and finish the check before recording commands from the stale Undo.
-        _check_after_apply(page, h, w['id'], joined)
-        expect(settled).to_be_visible()
+        _finish_rota_check(page, h, w['id'], joined)
         commands = []
         page.on('request', lambda r: commands.append(r.post_data_json.get('kind')) if r.url.endswith('/api/commands') else None)
         press(toast.get_by_role('button', name='Undo', exact=True))
