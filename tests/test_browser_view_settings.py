@@ -289,6 +289,7 @@ def test_session_cells_name_their_people_when_the_view_shows_them(browser, live_
     for name, on in (("Fictional services plain", False), ("Fictional services with people", True)):
         h.command("coordinator", "table_view.create", {"table_key": "planner", "name": name, "definition": {"planner": {
             "mode": "timeline", "range": "week", "rows": "service", "group_by": "none",  # rows and group: different dimensions
+            "label": {"parts": ["full"], "separator": "dot", "honorific": "none"},
             "properties": [{"key": "people", "on": on, "form": "text"}]}}})
     context, page = sign_in(browser, live_server, "coordinator", {"width": width, "height": 900}, color_scheme=scheme)
     try:
@@ -297,12 +298,12 @@ def test_session_cells_name_their_people_when_the_view_shows_them(browser, live_
         panel = view_settings(bar, "Properties")
         expect(panel.locator('.vs-prop[data-part="people"]')).to_have_count(0)  # Week's cards always name their people
         close_popover(page)
-        meta = page.locator("#schedule-view .pg-chip[data-session] .pg-chip-meta")
+        people = page.locator('#schedule-view .pg-chip[data-session] [data-part="people"]')
         pick_view(page, "Fictional services plain"); settled(page)
         expect(page.locator("#schedule-view .pg-chip[data-session]").first).to_be_visible()
-        expect(meta).to_have_count(0)
+        expect(people).to_have_count(0)
         pick_view(page, "Fictional services with people"); settled(page)
-        named = meta.filter(has_text=re.compile("|".join(re.escape(n) for n in names))).first
+        named = people.filter(has_text=re.compile("|".join(re.escape(n) for n in names))).first
         expect(named).to_be_visible()
         chip = named.locator(CHIP_OF)
         expect(chip).to_have_attribute("aria-label", re.compile(re.escape(named.inner_text())))

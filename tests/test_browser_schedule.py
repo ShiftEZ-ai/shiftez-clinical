@@ -496,8 +496,7 @@ def test_every_role_opens_the_schedule_on_desktop_and_phone_in_light_and_dark(br
             expect(nav).to_have_attribute('aria-current', 'page')
             # Only coordinators change a draft; every other role reads it.
             expect(page.get_by_role('button', name='Add session', exact=True)).to_have_count(1 if role in ('coordinator', 'admin') else 0)
-            if role != 'staff':
-                expect(page.locator('.topbar h1')).to_have_text('Mid-October draft')
+            expect(page.locator('.topbar h1')).to_have_text('Mid-October draft' if role in ('coordinator', 'admin') else 'Schedule')
             if viewport['width'] == 390:
                 expect(page.get_by_role('button', name='Menu', exact=True)).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 2')

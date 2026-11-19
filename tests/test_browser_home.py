@@ -597,7 +597,8 @@ def test_drafts_with_gaps_name_their_open_places(browser, live_server, h):
             route.fulfill(json=body)
         page.route('**/api/home/rotas?**', stale)
         page.reload()
-        expect(month).to_contain_text('needs a check')
+        expect(page.locator('.app-footer .footer-status').filter(has_text='needs a check')).to_have_count(1)
+        expect(month).not_to_contain_text('needs a check')
         expect(month).not_to_contain_text('3 open')
         # A fresh check with no open place but a session missing its lead: that is a session, worded as one.
         page.unroute_all()
