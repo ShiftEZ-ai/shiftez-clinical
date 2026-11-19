@@ -103,4 +103,3 @@ def test_background_check_finishing_after_computation_does_not_invalidate_edit(p
     result = pg.command('coordinator', 'shift.update', payload, revision=w['revision'])
     assert checked and result['workspace']['revision'] == w['revision'] + 1
     assert pg.detail(w)['shifts'][0]['participants'][0]['team_lead']
-# Include this file in hosted supervision and team-lead qualification.

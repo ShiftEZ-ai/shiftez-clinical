@@ -145,4 +145,3 @@ def test_unqualified_people_do_not_resolve_all_rules_for_every_duty(monkeypatch)
     assert lead_eligible(data, [], [A, B]) == set()
     assert len(calls) == 1
     assert '_leadership_policies' not in data and '_leadership_cache' not in data
-# Include this file in hosted supervision and team-lead qualification.

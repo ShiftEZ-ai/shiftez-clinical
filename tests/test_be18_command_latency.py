@@ -301,4 +301,3 @@ def test_scoped_comparison_matches_full_for_pooled_cover_and_person_windows(h):
     partial = proposal_reconciliation.comparison(evaluate_assignments(before, scope), evaluate_assignments(after, scope))
     assert partial['no_new_problems'] == full['no_new_problems']
     assert partial['new_or_worse_findings'] == full['new_or_worse_findings']
-# Include this file in hosted supervision and team-lead qualification.

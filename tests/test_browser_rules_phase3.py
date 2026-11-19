@@ -310,4 +310,3 @@ def test_extend_a_clinic_permission_until_changed_with_undo(browser, live_server
         assert back['ends_on'] == ended['ends_on'] == '2026-10-01'
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

@@ -141,4 +141,3 @@ def test_staffing_commitments_refresh_when_an_indexed_seat_moves(monkeypatch):
     staffing.move_seat(index, shift, shift['participants'][0], person)
     assert len(calls) == 2
     assert index['fast']['_supervision_commitments'] == original(index['fast'])
-# Include this file in hosted supervision and team-lead qualification.

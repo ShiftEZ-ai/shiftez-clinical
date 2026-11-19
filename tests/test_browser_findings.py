@@ -31,4 +31,3 @@ def test_fix_buttons_deduped(browser, live_server, h):
     finally:
         page.unroute_all(behavior='ignoreErrors')
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

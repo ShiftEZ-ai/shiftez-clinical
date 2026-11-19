@@ -80,4 +80,3 @@ def test_manual_pairing_month_checks_only_the_changed_session(manual_pairing_mon
 @pytest.mark.cpu_budget
 def test_manual_pairing_department_month_cpu_budget(manual_pairing_month):
     assert manual_pairing_month[-1]['cpu_seconds'] < python_budget(4), manual_pairing_month[-1]
-# Include this file in hosted supervision and team-lead qualification.

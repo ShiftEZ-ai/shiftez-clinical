@@ -265,4 +265,3 @@ def test_manual_pairing_keeps_supervisor_grouped_limits_across_other_sessions(h)
     added = next(shift for shift in reply['shifts'] if shift['start'].startswith('2026-10-05'))
     assert next(p['supervisor_person_id'] for p in added['participants'] if p['person_id'] == trainee) is None
     assert 'MAX_DUTIES' not in {f['code'] for f in reply['validation']['findings']}
-# Include this file in hosted supervision and team-lead qualification.

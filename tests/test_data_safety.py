@@ -1774,4 +1774,3 @@ def test_integration_migration_preserves_existing_rows(tmp_path, previous):
         assert 'manual_type_override' in {r[1] for r in db.execute('PRAGMA table_info(availability)')}
         assert 'batch_id' in {r[1] for r in db.execute('PRAGMA table_info(definition_history)')}
         assert 'bulk_settings' in {r[1] for r in db.execute('PRAGMA table_info(departments)')}
-# Include this file in hosted supervision and team-lead qualification.

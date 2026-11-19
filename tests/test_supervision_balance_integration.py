@@ -191,4 +191,3 @@ def test_catalogue_publication_history_distribution_and_fix_causes(h):
         assert db.get(m.Publication, published['publication_id']).snapshot == before
         assert [(r.id, r.metric_key, r.value) for r in db.scalars(select(m.FairnessLedger).where(
             m.FairnessLedger.publication_id == published['publication_id']))] == ledger_before
-# Include this file in hosted supervision and team-lead qualification.

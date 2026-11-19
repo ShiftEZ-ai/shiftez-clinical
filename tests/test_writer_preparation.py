@@ -511,4 +511,3 @@ def test_a_finished_rota_check_matches_the_rota_it_checked(h):
     job = h.get('coordinator', f"/api/jobs?workspace_id={w['id']}")['jobs'][0]
     current = h.get('coordinator', f"/api/workspaces/{w['id']}?view=compact")['current_fingerprint']
     assert job['status'] == 'succeeded' and job['input_fingerprint'] == current
-# Include this file in hosted supervision and team-lead qualification.

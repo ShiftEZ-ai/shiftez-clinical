@@ -279,4 +279,3 @@ def test_creation_batch_counts_preexisting_sessions_changed_by_overlap_flags(h):
     error = h.command('coordinator', 'bulk.apply', {'items': items, 'reason': REASON}, status=422)['error']
     assert error['code'] == 'BULK_ITEM_LIMIT'
     assert state(h, workspace) == before
-# Include this file in hosted supervision and team-lead qualification.

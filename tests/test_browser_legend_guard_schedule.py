@@ -140,4 +140,3 @@ def test_rules_marks_and_number_pills_are_keyed(browser, live_server, h):
         assert_legend_matches(page, root='#main', expect_marks=['mark:prop', 'mark:mand', 'mark:adv', 'pill'])
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

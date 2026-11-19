@@ -633,4 +633,3 @@ def test_the_approver_reviews_by_group_on_a_phone_and_a_rejection_returns_the_ro
         assert returned['status'] == 'draft' and not returned['rule_adjustments']  # the whole rota comes back (D24)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

@@ -223,4 +223,3 @@ def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget(per
 def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget_cpu_budget(person_workload_scale):
     _, _, elapsed = person_workload_scale
     assert elapsed < python_budget(1), f'150 people and 500 duties must remain a bounded read: {elapsed:.3f}s'
-# Include this file in hosted supervision and team-lead qualification.

@@ -384,4 +384,3 @@ def test_programme_name_is_said_once_by_its_group(browser, live_server, all_role
         expect(board.locator(".tl-nm small", has_text="Fictional residency")).to_have_count(0)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

@@ -409,4 +409,3 @@ def test_selected_trainee_upper_bound_retains_outsider_supervision_context(h, re
         [diagnostic] = proof
         assert diagnostic['available_upper_bound'] == 0
         assert any(r['code'] == 'SUPERVISION_UNAVAILABLE' for c in diagnostic['candidates'] for r in c['exclusions'])
-# Include this file in hosted supervision and team-lead qualification.

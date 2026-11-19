@@ -237,4 +237,3 @@ def test_retired_source_keeps_new_seed_in_pending_proposal_stale_guard(request, 
         fresh['id'], fresh['revision'])
     [current] = h.get('admin', '/api/policies?status=active')['policies']
     assert default_id in {line['id'] for line in current['definition']['rule']['lines']}
-# Include this file in hosted supervision and team-lead qualification.

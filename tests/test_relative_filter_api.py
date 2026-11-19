@@ -574,4 +574,3 @@ def test_relative_filter_resolve_and_saved_view_round_trip_on_postgres(pg):
         "definition": {"conditions": conditions}})["view"]
     actual = post(pg, "/api/bulk/resolve", {"collection": "people", "where": {"conditions": saved["definition"]["conditions"]}})
     assert actual["count"] == 1 and actual["sample"][0]["id"] == pg.seed["people"][0]
-# Include this file in hosted supervision and team-lead qualification.

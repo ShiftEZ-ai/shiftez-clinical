@@ -469,4 +469,3 @@ def test_locked_assignment_error_keeps_the_persons_other_healthy_duty(h, engine,
     assert any(f['code'] == ('NOT_ELIGIBLE' if conflict == 'qualification' else 'FULL_ASSIGNMENT_REQUIRED')
                and f['shift_id'] == kept['id'] for f in result['issues'])
     assert not any(f['severity'] == 'error' and f['shift_id'] == healthy['id'] for f in result['validation']['findings'])
-# Include this file in hosted supervision and team-lead qualification.

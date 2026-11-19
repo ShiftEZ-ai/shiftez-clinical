@@ -288,4 +288,3 @@ def test_wish_priority_policy_cannot_be_overridden_for_a_generation_run(h, field
     refused = h.command('coordinator', 'job.create', {'workspace_id': rota['id'], 'kind': 'generation',
         'generation_options': {'scoring': {field: value}}}, revision=rota['revision'], status=422)
     assert refused['error']['code'] == 'DEPARTMENT_OPTIONS_ONLY'
-# Include this file in hosted supervision and team-lead qualification.

@@ -113,4 +113,3 @@ def test_replacement_enforces_configured_supervisor_capacity(h):
     assert 'SUPERVISOR_SCOPED_CAPACITY' in {f['code'] for f in result['validation']['findings']}
     h.command('coordinator', 'publication.changes.submit', {'reason': 'Attempt excess supervision'},
               target=pub, revision=result['workspace']['revision'], status=422)
-# Include this file in hosted supervision and team-lead qualification.

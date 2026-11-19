@@ -358,4 +358,3 @@ def test_selected_published_print_sheet_retains_long_labels_and_hides_controls(b
         if printed:
             printed.close()
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

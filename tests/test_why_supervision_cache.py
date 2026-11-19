@@ -82,4 +82,3 @@ def test_why_runner_up_ranks_fresh_canonical_scores_after_releasing_supervisor(h
     assert runner_up['point_difference'] == round(selected_score['score'] - scores[ranked[0]]['score'], 1)
     assert runner_up['uncapped_point_difference'] == round(
         selected_score['uncapped_score'] - scores[ranked[0]]['uncapped_score'], 1)
-# Include this file in hosted supervision and team-lead qualification.

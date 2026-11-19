@@ -229,4 +229,3 @@ def test_continuous_who_still_applies_during_reserved_off_cover_time(h):
     assert generate(copy.deepcopy(data), 20, workers=1, feasibility_only=True, _on_model=models.append)['status'] == 'model_ready'
     names = [v.name for v in models[0].proto.variables if v.name.startswith('lead:')]
     assert any(b in name for name in names) and not any(a in name for name in names)
-# Include this file in hosted supervision and team-lead qualification.

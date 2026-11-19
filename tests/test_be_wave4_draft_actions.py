@@ -457,4 +457,3 @@ def test_unassign_bulk_mandatory_gap_gate_remains_atomic(h):
         'payload': {'workspace_id': w['id'], 'shift_ids': [source['id'], target['id']], 'action': 'unassign'}}],
         'reason': 'Retain the existing bulk clinical-impact gate'}, status=409)
     assert result['error']['code'] == 'COVERAGE_GAP' and state(h, w) == before
-# Include this file in hosted supervision and team-lead qualification.

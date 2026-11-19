@@ -155,4 +155,3 @@ def test_rotation_restore_batch_rolls_back_earlier_rows_when_a_later_row_conflic
         for original in (first, second):
             row = db.get(m.Rotation, original['id'], execution_options={'include_withdrawn': True})
             assert row.withdrawn and row.revision == original['revision'] + 1
-# Include this file in hosted supervision and team-lead qualification.

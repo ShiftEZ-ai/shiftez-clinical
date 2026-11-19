@@ -87,4 +87,3 @@ def test_every_mark_on_the_schedule_grids_has_its_key_entry(browser, live_server
         assert not errors, errors
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

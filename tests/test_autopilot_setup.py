@@ -179,4 +179,3 @@ def test_repair_can_move_spare_cover_but_never_create_another_gap(h):
     for shift in data['shifts']:
         if shift['participants']: shift['locked'] = True
     assert generate(data)['status'] == 'candidate_with_gaps'
-# Include this file in hosted supervision and team-lead qualification.

@@ -217,4 +217,3 @@ def test_batch_apply_revises_each_changed_session_once_and_preserves_undo(h, rec
     undone = h.command('coordinator', 'workspace.undo', {'reason': 'Undo reviewed session changes'},
         workspace['id'], applied['workspace']['revision'])['workspace']
     assert h.snapshot(undone)['shifts'] == before['shifts']
-# Include this file in hosted supervision and team-lead qualification.

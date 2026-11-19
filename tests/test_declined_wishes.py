@@ -559,4 +559,3 @@ def test_feasibility_only_run_does_not_attribute_wish_priority(h, monkeypatch):
     assert applied and not any(applied)
     assert result['declined_wishes']
     assert all(r['kind'] != 'competing_wishes' for row in result['declined_wishes'] for r in row['reasons'])
-# Include this file in hosted supervision and team-lead qualification.

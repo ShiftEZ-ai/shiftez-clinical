@@ -429,4 +429,3 @@ def test_explicit_removal_hides_typed_contacts_without_rewriting_them(pg):
     assert '555018844' not in json.dumps(directory)
     with transaction(pg.app.state.engine) as db:
         assert record(db.get(m.PersonContact, saved['id'])) == saved
-# Include this file in hosted supervision and team-lead qualification.

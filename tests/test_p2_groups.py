@@ -981,4 +981,3 @@ def test_resolve_issues_requires_group_authority_before_current_findings(h, monk
     assert response.json()['error']['code'] == 'GROUP_EDIT_AUTHORITY'
     assert 'findings' not in response.text and restricted not in response.text
     assert h.detail(workspace) == original
-# Include this file in hosted supervision and team-lead qualification.

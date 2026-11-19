@@ -112,4 +112,3 @@ def test_approved_rota_publishes_with_scope_free_catalogue_history_and_coverage(
     assert {row['person_id']: row['value'] for row in pg.get('coordinator',
         '/api/fairness/distribution?metric=lead_turns&starts_on=2026-10-01&ends_on=2026-11-01')['people']}[a] == 2
     assert pg.get('coordinator', f'/api/publications/{history["publication_id"]}/coverage')['evaluation']['error_count'] == 0
-# Include this file in hosted supervision and team-lead qualification.

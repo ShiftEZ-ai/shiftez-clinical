@@ -297,4 +297,3 @@ def test_team_leads_without_legacy_types_offers_no_conversion(browser, live_serv
         assert next(e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['id'] == 'team_leads').get('legacy_leads', 0) == 0
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

@@ -785,4 +785,3 @@ def test_historical_safety_flag_cannot_offer_exceptions_or_weaker_rota_adjustmen
         assert not h.detail(workspace)['workspace']['rule_adjustments']
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

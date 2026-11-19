@@ -202,4 +202,3 @@ def test_rebalance_does_not_count_an_existing_break_as_cover(h):
     # the segmented row instead produced a solver/validator translation error.
     assert result['status'] == 'requirements_conflict', result
     assert result['additions'] == result['removals'] == []
-# Include this file in hosted supervision and team-lead qualification.

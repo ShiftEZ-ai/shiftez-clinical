@@ -154,4 +154,3 @@ def test_finding_identity_ignores_derived_display_needs_but_retains_safety_detai
         'detail': {**restriction['detail'], 'derived_findings': [derived]}})
     assert citation_finding_key(restriction) != citation_finding_key({**restriction,
         'detail': {**restriction['detail'], 'line': 2}})
-# Include this file in hosted supervision and team-lead qualification.

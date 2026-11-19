@@ -131,4 +131,3 @@ def test_solver_keeps_an_attached_trainee_with_their_consultant(h):
     assert solved['status'] == 'candidate_feasible', solved.get('status')
     placed = [r for r in solved['additions'] if r['participant']['person_id'] == trainee]
     assert [r['participant']['supervisor_person_id'] for r in placed] == [c]  # c is only on the first session
-# Include this file in hosted supervision and team-lead qualification.

@@ -240,4 +240,3 @@ def test_live_week_fill_leave_and_shift_keep_unrelated_people_outside_team(brows
     finally:
         page.unroute_all(behavior='ignoreErrors')
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

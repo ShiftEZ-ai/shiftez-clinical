@@ -771,4 +771,3 @@ def test_options_with_ten_return_duties_per_recipient_stays_within_department_bu
 def test_options_with_ten_return_duties_per_recipient_stays_within_department_budget_cpu_budget(department_swap_options):
     _, _, timings = department_swap_options
     assert all(timing['cpu_seconds'] < python_budget(2) for timing in timings.values()), timings
-# Include this file in hosted supervision and team-lead qualification.

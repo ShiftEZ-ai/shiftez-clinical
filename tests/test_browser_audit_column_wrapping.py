@@ -355,4 +355,3 @@ def test_a_short_table_that_never_wraps_has_plain_headings(browser, live_server,
         expect(grid.locator('thead button')).to_have_count(0)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

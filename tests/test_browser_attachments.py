@@ -173,4 +173,3 @@ def test_clearing_named_supervisors_reserves_the_required_attachment_place(brows
         assert h.detail(workspace) == before
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

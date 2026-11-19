@@ -124,4 +124,3 @@ def test_legacy_attendance_without_ids_and_repeated_supervisor_rows_remain_expor
         'start': '2026-10-04T14:00:00+03:00', 'end': '2026-10-04T16:00:00+03:00'})
     rows = list(csv.DictReader(io.StringIO(exports(data)[0])))
     assert rows[1]['team'] == rows[-1]['team'] == 'Supervisor: Dr X — R2 A, R1 B'
-# Include this file in hosted supervision and team-lead qualification.

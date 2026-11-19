@@ -37,4 +37,3 @@ def test_removing_the_named_supervisor_is_refused_with_the_next_step(browser, li
         assert h.detail(w) == before
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

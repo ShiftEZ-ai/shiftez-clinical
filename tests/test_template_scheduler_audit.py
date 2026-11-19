@@ -153,4 +153,3 @@ def test_stricter_safety_adjustments_preserve_historical_evidence_and_can_be_cle
     assert cleared['rule_adjustments'] == []
     restored = next(p for p in h.snapshot(cleared)['policies'] if p['id'] == policy['id'])
     assert restored['definition'] == policy['definition']
-# Include this file in hosted supervision and team-lead qualification.

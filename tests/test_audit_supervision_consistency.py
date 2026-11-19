@@ -152,4 +152,3 @@ def test_supervision_reach_matches_safe_windows_and_named_counts(h, maximum, com
     scoped = [(aware(f["start"]), aware(f["end"])) for f in findings if f["code"] == "SUPERVISOR_SCOPED_CAPACITY"]
     assert scoped == (expected if maximum == 0 else [])
     assert data == original
-# Include this file in hosted supervision and team-lead qualification.

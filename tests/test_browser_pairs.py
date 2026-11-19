@@ -116,4 +116,3 @@ def test_supervision_team_grouping_follows_each_sessions_recorded_supervisor(bro
         expect(grid.locator(f'.pg-row[data-row-person="{trainee}"] .pg-chip')).to_have_count(2)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

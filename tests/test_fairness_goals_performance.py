@@ -130,4 +130,3 @@ def test_fairness_goals_projection_reuses_across_api_apps(pg, monkeypatch):
             assert len(calls) == 1
     finally:
         other_app.state.engine.dispose()
-# Include this file in hosted supervision and team-lead qualification.

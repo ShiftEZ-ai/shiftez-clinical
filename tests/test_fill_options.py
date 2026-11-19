@@ -425,4 +425,3 @@ def test_fill_options_keep_overlap_and_ineligible_overrides_refused(h, blocker):
     assert candidate['status'] == 'blocked' and not candidate['override_allowed']
     assert any(f['code'] == 'TIME_OVERLAP' if blocker == 'overlap' else f['kind'] == 'NOT ELIGIBLE'
                for f in candidate['findings'])
-# Include this file in hosted supervision and team-lead qualification.

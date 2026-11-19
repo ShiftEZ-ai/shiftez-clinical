@@ -95,4 +95,3 @@ def test_distribution_selected_goal_equals_goals_for_draft_and_publication(h, me
         'metric': metric, 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}))
     assert reference['basis'] == ('reference_offered' if share_by == 'offered' else 'reference_available_days')
     h.get('coordinator', '/api/fairness/distribution?workspace_id=' + workspace['id'], status=422)
-# Include this file in hosted supervision and team-lead qualification.

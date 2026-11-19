@@ -241,4 +241,3 @@ def test_a_supervision_goals_distribution_shows_its_goal_card_numbers(browser, l
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

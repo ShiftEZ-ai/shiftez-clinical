@@ -482,4 +482,3 @@ def test_postgres_concurrent_designation_keeps_one_department_rota(pg):
         results = list(pool.map(designate, workspaces))
     assert sorted(r.status_code for r in results) == [200, 409]
     assert next(r for r in results if r.status_code == 409).json()['error']['code'] == 'ROTA_ALREADY_DESIGNATED'
-# Include this file in hosted supervision and team-lead qualification.

@@ -152,4 +152,3 @@ def test_department_draft_closure_cpu_budget(department_draft_closure):
     from tests.test_scheduler_performance import _budget
     # Native measurement: 4.4 ms for 540 duties; allow ample runner headroom and coverage tracing.
     assert department_draft_closure[3] < _budget(0.1)
-# Include this file in hosted supervision and team-lead qualification.

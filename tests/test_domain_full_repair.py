@@ -88,4 +88,3 @@ def test_pattern_conjunction_uses_one_constraint_and_exact_boolean_cost(worked):
     solver.parameters.num_search_workers = 1
     assert solver.solve(model) == cp_model.OPTIMAL
     assert solver.value(breaches['gap-wish']) == (worked == 5)
-# Include this file in hosted supervision and team-lead qualification.

@@ -375,4 +375,3 @@ def test_frozen_and_authoring_default_additions_match(version, strength, existin
             'amount': line['numbers']['max']['value']}}).rule
         assert quota.starts_on.isoformat() == '2000-01-01' and quota.ends_on is None and quota.repeat
         assert quota.window_alignment in ('calendar_week', 'calendar_month')
-# Include this file in hosted supervision and team-lead qualification.

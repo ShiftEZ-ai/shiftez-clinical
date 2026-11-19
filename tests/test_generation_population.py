@@ -393,4 +393,3 @@ def test_generation_apply_population_change_moves_currency_hint(h):
         after = currency_hint(db, db.get(m.Workspace, w['id']))
     assert reply['reconciliation']['population_recorded']
     assert after['content_revision'] == before['content_revision'] + 1
-# Include this file in hosted supervision and team-lead qualification.

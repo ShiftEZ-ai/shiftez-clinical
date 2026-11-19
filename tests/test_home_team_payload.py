@@ -82,4 +82,3 @@ def test_home_calendar_shows_paired_rank_and_supervisor_presence(pg, present):
     assert duty['supervisor_person_id'] == supervisor
     assert unrelated not in calendar['pair_names']
     assert unrelated not in duty['pair_ranks']
-# Include this file in hosted supervision and team-lead qualification.

@@ -218,4 +218,3 @@ def test_score_trend_never_draws_a_score_in_the_running_blue(browser, live_serve
             assert p['fill'] == p['dot'], p  # the key shows the same colour as the point
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

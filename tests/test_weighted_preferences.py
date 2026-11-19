@@ -390,4 +390,3 @@ def test_preferred_attachment_is_a_shared_preference_item(chosen, expected):
                                'starts_on': '2020-01-01', 'ends_on': None}]
     loss, _ = _components(snapshot)
     assert loss == expected
-# Include this file in hosted supervision and team-lead qualification.

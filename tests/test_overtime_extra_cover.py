@@ -406,4 +406,3 @@ def test_job_history_preserves_optional_extra_cover_counts_and_complete_outcome(
 @pytest.mark.postgres
 def test_job_history_preserves_optional_extra_cover_counts_postgres(pg):
     test_job_history_preserves_optional_extra_cover_counts_and_complete_outcome(pg)
-# Include this file in hosted supervision and team-lead qualification.

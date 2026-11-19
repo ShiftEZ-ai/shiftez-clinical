@@ -264,4 +264,3 @@ def test_evaluate_preserves_explicit_authority_contract_and_owns_absence_prepara
         assert v.evaluate(source) == actual
     assert all(source[k] is value for k, value in supplied.items())
     assert {k: value for k, value in source.items() if k not in supplied} == public
-# Include this file in hosted supervision and team-lead qualification.

@@ -514,4 +514,3 @@ def test_every_surface_draws_the_same_person_pill(browser, live_server, h, width
         assert month[:4] == looks['week'][:4] and month[-1] == '20px', month  # --pill-h-compact, same pill otherwise
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

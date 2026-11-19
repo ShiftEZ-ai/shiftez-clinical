@@ -451,4 +451,3 @@ def test_collection_sort_works_in_cards_board_headers_and_saved_clear(browser, l
         expect(sort.get_by_role('radiogroup', name='Sort direction')).to_have_count(0)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

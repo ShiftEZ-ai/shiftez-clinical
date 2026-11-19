@@ -401,4 +401,3 @@ def test_converted_primitive_replacement_uses_authenticated_default_lineage(h, k
     else:
         assert response['record']['status'] == 'proposed'
         assert response['record']['definition']['replaces_id'] == current_id
-# Include this file in hosted supervision and team-lead qualification.

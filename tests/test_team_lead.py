@@ -460,4 +460,3 @@ def test_adding_a_lead_cap_on_update_points_to_workload_limit(h):
     value = {'name': created['name'], 'starts_on': created['starts_on'], 'definition': {'lead': {'most_turns': 2}}}
     refused = h.configure('assignment_types', value, created['id'], created['revision'], status=422)
     assert refused['error']['code'] == 'USE_RULE_CATALOGUE'
-# Include this file in hosted supervision and team-lead qualification.

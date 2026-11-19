@@ -235,4 +235,3 @@ def test_staff_and_lead_staff_person_filter_preserves_person_and_programme_scope
                 expect(page.locator(f'#main [data-row="{records[member]}"]')).to_have_count(1)
     finally:
         context.close()
-# Include this file in hosted supervision and team-lead qualification.

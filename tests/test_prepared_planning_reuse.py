@@ -269,4 +269,3 @@ def test_retained_check_time_uses_the_final_writer_clock(harness, monkeypatch, a
                       'reason': 'Keep the existing check time'}, revision=workspace['revision'])
     assert result['validation']['evaluated_at'] == clock[0].isoformat()
     assert clock[0] == at + timedelta(minutes=1)
-# Include this file in hosted supervision and team-lead qualification.
