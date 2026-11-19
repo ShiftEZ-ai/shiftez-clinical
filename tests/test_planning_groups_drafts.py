@@ -396,9 +396,544 @@ def test_generation_rejects_broader_populations_and_accepts_owned_conditions(h):
     refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation'},
         revision=workspace['revision'], status=403)
     assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'])) is None
     accepted = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
         'generation_scope': {'conditions': tree(h.seed['people'][0])}}, revision=workspace['revision'])
     assert accepted['job']['status'] == 'queued'
+
+
+def test_generation_scope_fields_refuse_outside_and_accept_owned_population(h):
+    from packages.contracts.schemas import GENERATION_SCOPE_FIELDS
+
+    own, outside = h.seed['people'][:2]
+    identity(h, 'generation_scope_outside', ['operator'], person=outside)
+    workspace, _, _ = integrated(h, people=[], ends_on='2026-10-07')
+    settings(h, group_lookahead='none')
+    starts_on, ends_on = date(2020, 1, 1), date(2026, 10, 7)
+    with transaction(h.app.state.engine, write=True) as db:
+        department_id = h.seed['department_id']
+        own_category = m.Category(department_id=department_id, name='Owned scope category', starts_on=starts_on,
+                                  ends_on=ends_on, active=True)
+        outside_category = m.Category(department_id=department_id, name='Outside scope category', starts_on=starts_on,
+                                      ends_on=ends_on, active=True)
+        own_capability = m.Capability(department_id=department_id, name='Owned scope capability', starts_on=starts_on,
+                                      ends_on=ends_on, active=True)
+        outside_capability = m.Capability(department_id=department_id, name='Outside scope capability',
+                                          starts_on=starts_on, ends_on=ends_on, active=True)
+        own_programme = m.Programme(department_id=department_id, name='Owned scope programme', starts_on=starts_on,
+                                    ends_on=ends_on, active=True)
+        outside_programme = m.Programme(department_id=department_id, name='Outside scope programme', starts_on=starts_on,
+                                        ends_on=ends_on, active=True)
+        db.add_all([own_category, outside_category, own_capability, outside_capability, own_programme, outside_programme])
+        db.flush()
+        own_cohort = m.Cohort(department_id=department_id, programme_id=own_programme.id, name='Owned scope cohort',
+                              starts_on=starts_on, ends_on=ends_on)
+        outside_cohort = m.Cohort(department_id=department_id, programme_id=outside_programme.id,
+                                 name='Outside scope cohort', starts_on=starts_on, ends_on=ends_on)
+        own_rotation_type = m.RotationType(department_id=department_id, name='Owned scope rotation', starts_on=starts_on,
+                                           ends_on=ends_on, active=True)
+        outside_rotation_type = m.RotationType(department_id=department_id, name='Outside scope rotation',
+                                               starts_on=starts_on, ends_on=ends_on, active=True)
+        own_service = m.Service(department_id=department_id, name='Owned scope service', starts_on=starts_on,
+                                ends_on=ends_on, active=True)
+        outside_service = m.Service(department_id=department_id, name='Outside scope service', starts_on=starts_on,
+                                    ends_on=ends_on, active=True)
+        own_tag = m.Tag(department_id=department_id, name='Owned scope tag', labels=['people'])
+        outside_tag = m.Tag(department_id=department_id, name='Outside scope tag', labels=['people'])
+        db.add_all([own_cohort, outside_cohort, own_rotation_type, outside_rotation_type,
+                    own_service, outside_service, own_tag, outside_tag])
+        db.flush()
+        db.add_all([
+            m.Membership(department_id=department_id, person_id=own, category_id=own_category.id,
+                         starts_on=starts_on, ends_on=ends_on),
+            m.Membership(department_id=department_id, person_id=outside, category_id=outside_category.id,
+                         starts_on=starts_on, ends_on=ends_on),
+            m.CapabilityGrant(department_id=department_id, person_id=own, capability_id=own_capability.id,
+                              granted_by=h.seed['identities']['credentialer'], evidence='Synthetic scope evidence',
+                              starts_on=starts_on, ends_on=ends_on),
+            m.CapabilityGrant(department_id=department_id, person_id=outside, capability_id=outside_capability.id,
+                              granted_by=h.seed['identities']['credentialer'], evidence='Synthetic scope evidence',
+                              starts_on=starts_on, ends_on=ends_on),
+            m.ProgrammeMembership(department_id=department_id, person_id=own, programme_id=own_programme.id,
+                                  starts_on=starts_on, ends_on=ends_on),
+            m.ProgrammeMembership(department_id=department_id, person_id=outside, programme_id=outside_programme.id,
+                                  starts_on=starts_on, ends_on=ends_on),
+            m.Rotation(department_id=department_id, person_id=own, cohort_id=own_cohort.id,
+                       rotation_type_id=own_rotation_type.id, service_id=own_service.id,
+                       starts_on=starts_on, ends_on=ends_on),
+            m.Rotation(department_id=department_id, person_id=outside, cohort_id=outside_cohort.id,
+                       rotation_type_id=outside_rotation_type.id, service_id=outside_service.id,
+                       starts_on=starts_on, ends_on=ends_on),
+            m.Eligibility(department_id=department_id, person_id=own, service_id=own_service.id,
+                          starts_on=starts_on, ends_on=ends_on),
+            m.Eligibility(department_id=department_id, person_id=outside, service_id=outside_service.id,
+                          starts_on=starts_on, ends_on=ends_on),
+            m.TagMember(department_id=department_id, tag_id=own_tag.id, kind='people', member_id=own,
+                        starts_on=starts_on, ends_on=ends_on),
+            m.TagMember(department_id=department_id, tag_id=outside_tag.id, kind='people', member_id=outside,
+                        starts_on=starts_on, ends_on=ends_on),
+        ])
+
+    values = {
+        'category_ids': (own_category.id, outside_category.id),
+        'capability_ids': (own_capability.id, outside_capability.id),
+        'programme_ids': (own_programme.id, outside_programme.id),
+        'rotation_type_ids': (own_rotation_type.id, outside_rotation_type.id),
+        'cohort_ids': (own_cohort.id, outside_cohort.id),
+        'tags': (own_tag.name, outside_tag.name),
+        'person_ids': (own, outside),
+        'eligible_service_ids': (own_service.id, outside_service.id),
+        'roles': ('staff', 'operator'),
+    }
+    assert set(values) == set(GENERATION_SCOPE_FIELDS)
+    for field in GENERATION_SCOPE_FIELDS:
+        for value, status in zip((values[field][1], values[field][0]), (403, 200)):
+            result = h.command('coordinator', 'job.create', {
+                'workspace_id': workspace['id'], 'kind': 'generation',
+                'generation_scope': {'conditions': {'match': 'all', 'conditions': [
+                    {'field': field, 'values': [value]}]}},
+            }, revision=workspace['revision'], status=status)
+            if status == 200:
+                assert result['job']['status'] == 'queued'
+                h.command('coordinator', 'job.cancel', {'reason': 'Synthetic scope parity case'},
+                          result['job']['id'], result['job']['revision'])
+
+
+@pytest.mark.parametrize('indexed', [False, True])
+def test_generation_role_condition_does_not_mutate_caller_data(indexed):
+    from packages.domain.conditions import rule_holds
+    from packages.domain.time import aware
+
+    data = {'organisation': {'timezone': 'UTC'}, 'role_bindings': [
+        {'person_id': 'subject', 'role': 'staff', 'starts_on': '2020-01-01'},
+        {'person_id': 'subject', 'role': 'auditor', 'ends_on': '2026-10-04'},
+        {'person_id': 'subject', 'role': 'operator', 'revoked': True},
+        {'person_id': 'other', 'role': 'coordinator'},
+    ]}
+    if indexed:
+        data['_role_bindings_by_person'] = {
+            person: [row for row in data['role_bindings'] if row['person_id'] == person]
+            for person in ('subject', 'other')}
+    before = deepcopy(data)
+    a, b = aware('2026-10-04T08:00:00+00:00'), aware('2026-10-04T12:00:00+00:00')
+    holds = rule_holds(data, 'subject', None, a, b)
+    assert data == before
+    assert holds('roles') == {'staff'}
+    assert rule_holds(data, 'other', None, a, b)('roles') == {'coordinator'}
+    assert data == before
+
+
+@pytest.mark.parametrize('control', ['continue', 'lease_retry'])
+def test_default_scope_generation_with_overlapping_memberships_can_continue_or_retry(h, control):
+    from dataclasses import replace
+    from apps.api.main import create_app
+    from apps.worker.main import JOB_LEASE_SECONDS, claim_job, prepare_deferred_generation, process_one
+
+    h.settings = replace(h.settings, generation_engine='cp_sat')
+    h.app = create_app(h.settings)
+    own, overlapping = h.seed['people'][:2]
+    group(h, people=[overlapping], owner='admin', primary_priority=5)
+    workspace, shift, selected = integrated(h, membership=tree(own, overlapping))
+    settings(h, group_lookahead='none')
+    payload = {'workspace_id': workspace['id'], 'kind': 'generation',
+               'planning_group_version_id': selected['id']}
+    refused = h.command('coordinator', 'job.create', {**payload,
+        'generation_scope': {'conditions': tree(own, overlapping)}},
+        revision=workspace['revision'], status=403)
+    assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'])) is None
+    queued = h.command('coordinator', 'job.create', payload, revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    request = deepcopy(claim['input']['generation_request'])
+    assert 'generation_scope' not in request
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, queued['id'])
+        assert not row.input_snapshot.get('_deferred_generation')
+        assert row.input_snapshot['planning_population'][shift['id']] == [own]
+        if control == 'continue':
+            row.status, row.completed_at, row.result = 'succeeded', m.now(), {'status': 'needs_more_time'}
+        else:
+            row.heartbeat_at = m.now() - timedelta(seconds=JOB_LEASE_SECONDS + 1)
+    target = (h.command('coordinator', 'job.continue', {'reason': REASON}, queued['id'])['job']
+              if control == 'continue' else queued)
+    assert process_one(h.app.state.engine, settings=h.settings)
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Job, target['id'])
+        assert row.status == 'succeeded' and row.error_code is None
+        assert row.attempts == (2 if control == 'lease_retry' else 1)
+        assert row.input_snapshot['generation_request'] == request
+        assert row.input_snapshot['planning_population'][shift['id']] == [own]
+
+
+def _prepared_owned_group_job(h):
+    from dataclasses import replace
+    from apps.api.main import create_app
+    from apps.worker.main import claim_job, prepare_deferred_generation
+
+    h.settings = replace(h.settings, generation_engine='cp_sat')
+    h.app = create_app(h.settings)
+    workspace, _, selected = integrated(h, people=[])
+    settings(h, group_lookahead='none')
+    scope = {'conditions': tree(h.seed['people'][0])}
+    queued = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': scope},
+        revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    return workspace, selected, queued
+
+
+def test_prepared_group_generation_can_continue_with_owned_population(h):
+    from apps.worker.main import process_one
+
+    workspace, _, queued = _prepared_owned_group_job(h)
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, queued['id'])
+        row.status, row.completed_at, row.result = 'succeeded', m.now(), {'status': 'needs_more_time'}
+    continued = h.command('coordinator', 'job.continue', {'reason': REASON}, queued['id'])['job']
+    assert process_one(h.app.state.engine, settings=h.settings)
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Job, continued['id'])
+        assert row.status == 'succeeded' and row.error_code is None
+        assert db.get(m.Job, queued['id']).workspace_id == workspace['id']
+
+
+def test_prepared_group_generation_lease_retry_rechecks_owned_population(h):
+    from apps.worker.main import JOB_LEASE_SECONDS, claim_job, prepare_deferred_generation
+
+    _, _, queued = _prepared_owned_group_job(h)
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, queued['id'])
+        row.heartbeat_at = m.now() - timedelta(seconds=JOB_LEASE_SECONDS + 1)
+        retry = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, retry, h.settings)
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Job, queued['id'])
+        assert row.status == 'running' and row.error_code == 'WORKER_LEASE_EXPIRED'
+
+
+def test_prepared_group_generation_broad_retry_refuses_before_supersession(h):
+    from apps.api.errors import Problem
+    from apps.worker.main import JOB_LEASE_SECONDS, claim_job, prepare_deferred_generation
+
+    workspace, selected, queued = _prepared_owned_group_job(h)
+    with transaction(h.app.state.engine, write=True) as db:
+        older = m.Job(department_id=h.seed['department_id'], workspace_id=workspace['id'],
+            requested_by=h.seed['identities']['coordinator'], kind='generation', status='succeeded',
+            input_fingerprint='older-prepared-run', input_snapshot={}, supersedes=[],
+            created_at=m.now() - timedelta(minutes=1), result={'status': 'candidate_feasible'})
+        db.add(older)
+        row = db.get(m.Job, queued['id'])
+        row.input_snapshot = {**row.input_snapshot, 'planning_group_version_id': selected['id']}
+        row.heartbeat_at = m.now() - timedelta(seconds=JOB_LEASE_SECONDS + 1)
+    changed = h.command('admin', 'planning_group.update', {'definition': {
+        **selected['definition'], 'membership': tree(h.seed['people'][1])}, 'reason': REASON},
+        selected['group_id'], selected['revision'])['group']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, queued['id'])
+        row.input_snapshot = {**row.input_snapshot, 'planning_group_version_id': changed['id'],
+            'generation_request': {**row.input_snapshot['generation_request'], 'planning_group_version_id': changed['id']}}
+        retry = claim_job(db)
+    with pytest.raises(Problem) as refused:
+        prepare_deferred_generation(h.app.state.engine, retry, h.settings)
+    assert refused.value.code == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Job, older.id).supersedes == []
+        assert db.get(m.Job, queued['id']).supersedes == []
+
+
+def test_role_scoped_group_generation_rejects_broader_roles_and_accepts_owned_roles(h):
+    identity(h, 'role_scope_staff', ['staff', 'coordinator'], person=h.seed['people'][0])
+    identity(h, 'role_scope_coordinator', ['coordinator'], person=h.seed['people'][1])
+    role_membership = {'match': 'all', 'conditions': [{'field': 'roles', 'values': ['staff']}]}
+    workspace, _, selected = integrated(h, people=[], membership=role_membership)
+    settings(h, group_lookahead='none')
+    broad = {'conditions': {'match': 'all', 'conditions': [{'field': 'roles', 'values': ['coordinator']}]}}
+    refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': broad},
+        revision=workspace['revision'], status=403)
+    assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'])) is None
+    owned = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': {'conditions': role_membership}},
+        revision=workspace['revision'])
+    assert owned['job']['status'] == 'queued'
+    h.command('coordinator', 'job.cancel', {'reason': REASON}, owned['job']['id'], owned['job']['revision'])
+    person_scope = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': {'conditions': tree(h.seed['people'][0])}},
+        revision=workspace['revision'])
+    assert person_scope['job']['status'] == 'queued'
+
+
+def test_generation_authority_distinguishes_same_time_duties_with_different_services(h):
+    workspace, _, selected = integrated(h, people=[])
+    settings(h, group_lookahead='none')
+    workspace = h.shift(workspace, people=[], service=1, role='admin')['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        services = list(db.scalars(select(m.ShiftService.service_id).join(
+            m.Shift, m.Shift.id == m.ShiftService.shift_id).where(m.Shift.workspace_id == workspace['id'])
+            .order_by(m.Shift.start, m.Shift.id)))
+        assert len(services) == 2 and services[0] != services[1]
+        capability = m.Capability(department_id=h.seed['department_id'], name='Synthetic scope capability',
+                                  starts_on=date(2020, 1, 1), active=True)
+        db.add(capability)
+        db.flush()
+        db.add_all([m.CapabilityGrant(department_id=h.seed['department_id'], person_id=person,
+            capability_id=capability.id, service_id=service, granted_by=h.seed['identities']['credentialer'],
+            evidence=REASON, starts_on=date(2020, 1, 1))
+            for person, service in ((h.seed['people'][0], None), (h.seed['people'][1], services[1]))])
+    refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': {'conditions': {'match': 'all',
+            'conditions': [{'field': 'capability_ids', 'values': [capability.id]}]}}},
+        revision=workspace['revision'], status=403)
+    assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'])) is None
+
+
+@pytest.mark.parametrize('scoped', [False, True])
+def test_compact_population_matches_full_snapshot_for_every_group_scope_field(h, scoped):
+    from apps.api.services.planning_groups import _compact_generation_snapshot
+    from apps.api.snapshots import domain_snapshot
+    from packages.domain.generation_scope import population_allows
+
+    role_identity = identity(h, 'role_scope_equivalence', ['auditor'], person=h.seed['people'][0])
+    workspace, shift, _ = integrated(h, people=[])
+    later = h.shift(workspace, start='2026-10-08T08:00:00+03:00', end='2026-10-08T12:00:00+03:00',
+                    people=[], role='admin')
+    later_shift_id = later['shifts'][0]['id']
+    scope_ends = date(2026, 10, 7)
+    with transaction(h.app.state.engine) as db:
+        workspace_row = db.get(m.Workspace, workspace['id'])
+        for binding in db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == role_identity)):
+            binding.ends_on = scope_ends
+        programme = m.Programme(department_id=h.seed['department_id'], name='Equivalence programme',
+                                starts_on=date(2020, 1, 1), ends_on=date(2030, 1, 1), active=True)
+        db.add(programme)
+        db.flush()
+        cohort = m.Cohort(department_id=h.seed['department_id'], programme_id=programme.id,
+                          name='Equivalence cohort', starts_on=date(2020, 1, 1), ends_on=date(2030, 1, 1))
+        rotation_type = m.RotationType(department_id=h.seed['department_id'], name='Equivalence rotation',
+                                       starts_on=date(2020, 1, 1), ends_on=date(2030, 1, 1), active=True)
+        db.add_all([cohort, rotation_type])
+        db.flush()
+        db.add_all([
+            m.ProgrammeMembership(department_id=h.seed['department_id'], person_id=h.seed['people'][0],
+                                  programme_id=programme.id, starts_on=date(2020, 1, 1), ends_on=scope_ends),
+            m.Rotation(department_id=h.seed['department_id'], person_id=h.seed['people'][0], cohort_id=cohort.id,
+                       rotation_type_id=rotation_type.id, service_id=h.seed['services'][0],
+                       starts_on=date(2020, 1, 1), ends_on=scope_ends),
+        ])
+        expired_category = m.Category(department_id=h.seed['department_id'], name='Expired scope category',
+                                      starts_on=date(2020, 1, 1), ends_on=scope_ends, active=True)
+        db.add(expired_category)
+        db.flush()
+        db.add(m.Membership(department_id=h.seed['department_id'], person_id=h.seed['people'][0],
+                            category_id=expired_category.id, starts_on=date(2020, 1, 1), ends_on=scope_ends))
+        tag = m.Tag(department_id=h.seed['department_id'], name='Equivalence tag', labels=['people'])
+        db.add(tag)
+        db.flush()
+        db.add(m.TagMember(department_id=h.seed['department_id'], tag_id=tag.id, kind='people',
+                           member_id=h.seed['people'][0], starts_on=date(2020, 1, 1), ends_on=scope_ends))
+        full = domain_snapshot(db, workspace_row, include_fairness=False, include_objectives=False,
+                               include_fairness_history=False)
+        compact = _compact_generation_snapshot(db, workspace_row, s.JobInput(
+            workspace_id=workspace['id'], kind='generation'))
+    person_id = h.seed['people'][0]
+    person_rows = {name: next((row for row in compact.get(name, [])
+                               if row.get('person_id') == person_id), {})
+                   for name in ('memberships', 'grants', 'programme_memberships', 'rotations')}
+    assert all(person_rows[name] for name in person_rows)
+    assert compact['role_bindings']
+    conditions = [
+        ('person_ids', [person_id]),
+        ('category_ids', [expired_category.id]),
+        ('capability_ids', [person_rows['grants'].get('capability_id', 'missing-capability')]),
+        ('programme_ids', [person_rows['programme_memberships'].get('programme_id', 'missing-programme')]),
+        ('rotation_type_ids', [person_rows['rotations'].get('rotation_type_id', 'missing-rotation-type')]),
+        ('cohort_ids', [person_rows['rotations'].get('cohort_id', 'missing-cohort')]),
+        ('eligible_service_ids', [compact['eligibilities'][0]['service_id'] if compact['eligibilities'] else 'missing-service']),
+        ('tags', ['Equivalence tag']),
+        ('roles', ['auditor']),
+    ]
+    assert {field for field, _ in conditions} == set(s.GENERATION_SCOPE_FIELDS)
+    compact_shift = next(row for row in compact['shifts'] if row['id'] == shift['id'])
+    full_shift = next(row for row in full['shifts'] if row['id'] == shift['id'])
+    for field, values in conditions:
+        scope = {'conditions': {'match': 'all', 'conditions': [{'field': field, 'values': values}]}}
+        if scoped:
+            with transaction(h.app.state.engine) as db:
+                compact = _compact_generation_snapshot(db, db.get(m.Workspace, workspace['id']),
+                    s.JobInput(workspace_id=workspace['id'], kind='generation', generation_scope=scope), scope=scope)
+            compact_shift = next(row for row in compact['shifts'] if row['id'] == shift['id'])
+        compact_requested = {**compact, 'generation_scope': scope}
+        full_requested = {**full, 'generation_scope': scope}
+        assert population_allows(compact_requested, compact_shift, person_id) == population_allows(
+            full_requested, full_shift, person_id), field
+        if field in {'category_ids', 'programme_ids', 'rotation_type_ids', 'cohort_ids', 'roles'}:
+            compact_later = next(row for row in compact['shifts'] if row['id'] == later_shift_id)
+            full_later = next(row for row in full['shifts'] if row['id'] == later_shift_id)
+            assert not population_allows(compact_requested, compact_later, person_id)
+            assert not population_allows(full_requested, full_later, person_id)
+
+
+def test_broader_selected_group_generation_refuses_before_insert(h):
+    workspace, _, first = integrated(h)
+    settings(h, group_lookahead='none')
+    def reject_insert(*args):
+        pytest.fail('unauthorized generation reached Job INSERT')
+
+    event.listen(m.Job, 'before_insert', reject_insert)
+    try:
+        refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+            'planning_group_version_id': first['id'],
+            'generation_scope': {'conditions': tree(h.seed['people'][0], h.seed['people'][1])}},
+            revision=workspace['revision'], status=403)
+    finally:
+        event.remove(m.Job, 'before_insert', reject_insert)
+    assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'])) is None
+
+
+def test_refused_group_generation_does_not_supersede_other_group_runs(h):
+    workspace, _, first = integrated(h)
+    other = group(h, people=[h.seed['people'][1]], owner='admin')
+    settings(h, group_lookahead='none')
+    broad = {'conditions': tree(h.seed['people'][0], h.seed['people'][1])}
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.Job(department_id=h.seed['department_id'], workspace_id=workspace['id'],
+            requested_by=h.seed['identities']['admin'], kind='generation', status='succeeded',
+            input_fingerprint='other-succeeded', input_snapshot={
+                '_deferred_generation': True, 'planning_group_version_id': other['id'],
+                'generation_scope': broad}, supersedes=[], created_at=m.now() - timedelta(minutes=1),
+            completed_at=m.now(), result={'status': 'candidate_feasible'}))
+    refused = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': first['id'],
+        'generation_scope': broad},
+        revision=workspace['revision'], status=403)
+    assert refused['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine, write=True) as db:
+        rows = list(db.scalars(select(m.Job).where(m.Job.workspace_id == workspace['id'])))
+        assert len(rows) == 1 and rows[0].supersedes == []
+
+
+def test_authorized_group_generation_supersedes_only_after_worker_guard(h):
+    from apps.api.services.jobs import require_latest_run
+    workspace, _, selected = integrated(h)
+    settings(h, group_lookahead='none')
+    scope = {'conditions': tree(h.seed['people'][0])}
+    first = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': scope},
+        revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine, write=True) as db:
+        older = db.get(m.Job, first['id'])
+        older.status, older.completed_at = 'succeeded', m.now()
+        older.result = {'status': 'candidate_feasible'}
+    second = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': scope},
+        revision=workspace['revision'])['job']
+    from apps.worker.main import claim_job, prepare_deferred_generation
+    with transaction(h.app.state.engine) as db:
+        queued = db.get(m.Job, second['id'])
+        assert queued.supersedes == []
+        assert 'score_baseline' not in queued.input_snapshot
+        assert db.get(m.Job, first['id']).supersedes == []
+        require_latest_run(db, db.get(m.Job, first['id']))
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine) as db:
+        prepared = db.get(m.Job, second['id'])
+        assert prepared.supersedes == [first['id']]
+        assert 'score_baseline' not in prepared.input_snapshot
+
+
+def test_continue_rechecks_current_group_population_before_creating_job(h):
+    from dataclasses import replace
+    from apps.api.main import create_app
+    from apps.worker.main import process_one
+
+    h.settings = replace(h.settings, generation_engine='cp_sat')
+    h.app = create_app(h.settings)
+    workspace, _, selected = integrated(h)
+    settings(h, group_lookahead='none')
+    scope = {'conditions': tree(h.seed['people'][0])}
+    queued = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id'], 'generation_scope': scope},
+        revision=workspace['revision'])['job']
+    assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine, write=True) as db:
+        previous = db.get(m.Job, queued['id'])
+        previous.result = {**(previous.result or {}), 'status': 'needs_more_time'}
+        previous.input_snapshot = {**previous.input_snapshot,
+            'planning_group_version_id': selected['id'],
+            'generation_request': {'workspace_id': workspace['id'], 'kind': 'generation',
+                                   'planning_group_version_id': selected['id'],
+                                   'generation_scope': scope}}
+    changed = h.command('admin', 'planning_group.update', {'definition': {
+        **selected['definition'], 'membership': tree(h.seed['people'][1])}, 'reason': REASON},
+        selected['group_id'], selected['revision'])['group']
+    with transaction(h.app.state.engine) as db:
+        previous = db.get(m.Job, queued['id'])
+        previous.input_snapshot = {**previous.input_snapshot,
+            'planning_group_version_id': changed['id'],
+            'generation_request': {'workspace_id': workspace['id'], 'kind': 'generation',
+                                   'planning_group_version_id': changed['id'],
+                                   'generation_scope': scope}}
+    denied = h.command('coordinator', 'job.continue', {'minutes': 1, 'reason': REASON},
+                       queued['id'], status=403)
+    assert denied['error']['code'] == 'GROUP_GENERATION_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.id != queued['id'],
+                                                m.Job.workspace_id == workspace['id'],
+                                                m.Job.kind == 'generation')) is None
+        assert db.get(m.Job, queued['id']).supersedes == []
+
+
+def test_worker_scope_refusal_is_audited_private_and_sanitized(h):
+    from apps.worker.main import process_one
+
+    identity(h, 'unrelated_scheduler', ['coordinator'])
+    workspace, shift, selected = integrated(h, co_editor_identity_ids=[h.seed['identities']['admin']])
+    settings(h, group_lookahead='none')
+    queued = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'generation',
+        'planning_group_version_id': selected['id']}, revision=workspace['revision'])['job']
+    outside = h.seed['people'][1]
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, queued['id'])
+        row.input_snapshot = {**row.input_snapshot, 'generation_request': {**row.input_snapshot['generation_request'],
+            'generation_scope': {'conditions': tree(h.seed['people'][0], outside)}}}
+        row.progress = {'stage': 'checking', 'solution': {'pairs': [{'shift_id': shift['id'], 'person_id': outside}]}}
+
+    def unexpected_scheduler(*args, **kwargs):
+        pytest.fail('scope refusal must not call the scheduler')
+
+    assert process_one(h.app.state.engine, scheduler=unexpected_scheduler)
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Job, queued['id'])
+        assert row.status == 'failed' and row.error_code == 'GROUP_GENERATION_SCOPE'
+        assert row.supersedes == []
+        audit = db.scalars(select(m.AuditEvent).where(m.AuditEvent.correlation_id == row.id,
+            m.AuditEvent.action == 'command.refused')).one()
+        assert audit.detail['error_code'] == 'GROUP_GENERATION_SCOPE' and audit.detail['status'] == 403
+    for role in ('coordinator', 'admin'):
+        for suffix in ('', '?full=true', '/status'):
+            response = h.get(role, '/api/jobs/' + queued['id'] + suffix)['job']
+            assert response['error_code'] == 'GROUP_GENERATION_SCOPE'
+            assert response['input_fingerprint'] is None
+            assert 'generation_scope' not in response and 'planning_context' not in response
+            assert outside not in str(response)
+        assert queued['id'] in {row['id'] for row in h.get(role, '/api/jobs')['jobs']}
+    for suffix in ('', '/status'):
+        h.get('unrelated_scheduler', '/api/jobs/' + queued['id'] + suffix, status=404)
+    assert queued['id'] not in {row['id'] for row in h.get('unrelated_scheduler', '/api/jobs')['jobs']}
 
 
 def test_generation_apply_and_bulk_cannot_bypass_current_slice_authority(h):

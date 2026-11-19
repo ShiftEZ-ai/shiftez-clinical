@@ -4,6 +4,7 @@ import re
 
 import pytest
 from sqlalchemy import event, func, insert, select
+from uuid import uuid4
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -80,6 +81,71 @@ def test_jobs_history_keeps_the_latest_hundred_runs_without_loading_proposals(h)
     assert len(cached_statements) == 1
     assert not re.search(r'\bSELECT\s+(?:DISTINCT\s+)?jobs\.', cached_statements[0], re.I)
     assert cached.headers['etag'] == response.headers['etag']
+
+
+def test_jobs_history_filters_private_refusals_before_paging(h):
+    """Private scope refusals do not consume a page while readable jobs remain."""
+    workspace = h.workspace()
+    first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(insert(m.Job), [
+            {'id': f'private-refusal-{index}', 'department_id': h.seed['department_id'],
+             'workspace_id': workspace['id'], 'requested_by': h.seed['identities']['admin'],
+             'kind': 'generation', 'status': 'failed', 'error_code': 'GROUP_GENERATION_SCOPE',
+             'input_fingerprint': f'private-{index}', 'created_at': first + timedelta(minutes=20 + index),
+             'input_snapshot': {'planning_group_version_id': 'unreadable-group', 'generation_engine': 'cp_sat'}}
+            for index in range(3)] + [
+            {'id': f'readable-run-{index}', 'department_id': h.seed['department_id'],
+             'workspace_id': workspace['id'], 'requested_by': h.seed['identities']['coordinator'],
+             'kind': 'generation', 'status': 'succeeded', 'input_fingerprint': f'readable-{index}',
+             'created_at': first + timedelta(minutes=index),
+             'input_snapshot': {'generation_engine': 'cp_sat'},
+             'result': {'status': 'candidate_feasible'}}
+            for index in range(3)])
+    page = h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'] + '&limit=2')
+    assert [row['id'] for row in page['jobs']] == ['readable-run-2', 'readable-run-1']
+    assert page['has_more']
+
+
+def test_jobs_history_excludes_superseded_group_refusals_before_paging(h):
+    """A refusal tied to an obsolete group version cannot consume the page."""
+    workspace = h.workspace()
+    current_settings = h.get('admin', '/api/planning-settings')['settings']
+    h.command('admin', 'planning.settings', {'definition': {
+        'coordinator_identity_ids': [h.seed['identities']['admin']]}, 'reason': 'History regression'},
+        revision=current_settings['revision'] if current_settings else None)
+    membership = {'match': 'all', 'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][0]]}]}
+    first = h.command('admin', 'planning_group.create', {'definition': {
+        'name': 'History group', 'starts_on': '2020-01-01', 'ends_on': None,
+        'membership': membership, 'owner_identity_ids': [h.seed['identities']['coordinator']],
+        'primary_priority': 10}, 'reason': 'History regression'})['group']
+    second = h.command('admin', 'planning_group.update', {'definition': {
+        **first['definition'], 'owner_identity_ids': [h.seed['identities']['admin']]},
+        'reason': 'Supersede history group'}, first['group_id'], first['revision'])['group']
+    first_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with transaction(h.app.state.engine, write=True) as db:
+        rows = []
+        for index in range(3):
+            job_id = f'obsolete-refusal-{index}'
+            rows.append({'id': job_id, 'department_id': h.seed['department_id'],
+                'workspace_id': workspace['id'], 'requested_by': h.seed['identities']['admin'],
+                'kind': 'generation', 'status': 'failed', 'error_code': 'GROUP_GENERATION_SCOPE',
+                'input_fingerprint': job_id, 'created_at': first_time + timedelta(minutes=20 + index),
+                'input_snapshot': {'planning_group_version_id': first['id'], 'generation_engine': 'cp_sat'}})
+            db.add(m.AuditEvent(id=str(uuid4()), department_id=h.seed['department_id'],
+                actor_id=h.seed['identities']['admin'], action='command.refused', target_id=workspace['id'],
+                reason='History regression', detail={'error_code': 'GROUP_GENERATION_SCOPE',
+                    'planning_group_version_id': first['id']}, correlation_id=job_id))
+        rows.extend({'id': f'visible-run-{index}', 'department_id': h.seed['department_id'],
+            'workspace_id': workspace['id'], 'requested_by': h.seed['identities']['coordinator'],
+            'kind': 'generation', 'status': 'succeeded', 'input_fingerprint': f'visible-{index}',
+            'created_at': first_time + timedelta(minutes=index),
+            'input_snapshot': {'generation_engine': 'cp_sat'},
+            'result': {'status': 'candidate_feasible'}} for index in range(3))
+        db.execute(insert(m.Job), rows)
+    page = h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'] + '&limit=2')
+    assert [row['id'] for row in page['jobs']] == ['visible-run-2', 'visible-run-1']
+    assert page['has_more']
 
 
 def test_jobs_list_etag_tracks_worker_create_and_finish(jobs_backend):

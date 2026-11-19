@@ -446,6 +446,10 @@ def job_record(row, *, include_result=True, include_events=False, include_progre
                input_snapshot=None, result_metadata=..., result_summary=...,
                input_fingerprint=..., include_error_detail=False):
     snapshot = row.input_snapshot if input_snapshot is None else input_snapshot
+    refused_group_scope = row.status == 'failed' and row.error_code == 'GROUP_GENERATION_SCOPE'
+    if refused_group_scope:
+        snapshot = {'generation_engine': (snapshot or {}).get('generation_engine', 'legacy'),
+                    '_deferred_generation': True}
     if isinstance(snapshot, dict) and snapshot.get('_deferred_generation'):
         input_fingerprint = None
     elif input_fingerprint is ...:
@@ -460,6 +464,9 @@ def job_record(row, *, include_result=True, include_events=False, include_progre
         value['progress'].pop('solution', None)
     result = (row.result if result_summary is ... else result_summary) if include_result else (
         row.result if result_metadata is ... else result_metadata)
+    if refused_group_scope:
+        detail = job_error_detail(result)
+        result = {'status': 'refused', **({'error_detail': detail} if detail is not None else {})}
     error_detail = job_error_detail(result) if include_error_detail else None
     if include_result:
         value['result'] = job_result_summary(result)

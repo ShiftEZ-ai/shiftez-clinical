@@ -2,7 +2,7 @@ from .workspace_access import shared_clause
 from copy import deepcopy
 import secrets
 from packages.contracts import schemas as s
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, or_, select, update
 from sqlalchemy.orm import defer
 from uuid import uuid4
 from apps.api import models as m
@@ -101,10 +101,34 @@ def baseline_generation_context(db, workspace):
     return defaults, row
 
 
-def queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity,
-                             group_metadata=None):
+def generation_request_from_snapshot(workspace, snapshot):
+    """Rebuild the authority input after worker preparation replaced the request snapshot."""
+    return snapshot.get('generation_request') or {
+        'workspace_id': workspace.id,
+        'kind': 'generation',
+        **({'generation_scope': snapshot['generation_scope']}
+           if snapshot.get('generation_scope') is not None else {}),
+        **({'session_ids': snapshot['generation_session_ids']}
+           if snapshot.get('generation_session_ids') is not None else {}),
+        **({'planning_group_version_id': snapshot['planning_group_version_id']}
+           if snapshot.get('planning_group_version_id') else {}),
+    }
+
+
+def queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity):
     """Persist a small generation request; the worker freezes the full graph after leasing it."""
     from apps.api.input_changes import watermark
+    from .planning_groups import defer_group_generation_supersession, guard_generation
+    group_metadata = guard_generation(db, actor, workspace, None, value, enqueue=True) or {}
+    defer_supersession = defer_group_generation_supersession(group_metadata)
+    if group_metadata.get('planning_group_version_id'):
+        identity = identity or catalogue_proof_identity()
+        require(identity is not None, 'BUILD_IDENTITY_REQUIRED',
+                'Restart on a stable build before scheduling a selected population', 409)
+        group_metadata = {**group_metadata, 'generation_scope_source': identity['source_digest']}
+    if value.lookahead == 'coupled':
+        require(settings.generation_engine == 'cp_sat', 'LOOKAHEAD_ENGINE_REQUIRED',
+                'Joint lookahead requires the CP-SAT scheduler', 422)
     department = db.get(m.Department, actor.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
     request = value.model_dump(mode='json', exclude_none=True)
@@ -132,19 +156,10 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
         'repair_conflicts': True,
         **(group_metadata or {}),
     }
-    score_baseline = publication_score_baseline(db, workspace, workspace_shifts(db, workspace.id))
-    if score_baseline is not None:
-        snapshot['score_baseline'] = score_baseline
-    if value.generation_scope is not None:
-        scoped = domain_snapshot(db, workspace, include_fairness=False,
-                                 include_objectives=False, include_fairness_history=False)
-        try:
-            scoped['generation_scope'] = value.generation_scope.model_dump(mode='json')
-            scoped['generation_session_ids'] = value.session_ids or scoped['focus_ids']
-            require(has_population(scoped), 'INVALID_SCOPE',
-                    'No people match this group during the selected duties; change the population or duty selection', 422)
-        finally:
-            del scoped
+    if not defer_supersession:
+        score_baseline = publication_score_baseline(db, workspace, workspace_shifts(db, workspace.id))
+        if score_baseline is not None:
+            snapshot['score_baseline'] = score_baseline
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
                 kind='generation', input_fingerprint=request_token, input_snapshot=snapshot,
                 search_control={'minutes': options.search_minutes, 'stop': False, 'spent_seconds': 0},
@@ -152,7 +167,8 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
     clear_generation_resume(db, workspace_id=workspace.id)
     db.add(job)
     db.flush()
-    record_supersessions(db, job)
+    if not defer_supersession:
+        record_supersessions(db, job)
     job.input_snapshot = {**job.input_snapshot,
                           'generation_manifest': generation_manifest(
                               baseline, job.input_snapshot, job=job, requester_id=actor.identity_id)}
@@ -216,18 +232,7 @@ def create_job(db, actor, command, settings):
         require(not value.diagnostic_proposal or settings.generation_engine == 'cp_sat',
                 'DIAGNOSTIC_ENGINE_REQUIRED', 'Diagnostic proposals require the CP-SAT scheduler')
         require_generation_sessions_in_scope(value.session_ids, db=db, workspace=workspace)
-        from .planning_groups import guard_generation
-        group_metadata = guard_generation(db, actor, workspace, None, value, enqueue=True)
-        if group_metadata:
-            identity = identity or catalogue_proof_identity()
-            require(identity is not None, 'BUILD_IDENTITY_REQUIRED',
-                    'Restart on a stable build before scheduling a selected population', 409)
-            group_metadata = {**group_metadata, 'generation_scope_source': identity['source_digest']}
-        if value.lookahead == 'coupled':
-            require(settings.generation_engine == 'cp_sat', 'LOOKAHEAD_ENGINE_REQUIRED',
-                    'Joint lookahead requires the CP-SAT scheduler', 422)
-        return queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity,
-                                        group_metadata)
+        return queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity)
     # Validation is a durable request for the worker to read the current rota.
     # Do not materialise the complete domain snapshot in the command writer: on
     # department-sized rotas that work can exceed the API health interval.
@@ -590,6 +595,9 @@ def continue_generation(db, actor, command, settings):
     workspace = scoped(db, m.Workspace, previous.workspace_id, actor)
     require(workspace.status == 'draft' and workspace.archived_at is None,
             'WORKFLOW_STATE', 'Continue only on the current draft rota', 409)
+    request = generation_request_from_snapshot(workspace, previous.input_snapshot)
+    from .planning_groups import guard_generation
+    guard_generation(db, actor, workspace, None, s.JobInput.model_validate(request))
     require(not db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace.id,
         m.Job.kind == 'generation', m.Job.status.in_(['queued', 'running'])).limit(1)),
         'JOB_ALREADY_RUNNING', 'This draft already has a queued or running auto-schedule run', 409)
@@ -900,7 +908,9 @@ def superseded_runs(db, jobs):
     if not candidates:
         return set()
     runs = run_facts(db, m.Job.workspace_id.in_({job.workspace_id for job in candidates}),
-                     m.Job.created_at >= min(job.created_at for job in candidates))
+                     m.Job.created_at >= min(job.created_at for job in candidates),
+                     or_(m.Job.input_snapshot['_group_generation'].as_boolean().is_not(True),
+                         m.Job.input_snapshot['_deferred_generation'].as_boolean().is_not(True)))
     return {job.id for job in candidates if job.id in runs
             and any(other != job.id and supersedes(run, runs[job.id]) for other, run in runs.items())}
 

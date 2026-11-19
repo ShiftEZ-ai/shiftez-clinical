@@ -104,8 +104,11 @@ def scoped(db, cls, object_id, actor, *, options=(), include_withdrawn=False):
     if isinstance(row, m.Workspace):
         from .workspace_access import require_visible
         require_visible(db, actor, row)
-    if isinstance(row, m.Job) and row.kind in {'merge_preview', 'merge_apply'}:
-        require(row.requested_by == actor.identity_id, 'NOT_FOUND', 'Record not found', 404)
+    if isinstance(row, m.Job):
+        if row.kind in {'merge_preview', 'merge_apply'}:
+            require(row.requested_by == actor.identity_id, 'NOT_FOUND', 'Record not found', 404)
+        from .planning_groups import require_generation_job_read
+        require_generation_job_read(db, actor, row)
     return row
 
 
