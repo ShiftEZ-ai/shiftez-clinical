@@ -10,6 +10,7 @@ from apps.api.auth import authenticate, held_roles
 from apps.api.db import transaction
 from apps.api.services import workspace_access
 from apps.api.services.independence import active_permissions, today
+from tests.clock_support import freeze_clock
 from tests.governance_support import identity
 from tests.test_planning_groups_drafts import private
 
@@ -49,8 +50,9 @@ def test_self_approval_grant_and_expiry_are_visible_on_next_request(backend, mon
         'starts_on': day.isoformat(), 'ends_on': ends.isoformat(), 'reason': 'Temporary independent cover gap',
     })
     assert h.get('dual_role', '/api/me')['self_approval'] == ['rota.approve']
-    clock = m.now
-    monkeypatch.setattr(m, 'now', lambda: clock() + timedelta(days=1))
+    tomorrow = m.now() + timedelta(days=1)
+    freeze_clock(monkeypatch, tomorrow)
+    h.clients.pop('dual_role')  # A day later the old session has expired; sign in again.
     assert h.get('dual_role', '/api/me')['self_approval'] == []
 
 
