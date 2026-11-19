@@ -161,9 +161,13 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
         assert_facts(page, '.rt-ln')
         long = lines.filter(has=page.locator(f'.rt-ln-who .rp[title="{LONG_RANK}"]')).last
         expect(long).to_be_visible()
-        who = long.locator('.rt-ln-who')
-        next_cell = long.locator('.rt-ln-what')
-        assert who.evaluate('(a,b) => a.getBoundingClientRect().right <= b.getBoundingClientRect().left + 1', next_cell), 'Who overlaps the next line cell'
+        # Who never overlaps the line's other cells: beside it on a desktop, below it on a phone. (.rt-ln-what only groups
+        # them, display:contents on a desktop, so it has no box of its own; a Locator is no evaluate argument either.)
+        overlaps = long.evaluate('''row => {const who=row.querySelector('.rt-ln-who').getBoundingClientRect();
+            return [...row.querySelectorAll('.rt-ln-when,.rt-ln-num,.rt-ln-flags,.rt-ln-open')].map(n=>({cls:n.className,r:n.getBoundingClientRect()}))
+              .filter(({r})=>r.width&&r.height&&Math.min(who.right,r.right)-Math.max(who.left,r.left)>1&&Math.min(who.bottom,r.bottom)-Math.max(who.top,r.top)>1)
+              .map(({cls})=>cls);}''')
+        assert not overlaps, f'Who overlaps the next line cell: {overlaps}'
         expect(long.locator('.pill-more')).to_have_count(0)
         scroll = main.locator('.rt-scroll')
         size = scroll.evaluate('e=>({height:e.clientHeight,total:e.scrollHeight,width:e.clientWidth,wide:e.scrollWidth})')

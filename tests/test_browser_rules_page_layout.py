@@ -130,9 +130,9 @@ def test_rules_page_flags_fit_and_mixed_safety_lines_stay_apart(browser, live_se
                 box, line_box = flags.bounding_box(), flags.locator('xpath=ancestor::li[contains(@class,"rt-ln")][1]').bounding_box()
                 assert box['x'] + box['width'] <= line_box['x'] + line_box['width'] + 1, (box, line_box)
         navigate(page, 'rules/workload_limit')
-        rows = page.locator('[data-table=rule-line-db] tr[data-row]')
-        apply_row = rows.and_(page.locator(f'[data-line="{apply_line["id"]}"]'))  # the row itself carries data-line
-        expect(apply_row.locator('[data-col="n_apply"] .rule-num')).to_contain_text('No duties')
+        # The row itself carries data-line: a table row at 1440, a card (its facts in dd) on a phone.
+        apply_row = page.locator(f'[data-table=rule-line-db] [data-row][data-line="{apply_line["id"]}"]')
+        expect(apply_row.locator('[data-col="n_apply"] .rule-num' if width == 1440 else 'dd .rule-num')).to_contain_text('No duties')
         expect(apply_row.locator('.rk-lockmark[aria-label^="Safety line"]')).to_have_count(1)
         expect(apply_row.locator('.rt-always-word')).to_have_text('Always applies')
     finally:

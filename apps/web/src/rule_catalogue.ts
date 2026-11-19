@@ -338,6 +338,8 @@ function validParts(l:RuleLine):string[]{
 export const validText=(l:RuleLine):string=>validParts(l).join(' ');
 /** Wrap between complete dates when a column is wrapped, never between a day, month and year. */
 export const validNode=(l:RuleLine):HTMLElement=>dateUnits(validParts(l),'rule-valid');
+/** The rule page's Valid cell: as validNode, and "From" / "Until" may also wrap before their date (a narrow column). */
+const validCell=(l:RuleLine):HTMLElement=>dateUnits(validParts(l).flatMap(p=>/^(From|Until) /.test(p)?[p.slice(0,p.indexOf(' ')),p.slice(p.indexOf(' ')+1)]:[p]),'rule-valid');
 /** The server's validity of each saved line, with the dates it was worked out from. A line whose dates were changed in
  *  a draft (not saved yet) is read from its own dates; every saved line is the server's word. */
 const savedValidity=new Map<string,{v:RuleLineValidity;day:string;starts_on?:string|null;ends_on?:string|null}>();
@@ -612,11 +614,13 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     // A Fair share line counts the rule's measure or its own (Supervision, Overtime hours…).
     ...(e.default_settings?.balance_goal?[{key:'measure',label:'Measure',text:goalCell,cell:goalCell}]:[]),
     {key:'days',label:'Days',class:'rc-col-narrow',text:r=>whenWords(e,r.line,draft.settings),cell:r=>whenWords(e,r.line,draft.settings),edit:edit(r=>daysEditor(r.line),(l,v)=>{l.weekdays=v;})},
-    ...Object.keys(e.numbers).map(k=>({key:'n_'+k,label:numberLabel(e,k),num:k!=='apply',text:(r:LineRow)=>shownNumber(r.line,k,inhOf(r.line.id)),cell:(r:LineRow)=>{if(k==='apply'&&'apply' in (r.line.numbers||{})&&appliesWord(e)==='no duties')return el('span',{class:'rule-num'},marks.stamp(safetyLock()),' No duties');
+    ...Object.keys(e.numbers).map(k=>({key:'n_'+k,label:numberLabel(e,k),num:k!=='apply',text:(r:LineRow)=>shownNumber(r.line,k,inhOf(r.line.id)),cell:(r:LineRow)=>{if(k==='apply'&&'apply' in (r.line.numbers||{})&&appliesWord(e)==='no duties')
+          // one lock per line: beside its who with "Always applies" when it has that, else here.
+          return el('span',{class:'rule-num'},...(!proposedIds.has(r.line.id)&&shapeOf(r.line)?.always?[]:[marks.stamp(safetyLock()),' ']),'No duties');
         // each cell keeps its strength, as its accessible name says it (only the Rules list says one strength once per rule).
         return numberCell(r.line,k,inhOf(r.line.id),from,marks);},
       edit:edit((r,finish)=>numberEditor(e,k,r.line,finish),(l,v)=>setNumber(l,k,v))})),
-    {key:'valid',label:'Valid',class:'rc-col-narrow',text:r=>validText(r.line),sort:r=>r.line.ends_on||'9999',cell:r=>validNode(r.line),
+    {key:'valid',label:'Valid',class:'rc-col-narrow',text:r=>validText(r.line),sort:r=>r.line.ends_on||'9999',cell:r=>validCell(r.line),
       edit:edit(r=>validEditor(r.line),(l,v)=>{l.starts_on=v.starts_on||null;l.ends_on=v.ends_on||null;})},
     {key:'reach',label:'Reach',num:true,sort:r=>reachOf(r.line)??0,text:r=>String(reachOf(r.line)??''),cell:r=>marks.stamp(reachNode(reachOf(r.line),r.line))},
     // H-14: a click on the note opens the line's panel (its whole note, edited there), never a free-text edit in place.

@@ -4515,6 +4515,12 @@ tr.is-explained>td{background:var(--accent-soft)}
 [data-table=rule-line-db] .dt-table td[data-col=valid] .rule-valid{flex-wrap:wrap}
 /* Their plain text too (Measure, Days, Note): the shared one-line clip would hold each at 32ch and widen the table. */
 [data-table=rule-line-db] .dt-table td:is([data-col=who],[data-col=where],[data-col=mode],[data-col=measure],[data-col=days],[data-col=valid],[data-col=note],[data-col=check]) .dt-clip{white-space:normal;overflow:visible;overflow-wrap:break-word}
+/* Its 13 columns fit beside the pinned navigation (1134px at 1440): denser cell sides, headings and Reach words wrap at
+   their spaces (the numbers stay one phrase each). */
+[data-table=rule-line-db] .dt-table td:not(.dt-check){padding-inline:8px}
+[data-table=rule-line-db] .dt-table th .dt-sort,[data-table=rule-line-db] .dt-table th[scope=col]:not(.dt-check):not(:has(>.dt-sort)){padding-inline:8px}
+[data-table=rule-line-db] .dt-table .dt-column-label{white-space:normal}
+[data-table=rule-line-db] .dt-table td[data-col=reach]{white-space:normal}
 .rt-always-word{grid-column:1/-1;padding:6px 0 2px 50px;font-size:12px;font-weight:600;color:var(--muted)}
 .rt-always{grid-column:1/-1;display:grid;grid-template-columns:subgrid;list-style:none;margin:0;padding:0}
 td .rt-always-word{padding:0;font-weight:500}
