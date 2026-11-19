@@ -127,7 +127,7 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
         '_deferred_generation': True,
         'fingerprint': request_token,
         'audit_watermark': watermark(db, actor.department_id),
-        'currency_hint': currency_hint(db, workspace, mandatory_rules=True),
+        'currency_hint': currency_hint(db, workspace),
         'repair_unavailable': True,
         'repair_conflicts': True,
         **(group_metadata or {}),
@@ -136,7 +136,7 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
     if score_baseline is not None:
         snapshot['score_baseline'] = score_baseline
     if value.generation_scope is not None:
-        scoped = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=True,
+        scoped = domain_snapshot(db, workspace, include_fairness=False,
                                  include_objectives=False, include_fairness_history=False)
         try:
             scoped['generation_scope'] = value.generation_scope.model_dump(mode='json')
@@ -335,7 +335,7 @@ def create_job(db, actor, command, settings):
     if value.kind == 'generation':
         from .rota_summary import reusable_check
         from packages.domain.rota_summary import rota_summary
-        if reusable_check(workspace.validation, fingerprint(db, workspace, mandatory_rules=True), defaults.model_dump(mode='json')):
+        if reusable_check(workspace.validation, fingerprint(db, workspace), defaults.model_dump(mode='json')):
             snapshot['fix_list_before'] = rota_summary(workspace.validation,
                 accepted_issues=workspace.accepted_issues or [])['fix_list']
         clear_generation_resume(db, workspace_id=workspace.id)
@@ -709,14 +709,14 @@ def apply_generation(db, actor, command):
     from apps.api.snapshots import preparation_stamp
     if plan.get('writer_current_inputs'):
         # Repeated changes retain the existing current-input reply instead of introducing a new error.
-        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     else:
         if not currency_match(plan['current_stamp'], preparation_stamp(db, workspace)):
             raise GenerationInputsChanged()
         current_data = plan['current_data']
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
-                 and currency_match(plan['currency_hint'], currency_hint(db, workspace, mandatory_rules=True))
+                 and currency_match(plan['currency_hint'], currency_hint(db, workspace))
                  and snapshot_hash({k: v for k, v in (job.result or {}).items() if k != 'reconciliation'}) == plan['result_hash'])
     if not unchanged or not (receipt['addition_indexes'] or receipt['removal_indexes']):
         if not unchanged:

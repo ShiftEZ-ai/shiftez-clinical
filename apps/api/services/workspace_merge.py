@@ -39,7 +39,7 @@ def prepare(db, actor, source, target):
     fork = admit(db, actor, source, target)
     content = workspace_content(db, target)
     source_content = workspace_content(db, source)
-    data = domain_snapshot(db, target, mandatory_rules=True)
+    data = domain_snapshot(db, target)
     versions = groups.load_groups(db, actor.department_id, starts_on=target.starts_on, ends_on=target.ends_on)
     resolver = GroupResolver(data, versions)
     is_coordinator = groups.coordinator(db, actor)
@@ -96,7 +96,7 @@ def checked(db, data, content, bundles, choices, binding, *, for_apply=False):
     try:
         workspace.rule_adjustments = candidate['workspace'].get('rule_adjustments', [])
         workspace.target_overrides = candidate['workspace'].get('target_overrides', [])
-        after_data = domain_snapshot(db, workspace, own_shifts=candidate['shifts'], mandatory_rules=True)
+        after_data = domain_snapshot(db, workspace, own_shifts=candidate['shifts'])
     finally:
         workspace.rule_adjustments, workspace.target_overrides = original
         db.flush()

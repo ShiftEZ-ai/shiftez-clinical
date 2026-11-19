@@ -754,7 +754,7 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         if (workspace.status != 'draft' or workspace.archived_at is not None
                 or ('previous_check' in claim
                     and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
-                or (current_manifest := domain_snapshot(db, workspace, mandatory_rules=True)['input_manifest'])['token'] != result['fingerprint']):
+                or (current_manifest := domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
             # The same inputs can have newer counters after an access change.
@@ -1174,7 +1174,7 @@ def prepare_deferred_generation(engine, claim, settings):
         if (claim['input'].get('generation_engine') == 'cp_sat'
                 and claim['input'].get('compiler_version') not in (None, COMPILER_VERSION)):
             raise ValueError('Scheduler version changed; request a fresh job')
-        snapshot = domain_snapshot(db, workspace, mandatory_rules=True,
+        snapshot = domain_snapshot(db, workspace,
                                    wish_debt_cap=options.scoring.wish_debt_cap,
                                    lead_balance=options.scoring.lead_balance)
         if not deferred:
@@ -1229,7 +1229,7 @@ def prepare_deferred_generation(engine, claim, settings):
         from apps.api.services.rota_summary import reusable_check
         from packages.domain.rota_summary import rota_summary
         snapshot['audit_watermark'] = watermark(db, workspace.department_id)
-        snapshot['currency_hint'] = currency_hint(db, workspace, mandatory_rules=True)
+        snapshot['currency_hint'] = currency_hint(db, workspace)
         snapshot['repair_unavailable'] = True
         snapshot['repair_conflicts'] = True
         if reusable_check(workspace.validation, snapshot['fingerprint'], defaults.model_dump(mode='json')):
@@ -1619,7 +1619,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                 and workspace.status == 'draft' and workspace.archived_at is None,
                                 'STALE_INPUTS', 'The rota changed before its check', 409)
                     else:
-                        require(fingerprint(db, workspace, mandatory_rules=True) == claim['input']['fingerprint'],
+                        require(fingerprint(db, workspace) == claim['input']['fingerprint'],
                                 'STALE_INPUTS', 'The check inputs changed', 409)
                     db.info['_check_budget'] = check_cancelled
                     # Fix-list receipts depend on the evidence and acknowledgements seen by this check.

@@ -468,7 +468,7 @@ def assignment_check(db, workspace, before, *, shared_inputs=None):
     if (workspace.base_publication_id or db.info.get('bulk') is not None or db.info.get('_planner_preview')
             or not background_checks_available(db)):
         return None
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, mandatory_rules=True)
+    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs)
     if assignment_check_scope(data, before) is None:
         return None
     from packages.domain.validation_scope import bounded_assignment_scope, evaluate_assignments
@@ -911,7 +911,7 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, mandatory_rules=True)
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1358,7 +1358,7 @@ def create_workspace(db, actor, command, settings):
             fork_content=workspace_content(db, workspace), session_map=fork_session_map, actor_id=actor.identity_id,
             reason='Created private draft from current rota'))
         db.flush()
-    template_data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, mandatory_rules=True,
+    template_data = domain_snapshot(db, workspace, shared_inputs=shared_inputs,
         **({'own_shifts': []} if not (base or value.source_workspace_id) else {})) if value.series_ids else None
     skipped_people = []
     series_rows = selected_series(db, actor, value.series_ids)
@@ -1380,7 +1380,7 @@ def create_workspace(db, actor, command, settings):
     # Only this draft's sessions changed; catalogues and external context remain under the same write lock.
     if value.visibility == 'private' and fork_base_content is not None:
         from .jobs import queue_validation
-        data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, mandatory_rules=True)
+        data = domain_snapshot(db, workspace, shared_inputs=shared_inputs)
         preparation = db.info.get('_planning_preparation')
         if preparation is None or preparation['replay']:
             queue_validation(db, actor, workspace, data)
@@ -1616,7 +1616,7 @@ def target_override(db, actor, command):
     rule = policy['definition']['rule']
     require(rule['kind'] == 'block_quota' and rule['comparison'] == 'target',
             'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
-    report = command_evaluate(db, domain_snapshot(db, workspace, mandatory_rules=True)).get('quota_report') or {}
+    report = command_evaluate(db, domain_snapshot(db, workspace)).get('quota_report') or {}
     source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy['id']]
     person_rows = [row for row in source_rows if row['person_id'] == value.person_id]
     targets = [row for row in person_rows if row.get('target_calculation') is not None]
@@ -1654,7 +1654,7 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
                    for person in current['participants']):
             return
     data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
-                           include_objectives=False, mandatory_rules=True)
+                           include_objectives=False)
     shift = next(s for s in data['shifts'] if s['id'] == row.id)
     missing = [(p, intervals) for p in shift['participants']
                if p['person_id'] not in explicit_clears and not p.get('supervisor_person_id')
@@ -1754,7 +1754,7 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.input_manifest import shift_input
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
     data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
-                           include_objectives=False, mandatory_rules=True)
+                           include_objectives=False)
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
@@ -1881,7 +1881,7 @@ def shift_action(db, actor, command):
     if value.action == "release_unavailable":
         # The exact absent-person delta is checked again by changed() after the current findings are known.
         require_change_authority(db, actor, workspace, before)
-        unavailable = {(f['shift_id'], f['person_id']) for f in command_evaluate(db, domain_snapshot(db, workspace, mandatory_rules=True))['findings']
+        unavailable = {(f['shift_id'], f['person_id']) for f in command_evaluate(db, domain_snapshot(db, workspace))['findings']
                        if f['code'] in {'UNAVAILABLE', 'EXTERNAL_ROTATION'}}
         require(any(sid in value.shift_ids for sid, _ in unavailable), 'NO_UNAVAILABLE_ASSIGNMENTS',
                 'No recorded absence or external rotation affects the selected sessions', 409)
@@ -2016,7 +2016,7 @@ def move(db, actor, command):
     shifts[target.id]['participants'].append(participant)
     require_change_authority(db, actor, workspace, before, after=proposed)
     person_access(db, actor, assignment.person_id)
-    data = domain_snapshot(db, workspace, mandatory_rules=True)
+    data = domain_snapshot(db, workspace)
     shifts = {row['id']: row for row in data['shifts'] if row['id'] in data['focus_ids']}
     origin, destination = shifts[source.id], shifts[target.id]
     require(not inactive(origin) and not inactive(destination), 'SESSION_CLOSED',
@@ -2334,7 +2334,7 @@ def expand_series(db, actor, command):
         shared_inputs = snapshots.prepared_snapshot_inputs(db, organisation)
     template_data = held.get('data')
     if template_data is None:
-        template_data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, mandatory_rules=True)
+        template_data = domain_snapshot(db, workspace, shared_inputs=shared_inputs)
     skipped_people, batch = [], {'inputs': {'organisation': organisation}}
     series_rows = selected_series(db, actor, value.series_ids or [value.series_id])
     prime_series_batch(db, actor, batch, series_rows)
@@ -2397,7 +2397,7 @@ def reconcile_series(db, actor, command):
             "This slice contains manual changes, cancellations or assigned people. Explicitly acknowledge replacement before applying.", 409)
     definition = stored_series_definition(series.definition)
     start, end = max(value.from_on, series.starts_on), min(workspace.ends_on, series.ends_on or workspace.ends_on)
-    template_data = domain_snapshot(db, workspace, mandatory_rules=True)
+    template_data = domain_snapshot(db, workspace)
     occurrences = series_occurrences(template_data, series, definition, start, end) if series.active else []
     planned = {r["start"].astimezone(ZoneInfo(definition.timezone)).date(): r for r in occurrences}
     # Refuse ambiguity even if a future recurrence definition permits >1 per day.
@@ -2410,7 +2410,7 @@ def reconcile_series(db, actor, command):
             db.delete(row)
             removed += 1
     db.flush()
-    template_data, skipped_people = domain_snapshot(db, workspace, mandatory_rules=True), []
+    template_data, skipped_people = domain_snapshot(db, workspace), []
     for day, occurrence in sorted(planned.items()):
         row = selected.get(day)
         if row is None:

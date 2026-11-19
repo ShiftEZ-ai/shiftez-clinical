@@ -18,7 +18,7 @@ from .workspace_reads import stored_checks
 def compact(db, actor, workspace):
     from apps.api.workspace_baselines import attach as attach_baseline
     check = stored_checks(db, [workspace])[workspace.id]
-    current = fingerprints(db, [workspace], checks={workspace.id: check}, reload=False, mandatory_rules=True)[workspace.id]
+    current = fingerprints(db, [workspace], checks={workspace.id: check}, reload=False)[workspace.id]
     org = db.get(m.Organisation, actor.organisation_id)
     metadata = attach_baseline(db, workspace, record(workspace, exclude=('validation', 'review_snapshot')))
     from .people import with_adjustment_names

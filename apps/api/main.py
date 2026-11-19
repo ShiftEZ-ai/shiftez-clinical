@@ -2046,7 +2046,7 @@ def create_app(settings: Settings | None = None, engine=None):
             checks = stored_checks(db, rows)
             # A sidebar label is never permission to rebuild a full scheduling context.
             visible = [r for r in rows if r.ends_on > near_since and r.starts_on < near_until]
-            current_inputs = cheap_fingerprints(db, visible, checks=checks, mandatory_rules=True)
+            current_inputs = cheap_fingerprints(db, visible, checks=checks)
             outdated = lambda r: r.status in ("submitted", "approved") and (
                 r.id not in current_inputs or r.submitted_fingerprint != current_inputs[r.id])
             # Competing rotas for the same days, and published rotas overlapped without a decision (schedule.flags).
@@ -2350,7 +2350,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .snapshots import cheap_fingerprints
             from .services.workspace_reads import check_projection
             check = check_projection(workspace, workspace.validation)
-            current = (cheap_fingerprints(db, [workspace], checks={workspace.id: check}, mandatory_rules=True).get(workspace.id)
+            current = (cheap_fingerprints(db, [workspace], checks={workspace.id: check}).get(workspace.id)
                        if validation else None)
             began = time.perf_counter()
             adjusted = [r["policy_id"] for r in workspace.rule_adjustments or []]
@@ -2537,7 +2537,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 m.AuditEvent.department_id == actor.department_id, m.AuditEvent.target_id == workspace.id,
                 m.AuditEvent.action.in_({'workspace.submit', 'workspace.publish'})).limit(1)) is not None
             from .snapshots import fingerprints as read_fingerprints
-            current_fingerprint = read_fingerprints(db, [workspace], mandatory_rules=True)[workspace.id]
+            current_fingerprint = read_fingerprints(db, [workspace])[workspace.id]
             from .services.common import visible_rota_name
             from .services.planning_groups import unrestricted
             from .services.workspace_access import access_record
@@ -3413,8 +3413,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .snapshots import fingerprints as read_fingerprints, receipt_currencies
             candidates = {wid: [row for row in rows[:limit] if row.kind == 'generation' and row.workspace_id == wid]
                           for wid in workspaces}
-            fingerprints = receipt_currencies(db, list(workspaces.values()), candidates,
-                lambda session, rows: read_fingerprints(session, rows, mandatory_rules=True), mandatory_rules=True)
+            fingerprints = receipt_currencies(db, list(workspaces.values()), candidates, read_fingerprints)
             source = current_source_digest() if any((row.read_metadata or {}).get('input_snapshot', {}).get('generation_scope') is not None for row in rows[:limit]) else None
             list_input_keys = {'generation_engine', 'generation_options', 'compiler_version', 'diagnostic_proposal', 'bindings',
                                'generation_scope', 'generation_scope_source', 'run_context', 'generation_manifest',
@@ -3454,7 +3453,7 @@ def create_app(settings: Settings | None = None, engine=None):
             workspace = scoped(db, m.Workspace, job.workspace_id, actor)
             frozen, since = db.execute(select(m.Job.input_snapshot['input_manifest'],
                 m.Job.input_snapshot['audit_watermark']).where(m.Job.id == job.id)).one()
-            current = domain_snapshot(db, workspace, mandatory_rules=True)
+            current = domain_snapshot(db, workspace)
             from .input_changes import changed_facts
             rows = changed_facts(db, {'input_manifest': frozen}, current, actor.department_id, since or 0)
             return {'changes': rows[offset:offset + limit], 'total': len(rows), 'offset': offset, 'limit': limit,
@@ -3506,7 +3505,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     stale = None
                 else:
                     from .snapshots import fingerprints as read_fingerprints
-                    current = read_fingerprints(db, [workspace], mandatory_rules=True)[workspace.id]
+                    current = read_fingerprints(db, [workspace])[workspace.id]
                     stale = result_stale(job, projection, current, source,
                                          input_fingerprint=projection.get('input_fingerprint'))
                 value['result_stale'] = stale
@@ -3560,7 +3559,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 from .services.issues import issue_key
                 from .services.jobs import application_recheckable
                 from .snapshots import fingerprints as read_fingerprints
-                current = read_fingerprints(db, [workspace], mandatory_rules=True)[workspace.id]
+                current = read_fingerprints(db, [workspace])[workspace.id]
                 source = current_source_digest() if snapshot.get('generation_scope') is not None else None
                 value['result_stale'] = result_stale(job, retained, current, source,
                     input_fingerprint=effective_input_fingerprint(job, projection=retained))

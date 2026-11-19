@@ -84,7 +84,7 @@ def current_check(db, workspace, current_fingerprint=None):
     """Stored evidence must match both current inputs and the evaluator contract."""
     check = workspace.validation
     department = db.get(m.Department, workspace.department_id)
-    current = current_fingerprint or fingerprints(db, [workspace], mandatory_rules=True)[workspace.id]
+    current = current_fingerprint or fingerprints(db, [workspace])[workspace.id]
     if workspace.base_publication_id:
         from packages.domain.validation import ENGINE_VERSION, check_contracts
         from packages.domain.input_manifest import FORMAT as MANIFEST_FORMAT
@@ -112,10 +112,9 @@ def current_check(db, workspace, current_fingerprint=None):
 def summary_check(db, workspace, *, include_shifts=True):
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    current_fingerprint = cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation},
-                                             mandatory_rules=True).get(workspace.id)
+    current_fingerprint = cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}).get(workspace.id)
     if current_fingerprint is None:
-        current_fingerprint = fingerprints(db, [workspace], mandatory_rules=True)[workspace.id]
+        current_fingerprint = fingerprints(db, [workspace])[workspace.id]
     validation = workspace.validation
     check_job = checking_workspaces(db, [workspace.id]).get(workspace.id)
     checking = bool(check_job and check_job['checking'])
@@ -157,7 +156,7 @@ def summary_check(db, workspace, *, include_shifts=True):
             else:
                 data = db.info.get('read_snapshots', {}).get(workspace.id)
                 if data is None:
-                    data = domain_snapshot(db, workspace, mandatory_rules=True)
+                    data = domain_snapshot(db, workspace)
                 check = evaluate(data)
                 check['score'] = schedule_score(data, check, department.generation_defaults)
                 check['fix_list_context'] = fix_list_context(data)
@@ -199,7 +198,7 @@ def workspace_validation(db, workspace):
         return validation
     data = db.info.get('read_snapshots', {}).get(workspace.id)
     if data is None:
-        data = domain_snapshot(db, workspace, mandatory_rules=True)
+        data = domain_snapshot(db, workspace)
     defaults = data['generation_options']
     def build(_wid):
         complete = evaluate(data)

@@ -28,7 +28,7 @@ def context(db, actor, workspace_id, value):
     people_count = db.scalar(select(func.count()).select_from(m.Person).where(m.Person.organisation_id == actor.organisation_id))
     require(people_count <= MAX_DIRECTORY_MATCHES, 'STAFFING_DIRECTORY_LIMIT',
             'The recorded directory exceeds the supported context size; no complete readiness claim is available.', 409)
-    source = domain_snapshot(db, workspace, mandatory_rules=True)
+    source = domain_snapshot(db, workspace)
     current = source['fingerprint']
     require(current == value.expected_fingerprint, 'STALE_INPUTS', 'Planning inputs changed; reload the rota.', 409)
     if value.generation_scope is not None:
