@@ -703,3 +703,27 @@ def test_only_the_live_zero_quota_clamps_counts_to_policy_validity(request, back
             if row['person_id'] == pid} == {3: 3, 0: 1}
     assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['rule_id'] == source['id']
                and f['severity'] == 'error' for f in validation['findings'])
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_apply_keeps_only_zero_lines_of_an_uncaptured_legacy_overtime_cap(request, backend):
+    from apps.api.snapshots import domain_snapshot
+    from packages.contracts.schemas import PolicyDefinition
+    from packages.domain.conditions import active_rules
+
+    h = request.getfixturevalue(backend)
+    draft, zero_person = overtime_draft(h)
+    positive_person = h.seed['people'][1]
+    rule = {'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+            'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'}
+    source = h.policy(rule)
+    definition = PolicyDefinition.model_validate({**source['definition'], 'listed_only': True, 'per_person': [
+        {'person_id': zero_person, 'amount': 0}, {'person_id': positive_person, 'amount': 2},
+    ]}).model_dump(mode='json')
+    tighten(h, source, rule, definition=definition)
+    with transaction(h.app.state.engine) as db:
+        data = domain_snapshot(db, db.get(m.Workspace, draft['id']), mandatory_rules=True)
+    rows = [row for row in active_rules(data['policies'], context=data)
+            if row.get('_source_policy_id', row['id']) == source['id']]
+    assert {(row['template_line']['person_id'], row['definition']['rule']['amount'])
+            for row in rows} == {(zero_person, 0)}

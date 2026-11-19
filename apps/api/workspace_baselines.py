@@ -167,7 +167,8 @@ def _without_positive_overtime_cap(policy):
     rule = policy["definition"]["rule"]
     if rule.get("kind") != "catalogue":
         cap = _ceiling(rule)
-        return None if rule.get("overtime") == "only" and cap is not None and cap > 0 else policy
+        # The zero overlay carries any prohibitions from a legacy overtime quota.
+        return None if rule.get("overtime") == "only" and cap is not None else policy
     from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
     from packages.domain.rule_lines import _settings
     entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
