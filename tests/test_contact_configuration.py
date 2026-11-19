@@ -1,6 +1,7 @@
 """Synthetic contact data: per-type privacy, typed edits, immutable history and bounded reads."""
 from datetime import date
 import json
+import re
 from types import SimpleNamespace
 from time import perf_counter
 
@@ -99,7 +100,8 @@ def test_value_validation_undo_override_and_mirror(pg):
     with transaction(pg.app.state.engine) as db:
         assert db.get(m.Person, person).pager == restored['value']
         audit = json.dumps([record(r) for r in db.scalars(select(m.AuditEvent))])
-        assert '4418' not in audit and '4417' not in audit
+        # Whole values only: timestamps (.441793) and ids may contain the same digits.
+        assert not re.search(r'(?<![0-9A-Za-z.])441[78](?![0-9A-Za-z])', audit)
     set_value(pg, typ, '4420', pg.seed['people'][1], role='staff', status=403)
 
 
@@ -355,6 +357,29 @@ def test_hidden_values_do_not_leak_through_edits_or_retained_receipts(pg):
     changed = pg.configure('people', {'display_name': 'Synthetic second name'}, person, reply['record']['revision'], role='coordinator')
     assert '555018811' not in json.dumps(changed)
     set_value(pg, typ, '555018812', role='coordinator', status=403)
+
+
+def test_people_edit_persists_legacy_extension_after_catalogue_reload(h):
+    person = h.seed['people'][0]
+    initial = h.get('coordinator', '/api/catalogues?include=people')
+    before = next(row for row in initial['people'] if row['id'] == person)
+    value = {key: before[key] for key in ('display_name', 'active', 'title', 'directory_section',
+                                          'work_phone', 'work_extension', 'pager', 'staff_number',
+                                          'directory_order', 'short_code', 'tags') if key in before}
+    value['work_extension'] = '4321'
+    command = {'kind': 'catalogue.update', 'target_id': person, 'expected_revision': before['revision'],
+               'payload': {'catalogue': 'people', 'value': value, 'reason': 'Set office extension'}}
+    preview = h.client('coordinator').post('/api/catalogue/preview', json=command)
+    assert preview.status_code == 200, preview.text
+    reply = h.command('coordinator', 'catalogue.update', command['payload'], person, before['revision'],
+                      expected_fingerprint=preview.json()['source_fingerprint'])
+    saved = reply['record']
+    assert saved['work_extension'] == '4321'
+    assert reply['previous_value']['work_extension'] == before.get('work_extension', '')
+    conditional = h.client('coordinator').get('/api/catalogues?include=people&known=' + initial['_versions']['people'])
+    assert conditional.status_code == 200, conditional.text
+    reloaded = next(row for row in conditional.json()['people'] if row['id'] == person)
+    assert reloaded['work_extension'] == '4321'
 
 
 def test_pager_expiry_invalidates_schedule_etag(pg, monkeypatch):

@@ -1,4 +1,6 @@
 """Real browser quota proposal/review/publish/report. No API route mocking."""
+import re
+
 import pytest
 from playwright.sync_api import expect
 from .test_browser import browser, live_server, sign_in, navigate, save_dialog, decide, wait_held
@@ -15,8 +17,9 @@ def test_quota_proposal_activation_publication_and_personal_report(browser, live
     def assert_periods(report, person):
         expect(report.locator('th[data-col="block"]')).to_contain_text("Period")
         cells = report.locator("tr[data-row]").filter(has_text=person).locator('td[data-col="block"]')
-        expect(cells).to_have_count(len(periods))
-        assert sorted(cells.all_text_contents()) == sorted(periods)
+        for period in periods:
+            expect(cells.filter(has_text=re.compile(rf"^{re.escape(period)}$"))).to_have_count(1)
+        expect(cells).to_have_count(len(periods))  # reject extra cells as well as missing or duplicate periods
         # Every date is one intact unit; wrapping may occur between the two dates.
         expect(cells.locator(".date-units > span")).to_have_count(2 * len(periods))
 
@@ -119,7 +122,9 @@ def test_quota_proposal_activation_publication_and_personal_report(browser, live
         # One collection table: search by person or rule, and a Result filter in the shared Filter popover.
         panel.get_by_label("Search commitments", exact=True).fill("no such person")
         expect(panel.get_by_role("heading", name="No matching commitments", exact=True)).to_be_visible()
-        panel.get_by_label("Search commitments", exact=True).fill("Jordan")
+        search = panel.get_by_label("Search commitments", exact=True)
+        search.fill("Jordan")
+        expect(search).to_have_value("Jordan")
         expect(panel.get_by_role("cell", name="Jordan Lee", exact=True)).to_have_count(4 if mode == 'rolling' else 1)
         panel.get_by_label("Search commitments", exact=True).fill("")
         panel.get_by_role("button", name="Filter", exact=True).click()

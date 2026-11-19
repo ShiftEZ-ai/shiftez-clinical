@@ -159,10 +159,15 @@ def distribution_plan(data, policy, entries=None):
     groups = counted_groups(data, policy, entries)
     plans = []
     if rule['distribution'] == 'period_spread':
+        from .fairness import rota_dates
+        # Earlier weeks are fixed history; only rota weeks are decisions.
+        first = bucket_of(data, rule, rota_dates(data)[0])
         for pid in _people(data, policy)['who']:
             check()
-            days = _available_buckets(data, policy, pid)
-            terms = [term for (person, _, _), group in groups.items() if person == pid for term in group['total']]
+            days = {bucket: available for bucket, available in _available_buckets(data, policy, pid).items()
+                    if bucket >= first}
+            terms = [term for (person, bucket, _), group in groups.items()
+                     if person == pid and bucket >= first for term in group['total']]
             for bucket, available in sorted(days.items()):
                 check()
                 share = Fraction(available, sum(days.values()))

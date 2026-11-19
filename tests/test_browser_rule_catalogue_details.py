@@ -57,13 +57,13 @@ def test_select_all_picks_lines_so_rule_on_never_switches_on_an_empty_rule(brows
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-rule').filter(has_text='no lines').first).to_be_visible()
+        expect(main.locator('li.rt-item').filter(has_text='no lines').first).to_be_visible()
         with_lines = [e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['rule'] and e['rule']['definition']['rule']['lines']]
         main.get_by_role('checkbox', name='Select all lines shown').check()
         bar = page.locator('.selection-bar:not([hidden])')
         lines = sum(len(e['rule']['definition']['rule']['lines']) for e in with_lines)
         expect(bar).to_contain_text(f"{len(with_lines)} rule{'s' if len(with_lines) > 1 else ''} · {lines} lines")  # never the empty ones
-        expect(main.locator('.rt-family .rt-picked')).to_have_count(0)  # the family's tri-state box says it
+        expect(main.locator('.rt-qhead .rt-picked')).to_have_count(0)  # the family's tri-state box says it
     finally:
         context.close()
 
