@@ -405,3 +405,11 @@ def test_concurrent_same_name_requests_create_one_department_and_one_binding(pg)
     with transaction(pg.app.state.engine) as db:
         department = db.scalar(select(m.Department).where(m.Department.name == value['name']))
         assert len(list(db.scalars(select(m.RoleBinding).where(m.RoleBinding.department_id == department.id)))) == 1
+
+
+def test_a_new_department_starts_on_the_catalogue_rules_page(department_h):
+    # Owner decision (19 Nov 2026): the catalogue Rules page is the default for new departments.
+    h = department_h
+    value = payload(h)
+    created = h.command('operator', 'department.create', value, expected_fingerprint=token(h, value))
+    assert created['department']['display_settings'] == {'rule_catalogue': True}

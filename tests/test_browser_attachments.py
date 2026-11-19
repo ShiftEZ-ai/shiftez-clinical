@@ -106,17 +106,31 @@ def test_attachment_defaults_the_trainee_supervisor_on_its_active_dates(browser,
         expect(trainee_row.get_by_label('Named supervisor', exact=True)).to_have_value(expected or '')
         trainee_row.get_by_label('Named supervisor', exact=True).select_option('')
         before = h.detail(workspace)
-        if active:
+        if active and strength == 'required':
             with page.expect_response(lambda response: response.url.endswith('/api/commands')
                                       and response.request.method == 'POST') as refused:
                 form.get_by_role('button', name='Save draft session', exact=True).click()
             assert refused.value.status == 422
             error = refused.value.json()['error']
             assert error['code'] == 'EDIT_INVALID'
-            expected_finding = 'ATTACHMENT_PAIRING' if strength == 'required' else 'SUPERVISION_PAIRING'
-            assert expected_finding in {f['code'] for f in error['details']['findings']}
+            assert 'ATTACHMENT_PAIRING' in {f['code'] for f in error['details']['findings']}
             expect(form.get_by_role('alert')).to_be_visible()
             assert h.detail(workspace) == before
+        elif active:
+            # D65: a preferred attachment is advisory, so clearing it saves.
+            with page.expect_response(lambda response: response.url.endswith('/api/commands')
+                                      and response.request.method == 'POST') as saved:
+                form.get_by_role('button', name='Save draft session', exact=True).click()
+            assert saved.value.status == 200
+            expect(form).not_to_be_visible()
+            expected = None
+            validation = h.detail(workspace)['workspace']['validation']
+            assert validation['valid']
+            if validation['warning_count']:
+                navigate(page, f'schedule/issues?draft={workspace["id"]}')
+                could = page.locator('#main .fix-page section[data-level=could]')
+                expect(could.locator('.fix-row').first).to_be_visible()
+                navigate(page, 'planner/' + workspace['id'])
         else:
             save_dialog(form, 'Save draft session')
         participants = h.detail(workspace)['shifts'][0]['participants']
