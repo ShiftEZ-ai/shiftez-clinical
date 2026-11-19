@@ -19,10 +19,11 @@ OPTIONS = {'scoring': {'weights': {'coverage': 2, 'rules': 0, 'fairness': 19,
 def goal_program(amount, *, record=True):
     data = world([duty(1, 5, [A]), duty(2, 6, [B])])
     data['generation_options'] = OPTIONS
-    data['policies'] = [policy({'metric': 'duties', 'aim': 'target', 'period': 'rota', 'amount': amount,
+    data['policies'] = [policy({'metric': 'session_units', 'aim': 'target', 'period': 'rota', 'amount': amount,
                                 'tolerance_percent': 0, 'tolerance_units': 0})]
     model, choices, participants = cp_model.CpModel(), {}, {}
     for session in data['shifts']:
+        session['type_snapshot']['definition']['session_units'] = 1
         for person in (A, B):
             key = session['id'], person
             choices[key] = model.new_bool_var('choice')
