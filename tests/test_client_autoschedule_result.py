@@ -233,3 +233,117 @@ def test_a_run_refused_before_the_solver_says_not_run_never_a_solver_error(clien
     assert got == said
     for word in ('Solver status', 'error', 'score'):
         assert word not in got
+
+
+def receipt(client_modules, result):
+    return run(client_modules, "console.log(JSON.stringify(m.solverReceipt(a).textContent));",
+               {'kind': 'generation', 'result': result})
+
+
+def receipt_tip(client_modules, result):
+    return run(client_modules, "const h=m.solverReceipt(a).querySelector('.icon-button');"
+               "console.log(JSON.stringify(h?.dataset.tip||null));", {'kind': 'generation', 'result': result})
+
+
+@pytest.mark.parametrize('result', [
+    {
+        'status': 'candidate_with_gaps', 'solver_status': 'OPTIMAL',
+        'search_stop': {'reason': 'optimal'},
+        'generation_outcome': {'status': 'UNKNOWN', 'candidate': 'with_gaps',
+                               'strict_status': None, 'optimality_proven': False},
+    },
+    {
+        'status': 'candidate_feasible', 'validation': {'valid': False}, 'solver_status': 'OPTIMAL',
+        'search_stop': {'reason': 'optimal'},
+        'generation_outcome': {'status': 'UNKNOWN', 'candidate': 'with_gaps',
+                               'strict_status': None, 'optimality_proven': False},
+    },
+], ids=['candidate-with-gaps', 'validation-failed'])
+def test_solver_receipt_uses_unknown_final_outcome_for_diagnostic_candidates(client_modules, result):
+    got = receipt(client_modules, result)
+    assert 'Solver status: UNKNOWN' in got
+    assert 'diagnostic model:' not in got
+    assert 'Stop reason' not in got
+    assert 'proven best' not in got
+    tip = receipt_tip(client_modules, result)
+    assert tip and 'OPTIMAL' in tip and 'not proven best' in tip
+
+
+def test_solver_receipt_reports_needs_more_time_as_unknown_with_diagnostic_model(client_modules):
+    result = {
+        'status': 'needs_more_time', 'solver_status': 'FEASIBLE',
+        'search_stop': {'reason': 'time_limit'},
+        'generation_outcome': {'status': 'UNKNOWN', 'candidate': 'with_gaps',
+                               'strict_status': None, 'optimality_proven': False},
+    }
+    got = receipt(client_modules, result)
+    assert 'Solver status: UNKNOWN' in got
+    assert 'diagnostic model:' not in got
+    assert 'search time used up' in got
+    tip = receipt_tip(client_modules, result)
+    assert tip and 'FEASIBLE' in tip and 'not proven best' in tip
+
+
+def test_solver_receipt_reports_requirements_conflict_without_diagnostic_model(client_modules):
+    got = receipt(client_modules, {
+        'status': 'requirements_conflict', 'solver_status': 'INFEASIBLE',
+        'search_stop': {'reason': 'conflict'},
+        'generation_outcome': {'status': 'INFEASIBLE', 'candidate': 'none',
+                               'strict_status': 'INFEASIBLE', 'optimality_proven': False},
+    })
+    assert 'Solver status: INFEASIBLE' in got
+    assert 'Stop reason: rules conflict' in got
+    assert 'diagnostic model:' not in got
+
+
+def test_solver_receipt_reports_valid_feasible_without_proven_best(client_modules):
+    job = {'kind': 'generation', 'input_fingerprint': 'f', 'result_stale': False, 'currency': 'current', 'result': {
+        'status': 'candidate_feasible', 'validation': {'valid': True}, 'solver_status': 'OPTIMAL',
+        'optimality_proven': False,
+        'additions': [{'shift_id': 's1'}], 'removals': [],
+        'search_stop': {'reason': 'optimal'},
+        'generation_outcome': {'status': 'FEASIBLE', 'candidate': 'valid',
+                               'strict_status': None, 'optimality_proven': False},
+    }}
+    got = receipt(client_modules, job['result'])
+    assert 'Solver status: FEASIBLE' in got
+    tip = receipt_tip(client_modules, job['result'])
+    assert tip and 'OPTIMAL' in tip and 'not proven best' in tip
+    assert 'diagnostic model:' not in got
+    assert 'proven best' not in got
+    assert header(client_modules, job) == 'Proposal ready \u00b7 a better one may exist'
+    assert 'proven best' not in header(client_modules, job)
+
+
+def test_valid_feasible_header_never_says_proven_best_when_model_was_optimal(client_modules):
+    job = {'kind': 'generation', 'input_fingerprint': 'f', 'result_stale': False, 'currency': 'current', 'result': {
+        'status': 'candidate_feasible', 'validation': {'valid': True}, 'solver_status': 'OPTIMAL',
+        'optimality_proven': False,
+        'additions': [{'shift_id': 's1'}], 'removals': [],
+        'search_stop': {'reason': 'optimal'},
+        'generation_outcome': {'status': 'FEASIBLE', 'candidate': 'valid',
+                               'strict_status': None, 'optimality_proven': False},
+    }}
+    assert header(client_modules, job) == 'Proposal ready \u00b7 a better one may exist'
+    assert 'proven best' not in header(client_modules, job)
+
+
+def test_solver_receipt_reports_valid_optimal_as_proven_best(client_modules):
+    got = receipt(client_modules, {
+        'status': 'candidate_feasible', 'validation': {'valid': True}, 'solver_status': 'OPTIMAL',
+        'search_stop': {'reason': 'optimal'},
+        'generation_outcome': {'status': 'OPTIMAL', 'candidate': 'valid',
+                               'strict_status': None, 'optimality_proven': True},
+    })
+    assert 'Solver status: OPTIMAL' in got
+    assert 'Stop reason: proven best for these priorities' in got
+    assert 'diagnostic model:' not in got
+
+
+def test_solver_receipt_falls_back_to_model_status_without_generation_outcome(client_modules):
+    got = receipt(client_modules, {
+        'status': 'candidate_feasible', 'solver_status': 'OPTIMAL',
+        'search_stop': {'reason': 'optimal'},
+    })
+    assert 'Solver status: OPTIMAL' in got
+    assert 'Stop reason: proven best for these priorities' in got

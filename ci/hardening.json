@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "canaries": true,
+  "node_census": true,
+  "content_classifier": true,
+  "plan_lapse_backstop": true,
+  "window_expiry": true
+}

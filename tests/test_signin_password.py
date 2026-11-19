@@ -370,8 +370,10 @@ def test_password_api_key_requirement_depends_on_environment_and_progressive_mod
     if environment == "production":
         settings = replace(production(replace(settings, database_url="postgresql+psycopg://synthetic@localhost/disposable"),
                                       monkeypatch), fmuc_data_key="")
-    if environment == "production" and progressive:
-        with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required for progressive password sign-in"):
+    if environment == "production":
+        # Fixed mode also needs the key in production: sign-in hashes are keyed (#930).
+        refusal = "for progressive password sign-in" if progressive else "for sign-in in production"
+        with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required " + refusal):
             main.create_app(settings, h.app.state.engine)
         return
     app = main.create_app(settings, h.app.state.engine)

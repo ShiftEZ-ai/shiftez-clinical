@@ -143,7 +143,12 @@ def test_undo_applies_in_place_with_one_request_keeping_scroll_selection_and_foc
         scrolled = scroll.evaluate('n => n.scrollTop')
         assert scrolled > 0
         sent = []
-        page.on('request', lambda r: sent.append(r.url) if '/api/' in r.url and not re.search(r'/api/(pulse|events)', r.url) else None)
+        # The navigation counts (app.ts BADGE_SOURCES: the Schedule's rota list, the waiting requests) follow the live
+        # stream after any rota change, the batch's or the Undo's, whenever its pulse lands: before or after this check
+        # on a loaded runner. They are not the Undo reading the page again; the page mark below proves no reload.
+        nav_counts = ('/api/workspaces?limit=50&offset=0', '/api/requests/all?status=waiting&limit=1')
+        page.on('request', lambda r: sent.append(r.url) if '/api/' in r.url and not re.search(r'/api/(pulse|events)', r.url)
+                and not r.url.endswith(nav_counts) else None)
         page.locator('.toast').filter(has_text='issues resolved').get_by_role('button', name='Undo').dispatch_event('click')
         expect(page.locator('.toast').filter(has_text='Undone')).to_be_visible()
         expect(counts).to_contain_text(f'{total} open · 0 resolved')
