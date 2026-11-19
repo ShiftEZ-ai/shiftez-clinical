@@ -24,7 +24,7 @@ from .time import aware, duration_hours
 from .validation import finding_observations, index_person_rows, named_people, policy_applies, session_scope
 
 # v10: bind weighted score parity, Fair share adjustments and scoped preference changes.
-VERSION = 'score-v11'
+VERSION = 'score-v12'
 CAP = 59
 COMPONENTS = ('coverage', 'rules', 'fairness', 'preferences', 'stability')
 SESSION_KINDS = {'minimum_cover', 'maximum_participants'}
@@ -569,6 +569,11 @@ def score_review_lines(data, validation, options=None, scored=None):
     This is deliberately derived from the same expanded rules and score contributions as ``schedule_score``.  A line
     with no loss still appears, so a review can decide whether a zero is expected or an unused configuration.
     """
+    context = type(data)(data) if hasattr(data, '__dict__') else dict(data)
+    if hasattr(data, 'read_quality'):
+        context.read_quality = data.read_quality
+    context.setdefault('_line_index_cache', {})
+    data = context
     scored = scored or schedule_score(data, validation, options, limit=0)
     rules = data['_active_policies'] if '_active_policies' in data else active_rules(data['policies'], context=data)
     counted = data['_counted_policies'] if '_counted_policies' in data else counting_views(data, rules)
