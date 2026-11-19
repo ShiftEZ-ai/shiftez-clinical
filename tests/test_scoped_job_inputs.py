@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy import event
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.input_changes import rules_changed
 from apps.api.services import planning, generation_reconciliation
 from apps.worker.main import claim_job, heartbeat_job, finish_job, prepare_deferred_generation
 from packages.domain.input_manifest import manifest
@@ -327,20 +328,145 @@ def test_stale_planner_write_returns_the_edit_for_recovery(h):
 
 def test_rule_metadata_and_unrelated_period_do_not_invalidate_but_active_numbers_do(h):
     w = h.shift(h.workspace(), people=[])['workspace']
-    rule = h.policy({'kind': 'max_duties', 'maximum': 3, 'window': 'week'})
+    rule = h.policy({'kind': 'max_duties', 'maximum': 3, 'window': 'week'}, exception=True)
     w = h.refresh_draft_baseline(w)
     before = h.snapshot(w)['fingerprint']
     with transaction(h.app.state.engine, write=True) as db:
         row = db.get(m.Policy, rule['id']); row.name = 'Display label'; row.revision += 1
     assert h.snapshot(w)['fingerprint'] == before
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, rule['id'])
+        row.owner = 'Updated owner'
+        row.source = 'Updated source note'
+        row.revision += 1
+    assert h.snapshot(w)['fingerprint'] == before
     data = h.snapshot(w)
     source = next(p for p in data['policies'] if p['id'] == rule['id'])
+    source.update(notes='Display notes', description='Display description', reason='Display explanation')
+    assert manifest(data)['token'] == before
+    data['exceptions'] = [{'id': str(uuid4()), 'policy_id': source['id'], 'policy_revision': source['revision'],
+        'person_id': h.seed['people'][0], 'starts_on': '2026-10-04', 'ends_on': '2026-10-07', 'status': 'approved'}]
+    bound = manifest(data)['token']
+    assert bound != before
+    data['exceptions'][0]['reason'] = 'Updated explanation'
+    assert manifest(data)['token'] == bound
+    data['exceptions'][0]['policy_revision'] += 1
+    assert manifest(data)['token'] != bound
+    data['exceptions'][0]['policy_revision'] -= 1
+    source['revision'] += 1
+    assert manifest(data)['token'] != bound
+    data['exceptions'].clear()
+    assert manifest(data)['token'] == before
     source['definition']['rule']['maximum'] = 2
     assert manifest(data)['token'] != before
     source['starts_on'] = '2026-12-17'
     without = manifest(data)['token']
     source['definition']['rule']['maximum'] = 1
     assert manifest(data)['token'] == without
+
+
+def test_rule_currency_tracks_effective_catalogue_content(h):
+    data = h.snapshot(h.workspace())
+    row = next(p for p in data['policies'] if p['definition']['rule'].get('id') == 'fair_share')
+    live = next(p for p in data['_live_safety_staleness']['policies'] if p['id'] == row['id'])
+    before = data['fingerprint']
+    for policy in (row, live):
+        policy['definition']['rule']['lines'][0]['note'] = 'Updated line note'
+    assert manifest(data)['token'] == before
+
+    def changed(path, value):
+        # Change one evaluated input at a time while keeping the captured baseline fixed.
+        edited = copy.deepcopy(data)
+        target = next(p for p in edited['_live_safety_staleness']['policies'] if p['id'] == row['id'])
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+        current = manifest(edited)
+        assert current['token'] != before, path
+        source = 'live_safety:live_safety'
+        assert rules_changed([{'kind': 'live_safety', 'before': data['input_manifest']['sources'][source]['facts'],
+                               'after': current['sources'][source]['facts']}]), path
+
+    rule_path = ('definition', 'rule')
+    line_path = (*rule_path, 'lines', 0)
+    changed((*line_path, 'weekdays'), [0, 1, 2, 3, 4])
+    changed((*line_path, 'who'), {'match': 'all', 'conditions': [
+        {'field': 'person_ids', 'op': 'any', 'values': [h.seed['people'][0]]}]})
+    changed((*line_path, 'numbers', 'apply', 'level'), 'high')
+    changed((*line_path, 'starts_on'), '2026-10-05')
+    changed(('definition', 'merged_ids'), [str(uuid4())])
+    changed(('definition', 'scope'), {'person_ids': [h.seed['people'][0]]})
+    changed(('active',), False)
+    changed(('status',), 'retired')
+
+
+def test_live_safety_metadata_does_not_add_an_obligation(h):
+    rule = h.policy({'kind': 'restriction'}, {'person_id': h.seed['people'][0]})
+    workspace = h.workspace()
+    before = h.snapshot(workspace)['fingerprint']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, rule['id'])
+        row.name = 'Updated restriction label'
+        row.revision += 1
+    after = h.snapshot(workspace)
+    assert after['fingerprint'] == before
+    assert [p['id'] for p in after['policies'] if p['kind'] == 'restriction'] == [rule['id']]
+
+
+def test_rule_currency_tracks_each_fair_share_balance_input(h):
+    from packages.domain.conditions import active_rules
+    from packages.domain.fairness import comparison_goal
+
+    data = h.snapshot(h.workspace())
+    broad = next(row for row in active_rules(data) if row['definition']['rule']['kind'] == 'balance_goal')
+    person = h.seed['people'][0]
+    named = {**broad, 'definition': {**broad['definition'], 'scope': {'person_id': person}}}
+    group = comparison_goal([broad, named])
+    data['policies'] = [group]
+    before = manifest(data)['token']
+    renamed = copy.deepcopy(data)
+    renamed['policies'][0]['_balance_sources'][0]['name'] = 'Updated goal label'
+    renamed['policies'][0]['_balance_sources'][0]['revision'] += 1
+    assert manifest(renamed)['token'] == before
+
+    for field in ('_balance_sources', '_balance_people', '_balance_broad'):
+        empty = type(group[field])()
+        edited = {**data, 'policies': [{**group, field: empty}]}
+        assert manifest(edited)['token'] != before, field
+
+
+def test_rule_currency_tracks_concurrent_leadership_revision_groups(h):
+    from packages.contracts.schemas import PolicyDefinition
+
+    data = h.snapshot(h.workspace())
+    definition = PolicyDefinition.model_validate({'rule': {
+        'kind': 'team_lead_requirement', 'count_scope': 'concurrent_duties'}}).model_dump(mode='json')
+    source = {**data['policies'][0], 'kind': 'team_lead_requirement', 'definition': definition}
+    data['policies'] = [source, dict(source)]
+    before = manifest(data)['token']
+    data['policies'][0]['revision'] += 1
+    assert manifest(data)['token'] != before
+    data['policies'][1]['revision'] += 1
+    assert manifest(data)['token'] == before
+
+
+def test_bound_source_notes_do_not_split_an_effective_line(h):
+    from packages.domain.rule_catalogue_migration import source_policy
+
+    data = h.snapshot(h.workspace())
+    source = next(row for row in data['policies'] if row['definition']['rule'].get('id') == 'fair_share')
+    rule = source['definition']['rule']
+    line = rule['lines'][0]
+    binding = {'source': source, 'source_kind': 'catalogue', 'rule_shape': rule}
+    left, right = ({'source_line_index': 0, 'source_line_id': line['id'], 'person_id': pid}
+                   for pid in h.seed['people'][:2])
+    data['policies'] = [source_policy(binding, [(left, line), (right, line)])]
+    before = manifest(data)['token']
+    data['policies'] = [source_policy(binding, [(left, line), (right, {**line, 'note': 'Updated line note'})])]
+    assert manifest(data)['token'] == before
+    different = {**line, 'weekdays': [0, 1, 2, 3, 4]}
+    data['policies'] = [source_policy(binding, [(left, line), (right, different)])]
+    assert manifest(data)['token'] != before
 
 
 def test_submitted_rota_survives_unrelated_wish_but_relevant_change_requires_resubmission(h):

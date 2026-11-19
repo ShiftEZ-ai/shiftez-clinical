@@ -4,15 +4,16 @@ Re-resolving the snapshot detects inserted/deleted sources as well as row edits.
 Counters and labels are deliberately absent; source identity remains for explanation.
 """
 from datetime import date, timedelta
+from functools import lru_cache
 import hashlib
 import json
 
 from .conditions import active_rules
 from .serialization import json_default
 from .time import aware, local_midnight
-from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS, GenerationOptions
+from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS, GenerationOptions, PolicyDefinition
 
-FORMAT = 2
+FORMAT = 3
 # Explicit input fields: adding an evaluator input requires extending this contract.
 FIELDS = {
     'organisation': ('id', 'timezone', 'week_start'),
@@ -94,6 +95,32 @@ def generation_input(value):
     return GenerationOptions.model_validate(value or {}).model_dump(mode='json', exclude=GENERATION_RUNTIME_OPTIONS)
 
 
+def _policy_input(row):
+    # The resolver emits the same definition contract the compiler validates. Read the contract's
+    # fields directly so adding an input to it also adds that input to currency.
+    value = project(row, ('id', 'department_id', 'starts_on', 'ends_on', 'active', 'status', 'replaces_id',
+        'count_bucket', '_count_scope', '_quota_full_window', '_protected_interval', '_overtime_fact',
+        '_overtime_request', '_overtime_source', '_overtime_dates', '_fair_share_group', '_period_override', '_comparison_scope'))
+    value['definition'] = project(row['definition'], PolicyDefinition.model_fields)
+    if line := row.get('template_line'):
+        value['template_line'] = line
+    for field in ('_balance_sources', '_balance_broad'):
+        if field in row:
+            value[field] = [_policy_input(source) for source in row[field]]
+    if '_balance_people' in row:
+        value['_balance_people'] = {person: [_policy_input(source) for source in sources]
+                                   for person, sources in row['_balance_people'].items()}
+    return value
+
+
+# Keep a catalogue's worth of current and captured definitions reusable across a list read.
+@lru_cache(maxsize=1024)
+def _catalogue_definition_issues(text):
+    from .solver_rules import definition_issues
+
+    return tuple((issue['field'], issue['code']) for issue in definition_issues(json.loads(text), historical=True))
+
+
 def manifest(data, *, content_revision=None):
     period, zone = data['workspace'], data['organisation']['timezone']
     focus = set(data['focus_ids'])
@@ -112,6 +139,65 @@ def manifest(data, *, content_revision=None):
     # Fairness leave accounting can extend the objective horizon for the selected population.
     lo = min([lo, *[aware(r['start']) for r in data.get('rotation_leave_availability', []) if r['person_id'] in people]])
     first = lo.date().isoformat()
+
+    def selected(row):
+        return (not row.get('person_id') or row['person_id'] in people) and (
+            not row.get('department_id') or row['department_id'] in departments) and dated(row)
+
+    def approved_exceptions(context):
+        return [row for row in context.get('exceptions', []) if row.get('status') == 'approved' and selected(row)]
+
+    def catalogue_definition_issues(context):
+        issues = {}
+        for row in context['policies']:
+            if row['status'] != 'active' or not row.get('active', True):
+                continue
+            definition = row['definition']
+            rule = definition['rule']
+            if rule['kind'] != 'catalogue' or not selected(row):
+                continue
+            # The compiler also validates the parent definition. Expansion already covers the lines.
+            envelope = {**definition, 'rule': {**rule, 'lines': []}}
+            if found := _catalogue_definition_issues(json.dumps(envelope, sort_keys=True, default=json_default)):
+                issues[row['id']] = [list(issue) for issue in found]
+        return issues
+
+    def policy_sources(context, exceptions):
+        # The binding revision is operative for exceptions and quota overrides pinned to a rule version.
+        exception_ids = {row['policy_id'] for row in exceptions}
+        override_ids = {row['policy_id'] for row in period.get('target_overrides') or []}
+        registries, copies, lead_revisions = set(), {}, {}
+        for row in active_rules(context['policies'], context=context):
+            if not selected(row):
+                continue
+            value = _policy_input(row)
+            definition = value['definition']
+            rule = definition['rule']
+            if row['id'] in exception_ids:
+                value['exception_binding_revision'] = row.get('revision')
+            if row['id'] in override_ids and rule['kind'] == 'block_quota':
+                value['target_binding_revision'] = row.get('revision')
+            if rule['kind'] == 'team_lead_requirement' and rule.get('count_scope') == 'concurrent_duties':
+                from .leadership import _requirement_key
+                _, policy_id, revision, *line_identity = _requirement_key({'policy': row})
+                versions = lead_revisions.setdefault((policy_id, *line_identity), {})
+                # The leadership reader compares versions for equality, so uniform counter bumps preserve the group.
+                value['leadership_revision_group'] = versions.setdefault(revision, len(versions))
+            line = value.get('template_line', {})
+            key = row['id'] + ':' + digest([line.get('id', line.get('line')), line.get('slot'),
+                rule['kind'], rule.get('comparison'), definition['severity'], definition.get('strength')])
+            # A bound default can fan out into several scopes with the same source identity.
+            copies[key] = copies.get(key, 0) + 1
+            if copies[key] > 1:
+                key += ':' + str(copies[key])
+            registry = row.get('_catalogue_sources')
+            if registry is not None and id(registry) not in registries:
+                registries.add(id(registry))
+                for source_id, source in registry.items():
+                    if dated(source):
+                        yield 'rule_lines', source_id, source, {**source, 'id': row['id']}
+            yield 'policies', key, value, row
+
     sources, components = {}, {'content': {}, 'mandatory_inputs': {}, 'objective_inputs': {}, 'toolchain': {}}
     def add(group, kind, key, value, source=None):
         token = digest(value)
@@ -156,35 +242,33 @@ def manifest(data, *, content_revision=None):
                 continue
             add('objective_inputs' if kind == 'wishes' else 'mandatory_inputs', kind, row['id'], project(row, fields), row)
     # The resolver owns catalogue lines, precedence and safety; do not hash retired parent blobs.
-    registries = set()
-    bound_exceptions = {e['policy_id'] for e in data.get('exceptions', []) if e.get('status') == 'approved'}
-    for row in active_rules(data['policies'], context=data):
-        if row['department_id'] not in departments or not dated(row):
-            continue
-        value = project(row, ('id', 'revision', 'department_id', 'starts_on', 'ends_on', 'active', 'definition',
-            'template_line', 'count_bucket', '_count_scope', '_quota_full_window', '_protected_interval',
-            '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
-            '_balance_sources', '_balance_people', '_balance_broad'))
-        if row['id'] in bound_exceptions:
-            value['exception_binding_revision'] = row.get('revision')
-        line = row.get('template_line') or {}
-        key = row['id'] + ':' + digest([line.get('id', line.get('line')), line.get('slot'),
-            row['definition']['rule']['kind'], row['definition']['rule'].get('comparison'), row['definition']['severity']])
-        registry = row.get('_catalogue_sources')
-        if registry is not None and id(registry) not in registries:
-            registries.add(id(registry))
-            for source_id, source in registry.items():
-                if dated(source):
-                    add('mandatory_inputs', 'rule_lines', source_id, source, {**source, 'id': row['id']})
-        add('mandatory_inputs' if row['definition']['severity'] == 'mandatory' else 'objective_inputs', 'policies', key, value, row)
+    for kind, key, value, row in policy_sources(data, approved_exceptions(data)):
+        group = 'objective_inputs' if kind == 'policies' and value['definition']['severity'] == 'advisory' else 'mandatory_inputs'
+        add(group, kind, key, value, row)
+    if issues := catalogue_definition_issues(data):
+        add('mandatory_inputs', 'policy_definition_issues', 'policy_definition_issues', issues)
     if data.get('applied_planning_population') is not None:
         add('mandatory_inputs', 'applied_planning_population', period['id'], data['applied_planning_population'])
     for key in ('quota_context', 'score_baseline'):
         add('mandatory_inputs', key, key, data.get(key))
     # Draft safety evaluation keeps non-safety inputs frozen, but any approved
     # live rule/exception/grant/leave change invalidates checks bound to it.
-    if data.get('_live_safety_staleness') is not None:
-        add('mandatory_inputs', 'live_safety', 'live_safety', data['_live_safety_staleness'])
+    if (live := data.get('_live_safety_staleness')) is not None:
+        exceptions = approved_exceptions(live)
+        context = {**data, **live, '_catalogue_v2_materialized': False}
+        # Apply distinguishes governed rule drift from independently approved person facts.
+        governed = {row['id'] for row in live['policies']}
+        policies, rule_lines = [], []
+        for kind, key, value, row in policy_sources(context, exceptions):
+            if row['id'] in governed:
+                (policies if kind == 'policies' else rule_lines).append({**value, 'copy_key': key})
+        issues = catalogue_definition_issues(context)
+        add('mandatory_inputs', 'live_safety', 'live_safety', {
+            'policies': sorted(policies, key=lambda row: row['copy_key']),
+            'rule_lines': sorted(rule_lines, key=lambda row: (row['copy_key'], digest(row))),
+            'exceptions': [project(row, FIELDS['exceptions']) for row in exceptions],
+            **({'policy_definition_issues': issues} if issues else {}),
+            **project(live, ('grants', 'availability', 'scheduling_facts'))})
     for key, row in data.get('date_sets', {}).items():
         if row.get('department_id') in departments:
             add('mandatory_inputs', 'date_sets', key, project(row, ('id', 'department_id', 'active', 'entries')), row)

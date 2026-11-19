@@ -57,9 +57,18 @@ LIVE_VALIDITY_SOURCES = {key: cls for key, cls, _category, _scope, shape, _exclu
                          if shape == "keyed" and issubclass(cls, m.Effective) and key not in LIVE_OVERLAY_KEYS}
 
 
-def _rule_shape(policy, kind):
-    """Return an obligation shape with numeric values removed for comparison."""
+def _obligation_definition(policy):
+    from packages.domain.rule_lines import line_without_notes
+
     definition = deepcopy(policy.get("definition") or {})
+    rule = definition.get("rule") or {}
+    if rule.get("lines"):
+        rule["lines"] = [line_without_notes(line) for line in rule["lines"]]
+    return definition
+
+
+def _rule_shape(definition, kind):
+    """Return an obligation shape with numeric values removed for comparison."""
     rule = definition.get("rule") or {}
     if kind == "catalogue":
         lines = []
@@ -78,9 +87,9 @@ def _rule_shape(policy, kind):
 
 def _distinct_live_policy(policy):
     """Give a differently scoped live obligation its own transient evaluation id."""
-    payload = json.dumps(policy.get("definition") or {}, sort_keys=True, default=str, separators=(",", ":"))
-    ident = str(uuid.uuid5(uuid.NAMESPACE_URL,
-                           f"fmuc:live-safety:{policy.get('id')}:{policy.get('revision')}:{payload}"))
+    payload = json.dumps([policy.get("starts_on"), policy.get("ends_on"), _obligation_definition(policy)],
+                         sort_keys=True, default=str, separators=(",", ":"))
+    ident = str(uuid.uuid5(uuid.NAMESPACE_URL, f"live-safety:{policy.get('id')}:{payload}"))
     return {**deepcopy(policy), "id": ident, "_source_policy_id": policy.get("id")}
 
 
@@ -107,6 +116,11 @@ def _strictest_policy(frozen, live, kind):
         return [deepcopy(live)]
     if frozen_active and not live_active:
         return [deepcopy(frozen)]
+    # A new revision of the same obligation does not add a second safety rule.
+    frozen_definition, live_definition = _obligation_definition(frozen), _obligation_definition(live)
+    if (all(frozen.get(key) == live.get(key) for key in ("id", "starts_on", "ends_on"))
+            and frozen_definition == live_definition):
+        return [frozen]
     if kind in s.SAFETY_KEEP_BOTH:
         return [frozen, _distinct_live_policy(live)]
     if kind == "team_lead_requirement":
@@ -144,7 +158,7 @@ def _strictest_policy(frozen, live, kind):
                 numbers.setdefault("max", {})["value"] = minimum
         return [merged]
 
-    if _rule_shape(frozen, kind) != _rule_shape(live, kind):
+    if _rule_shape(frozen_definition, kind) != _rule_shape(live_definition, kind):
         return [frozen, _distinct_live_policy(live)]
 
     if kind == "catalogue":
@@ -239,6 +253,8 @@ def _catalogue_destination_at_least_as_strict(source, destination):
 
 def _live_safety_snapshot(db, workspace):
     """Read only the live safety and qualification sources needed by a draft overlay."""
+    from .snapshots import SCHEDULING_ORDER, scheduling_inputs, scheduling_sources
+
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
     department_ids = select(m.Department.id).where(m.Department.organisation_id == organisation.id)
@@ -265,24 +281,21 @@ def _live_safety_snapshot(db, workspace):
         "date_sets": (m.DateSet, m.DateSet.department_id.in_(department_ids)),
         "policies": (m.Policy, m.Policy.department_id.in_(department_ids)),
         "exceptions": (m.PolicyException, m.PolicyException.policy_id.in_(policy_ids)),
-        "scheduling_facts": (m.SchedulingFact, m.SchedulingFact.department_id.in_(department_ids)),
+        **scheduling_sources(department_ids),
         # Keep retracted rows in the currency so both adding and removing a leave
         # invalidates a bound check; the evaluator still receives only active rows.
-        "type_lead_ownership": (m.TypeLeadOwnership, m.TypeLeadOwnership.department_id.in_(department_ids)),
     }
     cache = db.info.setdefault("_live_safety_sources", {})
     cache_key = (organisation.id, organisation.input_revision, organisation.availability_revision)
     acquired = cache.get(cache_key)
     if acquired is None:
-        acquired = records_many(db, sources, exclude={"people": ("pager",)})
+        acquired = records_many(db, sources, exclude={"people": ("pager",)}, order_by=SCHEDULING_ORDER)
         cache[cache_key] = acquired
     availability = records_many(db, {"availability": (m.Availability, m.Availability.person_id.in_(person_ids)
                          & (m.Availability.start < hi) & (m.Availability.end > lo))},
                                exclude={"availability": ("private_reason",)})["availability"]
     acquired = {**acquired, "availability": availability}
     from .snapshots import tag_data
-    scheduling_facts = [row for row in acquired["scheduling_facts"]
-                        if row.get("status") in ("active", "retired") and row.get("approved_by")]
     return {"organisation": record(organisation),
             "people": {row["id"]: row for row in acquired["people"]},
              **{key: {row["id"]: row for row in acquired[key]} for key in
@@ -291,9 +304,9 @@ def _live_safety_snapshot(db, workspace):
              "tags": tag_data(db, department_ids, acquired={"tags": acquired["tags"],
                                                                "tag_members": acquired["tag_members"]}),
             **{key: acquired[key] for key in (*LIVE_QUALIFICATION_KEYS, *LIVE_QUALIFICATION_DEFINITIONS,
-                                               "policies", "exceptions", "availability", "type_lead_ownership",
+                                               "policies", "exceptions", "availability",
                                                "departments") if key != "tags"},
-            "scheduling_facts": scheduling_facts}
+            **scheduling_inputs(db, department_ids, acquired=acquired)}
 
 
 def _scope(value):
@@ -441,12 +454,13 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     for key in LIVE_OPERATIONAL_KEYS:
         if current.get(key) is not None:
             result[key] = current[key]
+    result["_live_safety_staleness"] = {
+        **{key: sorted_rows(current.get(key, []))
+           for key in ("policies", "exceptions", "grants", "availability", "scheduling_facts")},
+        **{key: current.get(key, []) for key in ("source_bindings", "policy_seed_lines")},
+    }
+    result["_live_safety_departments"] = sorted_rows(current.get("departments", []))
     if workspace.status not in {"draft", "submitted", "approved"}:
-        result["_live_safety_staleness"] = {
-            key: sorted_rows(current.get(key, []))
-            for key in ("policies", "exceptions", "grants", "availability", "scheduling_facts")
-        }
-        result["_live_safety_departments"] = sorted_rows(current.get("departments", []))
         return result
 
     frozen_policies = frozen.get("policies", [])
@@ -567,11 +581,6 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     result["exceptions"] += [row for row in live_exceptions if row.get("policy_id") not in safety_ids]
     result["scheduling_facts"] = current.get("scheduling_facts", result.get("scheduling_facts", []))
     result["people"] = {ident: dict(row) for ident, row in (current.get("people") or {}).items()}
-    result["_live_safety_staleness"] = {
-        key: sorted_rows(current.get(key, []))
-        for key in ("policies", "exceptions", "grants", "availability", "scheduling_facts")
-    }
-    result["_live_safety_departments"] = sorted_rows(current.get("departments", []))
     return result
 
 

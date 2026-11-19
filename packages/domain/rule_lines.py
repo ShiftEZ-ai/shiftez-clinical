@@ -119,6 +119,13 @@ def _line_identity(line, *, person=None):
     ], sort_keys=True, default=str)
 
 
+def line_without_notes(line):
+    value = {key: item for key, item in line.items() if key != 'note'}
+    if default := line.get('source_default'):
+        value['source_default'] = line_without_notes(default)
+    return value
+
+
 def _carrier_lines(policy):
     rule = (policy.get('definition') or {}).get('rule') or {}
     if rule.get('kind') == 'catalogue':
