@@ -25,7 +25,7 @@ from .recurrence import inactive, with_series_state, usual_assignee_fixed, serie
 from .fill_priority import STAGE_ORDER
 
 # 43: reject proposals that introduce or worsen missing supervision.
-ALGORITHM_VERSION = "bounded-greedy-43"
+ALGORITHM_VERSION = "bounded-greedy-44"
 # Person-level errors that only the person's own duties decide (overlap, rest, travel, transitions, hours and duty limits).
 OWN_DUTY_CODES = {'TIME_OVERLAP', 'MIN_REST', 'TRAVEL_BUFFER', 'FORBIDDEN_TRANSITION', 'MAX_HOURS', 'MAX_DUTIES',
                   'CONSECUTIVE_DAYS', 'CONSECUTIVE_WEEKENDS'}
