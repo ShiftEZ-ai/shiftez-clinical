@@ -330,6 +330,8 @@ def test_reach_lists_group_people_by_their_filter_with_load_and_links(browser, l
         expect(pop.get_by_role('option')).to_have_count(1)
         pop.get_by_role('combobox').fill('')
         shot(page, f'reach-people-{width}-{scheme}', full_page=False)
+        press_escape(page)
+        expect(pop).to_have_count(0)
         clinics = panel.locator('.rc-lp-title').nth(1).get_by_role('button', name='2 clinics')
         clinics.click()
         pop = page.locator('.picker')

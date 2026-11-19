@@ -76,6 +76,15 @@ def test_inbox_counts_are_the_servers_and_show_more_reads_the_next_page(browser,
         rows = notes[offset:offset + limit]
         route.fulfill(status=200, content_type='application/json', body=json.dumps(
             {'notifications': rows, 'total': 150, 'unread_total': 525, 'limit': limit, 'offset': offset, 'has_more': offset + limit < 150}))
+    # The bell also follows the live pulse's unread count, read from the server: the server holds the same 525, so a
+    # pulse landing after the routed read (a loaded runner) agrees with it instead of resetting the bell.
+    with transaction(h.app.state.engine, write=True) as db:
+        boxes = [m.Outbox(id=str(uuid.uuid4()), department_id=h.seed['department_id'], event_key=f'inbox-count:{n}',
+                          kind='announcement', payload={}) for n in range(525)]
+        db.add_all(boxes)
+        db.flush()
+        db.add_all([m.Notification(outbox_id=box.id, identity_id=h.seed['identities']['coordinator'],
+                                   title='Synthetic unread note', message='Read me') for box in boxes])
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         page.route(re.compile(r'/api/notifications(\?.*)?$'), page_of)

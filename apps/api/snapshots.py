@@ -1320,14 +1320,46 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     return result
 
 
+def preparation_stamp(db, workspace):
+    """Complete bounded source currency, checked again under the serialized writer."""
+    from .services.planning import validation_stamp
+    from packages.domain.input_manifest import digest, toolchain
+    department = db.get(m.Department, workspace.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    # Retain weak-identity-map parents for the entire pass.
+    db.info.setdefault('_preparation_parents', {}).update({department.id: department, organisation.id: organisation})
+    revisions = list(db.execute(select(m.Department.id, m.Department.revision, m.Department.catalogue_revision)
+                    .where(m.Department.organisation_id == organisation.id).order_by(m.Department.id)))
+    return {**currency_hint(db, workspace), 'validation_stamp': validation_stamp(db, workspace),
+            'department_revisions': [list(row) for row in revisions],
+            'toolchain': digest(toolchain(quota_policy_limit()))}
+
+
 def domain_snapshot(db, workspace, *args, **kwargs):
-    """Preparation may speculate on frozen inputs; final writes always acquire current relational inputs."""
+    """Reuse detached preparation inputs only after checking current relational currency."""
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
     supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'include_fairness', 'include_objectives',
                                          'include_fairness_history'} or value is None
                                  for key, value in kwargs.items())
+    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
+        db.flush()
+        index = state['next_snapshot']
+        state['next_snapshot'] += 1
+        stamp = preparation_stamp(db, workspace)
+        key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
+                             'stamp': stamp})
+        cached = state['prepared_snapshots'].get(index)
+        if cached and cached[0] == key and currency_match(stamp, stamp):
+            return pickle.loads(cached[1])
+        from .errors import require
+        require(not state['replay'], 'STALE_INPUTS',
+                'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
+                409, {'recoverable': True})
+        value = _domain_snapshot(db, workspace, *args, **kwargs)
+        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+        return value
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)
     db.flush()
