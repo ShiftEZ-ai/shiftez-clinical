@@ -17,7 +17,7 @@ USERNAME = "missing-person"
 
 def fill_pair_delay(h, peer):
     with transaction(h.app.state.engine, write=True) as db:
-        db.add(m.RateLimit(key_hash=auth.digest("login-delay:" + auth.login_keys(USERNAME, peer)[2]),
+        db.add(m.RateLimit(key_hash=auth.digest("login-delay:" + auth.login_keys(USERNAME, peer, h.settings)[2]),
                            hits=0, expires_at=auth.now() + timedelta(seconds=60)))
 
 
@@ -33,7 +33,7 @@ def pin_clock(monkeypatch):
 
 
 def pair_count(h, peer):
-    key, _ = counter_key("login-pair", auth.login_keys(USERNAME, peer)[2],
+    key, _ = counter_key("login-pair", auth.login_keys(USERNAME, peer, h.settings)[2],
                          h.settings.password_login_window_seconds, auth.now())
     with transaction(h.app.state.engine) as db:
         return db.scalar(select(m.RateLimit.hits).where(m.RateLimit.key_hash == key)) or 0

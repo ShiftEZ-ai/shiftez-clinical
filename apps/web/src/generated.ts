@@ -6352,7 +6352,7 @@ export type WorkspaceSubmitInput = {
   "acknowledgements"?: Array<GapAcknowledgement>;
 };
 
-export const APP_VERSION = "0.8.0-rc.16";
+export const APP_VERSION = "0.1.0-rc.1";
 export const ROLE_NAMES = ["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator"] as const;
 export type JobCurrency = "current" | "revalidation_required" | "unknown" | "preparing" | "superseded";
 export const RUN_SUPERSEDED = "RUN_SUPERSEDED" as const;

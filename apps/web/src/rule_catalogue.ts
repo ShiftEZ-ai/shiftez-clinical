@@ -29,7 +29,7 @@ import {RULE_FAMILIES,RULE_CATALOGUE,RULE_CATALOGUE_V2,MAX_SCORE_INPUT,NEVER_OVE
 import type {Row} from './types.js';
 import {mayDecide} from './independence.js';
 import {goalMeasure,METRIC_WORDS} from './balance_goal.js';
-import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
+import {menu,opens,refocusItem} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
 import {segmented} from './dom.js';  // the one segmented choice (UX › controls S6)
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
@@ -988,14 +988,14 @@ function relationParts(e:RuleCatalogueEntry,names:Namer,r:Relation,w:RuleLine,ot
 const effectHelp=(l:RuleLine)=>{const text=`Only drafts whose dates overlap ${lineDates(l)||'this line'} are checked. Other drafts are not affected.`;
   return el('button',{type:'button',class:'icon-button bare','aria-label':text,'data-help':'','data-tip':text},icon('help'));};
 /** The markup a repaint compares: a reach link's open state and the list it opened (picker.ts mounts it beside the
- *  link) are not content. */
-const paintedAs=(nodes:Iterable<Node>)=>[...nodes].filter(n=>!(n instanceof Element&&n.matches('.picker'))).map(n=>{
+ *  link, with its arrow from dom.ts tether) are not content. */
+const paintedAs=(nodes:Iterable<Node>)=>[...nodes].filter(n=>!(n instanceof Element&&n.matches('.picker,.pop-arrow'))).map(n=>{
   if(!(n instanceof Element))return n.textContent;const c=n.cloneNode(true) as Element;
   for(const b of [c,...c.querySelectorAll('.rc-reach-link')])if(b.matches('.rc-reach-link')){b.setAttribute('aria-expanded','false');b.classList.remove('is-open');}
   return c.outerHTML;}).join('\u0000');
 /** Repaints `box` only when its content changes: a check that changes nothing keeps the reach list a reader just
  *  opened (it lives inside `box`), where replacing the nodes would close it under their click. */
-function keepSame(box:HTMLElement,kids:(Node|string)[]){
+export function keepSame(box:HTMLElement,kids:(Node|string)[]){
   const next=el('span',{},...kids);if(paintedAs(box.childNodes)!==paintedAs(next.childNodes))box.replaceChildren(...next.childNodes);
 }
 /** One row per overlapping draft: its name and the outcome as a toned badge, or "Waiting to check · 0:14" / "Checking · 0:14" (elapsed, no ETA). */
@@ -2045,12 +2045,30 @@ function historyDialog(ctx:Context,e:Entry,names:Namer){
 export function moreActions(label:string,items:Child[],pending=0):HTMLElement{
   const held=el('span',{hidden:true},...items);
   const visible=(b:HTMLButtonElement)=>{for(let n:HTMLElement|null=b;n&&n!==held;n=n.parentElement)if(n.hidden)return false;return !b.disabled;};
-  // Each entry wears its button's own icon and name (compact() gave it both).
-  const entry=(b:HTMLButtonElement,close:()=>void)=>{const x=el('button',{type:'button',role:'menuitem',class:'menu-item'},b.querySelector('svg')?.cloneNode(true)||'',
-    el('span',{},b.getAttribute('aria-label')||b.textContent?.trim()||''));x.addEventListener('click',()=>{close();b.click();});return x;};
   let close=()=>{};
+  // Keep each entry in place when a read relabels it. A hidden slot holds the order for actions that appear later.
+  const entries=[...held.querySelectorAll<HTMLButtonElement>('button')].map(b=>{
+    const caption=el('span',{}),slot=el('span',{hidden:true});
+    const item=el('button',{type:'button',role:'menuitem',class:'menu-item',tabindex:-1},b.querySelector('svg')?.cloneNode(true)||'',caption);
+    item.addEventListener('click',()=>{close();b.click();});
+    return {b,caption,slot,item};
+  });
+  const sync=()=>{
+    for(const {b,caption,slot,item} of entries){
+      const text=b.getAttribute('aria-label')||b.textContent?.trim()||'';
+      if(caption.textContent!==text)caption.textContent=text;
+      if(visible(b))slot.replaceWith(item);
+      else if(item.parentElement){
+        const panel=item.parentElement,focused=document.activeElement===item;
+        item.replaceWith(slot);
+        item.tabIndex=-1;
+        if(focused)refocusItem(panel,text);
+      }
+    }
+  };
+  new MutationObserver(sync).observe(held,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['aria-label','hidden','disabled']});
   const more:HTMLButtonElement=opens(iconButton(pending?`${label}, ${plural(pending,'item')} waiting`:label,'dots',()=>{
-    close=menu(more,label,()=>[...held.querySelectorAll<HTMLButtonElement>('button')].filter(visible).map(b=>entry(b,()=>close())),{placement:'below-end'});}),'menu');
+    close=menu(more,label,()=>{sync();return entries.map(({b,item,slot})=>visible(b)?item:slot);},{placement:'below-end'});}),'menu');
   if(pending)more.append(el('span',{class:'nav-count','aria-hidden':'true'},String(pending)));
   return el('span',{class:'rc-more'},more,held);
 }
