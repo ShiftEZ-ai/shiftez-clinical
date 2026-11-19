@@ -1,5 +1,4 @@
 """Benchmark demand, scoring parity, timing provenance and department isolation."""
-from tests.historical_staffing import retained_staffing
 import copy
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -377,8 +376,8 @@ def test_benchmark_keeps_lead_only_gap_blocking_without_counting_an_open_seat(h)
     source = h.workspace('Imported lead benchmark fixture')
     with transaction(h.app.state.engine, write=True) as db:
         db.get(m.Workspace, source['id']).origin = 'import'
-    source = retained_staffing(h, source, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
-                               typ=typ, people=h.seed['people'][:2])['workspace']
+    source = h.shift(source, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
+                    typ=typ, people=h.seed['people'][:2])['workspace']
     with transaction(h.app.state.engine, write=True) as db:
         report = benchmark.compare(db, actor(h), command('score_check.benchmark',
             workspace_ids=[source['id']]), h.settings)['benchmark']

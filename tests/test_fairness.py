@@ -1,6 +1,5 @@
 """Fairness ledger and Balance goals: ledger build/backfill/idempotency, validator and score, the solver's
 history-aware balancing, and the dashboard API with its permissions."""
-from tests.historical_staffing import retained_staffing
 from tests.legacy_lead import historical_type
 
 import json
@@ -282,7 +281,7 @@ def test_lead_turns_share_out_between_the_people_who_may_lead(h, reverse):
     w = h.workspace()
     for day in range(4, 8):  # a and b work every session; who leads is the only choice
         start, end = at(day)
-        w = retained_staffing(h, w, start=start, end=end, typ=typ, people=[a, b])['workspace']
+        w = h.shift(w, start=start, end=end, typ=typ, people=[a, b])['workspace']
     data = h.snapshot(w)
     data['people'] = {p: data['people'][p] for p in ((b, a) if reverse else (a, b))}
     if reverse:
@@ -307,7 +306,7 @@ def test_lead_turn_ties_follow_the_configured_tolerance(h):
     w = h.workspace()
     for day in range(4, 8):
         start, end = at(day)
-        w = retained_staffing(h, w, start=start, end=end, typ=typ, people=[a, b])['workspace']
+        w = h.shift(w, start=start, end=end, typ=typ, people=[a, b])['workspace']
     data = h.snapshot(w)
     policy = policy_of(data, g)
     shifts = sorted(data['shifts'], key=lambda s: s['start'])

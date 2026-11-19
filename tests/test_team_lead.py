@@ -1,10 +1,10 @@
 """Team lead: duty-type settings, validator findings, solver and greedy choices, reports."""
-from tests.historical_staffing import retained_staffing
 import copy
 from datetime import datetime
 
 import pytest
 
+from tests.historical_staffing import retained_staffing
 from tests.legacy_lead import historical_type
 from packages.domain import generation
 from packages.domain.cp_sat import generate
@@ -50,7 +50,7 @@ def test_full_lead_gap_fix_list_marks_an_present_qualified_person(h):
     a, b = h.seed['people'][:2]
     typ = lead_type(h, lead={'minimum': 1, 'maximum': 1,
                              'capability_ids': [h.seed['supervisor_capability']], 'category_ids': []})
-    w = retained_staffing(h, h.workspace('Lead picker, present candidate'), typ=typ, people=[a, b])['workspace']
+    w = h.shift(h.workspace('Lead picker, present candidate'), typ=typ, people=[a, b])['workspace']
     shift = h.detail(w)['shifts'][0]
     cause = _lead_fix(h, w)
     assert cause['action']['kind'] == 'choose_cover'
@@ -71,7 +71,7 @@ def test_locked_full_lead_gap_points_to_the_picker_and_every_write_is_refused(h)
     the writes behind the picker refuse the locked session."""
     a, b = h.seed['people'][:2]
     typ = lead_type(h)
-    w = retained_staffing(h, h.workspace('Lead picker, locked session'), typ=typ, people=[a, b])['workspace']
+    w = h.shift(h.workspace('Lead picker, locked session'), typ=typ, people=[a, b])['workspace']
     shift = h.detail(w)['shifts'][0]
     w = h.command('coordinator', 'shift.action', {'workspace_id': w['id'], 'shift_ids': [shift['id']],
                   'action': 'lock', 'reason': 'Keep this session locked'}, revision=w['revision'])['workspace']
@@ -101,7 +101,7 @@ def test_full_lead_gap_fix_list_offers_qualified_replacement_and_clears_it(h):
                        'lead': {'minimum': 1, 'maximum': 1, 'capability_ids': [], 'category_ids': [],
                                  'conditions': {'match': 'all', 'conditions': [
                                      {'field': 'person_ids', 'op': 'any', 'values': [candidate]}]}}}})['id']
-    w = retained_staffing(h, h.workspace('Lead picker, replacement candidate'), typ=typ, people=[a, b])['workspace']
+    w = h.shift(h.workspace('Lead picker, replacement candidate'), typ=typ, people=[a, b])['workspace']
     shift = h.detail(w)['shifts'][0]
     cause = _lead_fix(h, w)
     assert cause['action']['kind'] == 'choose_cover'
@@ -137,7 +137,7 @@ def test_lead_settings_are_checked_and_findings_explain_gaps(h):
     h.configure('assignment_types', {'name': 'Protected lead', 'starts_on': '2020-01-01', 'definition': {
         'purpose': 'protected', 'requirements': [], 'lead': {'minimum': 1, 'maximum': 1}}}, status=422)
     typ = lead_type(h)
-    result = retained_staffing(h, h.workspace(), typ=typ, people=[a, b])
+    result = h.shift(h.workspace(), typ=typ, people=[a, b])
     gap = [f for f in result['validation']['findings'] if f['code'] == 'LEAD_GAP']
     assert gap and gap[0]['severity'] == 'error' and gap[0]['message'] == 'This session needs a team lead'
     data = h.snapshot(result['workspace'])
@@ -178,7 +178,7 @@ def test_solver_picks_one_qualified_lead_and_keeps_existing_leads(h):
     kept = generate(h.snapshot(w), 10)
     assert kept['status'] == 'candidate_feasible' and kept['additions'] == kept['removals'] == []
     # Fill-gaps keeps everyone in place but may still name one of them lead; a fixed person is never changed.
-    w = retained_staffing(h, h.workspace('Fill lead'), typ=typ, people=[a, {'person_id': b, 'start': START, 'end': END, 'fixed': True}])['workspace']
+    w = h.shift(h.workspace('Fill lead'), typ=typ, people=[a, {'person_id': b, 'start': START, 'end': END, 'fixed': True}])['workspace']
     data = h.snapshot(w)
     data['generation_options'] = {'mode': 'fill_gaps'}
     filled = generate(data, 10)
@@ -202,7 +202,7 @@ def test_solver_keeps_lead_flag_when_a_person_is_rewritten(h):
 def test_greedy_names_a_lead_among_assigned_people(h):
     a, b, c = h.seed['people']
     typ = lead_type(h)
-    w = retained_staffing(h, h.workspace(), typ=typ, people=[a, b])['workspace']
+    w = h.shift(h.workspace(), typ=typ, people=[a, b])['workspace']
     result = generation.generate(h.snapshot(w), 20)
     assert result['validation']['valid'], result['validation']['findings']
     assert [r['participant']['team_lead'] for r in result['additions']] == [True]
@@ -235,7 +235,7 @@ def test_lead_turns_report_quota_and_fill_options(h):
     report = h.get('coordinator', '/api/reports/' + published['publication_id'])
     assert {r['person_id']: r['lead_turns'] for r in report['rows']} == {b: 1, c: 0}
     assert 'lead_turns' in h.client('coordinator').get('/api/reports/' + published['publication_id'] + '?format=csv').text
-    w = retained_staffing(h, h.workspace('Open'), typ=typ, people=[a])['workspace']
+    w = h.shift(h.workspace('Open'), typ=typ, people=[a])['workspace']
     target = h.detail(w)['shifts'][0]
     options = h.client('coordinator').post('/api/planner/fill-options', json={
         'workspace_id': w['id'], 'shift_id': target['id'], 'expected_revision': w['revision']}).json()
@@ -267,7 +267,7 @@ def test_who_may_lead_uses_the_shared_conditions_on_any_dimension(h):
         'lead': {'minimum': 1, 'maximum': 1, 'conditions': {'match': 'all', 'conditions': [
             {'field': 'programme_ids', 'op': 'any', 'values': ['00000000-0000-4000-8000-000000000000']}]}}}}, status=422)
     programme, typ = programme_lead(h, c)
-    data = h.snapshot(retained_staffing(h, h.workspace(), typ=typ, people=[a, c])['workspace'])
+    data = h.snapshot(h.shift(h.workspace(), typ=typ, people=[a, c])['workspace'])
     assert lead_codes(copy.deepcopy(data), c) == set()
     assert lead_codes(copy.deepcopy(data), a) == {'LEAD_NOT_QUALIFIED', 'LEAD_GAP'}
     unqualified = copy.deepcopy(data)
@@ -296,17 +296,17 @@ def test_lead_conditions_split_at_dated_membership_and_drive_solver_greedy_and_o
     a, b, c = h.seed['people']
     _, typ = programme_lead(h, c, ends_on='2026-10-05')
     night = {'start': '2026-10-04T20:00:00+03:00', 'end': '2026-10-05T04:00:00+03:00'}
-    w = retained_staffing(h, h.workspace(), typ=typ, people=[a, {'person_id': c, **night, 'team_lead': True}], **night)['workspace']
+    w = h.shift(h.workspace(), typ=typ, people=[a, {'person_id': c, **night, 'team_lead': True}], **night)['workspace']
     found = [f for f in h.detail(w)['workspace']['validation']['findings'] if f['code'] == 'LEAD_NOT_QUALIFIED']
     assert found and datetime.fromisoformat(found[0]['start']) == datetime.fromisoformat('2026-10-05T00:00:00+03:00')
     _, typ = programme_lead(h, c)
     result = generate(h.snapshot(h.shift(h.workspace('Solver'), typ=typ, people=[])['workspace']), 10)
     assert result['status'] == 'candidate_feasible', result
     assert [r['participant']['person_id'] for r in result['additions'] if r['participant']['team_lead']] == [c]
-    greedy = generation.generate(h.snapshot(retained_staffing(h, h.workspace('Greedy'), typ=typ, people=[a, c])['workspace']), 20)
+    greedy = generation.generate(h.snapshot(h.shift(h.workspace('Greedy'), typ=typ, people=[a, c])['workspace']), 20)
     assert greedy['validation']['valid'], greedy['validation']['findings']
     assert [r['participant']['person_id'] for r in greedy['additions'] if r['participant'].get('team_lead')] == [c]
-    w = retained_staffing(h, h.workspace('Options'), typ=typ, people=[a])['workspace']
+    w = h.shift(h.workspace('Options'), typ=typ, people=[a])['workspace']
     options = h.client('coordinator').post('/api/planner/fill-options', json={
         'workspace_id': w['id'], 'shift_id': h.detail(w)['shifts'][0]['id'], 'expected_revision': w['revision']}).json()
     assert {r['person_id']: r['can_lead'] for r in options['candidates']} == {b: False, c: True}
@@ -336,15 +336,13 @@ def lead_counts(result):
     return counts
 
 
-def week(h, typ, name, first, people, days=4, *, retained=False):
+def week(h, typ, name, first, people, days=4):
     """A week's draft from day `first` of October with one session a day for `days` days; `people(start, end)`."""
     w = h.workspace(name, start=f'2026-10-{first:02}', end=f'2026-10-{first + 7:02}')
     for day in range(first, first + days):
         s, e = f'2026-10-{day:02}T08:00:00+03:00', f'2026-10-{day:02}T12:00:00+03:00'
-        participants = [p if isinstance(p, dict) else {'person_id': p, 'start': s, 'end': e} for p in people(s, e)]
-        created = (retained_staffing(h, w, start=s, end=e, typ=typ, people=participants) if retained
-                   else h.shift(w, start=s, end=e, typ=typ, people=participants))
-        w = created['workspace']
+        w = h.shift(w, start=s, end=e, typ=typ, people=[p if isinstance(p, dict) else {'person_id': p, 'start': s, 'end': e}
+                                                        for p in people(s, e)])['workspace']
     return w
 
 
@@ -377,7 +375,7 @@ def disable_lead_balance(data, typ):
 def test_lead_turns_are_shared_fairly_by_default_and_can_be_switched_off(h):
     a, b, _ = h.seed['people']
     typ = anyone_leads(h)
-    data = h.snapshot(week(h, typ, 'Fair leads', 4, lambda s, e: [a, b], retained=True))
+    data = h.snapshot(week(h, typ, 'Fair leads', 4, lambda s, e: [a, b]))
     from packages.domain.fairness import goal_identity
     lead = lead_goal(data, typ)
     assert lead['definition']['strength'] == 'medium'
@@ -397,7 +395,7 @@ def test_lead_turn_shares_count_only_people_who_may_lead(h):
     a, b, c = h.seed['people']
     _, typ = programme_lead(h, c)
     users = goal_policy(h)
-    data = h.snapshot(week(h, typ, 'Eligible only', 4, lambda s, e: [a, c], days=2, retained=True))
+    data = h.snapshot(week(h, typ, 'Eligible only', 4, lambda s, e: [a, c], days=2))
     from packages.domain.fairness import balance_goals, goal_report
     goals = {p['id']: p for p in balance_goals(data) if p['definition']['rule']['metric'] == 'lead_turns'}
     assert users['id'] in goals
@@ -410,7 +408,7 @@ def test_lead_turns_follow_history_in_solver_and_greedy(h):
     a, b, _ = h.seed['people']
     typ = anyone_leads(h)
     h.publish(week(h, typ, 'Last week', 4, lambda s, e: [{'person_id': a, 'start': s, 'end': e, 'team_lead': True}, b], days=2))
-    data = h.snapshot(week(h, typ, 'This week', 11, lambda s, e: [a, b], days=2, retained=True))
+    data = h.snapshot(week(h, typ, 'This week', 11, lambda s, e: [a, b], days=2))
     from packages.domain.fairness import goal_identity
     history = data['fairness_history'][goal_identity(lead_goal(data, typ))]['people']
     assert history[a]['value'] == 2 and history[b]['value'] == 0

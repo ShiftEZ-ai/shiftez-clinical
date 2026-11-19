@@ -1,5 +1,4 @@
 """Team lead in the browser: who may lead through the shared conditions, one lead by radio or several by checkbox, badge."""
-from tests.historical_staffing import retained_staffing
 from packages.domain.time import now as clock_now
 import re
 import pytest
@@ -22,7 +21,7 @@ def test_duty_type_lead_settings_radio_choice_and_badge(browser, live_server, h)
     activate(h, proposal(h, [governed]))
     assert typ['definition'].get('lead') is None
     errors = []
-    w = retained_staffing(h, h.workspace('Lead browser'), typ=typ['id'], people=[a, b])['workspace']
+    w = h.shift(h.workspace('Lead browser'), typ=typ['id'], people=[a, b])['workspace']
     context, page = sign_in(browser, live_server, 'coordinator')
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
@@ -53,7 +52,7 @@ def test_session_form_allows_several_leads_up_to_the_maximum(browser, live_serve
     typ = h.configure('assignment_types', {'name': 'Two leads', 'starts_on': '2020-01-01', 'definition': {
         'requirements': [{'minimum': 3, 'maximum': 3}]}})['record']['id']
     activate(h, proposal(h, [line(typ, maximum=2)]))
-    w = retained_staffing(h, h.workspace('Several leads'), typ=typ, people=[a, b, c])['workspace']
+    w = h.shift(h.workspace('Several leads'), typ=typ, people=[a, b, c])['workspace']
     context, page = sign_in(browser, live_server, 'coordinator'); errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
@@ -129,8 +128,10 @@ def test_filled_session_lead_context_is_fresh_or_visibly_unavailable(browser, li
     activate(h, proposal(h, [line(typ['id'], [b])]))
     w = h.workspace('Filled headcount without lead')
     start, end = '2026-10-04T08:00:00+03:00', '2026-10-04T12:00:00+03:00'
-    w = retained_staffing(h, w, start, end, typ=typ['id'], people=[a, b],
-                          service_ids=h.seed['services'])['workspace']
+    w = h.command('coordinator', 'shift.create', {'workspace_id': w['id'], 'assignment_type_id': typ['id'],
+        'location_id': h.seed['locations'][0], 'service_ids': h.seed['services'], 'start': start, 'end': end,
+        'participants': [{'person_id': pid, 'start': start, 'end': end} for pid in (a, b)],
+        'override_reason': 'Synthetic missing named lead'}, revision=w['revision'])['workspace']
     before = h.detail(w)
     shift = before['shifts'][0]
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': width, 'height': 900})
@@ -198,7 +199,7 @@ def test_lead_context_refreshes_after_governed_qualification_changes_without_dra
     typ = h.configure('assignment_types', {'name': 'Qualification refresh duty', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 2, 'maximum': 2}]}})['record']
     rule = activate(h, proposal(h, [line(typ['id'], [b])]))
-    w = retained_staffing(h, h.workspace('Qualification changes, same draft revision'), typ=typ['id'], people=[a, b])['workspace']
+    w = h.shift(h.workspace('Qualification changes, same draft revision'), typ=typ['id'], people=[a, b])['workspace']
     [shift] = h.detail(w)['shifts']
     gap = f'.pchip.role-gap[data-shift="{shift["id"]}"]'  # the grid's chip, not the legend's lg-mark key
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})

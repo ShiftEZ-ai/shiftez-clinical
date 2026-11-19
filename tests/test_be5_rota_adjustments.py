@@ -1,5 +1,4 @@
 """D16 extends the existing rota adjustment path; permanent rules never change."""
-from tests.historical_staffing import retained_staffing
 import copy
 from types import SimpleNamespace
 from uuid import uuid4
@@ -223,7 +222,7 @@ def test_cap_fit_excludes_full_lead_only_sessions_from_open_place_ranking(h):
         'definition': {'requirements': [{'minimum': 2, 'maximum': 2}],
                        'lead': {'minimum': 1, 'maximum': 1,
                                 'capability_ids': [h.seed['supervisor_capability']], 'category_ids': []}}})['id']
-    full = retained_staffing(h, rota, start='2026-10-07T08:00:00+03:00', end='2026-10-07T12:00:00+03:00',
+    full = h.shift(rota, start='2026-10-07T08:00:00+03:00', end='2026-10-07T12:00:00+03:00',
                    typ=typ, people=h.seed['people'][1:])['workspace']
     lead_shift_id = h.detail(full)['shifts'][-1]['id']
     result = preview(h, full, scoped_payload(policy, binding, h.seed['people'][0], amount=3),

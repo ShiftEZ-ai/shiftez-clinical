@@ -1,5 +1,4 @@
 """Small job-local population runs preserve existing evidence and keep complete safety context."""
-from tests.historical_staffing import retained_staffing
 from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
@@ -316,7 +315,7 @@ def test_scoped_run_cannot_promote_a_protected_existing_lead(h, engine):
     outsider, selected = h.seed['people'][:2]
     from .test_team_lead import lead_type
     typ = lead_type(h, requirements=[{'minimum': 1, 'maximum': 1}])
-    w = retained_staffing(h, h.workspace(), typ=typ, people=[outsider])['workspace']
+    w = h.shift(h.workspace(), typ=typ, people=[outsider])['workspace']
     data = h.snapshot(w)
     data['generation_scope'] = scope('person_ids', selected)
     planned = engine(data, 5)

@@ -1,5 +1,4 @@
 """Lawful internal-presence gaps from the independent leadership review."""
-from tests.historical_staffing import retained_staffing
 import copy
 
 import pytest
@@ -78,7 +77,7 @@ def test_optional_whole_duty_context_and_publication_agree(h, stage, monkeypatch
     a, b, c = h.seed['people']
     typ, _ = prepared(h)
     activate(h, proposal(h, [line(typ['id'], minimum=0, maximum=None)]))
-    w = retained_staffing(h, h.workspace('Optional whole-duty continuity'), typ=typ['id'], people=[
+    w = h.shift(h.workspace('Optional whole-duty continuity'), typ=typ['id'], people=[
         {'person_id': a, 'start': START, 'end': END, 'segments': presence(NINE, TEN), 'team_lead': True}, b, c])['workspace']
     shift = h.snapshot(w)['shifts'][0]
     value = {k: shift[k] for k in s.ShiftInput.model_fields if k in shift}

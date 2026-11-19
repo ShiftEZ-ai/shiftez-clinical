@@ -248,7 +248,7 @@ def test_move_refuses_full_lead_gap_target_as_no_open_place(h):
                                 'capability_ids': [h.seed['supervisor_capability']], 'category_ids': []}}})
     w = h.workspace('Full lead target')
     source = h.shift(w, *DAY, people=[h.seed['people'][2]])
-    target = retained_staffing(h, source['workspace'], *NEXT, typ=typ['id'], people=h.seed['people'][:2])
+    target = h.shift(source['workspace'], *NEXT, typ=typ['id'], people=h.seed['people'][:2])
     w = target['workspace']
     rows = {row['id']: row for row in h.detail(w)['shifts']}
     before = state(h, w)

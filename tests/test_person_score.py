@@ -365,7 +365,7 @@ def test_person_score_returns_a_qualified_lead_flag_and_reproducible_score_delta
     from tests.test_team_lead import lead_type
     pid, peer = h.seed['people'][:2]
     typ = lead_type(h)
-    workspace = retained_staffing(h, h.workspace(), typ=typ, people=[peer])['workspace']
+    workspace = h.shift(h.workspace(), typ=typ, people=[peer])['workspace']
     source = h.snapshot(workspace)
     [duty] = source['shifts']
     before = evaluate(source)

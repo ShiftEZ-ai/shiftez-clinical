@@ -1,5 +1,4 @@
 """Template setup and reviewed solver changes preserve the dated scheduling contract."""
-from tests.historical_staffing import retained_staffing
 from dataclasses import replace
 from functools import partial
 
@@ -56,7 +55,7 @@ def lead_proposal(h, segmented=False):
     first, second = h.seed['people'][:2]
     typ = lead_type(h, requirements=[{'minimum': 1, 'maximum': 2}])
     participant = person(first) if segmented else {'person_id': first, 'start': START, 'end': END}
-    w = retained_staffing(h, h.workspace(), typ=typ, people=[participant,
+    w = h.shift(h.workspace(), typ=typ, people=[participant,
         {'person_id': second, 'start': START, 'end': END, 'fixed': True}])['workspace']
     job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation',
         'generation_options': {'mode': 'fill_gaps'}, 'diagnostic_proposal': segmented}, revision=w['revision'])['job']

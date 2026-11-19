@@ -1758,11 +1758,13 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     current = [row for row in data['shifts'] if row['id'] in focus]
     touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
     prior = [old[row['id']] for row in touched if row['id'] in old]
+    open_places = []
+    if staffing_gaps_only:
+        if not prior and not any(row['participants'] for row in touched):
+            return None
+        # Compare staffing a new session with the same session left empty.
+        open_places = [{**row, 'participants': []} for row in touched if row['id'] not in old]
     scope = assignment_scope(data, prior, touched)
-    # Open places are valid draft building blocks. A staffed new session has no prior coverage.
-    open_places = [row for row in touched if row['id'] not in old and not row['participants']] if staffing_gaps_only else []
-    if staffing_gaps_only and len(open_places) == len(touched):
-        return None
     baseline = with_series_state({**data, 'shifts': before['shifts'] + open_places +
         [row for row in data['shifts'] if row['id'] not in focus]})
     def compare():
