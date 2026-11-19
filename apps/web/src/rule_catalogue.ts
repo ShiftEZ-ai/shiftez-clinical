@@ -2169,11 +2169,22 @@ export function moreActions(label:string,items:Child[],pending=0):HTMLElement{
 }
 /** Rules in force that are not in the catalogue yet: they keep applying as they are (read-only here). */
 export const keptRules=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='active'&&p.kind!=='catalogue'&&!p.definition?.workspace_id);
+/** Proposals for an older rule kind (not in the catalogue): one list for the ⋯ menu's count and Waiting for approval. */
+export const olderPending=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+const recordName=(ctx:Context)=>(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+/** What an older rule does, in words (its Effect in Other pending rules). */
+export const olderEffect=(ctx:Context,p:Row)=>ruleSentence(p.definition.rule,p.definition,recordName(ctx));
+/** May check an older-kind proposal against current rotas (its Review). */
+export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER);
+/** An older-kind proposal's decision panel (check, Activate, Decline): Activate for another approver, or the proposer
+ *  under a self-approval permission (mayDecide). */
+export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
+  refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{
-  const pending=(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+  const pending=olderPending(ctx);
   if(!kept.length&&!pending.length)return null;
-  const name=(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+  const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
   const context=kept.length?compact(button(`Other department rules (${kept.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
     build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
@@ -2187,7 +2198,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
           {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
     'secondary'),'layers'):null;
   if(!pending.length)return context;
-  const canCheck=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
+  const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};
   // Folds to its icon beside a side panel, like the other header buttons.
   const waiting=compact(button(`Other pending rules (${pending.length})`,()=>dockPanel({key:'pending-rules',title:'Other pending rules',width:640,
@@ -2198,7 +2209,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
       columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
         {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)}],
       rowActions:p=>{const mine=p.created_by===ctx.me.identity_id;return [
-        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>ruleReview(p,canCheck,ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),changed,name,ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx)}]:[]),
+        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>reviewOlder(ctx,p,changed)}]:[]),
         // Withdrawing your own proposal requires a recorded reason; Undo puts it back waiting.
         ...(canDecide&&mine?[{label:'Withdraw',icon:'close' as const,danger:true,run:()=>confirmAction(`Withdraw ${labelOf(p)}`,'The proposal stays in History; Undo puts it back waiting.',reason=>declineProposal(p,reason,'Proposal withdrawn.',changed),'Withdraw')}]:[]),
         ...(canDecide&&!mine?[{label:'Decline',icon:'close' as const,danger:true,run:()=>confirmAction(`Decline ${labelOf(p)}`,'The proposal is kept in History.',reason=>declineProposal(p,reason,'Proposal declined.',changed),'Decline')}]:[])];},

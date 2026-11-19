@@ -3,7 +3,7 @@
  *  select-all, one selection bar, and the Needs attention view. A rule row is its name and one count line. Every change goes into
  *  the rules' drafts and is proposed together ("Propose N changes"): one version per rule, each approved by another
  *  person. */
-import {el,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
+import {el,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,labelOf,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
 import {TABLE_CONDITION_DEFINITIONS,type Conditions} from './generated.js';
 import {command,sessionKey,type Undone} from './api.js';
 import {savingMark,failedMark,conflict} from './loading.js';
@@ -25,7 +25,7 @@ import type {Context} from './forms.js';
 import type {RuleLine,RulesViewSettings} from './generated.js';
 import type {Row} from './types.js';
 import {WAITING,linesOf,isOn,numberText,draftOf,draftView,keepDraft,discardDraft,rememberProposed,restoreProposedDrafts,changesOf,changesIn,changedRules,namer,treeText,pills,numbersText,numbersNode,sourceWords,daysText,validText,lineWords,
-  newLine,newLinePicker,propose,moreActions,checkBeforeProposing,checkWords,changeList,missingNeeds,settingsOf,numbersPopover,datesDialog,barButton,keptRules,otherRulesContext,ruleViewKey,validNode,
+  newLine,newLinePicker,propose,moreActions,checkBeforeProposing,checkWords,changeList,missingNeeds,settingsOf,numbersPopover,datesDialog,barButton,keptRules,otherRulesContext,ruleViewKey,validNode,olderPending,olderEffect,mayReviewOlder,reviewOlder,
   type Catalogue,type Entry,type Issue,type Fix,type Options,type Chosen,type Namer,type Draft} from './rule_catalogue.js';
 
 type Mode=NonNullable<RulesViewSettings['mode']>;
@@ -88,6 +88,12 @@ export const KINDS:Record<string,{label:string;tone:BadgeTone;about:string}>={
   blocks:{label:'Blocks a draft',tone:'err',about:'a mandatory line causes schedule issues'}};
 /** A kind's words; one the server adds before this client knows it still shows, under its own name (never dropped). */
 const kindOf=(k:string)=>KINDS[k]||{label:k.charAt(0).toUpperCase()+k.slice(1).replace(/_/g,' '),tone:'' as BadgeTone,about:''};
+/** Older-kind proposals are rows of Waiting for approval: their one property is that they wait, so they show when the
+ *  Filter asks for waiting rules and nothing else in it excludes them; a search matches their name. */
+export const olderShown=(older:Row[],t:Conditions|null,name?:(text:string)=>boolean):Row[]=>
+  t&&mentions(t,'state',[WAITING])&&holds(t,k=>k==='state'?[WAITING]:[],()=>'multiple_choice')?older.filter(p=>!name||name(labelOf(p))):[];
+/** Waiting for approval's count: catalogue rules with a proposal and older-kind proposals, each once. */
+export const waitingCount=(entries:Entry[],older:Row[])=>entries.filter(e=>e.proposed).length+older.length;
 // Acknowledged issues are shared by the department (rule.acknowledge): they leave Needs attention for everyone, show under
 // Acknowledged with who and when, and come back when their lines change. Fixes applied to a draft stay hidden until it
 // is proposed or discarded.
@@ -195,8 +201,9 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   const setWrapAll=(on:boolean)=>{const keys=wrapKeys();s.wrap=s.wrap.filter(k=>!keys.includes(k));if(on)s.wrap.push(...keys);changed();};
   const simplify=simplifyButton(ctx,refresh,o);
   // Add, Discard and Propose stay buttons; the rest is one ⋯ menu that says what waits (RUL-02). Older department rules
-  // and their pending proposals keep their own panels there (legacy compatibility until a governed conversion).
-  const otherPending=(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue').length;
+  // and their pending proposals keep their own panels there (legacy compatibility until a governed conversion); the
+  // proposals are rows of Waiting for approval too, counted from the same list.
+  const older=olderPending(ctx),otherPending=older.length;
   target.append(sectionHead('Rules','',
     moreActions('More rule actions',[...(o.whichRule?[compact(button('Which rule applies?',o.whichRule,'secondary'),'directory')]:[]),
       // Print: the page as shown (its sentences under the questions when grouped so), through the app's print styles.
@@ -222,7 +229,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const builtins=()=>[{label:'All rules',count:all.filter(current).length,on:!viewId&&!attention&&!s.filters.state?.length,apply:()=>open('rules',{})},
       {label:'Needs attention',count:attentionTotal(),on:!viewId&&s.mode==='attention',apply:()=>open('attention',{})},
       {label:'Acknowledged',count:acked.length,on:!viewId&&s.mode==='acknowledged',apply:()=>open('acknowledged',{})},
-      {label:WAITING,count:all.filter(e=>e.proposed).length,on:!viewId&&!attention&&s.filters.state?.join()===WAITING,apply:()=>open('rules',{state:[WAITING]})}];
+      {label:WAITING,count:waitingCount(all,older),on:!viewId&&!attention&&s.filters.state?.join()===WAITING,apply:()=>open('rules',{state:[WAITING]})}];
     const on=()=>builtins().find(b=>b.on);
     const facets=properties(attention);
     const t=collectionToolbar({label:'Rules',
@@ -518,15 +525,28 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       return el('section',{class:'rt-q','aria-labelledby':head},el('div',{class:'rt-qhead'},canEdit?box(`Select ${g.name}`,keys,!keys.length):el('span',{}),
         el('h3',{id:head},...(g.letter?[el('span',{class:'rt-letter'},g.letter),' ']:[]),g.name),el('span',{class:'dt-group-count'},String(g.rows.length))),list);
     });
+    // Older-kind proposals after the catalogue's groups, in a section of their own with no heading: each row names its kind.
+    const olders=olderShown(older,tree(),searching()?.name);
+    if(olders.length)sections.push(el('section',{class:'rt-q'},el('ul',{class:'rt-list','aria-label':plural(olders.length,'older rule')+' waiting for approval'},...olders.map(olderItem))));
     const n=rows.reduce((a,x)=>a+x.lines.length,0);
-    const listed=all.filter(current).length;
-    count.textContent=(rows.length===listed?plural(listed,'rule'):`${rows.length} of ${listed} rules`)+(s.q?` · ${plural(n,'line')}`:'');toolbar.shown(rows.length,listed,['rule','rules']);
+    const listed=all.filter(current).length+olderShown(older,tree()).length,shownCount=rows.length+olders.length;
+    count.textContent=(shownCount===listed?plural(listed,'rule'):`${shownCount} of ${listed} rules`)+(s.q?` · ${plural(n,'line')}`:'');toolbar.shown(shownCount,listed,['rule','rules']);
     const filtered=!!s.q.trim()||!!normalSearch(s.search_options)?.reference||Object.values(s.filters).some(v=>v.length)||!!s.conditions;
     // One list, no table and no columns: nothing is empty and nothing scrolls sideways.
-    body.replaceChildren(rows.length?el('div',{class:'table-scroll rt-scroll',tabindex:0,'aria-label':'Rules and their lines'},header(rows),...sections)
+    body.replaceChildren(shownCount?el('div',{class:'table-scroll rt-scroll',tabindex:0,'aria-label':'Rules and their lines'},header(rows),...sections)
       :v2&&!filtered?empty('No rules in use',canEdit?'Add rule starts one, from its first line. Filter shows empty types and ended lines.':'No rule applies yet. Filter shows empty types and ended lines.',null,'rules')
       :empty(all.length?'No matching rules':'No rules',all.length?searchWords(s.search_options)||'Clear the search or a filter.':'',null,'search'));
     selectionShown();
+  }
+  /** An older-kind proposal: its name opens the decision panel Other pending rules' Review opens (check, Activate,
+   *  Decline), with the same permissions; one who cannot check reads its rule sheet, as that panel's name link does. */
+  function olderItem(p:Row):HTMLElement{
+    const run=()=>mayReviewOlder(ctx)?void reviewOlder(ctx,p,refresh).catch(err=>notify((err as Error).message,'error',undefined,err)):o.openRule?.(p);
+    const title=el('div',{class:'rt-title'},button(labelOf(p),run,'',{class:'link-button rt-rule-link',...(mayReviewOlder(ctx)?popup('dialog'):{})}),
+      badge('Older rule','neutral','rt-older'),badge(WAITING,'info','rt-waiting-chip',{icon:'clock','data-rule-mark':'waiting'}));
+    // The row's columns (box, toggle, switch) stay empty: it has no lines and changes only through its decision.
+    return marks.stamp(el('li',{class:'rt-item','data-older-rule':p.id},el('div',{class:'rt-row'},el('span',{}),el('span',{}),el('span',{}),
+      el('div',{class:'rt-main'},title,el('div',{class:'rt-meta'},olderEffect(ctx,p))))));
   }
   /** The rules and lines picked, per rule (only rules that can change). */
   function chosen():Chosen{
