@@ -799,15 +799,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         current = (actor.identity_id, actor.department_id, workspace.content_revision,
                    workspace.status, workspace.archived_at, current_data['fingerprint'])
         if current != workspace_check[0]:
-            # Publication deliberately rechecks the live snapshot in the writer;
-            # a changed input fingerprint must reach the review gate as
-            # STALE_APPROVAL rather than being collapsed into a preflight race.
-            if command.kind == 'workspace.publish' and current[:-1] == workspace_check[0][:-1]:
-                return
             raise Problem(409, 'STALE_INPUTS',
-                ('The rota or its scheduling inputs changed before publication; refresh before publishing again.'
-                 if command.kind == 'workspace.publish' else
-                 'The rota or its scheduling inputs changed during the check; the completed check is retained here.'),
+                'The rota or its scheduling inputs changed during the check; the completed check is retained here.',
                 {'current_revision': workspace.revision, 'validation': workspace_check[1],
                  'recoverable': True, 'current_fingerprint': current[-1],
                  'changed_facts': input_changes.changed_facts(db, workspace_check[2], current_data,
@@ -832,19 +825,15 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 if command.kind != 'workspace.validate':
                     state = {'workspace.submit': 'draft', 'workspace.approve': 'submitted', 'workspace.publish': 'approved'}[command.kind]
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
-                captured = []
-                if command.kind == 'workspace.publish':
-                    # This read only detects drift before the serialized writer.
-                    # Publication always evaluates fresh inputs inside that writer.
-                    captured.append(planning.domain_snapshot(db, workspace))
-                    checked = workspace.validation or {}
-                else:
+                # Publish keeps the cheap preconditions; only its final writer acquires inputs.
+                if command.kind != 'workspace.publish':
+                    captured = []
                     checked = planning.revalidate(db, workspace, store=False, data_out=captured,
                         reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True)
-                context = (actor.identity_id, actor.department_id, workspace.content_revision,
-                           workspace.status, workspace.archived_at, captured[0]['fingerprint'])
-                workspace_check = (context, checked, captured[0], input_changes.watermark(db, actor.department_id),
-                                   planning.validation_stamp(db, workspace))
+                    context = (actor.identity_id, actor.department_id, workspace.content_revision,
+                               workspace.status, workspace.archived_at, captured[0]['fingerprint'])
+                    workspace_check = (context, checked, captured[0], input_changes.watermark(db, actor.department_id),
+                                       planning.validation_stamp(db, workspace))
 
     generation_plan = None
     if command.kind == 'generation.apply':
@@ -1037,21 +1026,14 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if workspace_check is not None:
             require_workspace_command(db, actor, command)
             workspace = scoped(db, m.Workspace, command.target_id, actor)
-            publish_inputs = (planning.snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
-                              if command.kind == 'workspace.publish' else None)
-            if command.kind == 'workspace.publish':
-                current_data = planning.domain_snapshot(db, workspace, shared_inputs=publish_inputs)
-            else:
-                if planning.validation_stamp(db, workspace) != workspace_check[4]:
-                    raise CheckInputsChanged()
-                # This request acquired canonical inputs under REPEATABLE READ. Every input
-                # revision is still identical under the writer; never rebuild history here.
-                expected(workspace, command.expected_revision)
-                current_data = workspace_check[2]
-            check_context(db, actor, workspace, current_data)
-            reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1] if command.kind == 'workspace.validate'
-                else (workspace_check[1], current_data if command.kind == 'workspace.publish' else workspace_check[2])),
-                shared_inputs=publish_inputs)
+            if planning.validation_stamp(db, workspace) != workspace_check[4]:
+                raise CheckInputsChanged()
+            # This request acquired canonical inputs under REPEATABLE READ. Every input
+            # revision is still identical under the writer; never rebuild history here.
+            expected(workspace, command.expected_revision)
+            check_context(db, actor, workspace, workspace_check[2])
+            reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
+                if command.kind == 'workspace.validate' else (workspace_check[1], workspace_check[2])))
         else:
             reply = dispatch(db, actor, command, settings, github_check=github_check, github_export=github_export)
         if planning_plan is not None:
@@ -1286,7 +1268,8 @@ def execute(engine, settings, token, csrf, idempotency_key, command, correlation
                     or command.kind in {'draft.swap', 'draft.move', 'issues.resolve', 'bulk.apply'}):
                 error.details['stale'] = True
         if actor is not None and (error.status == 403 or error.code in {
-                'SAFETY_RULE', 'SAFETY_EXCEPTION', 'ACCEPT_ADVISORY_ONLY', 'PUBLISH_TEST_PEOPLE_ONLY'}):
+                'SAFETY_RULE', 'SAFETY_EXCEPTION', 'ACCEPT_ADVISORY_ONLY', 'PUBLISH_TEST_PEOPLE_ONLY'}
+                or command.kind == 'workspace.publish' and error.code == 'VALIDATION_FAILED'):
             from .services.command_refusals import record_refusal
             record_refusal(engine, actor, command, error, idempotency_key, correlation_id)
         raise
