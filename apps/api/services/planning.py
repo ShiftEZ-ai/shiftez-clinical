@@ -14,12 +14,14 @@ from packages.domain.validation import (INTERNAL_CHECK_KEYS, evaluate, ancestor_
 from packages.domain.resources import date_set_closes, resource_intervals
 from packages.domain.date_sets import DateSetRangeError, prepare_date_sets
 from packages.domain.rule_map import NUMBERS, adjustable, rule_number, weakens_safety
+from packages.domain.rule_serialization import stored_definition
 from packages.domain.assignment_override import assignment_reason_allowed, ZERO_LIMIT_FINDING_CODES
 
 from apps.api import models as m, snapshots
 from apps.api.auth import require_role, person_access, current_roles
 from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
+from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (domain_snapshot, fingerprint, publication_snapshot,
                                 shift_record, workspace_content, workspace_shifts)
 from .common import scoped, expected, bump_inputs, outbox
@@ -941,11 +943,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
                                         next((p.start, p.end) for p in value.participants if p.person_id == pid)
                                         and (not previous[pid].override_reason or pid not in participant_fields_changed)
                                         and pid in known['override_allowed_people']}
-    zero_limits = [p for p in data['policies'] if p['definition']['severity'] == 'mandatory' and (
-        p['definition']['rule']['kind'] == 'block_quota'
-        and p['definition']['rule']['comparison'] == 'maximum' and p['definition']['rule']['amount'] == 0
-        or p['definition']['rule']['kind'] in {'max_duties', 'max_hours'}
-        and p['definition']['rule'].get('maximum', p['definition']['rule'].get('hours')) == 0)]
+    from apps.api.workspace_baselines import _zero_limit_policy
+    zero_limits = [zero for policy in data['policies'] if (zero := _zero_limit_policy(policy)) is not None]
     if zero_limits and counted - blocked:
         shift['participants'] = [{**p, 'id': command_id(db), 'shift_id': shift['id']} for p in shift['participants']]
         trial = {**data, 'policies': zero_limits, 'shifts': [shift], 'focus_ids': [shift['id']],
@@ -957,7 +956,7 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         checked = command_evaluate(db, trial)
         blocked |= zero_limit_blocked(checked)
         known['override_findings'].extend(
-            {'code': f['code'], 'person_id': f['person_id'], 'start': f.get('start'), 'end': f.get('end'),
+            {'code': f['code'], 'message': f['message'], 'person_id': f['person_id'], 'start': f.get('start'), 'end': f.get('end'),
              'severity': f.get('severity'), 'rule_id': f.get('rule_id'), 'detail': f.get('detail')}
             for f in checked['person_findings']
             if f['severity'] == 'error' and f['code'] in ZERO_LIMIT_FINDING_CODES)
@@ -969,7 +968,7 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
 
 def zero_limit_blocked(checked):
     return {f['person_id'] for f in checked['person_findings'] if f['severity'] == 'error'
-            and f['code'] in {'QUOTA_ABOVE_MAXIMUM', 'MAX_DUTIES', 'MAX_HOURS'}}
+            and f['code'] in ZERO_LIMIT_FINDING_CODES}
 
 
 def zero_limit_trial_results(db, trials):
@@ -1052,10 +1051,15 @@ def write_shift(db, actor, workspace, value, existing=None, series_id=None, batc
         # Always name who needs a reason (one or several); one reason never admits several people.
         details = {'people': sorted(needs_reason),
                    'findings': [f for f in known.get('override_findings', []) if f.get('person_id') in needs_reason]}
+        zero_findings = [f for f in details['findings'] if f['code'] in ZERO_LIMIT_FINDING_CODES]
+        current_rule = next((f['rule_id'] for f in zero_findings if (f.get('detail') or {}).get('live_zero')), None)
+        if current_rule:
+            override_refusal += f' (current department rule {current_rule})'
         reasoned = source == 'manual' and reason is not None and len(reason) >= 3
         if len(needs_reason) > 1 and reasoned:
             require(False, 'PERSON_UNAVAILABLE',
-                    'Enter a reason for one person at a time; each admission covers one person and their findings', 422, details)
+                    'Enter a reason for one person at a time; each admission covers one person and their findings'
+                    + (f' (current department rule {current_rule})' if current_rule else ''), 422, details)
         first = details['findings'][0] if details['findings'] else None
         require(reasoned and len(needs_reason) == 1, 'PERSON_UNAVAILABLE',
                 (blocker_text(first['code']) + ' ' if first else '') + override_refusal, 422, details)
@@ -1394,7 +1398,7 @@ def create_workspace(db, actor, command, settings):
                      'repair_unavailable': True, 'repair_conflicts': True}), settings)
     # Published rotas and other drafts on these days: the client warns and offers the ways out (schedule.overlaps).
     from apps.api.workspace_baselines import attach as attach_baseline, projection as baseline_projection
-    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)))
+    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)), baseline=baseline)
     return {"workspace": workspace_value, "baseline": baseline_projection(baseline),
             "snapshot_hash": baseline.payload_hash, "validation": result, 'setup': setup, 'template_skipped': skipped_people,
             'overlaps': schedule.overlaps(db, workspace.department_id, workspace)}
@@ -1451,8 +1455,12 @@ def adjusted_rule(policy, entry):
     else:
         field = ADJUSTABLE[rule['kind']]
         rule[field] = int(amount) if isinstance(rule[field], int) and float(amount).is_integer() else amount
-    result = {**policy, "definition": s.PolicyDefinition.model_validate(definition).model_dump(mode="json"), "rota_adjusted": True}
+    raw = stored_definition(definition) if rule['kind'] == 'catalogue' else definition
+    validated = s.PolicyDefinition.model_validate(raw).model_dump(mode="json")
+    result = {**policy, "definition": validated, "rota_adjusted": True}
     if rule['kind'] == 'catalogue':
+        for line, source in zip(validated['rule']['lines'], rule['lines'], strict=True):
+            line.update((key, value) for key, value in source.items() if key.startswith('_'))
         from packages.domain.rule_lines import expand as expand_rule
         expand_rule(result)  # Catalogue v1 numbers are validated by their resolved primitive schemas.
     return result
@@ -1529,7 +1537,9 @@ def adjusted_rules(policy, entries):
     for entry in sorted(entries, key=lambda r: bool(r.get('line_id'))):
         if policy is None:
             break
-        if entry['policy_id'] == policy['id']:
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
+        if entry['policy_id'] == source_id:
             policy = adjusted_rule(policy, entry)
     return policy
 
@@ -1795,6 +1805,9 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     # Move and swap have no reason field: keep their own message there.
     refusal_message = ('This edit introduces a conflict that a manual reason cannot override'
                        if refusal_code == 'EDIT_INVALID' else message)
+    current_rule = next((f['rule_id'] for f in findings if (f.get('detail') or {}).get('live_zero')), None)
+    if current_rule:
+        refusal_message = (message or refusal_message) + f' (current department rule {current_rule})'
     # A preview refuses exactly as its save will (F14; Master ruling 10 Nov).
     require(not findings, refusal_code, refusal_message or (findings[0]['message'] if findings else 'The edit introduces a blocking issue'),
             422, refusal_details(findings))
@@ -2102,14 +2115,17 @@ def undo(db, actor, command):
     unapplied = []
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
-        # Only the job that made this edit loads its (large) result; its input snapshot is never read here.
-        for job in db.scalars(select(m.Job).options(defer(m.Job.input_snapshot)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == "applied",
-                m.Job.result["applied_content_revision"].as_integer() == change.resulting_content_revision)):
-            if (job.result or {}).get("applied_content_revision") == change.resulting_content_revision:
-                job.status = "succeeded"
-                if (job.result or {}).get('reconciliation'):
-                    job.result = {**job.result, 'reconciliation': {**job.result['reconciliation'], 'status': 'undone'}}
+        receipt_column, raw_revision, current_revision = job_reconciliation_columns()
+        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
+                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+                current_revision == change.resulting_content_revision)):
+            result = job_result_with_reconciliation(job, {'reconciliation': receipt,
+                                                          'applied_content_revision': revision})
+            if result['applied_content_revision'] == change.resulting_content_revision:
+                job.status = 'succeeded'
+                if result['reconciliation']:
+                    retain_job_reconciliation(job, {**result['reconciliation'], 'status': 'undone'})
                 job.progress = job_progress_record(job.progress)
                 job.revision += 1
                 unapplied.append(job.id)
@@ -2185,12 +2201,15 @@ def redo(db, actor, command):
     require_redo_placements(db, actor, workspace, step.before_snapshot, current)
     content_changed = put_back(db, actor, workspace, step.before_snapshot, current)
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
-    for job in db.scalars(select(m.Job).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                              m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
-        receipt = (job.result or {}).get('reconciliation')
+    receipt_column, _, _ = job_reconciliation_columns()
+    revision = workspace.content_revision + int(content_changed)
+    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
+            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+        receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
-        job.result = {**job.result, 'applied_content_revision': workspace.content_revision + int(content_changed), **({'reconciliation': {
-            **receipt, 'status': 'applied', 'applied_content_revision': workspace.content_revision + int(content_changed)}} if receipt else {})}
+        retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
+                                  if receipt else None, applied_revision=revision)
         job.progress = job_progress_record(job.progress)
         job.revision += 1
     return changed(db, actor, workspace, current, value.reason, content_changed=content_changed,
@@ -2608,12 +2627,12 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
         if any(not item.accept for item in value.decisions):
             return acknowledged_gaps.reject_items(db, actor, workspace, value)
-        acknowledged_gaps.decide(db, actor, workspace, result, value)
+        acknowledged_gaps.require_gap_decisions(workspace, result, value)
         swaps.validate_publication(db, workspace)
-        reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
+        decision = reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
-        acknowledged_gaps.record_decision(db, actor, workspace, value)
+        acknowledged_gaps.record_decision(actor, workspace, value, decision)
     elif action == "publish":
         require(workspace.status == "approved", "WORKFLOW_STATE", "Only an approved candidate can be published", 409)
         from .notification_audience import is_test_identity, non_test_assignee_count

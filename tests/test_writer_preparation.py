@@ -1,6 +1,7 @@
 """PERF-7: expensive checks run before the global writer; the writer re-verifies, then writes."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import re
 from threading import Event, local
 from types import SimpleNamespace
 
@@ -312,12 +313,16 @@ def test_change_submit_preparation_does_not_block_an_unrelated_write(harness, mo
         assert sent.result(timeout=30)['workspace']['status'] == 'submitted'
 
 
-def job_columns_read(engine, statements):
-    """Collect SELECTs on jobs that return a whole input snapshot or result column (not an extracted field)."""
+def job_columns_read(engine, statements, *, result_reads=None):
+    """Collect whole-column reads and optionally track queries that use the result in JSON paths."""
     def listen(_connection, cursor, statement, *_):
+        if 'FROM jobs' not in statement:
+            return
         names = {column[0] for column in cursor.description or ()}
-        if 'FROM jobs' in statement and names & {'input_snapshot', 'result'}:
+        if names & {'input_snapshot', 'result'}:
             statements.append(statement)
+        if result_reads is not None and re.search(r'\bjobs\.result\b', statement):
+            result_reads.append(statement)
     event.listen(engine, 'after_cursor_execute', listen)
     return lambda: event.remove(engine, 'after_cursor_execute', listen)
 
@@ -366,16 +371,21 @@ def test_undoing_an_applied_proposal_loads_only_its_own_job_result(harness):
         'person_id': h.seed['people'][2], 'start': shift['start'], 'end': shift['end']}}])
     applied = h.command('coordinator', 'generation.apply', {'workspace_id': workspace['id'], 'job_id': job['id'],
                         'reason': 'Apply reviewed synthetic proposal'}, revision=workspace['revision'])
-    statements = []
-    stop = job_columns_read(h.app.state.engine, statements)
+    statements, result_reads = [], []
+    stop = job_columns_read(h.app.state.engine, statements, result_reads=result_reads)
     try:
         h.command('coordinator', 'workspace.undo', {'reason': 'Undo the applied proposal'},
                   workspace['id'], applied['workspace']['revision'])
     finally:
         stop()
     assert not any('input_snapshot' in statement.split('FROM jobs')[0] for statement in statements)
-    # Each preparation pass and the writer load results only for the job that made the undone edit.
-    assert statements and all('jobs.result' in statement.split('FROM jobs')[1] for statement in statements)
+    assert not statements, 'Undo must read the receipt and revision without loading a full job result'
+    # Any result access must use the applied revision filter for the edit being undone.
+    assert result_reads and all(
+        re.search(r'\bcoalesce\([^=]*\bjobs\.result\b[^=]*\)\s*=',
+                  statement.partition('FROM jobs')[2].partition('WHERE')[2])
+        for statement in result_reads
+    )
     assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['status'] == 'succeeded'
     with transaction(h.app.state.engine) as db:
         assert db.scalar(select(m.Job.status).where(m.Job.id == other['id'])) == 'applied'

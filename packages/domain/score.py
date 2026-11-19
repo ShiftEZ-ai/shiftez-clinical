@@ -24,7 +24,7 @@ from .time import aware, duration_hours
 from .validation import finding_observations, index_person_rows, named_people, policy_applies, session_scope
 
 # v10: bind weighted score parity, Fair share adjustments and scoped preference changes.
-VERSION = 'score-v11'
+VERSION = 'score-v12'
 CAP = 59
 COMPONENTS = ('coverage', 'rules', 'fairness', 'preferences', 'stability')
 SESSION_KINDS = {'minimum_cover', 'maximum_participants'}
