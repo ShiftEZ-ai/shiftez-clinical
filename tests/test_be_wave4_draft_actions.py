@@ -200,8 +200,7 @@ def test_move_preserves_unrelated_existing_overlap_and_its_resolution_actions(h,
     assert validation['valid'] is False
 
 
-@pytest.mark.parametrize('action', ['move', 'edit'])
-def test_move_cannot_leave_a_new_missing_team_lead(h, action):
+def refuses_a_new_missing_team_lead(h, action):
     typ = historical_type(h, {'name': 'Synthetic lead duty', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 1}], 'lead': {'minimum': 1}}})
     first = h.shift(h.workspace(), *DAY, typ=typ['id'], people=[{'person_id': h.seed['people'][0],
@@ -216,6 +215,14 @@ def test_move_cannot_leave_a_new_missing_team_lead(h, action):
     assert error['error']['code'] == ('MOVE_INVALID' if action == 'move' else 'EDIT_INVALID')
     assert any(f['code'] == 'LEAD_GAP' for f in error['error']['details']['findings'])
     assert state(h, w) == before
+
+
+def test_move_cannot_leave_a_new_missing_team_lead(h):
+    refuses_a_new_missing_team_lead(h, 'move')
+
+
+def test_edit_cannot_leave_a_new_missing_team_lead(h):
+    refuses_a_new_missing_team_lead(h, 'edit')
 
 
 def test_existing_team_lead_gap_does_not_block_building_the_draft(h):
