@@ -151,7 +151,9 @@ def main():
     # All code imports resolve under this trusted source, never the candidate or artifact directory.
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
-    if flags['canaries']:canary_evidence.verify_directory(reports, allow_product_errors=True, partial=partial)
+    retry = maker.retry_run(plan)
+    if flags['canaries']:
+        canary_evidence.verify_directory(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
     root_raw = policy.read_file(base, "ci/root-run-evidence.json")
     skips_raw = policy.read_file(base, "ci/known-skips.json")
     if root_raw is None or skips_raw is None:
@@ -207,7 +209,8 @@ def main():
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
             recovered = {}
-            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, recovered=recovered)
+            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, recovered=recovered,
+                                                     allow_retry=retry)
             if recovered and (branch == "main" or allowed_skips & recovered.keys()):
                 raise ValueError("Release/known-skip execution contains a failure or error")
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)

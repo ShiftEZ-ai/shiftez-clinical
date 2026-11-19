@@ -121,7 +121,7 @@ def test_the_december_sized_planner_is_usable_within_its_budget_on_first_open(br
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'home')
-        ms = timed_open(page, f"#schedule/week/2026-10-11?edit={department['id']}", 'schedule', '#schedule-view:not([inert]) [data-session]')
+        ms = timed_open(page, f"#schedule/week/2026-10-11?edit={department['id']}", 'schedule', '#schedule-view:not([data-reading]) [data-session]')
         print('PLANNER_FIRST_MS', round(ms))
         assert ms <= PLANNER_FIRST_MS, (round(ms), PLANNER_FIRST_MS)
     finally:

@@ -552,6 +552,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
             (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
+            from make_known_failures import retry_run
+            maker.retry_run = retry_run
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
             maker.collect_reports = lambda *a: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
@@ -608,6 +610,11 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                             verifier.main()
                 else:
                     verifier.main()
+                if verifier.hardening.load()["canaries"]:
+                    canaries.verify_directory.assert_called_once_with(
+                        reports, allow_product_errors=True, partial=False, allow_retry=retry_run(plan))
+                else:  # stop-loss profiles reuse this helper with canaries switched off
+                    canaries.verify_directory.assert_not_called()
             self.assertEqual(summaries, [True])
             self.assertTrue(all(revision == base for revision, name in reads if name not in {policy.KNOWN,'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
