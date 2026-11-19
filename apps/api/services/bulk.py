@@ -622,6 +622,7 @@ def _preload(db, actor, items, value):
 def _fingerprint(db, actor, value, items, selection_token):
     org = db.get(m.Organisation, actor.organisation_id)
     targets, checked = [], {}
+    authorized = False
     for item in items:
         kind, payload, changes = _commands(item, value)
         target = _target_id(kind or "", payload, item.get("target_id"))
@@ -630,12 +631,14 @@ def _fingerprint(db, actor, value, items, selection_token):
         except (Problem, ValidationError) as error:
             _problem(error)
             row = None  # Invalid or unauthorized rows must not fingerprint hidden record revisions.
+        else:
+            authorized = True
         targets.append((target, getattr(row, "revision", None)))
     # `only` chooses which already-previewed rows to apply; it does not alter their proposed content.
     change = {k: v for k, v in value.items() if k not in {"only", "apply_ready_only", "staged_id", "overlap_acknowledgement"}}
     return snapshot_hash({"contract": "bulk-v1", "department": actor.department_id,
-        "actor": actor.identity_id, "input_revision": org.input_revision,
-        "availability_revision": org.availability_revision, "selection": selection_token,
+        "actor": actor.identity_id, "input_revision": org.input_revision if authorized else None,
+        "availability_revision": org.availability_revision if authorized else None, "selection": selection_token,
         "targets": targets, "change": change})
 
 

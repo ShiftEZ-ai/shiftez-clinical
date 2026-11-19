@@ -122,17 +122,17 @@ export interface TableSpec<T>{
   print?:boolean;
   /** The page loads the rows in server pages (its own Show more / Previous · Next): every loaded row is drawn, no local pages. */
   serverPaged?:true;
-  /** Filters changed (not on the first draw): lists paged on the server fetch again with them. Returning the read's
-   *  promise marks the rows busy until its answer redraws them (as onSearch). */
+  /** Server filters changed: return the read's promise to keep the rows busy until the read settles. */
   onFilter?:(filters:Record<string,string[]>)=>void|Promise<unknown>;
-  /** Search changed: the caller searches the complete server list and replaces rows; local search is skipped. Returning
-   *  the read's promise lets a failed read (rejected, or resolved to `false` once the page has reported it) clear the busy rows. */
+  /** Search changed: the caller searches the complete server list and replaces rows; local search is skipped.
+   *  Return the read's promise to keep the rows busy until the read settles. */
   onSearch?:(query:string,options?:SearchOptions)=>void|Promise<unknown>;
   /** A list searched on the server: its search registry key (SEARCH_COLLECTIONS) when not its `collection`, so the box
    *  offers only the scopes and references that server applies (sent as `search_options` with the query). */
   searchIn?:string;
-  /** Sort changed: the caller orders the complete server list before paging; local sorting is skipped. */
-  onSort?:(sort:SortValue)=>void;
+  /** Sort changed: the caller orders the complete server list before paging; local sorting is skipped.
+   *  Return the read's promise to keep the rows busy until the read settles. */
+  onSort?:(sort:SortValue)=>void|Promise<unknown>;
   /** Identity of the listed results when the address also contains transient panel/form state. Defaults to the route. */
   resultScope?:()=>string;
   /** Narrowed outside the toolbar (a link's own filter chips): an empty result reads as "No matching", not as an empty list. */
@@ -1033,8 +1033,7 @@ export function dataTable<T>(spec:TableSpec<T>){
   // Rows hidden by a search or by filters beyond the view's own say so, with one way back to everything.
   const unresolvedNote=el('div',{class:'dt-unresolved',role:'status',hidden:true});
   const body=el('div',{class:'dt-body'}),pager=el('div',{class:'dt-pager'});
-  // While a new filter, view or search is read (aria-busy) the rows are the last answer's: opening one, its buttons or
-  // its ⋯ menu does nothing (openRow, and here for the page's own row controls). Focus stays where it is (never inert).
+  // While the list is reading, defer the last row open and block row actions on the previous result.
   const busy=()=>body.getAttribute('aria-busy')==='true';
   body.addEventListener('click',e=>{if(busy()&&(e.target as HTMLElement).closest('[data-row] :is(.dt-actions-col,.dt-card-actions) button,[data-row] .dt-more')){
     e.preventDefault();e.stopPropagation();}},true);
@@ -1223,7 +1222,22 @@ export function dataTable<T>(spec:TableSpec<T>){
     if(!body.querySelector(rowMark(spec.rowId(x.r)))){const {groupKey}=layoutNow(),then=v.then&&v.then!==groupKey?v.then:'',keys=(k:string)=>{const l=list(spec.columns.find(c=>c.key===k)?.facet?.(x.r));return l.length?l:['—'];};
       for(const k of keys(groupKey)){unlimited.add(k);if(then)for(const k2 of keys(then))unlimited.add(k+' › '+k2);}draw();}
     openRow(x.r);}});
-  const openRow=(r:T)=>{if(busy())return;const list=drawnOrder(),i=list.findIndex(x=>spec.rowId(x.r)===spec.rowId(r));spec.onOpen!(r,i<0?undefined:positionOf(list,i));};
+  let pendingOpen:string|null=null,pendingRead:Promise<unknown>|null=null;
+  const openRow=(r:T)=>{const id=spec.rowId(r);if(busy()){pendingOpen=id;return;}
+    const list=drawnOrder(),i=list.findIndex(x=>spec.rowId(x.r)===id);spec.onOpen!(r,i<0?undefined:positionOf(list,i));};
+  const trackRead=(read:void|Promise<unknown>)=>{
+    if(!(read instanceof Promise))return;
+    pendingRead=read;
+    const settled=()=>{
+      if(pendingRead!==read)return;  // a newer read owns the list
+      pendingRead=null;body.setAttribute('aria-busy','false');
+      const id=pendingOpen;pendingOpen=null;
+      if(id===null||account!==tableAccount||!root.isConnected||!body.querySelector(rowMark(id)))return;
+      const row=spec.rows.find(r=>spec.rowId(r)===id);
+      if(row!==undefined)openRow(row);
+    };
+    void read.then(settled,settled);
+  };
   const opener=(node:HTMLElement,r:T)=>{spec.decorate?.(r,node);node.dataset.row=spec.rowId(r);
     // Just changed by a bulk change: marked "Changed" for a while (text, not colour alone).
     if(recentlyChanged(spec.id)?.has(spec.rowId(r))){node.classList.add('dt-changed');node.querySelector('td[data-col],.dt-card-title')?.append(badge('Changed','ok','dt-changed-mark'));}if(spec.onOpen){node.classList.add('dt-open');node.addEventListener('click',e=>{
@@ -1459,8 +1473,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     const layout=narrow?'cards':v.layout==='board'&&!facetCols.length||v.layout==='calendar'&&!spec.calendar||v.layout==='timeline'&&!spec.timeline||v.layout==='sheet'&&!(sheetLayout&&spec.collection)?'table':v.layout;
     return {layout,groupKey:layout==='board'?(v.group||facetCols[0]?.key||''):v.group};
   }
-  // pending: the filter or view whose read is still out; a redraw meanwhile (a live update) keeps the rows busy.
-  let reported:string|null=null,reportedSearch:string|null=null,reportedSort:string|null=null,pending:string|null=null;
+  let reported:string|null=null,reportedSearch:string|null=null,reportedSort:string|null=null;
   const searchKey=()=>v.q.trim()+'\n'+JSON.stringify(normalSearch(v.search_options)??null);
   // After a change the owning list reads its records again (afterChange) before the rows are drawn anew.
   const reload=async()=>{await spec.afterChange?.();if(root.isConnected)draw();};
@@ -1482,19 +1495,16 @@ export function dataTable<T>(spec:TableSpec<T>){
     save(stateId,v);
     // A paged list hears of its filters and of its condition tree as the server reads it (also when first drawn with one).
     const tree=v.conditions?serverTree(v.conditions,spec.columns) as Conditions|null:null;serverTrees.set(spec.id,tree);
-    const f=JSON.stringify(v.filters),heard=f+JSON.stringify(tree),filtering=(reported===null?!!tree:heard!==reported)?spec.onFilter?.(v.filters):undefined;reported=heard;
-    // A filter or view the server reads is busy as a search is (below): the rows of the last answer are not this one's.
-    const refiltered=filtering instanceof Promise;
-    if(refiltered){pending=heard;const idle=()=>{if(pending===heard)pending=null;if(reported===heard)body.setAttribute('aria-busy','false');};filtering.then(idle,idle);}
+    const f=JSON.stringify(v.filters),heard=f+JSON.stringify(tree);
+    if(reported===null?!!tree:heard!==reported)trackRead(spec.onFilter?.(v.filters));reported=heard;
     // The text and its options are one search: a change of either reads again.
-    const q=v.q.trim(),sk=searchKey(),searched=reportedSearch!==null&&sk!==reportedSearch&&!!spec.onSearch;if(searched){const asked=spec.onSearch!(q,normalSearch(v.search_options));
-      // The answer redraws the list; a failed read leaves the rows shown, no longer marked busy (the page reports it).
-      if(asked instanceof Promise){const idle=()=>{if(searchKey()===sk)body.setAttribute('aria-busy','false');};asked.then(r=>{if(r===false)idle();},idle);}}reportedSearch=sk;
-    const sort=JSON.stringify(v.sort);if(reportedSort!==null&&sort!==reportedSort)spec.onSort?.(v.sort);reportedSort=sort;
+    const q=v.q.trim(),sk=searchKey(),searched=reportedSearch!==null&&sk!==reportedSearch&&!!spec.onSearch;
+    if(searched)trackRead(spec.onSearch!(q,normalSearch(v.search_options)));reportedSearch=sk;
+    const sort=JSON.stringify(v.sort);if(reportedSort!==null&&sort!==reportedSort)trackRead(spec.onSort?.(v.sort));reportedSort=sort;
     memo=null;
     // A search the server runs: the rows shown stay (marked busy) until its answer redraws the list once, instead of
     // drawing the old rows again first (SH-05). The page reads again on every search (onSearch's contract).
-    body.setAttribute('aria-busy',String(searched||refiltered||pending===reported));
+    body.setAttribute('aria-busy',String(searched||!!pendingRead));  // a search answered by a later redraw is busy until then
     if(searched&&body.firstElementChild){bar.sync();return;}
     const {layout,groupKey}=layoutNow();
     const rows=matches(),per=size(),pages=Math.max(1,Math.ceil(rows.length/per));v.page=Math.min(v.page,pages-1);
