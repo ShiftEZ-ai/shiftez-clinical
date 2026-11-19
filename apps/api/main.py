@@ -200,9 +200,9 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             if not schema_ready(db):
                 log.error("api_process_warmup_failed", extra={"error_code": "SCHEMA_UNAVAILABLE"})
-                return False
+                return "failed"
         read_projection_warming.warm_process(engine)
-        return True
+        return "done"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -226,11 +226,12 @@ def create_app(settings: Settings | None = None, engine=None):
                 signal.signal(sig, on_shutdown)
                 previous_handlers[sig] = previous
         try:
+            # Availability beats warmth: a failed warm-up is logged loudly and the process serves cold.
             try:
                 app.state.process_warmed = await background_io(warm_worker)
             except Exception as exc:
-                app.state.process_warmed = False
-                log.error("api_process_warmup_failed", extra={"error_code": type(exc).__name__})
+                app.state.process_warmed = "failed"
+                log.error("api_process_warmup_failed", exc_info=exc, extra={"error_code": type(exc).__name__})
             yield
         finally:
             app.state.process_warmed = None
@@ -265,8 +266,6 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        if app.state.process_warmed is False and request.url.path not in {"/health/live", "/health/ready", "/health/service"}:
-            return JSONResponse({"status": "unavailable"}, status_code=503)
         correlation = secrets.token_hex(12)
         request.state.correlation_id = correlation
         refresh_correlation = request.headers.get("x-refresh-correlation-id", "")[:128]
@@ -420,7 +419,7 @@ def create_app(settings: Settings | None = None, engine=None):
         return {"status": "alive", "version": __version__}
 
     def readiness(service=False):
-        if not app.state.process_warmed:
+        if app.state.process_warmed is None:
             return JSONResponse({"status": "unavailable"}, status_code=503)
         try:
             with transaction(engine) as db:
@@ -432,7 +431,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         return JSONResponse({"status": "unavailable"}, status_code=503)
         except SQLAlchemyError:
             return JSONResponse({"status": "unavailable"}, status_code=503)
-        return {"status": "ready"}
+        return {"status": "ready", "warm": app.state.process_warmed}
 
     @app.get("/health/ready")
     async def ready():

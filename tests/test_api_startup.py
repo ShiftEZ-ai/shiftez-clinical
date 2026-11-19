@@ -63,7 +63,7 @@ def test_readiness_waits_for_warmup(h, monkeypatch):
                 assert (await client.get('/health/live')).status_code == 200
                 release.set()
                 await asyncio.wait_for(started.wait(), 60)
-                assert (await client.get('/health/ready')).status_code == 200
+                assert (await client.get('/health/ready')).json() == {'status': 'ready', 'warm': 'done'}
             finally:
                 release.set()
                 finish.set()
@@ -73,19 +73,21 @@ def test_readiness_waits_for_warmup(h, monkeypatch):
 
 
 @pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
-def test_failed_warmup_is_logged_and_refuses_requests(h, monkeypatch, caplog):
+def test_failed_warmup_is_logged_then_serves_cold(h, monkeypatch, caplog):
     def fail(engine):
         raise RuntimeError('Synthetic warm-up failure')
 
     monkeypatch.setattr(read_projection_warming, 'warm_process', fail)
-    with TestClient(h.app, base_url=h.settings.public_origin) as client:
-        for path in ('/health/ready', '/health/service', '/api/home'):
-            response = client.get(path)
-            assert response.status_code == 503
-            assert response.json() == {'status': 'unavailable'}
+    cookies = h.client('coordinator').cookies
+    with TestClient(h.app, base_url=h.settings.public_origin, cookies=cookies) as client:
+        ready = client.get('/health/ready')
+        assert ready.status_code == 200
+        assert ready.json() == {'status': 'ready', 'warm': 'failed'}
         assert client.get('/health/live').status_code == 200
-    assert [(entry.levelname, entry.error_code) for entry in caplog.records
-            if entry.message == 'api_process_warmup_failed'] == [('ERROR', 'RuntimeError')]
+        assert client.get('/api/home').status_code == 200
+    failures = [entry for entry in caplog.records if entry.message == 'api_process_warmup_failed']
+    assert [(entry.levelname, entry.error_code) for entry in failures] == [('ERROR', 'RuntimeError')]
+    assert 'Synthetic warm-up failure' in str(failures[0].exc_info[1])
 
 
 def test_live_updates_start_before_requests_and_stop_on_exit(h, monkeypatch):
