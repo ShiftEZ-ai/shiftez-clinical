@@ -78,13 +78,15 @@ def test_an_overlap_acknowledged_on_sparse_legacy_lines_stays_acknowledged_after
         'numbers': {'max': {'value': 2, 'level': 'mandatory'}},
     }
     waiting = propose(h, 'duties_per_week', [*before, added],
-                      policy_id=live['id'], revision=live['revision'], acknowledged=[before[0]['id']])['record']
+                      policy_id=live['id'], revision=live['revision'])['record']
+    [overlap] = entry(h, 'duties_per_week')['proposed']['check']['overlaps']
+    assert overlap['line_id'] == before[0]['id'] and overlap['winner_ids'] == [added['id']]
     current = approve(h, waiting)
     assert current['definition']['rule']['lines'][:14] == before
-    issues = h.get('auditor', '/api/rules/catalogue')['attention']
-    overlap = next(x for x in issues if x['kind'] == 'overlap' and x['facts']['loser'] == before[0]['id'])
-    assert overlap['acknowledged']['note'] == 'When proposed: Weekly duty caps'
-    assert overlap['acknowledged']['by']
+    data = h.get('auditor', '/api/rules/catalogue')
+    assert not [issue for issue in data['attention'] if issue['kind'] == 'overlap']
+    saved = next(row for row in data['entries'] if row['id'] == 'duties_per_week')
+    assert saved['line_replaces'][added['id']] == [{'replaced_line_id': before[0]['id'], 'numbers': ['max']}]
 
 
 def test_sparse_resubmission_preserves_existing_defaults_and_only_edits_the_note(h):

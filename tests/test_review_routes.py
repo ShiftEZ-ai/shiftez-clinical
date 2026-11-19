@@ -190,7 +190,10 @@ def test_urgent_amendment_selects_approved_route_not_a_validation_bypass(h):
     w = h.lifecycle(w, "approve", "approver")["workspace"]
     h.command("coordinator", "availability.record", {"person_id": h.seed["people"][0], "start": "2026-10-04T08:00:00+03:00",
         "end": "2026-10-04T12:00:00+03:00", "kind": "actual_absence", "private_reason": "Private fixture"})
-    h.lifecycle(w, "publish", status=409)
+    # Urgent publication also reports mandatory validation before stale approval.
+    refused = h.lifecycle(w, "publish", status=422)["error"]
+    assert refused["code"] == "VALIDATION_FAILED"
+    assert refused["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
     w = h.lifecycle(w, "reopen")["workspace"]
     assert h.lifecycle(w, "submit", status=422)["error"]["code"] == "VALIDATION_FAILED"
     assert h.get("coordinator", "/api/publications")["publications"][0]["id"] == pub["publication_id"]
