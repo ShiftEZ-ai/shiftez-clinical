@@ -99,7 +99,9 @@ def test_rules_page_rule_attention_is_line_scoped_and_rule_rows_never_say_overla
         for ident in (ranked['id'], tagged['id']):
             expect(rule.locator(f'li.rt-ln[data-line="{ident}"] .rt-ln-flags')).to_contain_text('⚠ Overlaps')
         view(page, 'Needs attention')
-        expect(page.locator('.rt-issue')).not_to_contain_text('gives way to')
+        # Both issues of this rule are listed (both apply, ending soon); none says a line gives way.
+        expect(page.locator('.rt-issue')).to_have_count(2)
+        expect(page.locator('.rt-issue').filter(has_text='gives way to')).to_have_count(0)
         page.get_by_role('button', name=re.compile(r'^Filter')).click()
         pop = page.locator('.dt-pop')
         add_filter(pop)
@@ -277,7 +279,10 @@ def test_shadowed_attention_is_grouped_searchable_and_removes_the_right_line(bro
         row.get_by_role('button', name='Remove line 1', exact=True).click()
         expect(row).to_have_count(0)
         expect(page.locator('.toast')).to_contain_text('Remove line 1: added to the proposal.')
-        navigate(page, 'rules/workload_limit')
+        # The removal is a change not yet proposed: going to another address asks first, and going on keeps it.
+        page.evaluate("location.hash='rules/workload_limit'")
+        page.get_by_role('dialog', name='Leave this page?').get_by_role('button', name=re.compile(r'^Go to Rules')).click()
+        expect(page.locator('#main')).to_have_attribute('data-loaded-tab', 'workload_limit')
         lines = page.locator('[data-table=rule-line-db] tr[data-row]')
         expect(lines).to_have_count(len(ranks))
         expect(lines.and_(page.locator(f'[data-line="{anchor["id"]}"]'))).to_have_count(0)

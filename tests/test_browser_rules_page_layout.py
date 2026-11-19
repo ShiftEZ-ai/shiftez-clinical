@@ -97,7 +97,7 @@ def _open(page, rule='Workload limit'):
 @pytest.mark.parametrize('width', [1440, 390], ids=['desktop-1440', 'phone-390'])
 def test_rules_page_flags_fit_and_mixed_safety_lines_stay_apart(browser, live_server, h, width):
     """Items 10, 12 and C1: flags fit, no-duties lines always apply, and count lines still form a tree."""
-    _, _, lines, apply_line, _ = _mixed_fixture(h)
+    _, _, lines, apply_line, pair = _mixed_fixture(h)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
     try:
         navigate(page, 'rules')
@@ -116,8 +116,11 @@ def test_rules_page_flags_fit_and_mixed_safety_lines_stay_apart(browser, live_se
         expect(apply_row.locator('.rk-lockmark[aria-label^="Safety line"]')).to_have_count(1)
         expect(item.locator('ol.rt-always[aria-label^="Always applies"]')).to_have_count(1)
         expect(item.locator('.rt-always > li.rt-ln')).to_have_count(1)
-        expect(item.locator('.rt-exc')).to_have_count(1)
-        expect(item.locator('.rt-instead')).to_have_count(0)
+        # Two where groups have one Everyone line to anchor their exceptions: Review clinic (line 2) and the replacement clinic.
+        expect(item.locator('.rt-exc')).to_have_count(2)
+        # The server's one replacement in this fixture (as the rule page shows it); no safety line ever replaces.
+        expect(item.locator('.rt-instead')).to_have_count(1)
+        expect(item.locator(f'li[data-line="{pair[1]["id"]}"] .rt-instead')).to_contain_text('instead of')
         if width == 390:
             wrapped = [row.locator('.rt-ln-flags') for row in item.locator('.rt-ln-flags').all()
                        if row.locator('.badge').count() > 1]
@@ -193,7 +196,7 @@ def test_rules_page_rule_page_fits_at_1440_with_checks_and_exception_text(browse
         for nav in ('rail', 'pinned'):
             shell = page.locator('.shell')
             if shell.get_attribute('data-nav') != nav:
-                page.locator('.pin-button').click()
+                page.locator('.pin-button').evaluate('b => b.click()')  # hidden in the rail until the sidebar peeks
             expect(shell).to_have_attribute('data-nav', nav)
             navigate(page, 'rules/workload_limit')
             table_scroll = page.locator('[data-table=rule-line-db] .table-scroll')
@@ -316,7 +319,8 @@ def test_rules_page_opened_lines_use_the_applied_seven_track_grid(browser, live_
             }))
         }}''')
         assert info['columns'] != 'none' and info['tracks'] == 7, info
-        assert info['rows'] and all(row['grid'] == 'subgrid' for row in info['rows']), info
+        # Chromium reads a subgrid back with its line names: "subgrid [] [] …".
+        assert info['rows'] and all(row['grid'].split()[0] == 'subgrid' for row in info['rows']), info
         lefts = [row['left'] for row in info['rows'] if row['left'] is not None]
         assert max(lefts) - min(lefts) <= 1, info
         for column in range(7):

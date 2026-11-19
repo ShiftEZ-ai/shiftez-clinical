@@ -4525,15 +4525,14 @@ td .rt-always-word{padding:0;font-weight:500}
 .rt-new{grid-column:1/-1;padding-top:6px}
 /* Phone (and a docked panel narrowing the page column): a line wraps to two rows, who over when · numbers · flags. */
 @container work (max-width:720px){
-  .rt-row{grid-template-columns:24px 34px minmax(0,1fr);padding-inline:8px}
-  /* Selection and bulk changes are desktop work (Phone scope). */
-  .rt-row>.bulk-check,.rt-row>:first-child:empty,.rt-lhead>:first-child,.rt-qhead>:first-child,.rt-ln>:first-child{display:none}
+  .rt-row{padding-inline:8px}
   .rt-lines{display:block;padding:2px 8px 8px}
   .rt-lns,.rt-sub,.rt-exc{display:block}
-  .rt-ln{display:grid;grid-template-columns:3ch minmax(0,1fr) max-content;column-gap:8px;row-gap:2px;padding:4px 0}
-  .rt-ln-who{grid-column:2;flex-wrap:wrap}
-  .rt-ln-open{grid-column:3;grid-row:1}
-  .rt-ln-what{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
+  /* Its box stays (a line is picked on a phone too, as on the rule's page), then No. › who over what › open. */
+  .rt-ln{display:grid;grid-template-columns:24px 3ch minmax(0,1fr) max-content;column-gap:8px;row-gap:2px;padding:4px 0}
+  .rt-ln-who{grid-column:3;flex-wrap:wrap}
+  .rt-ln-open{grid-column:4;grid-row:1}
+  .rt-ln-what{grid-column:3;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
   .rt-ln-when:empty{display:none}
   .rt-ln-num{white-space:normal}
   .rt-wh{flex-wrap:wrap}

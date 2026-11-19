@@ -49,7 +49,7 @@ FACTS = r'''selector => {
   const rows=document.querySelectorAll(selector);
   const failures=[];let facts=0,dates=0;
   for(const row of rows){
-    for(const cell of row.querySelectorAll('.rt-who,.rt-where,[data-col=who],[data-col=where]')){
+    for(const cell of row.querySelectorAll('.rt-who,.rt-where,.rt-ln-who,[data-col=who],[data-col=where]')){
       const bounds=cell.getBoundingClientRect();
       const nodes=[...cell.querySelectorAll('.pill-item>*,.pill-more')].map(n=>({text:n.textContent,r:n.getBoundingClientRect()})).filter(n=>n.r.width&&n.r.height);
       facts+=nodes.length;
