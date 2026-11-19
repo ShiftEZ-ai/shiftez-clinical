@@ -280,13 +280,24 @@ def test_rules_changed_after_run_retain_even_a_safe_proposal(request, backend, c
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 @pytest.mark.parametrize('non_rule_change', [False, True])
 def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, backend, non_rule_change):
-    from apps.api.input_changes import rules_changed
+    from apps.api.input_changes import rules_changed, watermark
+    from apps.api.snapshots import currency_hint, domain_snapshot
 
     h = request.getfixturevalue(backend)
     w = h.shift(h.workspace('Synthetic live mandatory guard'), people=[])['workspace']
-    # The draft baseline predates this quota, but the run currency already includes it.
-    h.policy({'kind': 'max_duties', 'maximum': 0})
+    # #797: generation reads live mandatory rules, so the rule must become active after the proposal exists
     job = run(h, w)
+    h.policy({'kind': 'max_duties', 'maximum': 0})
+    # A legacy worker could record the live currency while compiling only captured rules.
+    with transaction(h.app.state.engine, write=True) as db:
+        stored = db.get(m.Job, job['id'])
+        workspace = db.get(m.Workspace, w['id'])
+        legacy = domain_snapshot(db, workspace)
+        stored.input_fingerprint = legacy['fingerprint']
+        stored.input_snapshot = {**stored.input_snapshot, 'fingerprint': stored.input_fingerprint,
+            'input_manifest': legacy['input_manifest'], 'audit_watermark': watermark(db, workspace.department_id),
+            'currency_hint': currency_hint(db, workspace)}
+        stored.result = {**stored.result, 'input_fingerprint': stored.input_fingerprint}
     if non_rule_change:
         h.command('coordinator', 'availability.record', {'person_id': h.seed['people'][-1],
             'kind': 'recorded_leave', 'start': '2026-10-04T00:00:00+03:00',

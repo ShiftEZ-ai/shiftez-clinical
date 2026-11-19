@@ -466,7 +466,7 @@ def command(db, actor, command, settings):
         if value.kind in {'replace', 'add', 'move', 'swap'} and sh.get('series_snapshot'):
             sh['series_snapshot'] = {**sh['series_snapshot'], 'definition': {**sh['series_snapshot']['definition'], 'close_when_all_usual_unavailable': False}}
     if value.kind in {'replace', 'add', 'move', 'swap'}:
-        blockers = change_assignment_blockers(domain_snapshot(db, workspace), kept, changed)
+        blockers = change_assignment_blockers(domain_snapshot(db, workspace, mandatory_rules=True), kept, changed)
         require(not blockers, 'PERSON_UNAVAILABLE',
                 'A published change cannot assign someone during leave or an external rotation', 409,
                 {'findings': blockers})

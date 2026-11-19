@@ -23,7 +23,7 @@ def source_identity(db):
     return held['source']
 
 
-def input_stamp(db, workspace):
+def input_stamp(db, workspace, *, mandatory_rules=True):
     from apps.api.snapshots import draft_policy_hint
 
     # Keep strong references within this transaction (SQLAlchemy's identity map is weak).
@@ -39,9 +39,10 @@ def input_stamp(db, workspace):
     # which used to discard otherwise valid Postgres projections at restart.
     # Release preparation bumps the evaluator versions when their output
     # changes, so revision-keyed read work survives an API deploy safely.
+    policy_basis = draft_policy_hint(workspace) if mandatory_rules else {}
     return digest([org.input_revision, org.availability_revision,
         workspace.revision, workspace.content_revision, workspace.status, department.generation_defaults,
-        digest(toolchain(quota_policy_limit())), *draft_policy_hint(workspace).values()])
+        digest(toolchain(quota_policy_limit())), *policy_basis.values()])
 
 
 def _store(db, audience, kind, values, stamps):

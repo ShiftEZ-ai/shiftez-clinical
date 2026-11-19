@@ -116,5 +116,5 @@ def prepare(db, actor, command):
     return {'receipt': receipt, 'assignment_ids': assignment_ids, 'result_hash': snapshot_hash({k: v for k, v in result.items() if k != 'reconciliation'}),
             'actor_id': actor.identity_id, 'department_id': actor.department_id, 'workspace_id': workspace.id,
             'validation': plan['validation'], 'data': plan['data'], 'population_contribution': contribution,
-            'currency_hint': currency_hint(db, workspace), 'current_data': captured,
+            'currency_hint': currency_hint(db, workspace, mandatory_rules=True), 'current_data': captured,
             'current_stamp': stamp, 'overlap_flags': flags, 'summary_cache': summary_cache}

@@ -167,7 +167,7 @@ def score_summary(db, workspace):
     return {"score": score["score"], "publishable": score["publishable"],
             "components": {c: v["value"] for c, v in score["components"].items()},
             # A published rota is frozen: its score is the one it was published with, whatever changed since.
-            "fresh": workspace.status in ("published", "superseded") or workspace.validation.get("fingerprint") == fingerprint(db, workspace)}
+            "fresh": workspace.status in ("published", "superseded") or workspace.validation.get("fingerprint") == fingerprint(db, workspace, mandatory_rules=True)}
 
 
 def score_detail(db, before, after):
@@ -209,7 +209,8 @@ def compare(db, actor, workspace_id, other_id, limit=100, offset=0):
     result = difference(left["shifts"], right["shifts"])
     total = len(result["changes"])
     result.update({"before": record(before, exclude=("validation",)), "after": record(after, exclude=("validation",)),
-        "before_fingerprint": fingerprint(db, before), "after_fingerprint": fingerprint(db, after),
+        "before_fingerprint": fingerprint(db, before, mandatory_rules=True),
+        "after_fingerprint": fingerprint(db, after, mandatory_rules=True),
         "scope_matches": before.starts_on == after.starts_on and before.ends_on == after.ends_on,
         # Each rota's score from its last check (None when never checked); the dialog shows the deltas.
         "scores": {"before": score_summary(db, before), "after": score_summary(db, after), "detail": score_detail(db, before, after)},

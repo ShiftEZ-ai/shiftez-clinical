@@ -142,7 +142,7 @@ def suggestions(db, actor, value: s.StaffingSuggestionsInput) -> dict:
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     expected(workspace, value.expected_revision)
     require(workspace.status == 'draft', 'WORKFLOW_STATE', 'Staffing suggestions apply only to a draft', 409)
-    source = domain_snapshot(db, workspace)
+    source = domain_snapshot(db, workspace, mandatory_rules=True)
     from .published_changes import validation_scope
     validation_scope(db, workspace, source)
     source.pop('_published_session_checks', None)
@@ -274,7 +274,7 @@ def fill_options(db, actor, value: s.FillOptionsInput, *, progress=None, cancell
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     expected(workspace, value.expected_revision)
     require(workspace.status == 'draft', 'WORKFLOW_STATE', 'Staffing options apply only to a draft', 409)
-    source = domain_snapshot(db, workspace)
+    source = domain_snapshot(db, workspace, mandatory_rules=True)
     from .published_changes import validation_scope
     validation_scope(db, workspace, source)
     source.pop('_published_session_checks', None)
@@ -379,7 +379,7 @@ def fill_options_job_scope(db, actor, value: s.FillOptionsInput):
     expected(workspace, value.expected_revision)
     require(workspace.status == 'draft', 'WORKFLOW_STATE', 'Staffing options apply only to a draft', 409)
     require(workspace.archived_at is None, 'WORKFLOW_STATE', 'This draft was discarded; restore it first', 409)
-    source = domain_snapshot(db, workspace)
+    source = domain_snapshot(db, workspace, mandatory_rules=True)
     from .published_changes import validation_scope
     validation_scope(db, workspace, source)
     source.pop('_published_session_checks', None)
@@ -1103,7 +1103,7 @@ def prepare_why(db, actor, value: s.WhyInput):
                   organisation.input_revision, organisation.availability_revision, department.catalogue_revision)
     source = copy.deepcopy(_WHY_SOURCE_CACHE.get(source_key)) if source_key in _WHY_SOURCE_CACHE else None
     if source is None:
-        source = domain_snapshot(db, workspace)
+        source = domain_snapshot(db, workspace, mandatory_rules=True)
         _WHY_SOURCE_CACHE[source_key] = copy.deepcopy(source)
         if len(_WHY_SOURCE_CACHE) > WHY_CACHE_LIMIT:
             _WHY_SOURCE_CACHE.pop(next(iter(_WHY_SOURCE_CACHE)))

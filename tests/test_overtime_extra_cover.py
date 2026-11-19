@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import job_outcome, job_result_metadata
+from apps.api.snapshots import domain_snapshot
 from packages.contracts.schemas import TypeDefinition
 from packages.domain.cp_sat import generate as cp_sat_generate
 from packages.domain.generation import allocation_settings, generate as greedy_generate
@@ -173,6 +174,11 @@ def test_no_overtime_eligible_people_never_get_regular_placements(h, generate, u
         assert not result.get('optimality_proven', False)
 
 
+def _draft_check_snapshot(h, workspace):
+    with transaction(h.app.state.engine) as db:
+        return domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=True)
+
+
 @pytest.mark.parametrize('safeguard', ['cap', 'rest', 'qualification'])
 def test_extra_cover_overtime_does_not_bypass_safety_or_qualifications(h, generate, safeguard):
     duty_type = extra_type(h)
@@ -188,7 +194,7 @@ def test_extra_cover_overtime_does_not_bypass_safety_or_qualifications(h, genera
         workspace = h.shift(workspace, start='2026-10-04T00:00:00+03:00',
             end='2026-10-04T04:00:00+03:00', people=[person])['workspace']
     workspace = h.shift(workspace, typ=duty_type['id'], people=[])['workspace']
-    data = h.snapshot(workspace)
+    data = _draft_check_snapshot(h, workspace)
     data['people'] = {person: data['people'][person]}
     if safeguard == 'qualification':
         data['eligibilities'] = []
@@ -206,7 +212,7 @@ def test_validator_reports_late_overtime_only_maximum_on_extra_cover(h):
     cap = h.policy({'kind': 'block_quota', 'starts_on': workspace['starts_on'], 'ends_on': workspace['ends_on'],
                     'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
                    {'person_id': person})
-    data = h.snapshot(workspace)
+    data = _draft_check_snapshot(h, workspace)
     shift, = data['shifts']
     shift['participants'] = [{'id': str(uuid.uuid4()), 'person_id': person, 'shift_id': shift['id'],
                              'start': shift['start'], 'end': shift['end'], 'participation': 'staff',

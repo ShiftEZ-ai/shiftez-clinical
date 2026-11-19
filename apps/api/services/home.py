@@ -62,7 +62,7 @@ def rota_strip(db, actor, start, end, limit, offset):
     proposal_by_workspace = proposals(db, actor, rows[:limit])
     from .workspace_reads import stored_checks
     checks = stored_checks(db, rows[:limit])
-    current_inputs = cheap_fingerprints(db, rows[:limit], checks=checks)
+    current_inputs = cheap_fingerprints(db, rows[:limit], checks=checks, mandatory_rules=True)
     from .rota_summary import checking_workspaces
     checking = checking_workspaces(db, [row.id for row in rows[:limit]])
     names = rota_names(db, actor.roles, actor.person_id, {row.id: row.name for row in rows[:limit]})
@@ -119,7 +119,7 @@ def _home_uncached(db, actor, *, max_days):
         checks = stored_checks(db, live)
         # A landing read must not rebuild every live rota. Unknown currency is shown
         # conservatively and the planner resolves it on open.
-        current_inputs = cheap_fingerprints(db, live, checks=checks)
+        current_inputs = cheap_fingerprints(db, live, checks=checks, mandatory_rules=True)
         outdated = {w.id for w in live if w.status != "draft" and (
             w.id not in current_inputs or w.submitted_fingerprint != current_inputs[w.id])}
         fresh = {w.id for w in drafts if checks[w.id]['checked'] and checks[w.id]['fingerprint'] == current_inputs.get(w.id)}

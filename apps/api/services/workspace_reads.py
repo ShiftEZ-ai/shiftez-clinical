@@ -144,7 +144,7 @@ def rule_map_etag(db, actor, workspace):
     ).where(m.Policy.department_id == workspace.department_id, m.Policy.status == 'proposed')).one()
     return revision_etag("workspace-rule-map", workspace.id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), tuple(row), workspace.rule_adjustments or [],
-                         workspace.target_overrides or [], tuple(proposals), *draft_policy_hint(workspace).values())
+                         workspace.target_overrides or [], tuple(proposals))
 
 
 def publication_coverage_etag(db, actor, publication, workspace, organisation, department):

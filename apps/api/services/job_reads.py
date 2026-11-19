@@ -90,7 +90,7 @@ def complete_validation_delta(db, job, workspace):
     watermark = validation.get('fingerprint')
     current = (workspace.status == 'draft' and workspace.archived_at is None and checked_revision == workspace.revision
                and bool(watermark) and watermark == cheap_fingerprints(
-                   db, [workspace], checks={workspace.id: projection}).get(workspace.id))
+                   db, [workspace], checks={workspace.id: projection}, mandatory_rules=True).get(workspace.id))
     partial = bool(validation.get('scope') or validation.get('checking'))
     return {'kind': 'complete_check', 'workspace_id': workspace.id, 'revision': checked_revision,
             'current_fingerprint': watermark, 'partial': partial, 'stale': not current, 'validation': validation}

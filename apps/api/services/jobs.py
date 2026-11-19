@@ -127,7 +127,7 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
         '_deferred_generation': True,
         'fingerprint': request_token,
         'audit_watermark': watermark(db, actor.department_id),
-        'currency_hint': currency_hint(db, workspace),
+        'currency_hint': currency_hint(db, workspace, mandatory_rules=True),
         'repair_unavailable': True,
         'repair_conflicts': True,
         **(group_metadata or {}),
@@ -136,7 +136,7 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
     if score_baseline is not None:
         snapshot['score_baseline'] = score_baseline
     if value.generation_scope is not None:
-        scoped = domain_snapshot(db, workspace, include_fairness=False,
+        scoped = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=True,
                                  include_objectives=False, include_fairness_history=False)
         try:
             scoped['generation_scope'] = value.generation_scope.model_dump(mode='json')
@@ -241,6 +241,7 @@ def create_job(db, actor, command, settings):
             return {'job': None, 'validation_current': True}
         return {'job': job_record(queue_current_validation(db, actor, workspace))}
     snapshot = domain_snapshot(db, workspace, operational=workspace.status == 'published',
+                               mandatory_rules=value.kind == 'generation',
                                wish_debt_cap=options.scoring.wish_debt_cap if options is not None else None,
                                lead_balance=options.scoring.lead_balance if options is not None else None)
     if value.kind == 'feasibility':
@@ -311,7 +312,7 @@ def create_job(db, actor, command, settings):
             snapshot['compiler_version'] = COMPILER_VERSION
     from apps.api.input_changes import watermark
     snapshot['audit_watermark'] = watermark(db, actor.department_id)
-    snapshot['currency_hint'] = currency_hint(db, workspace)
+    snapshot['currency_hint'] = currency_hint(db, workspace, mandatory_rules=value.kind == 'generation')
     snapshot['repair_unavailable'] = value.kind == 'generation'
     snapshot['repair_conflicts'] = value.kind == 'generation'
     if snapshot.get('planning_group_id') and snapshot.get('lookahead') == 'coupled':
@@ -335,7 +336,7 @@ def create_job(db, actor, command, settings):
     if value.kind == 'generation':
         from .rota_summary import reusable_check
         from packages.domain.rota_summary import rota_summary
-        if reusable_check(workspace.validation, fingerprint(db, workspace), defaults.model_dump(mode='json')):
+        if reusable_check(workspace.validation, fingerprint(db, workspace, mandatory_rules=True), defaults.model_dump(mode='json')):
             snapshot['fix_list_before'] = rota_summary(workspace.validation,
                 accepted_issues=workspace.accepted_issues or [])['fix_list']
         clear_generation_resume(db, workspace_id=workspace.id)
@@ -716,7 +717,7 @@ def apply_generation(db, actor, command):
         current_data = plan['current_data']
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
-                 and currency_match(plan['currency_hint'], currency_hint(db, workspace))
+                 and currency_match(plan['currency_hint'], currency_hint(db, workspace, mandatory_rules=True))
                  and snapshot_hash({k: v for k, v in (job.result or {}).items() if k != 'reconciliation'}) == plan['result_hash'])
     if not unchanged or not (receipt['addition_indexes'] or receipt['removal_indexes']):
         if not unchanged:

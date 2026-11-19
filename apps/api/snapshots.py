@@ -357,7 +357,7 @@ def precondition_snapshot(db, workspace):
     organisation = db.get(m.Organisation, department.organisation_id)
     inputs = snapshot_inputs(db, organisation)
     content = workspace_content(db, workspace)
-    data = domain_snapshot(db, workspace, shared_inputs=inputs, own_shifts=content['shifts'])
+    data = domain_snapshot(db, workspace, shared_inputs=inputs, own_shifts=content['shifts'], mandatory_rules=True)
     db.info['_precondition_snapshot'] = {'workspace_id': workspace.id, 'content_revision': workspace.content_revision,
                                          'inputs': inputs, 'data': data, 'content': content,
                                          'context': (department, organisation)}
@@ -369,8 +369,9 @@ def take_precondition(db, workspace):
     return held if (held.get('workspace_id'), held.get('content_revision')) == (workspace.id, workspace.content_revision) else {}
 
 
-def fingerprint(db, workspace, *, content_revision=None) -> str:
-    data = domain_snapshot(db, workspace, shared_inputs=_fingerprint_shared_inputs(db, workspace))
+def fingerprint(db, workspace, *, content_revision=None, mandatory_rules=False) -> str:
+    data = domain_snapshot(db, workspace, shared_inputs=_fingerprint_shared_inputs(db, workspace),
+                           mandatory_rules=mandatory_rules)
     if content_revision is None:
         return data['fingerprint']
     from packages.domain.input_manifest import manifest
@@ -437,10 +438,10 @@ DRAFT_POLICY_BASIS = 'live_mandatory'
 
 def draft_policy_hint(workspace):
     """Identify the draft rule basis for receipts made before the live overlay."""
-    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if workspace.status == 'draft' else {}
+    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
 
 
-def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
+def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True, mandatory_rules=False):
     """One shared acquisition per organisation for a visible batch; never authority across transactions.
 
     With `rebuild`, a rota it rejects is never rebuilt: it gets its current stored manifest or
@@ -471,7 +472,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         cached = checks[workspace.id].get('input_manifest') or {}
         if (currency_match(cached.get('dirty_hint'), {'input_revision': org.input_revision,
                 'availability_revision': org.availability_revision, 'content_revision': workspace.content_revision,
-                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)}
+                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace), **(draft_policy_hint(workspace) if mandatory_rules else {})}
                 ) and cached.get('components', {}).get('toolchain') == current_toolchain):
             result[workspace.id] = cached['token']
             continue
@@ -482,7 +483,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         C = m.WorkspaceReadProjection
         stored = db.execute(select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(skipped),
             C.audience == CANONICAL_AUDIENCE, C.kind == 'fingerprint')).all()
-        result.update({wid: value for wid, stamp, value in stored if stamp == input_stamp(db, pending[wid])})
+        result.update({wid: value for wid, stamp, value in stored if stamp == input_stamp(db, pending[wid], mandatory_rules=mandatory_rules)})
         for wid in skipped:
             del pending[wid]
     def build(wid):
@@ -491,13 +492,13 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         org = db.get(m.Organisation, department.organisation_id)
         if org.id not in shared:
             shared[org.id] = _fingerprint_shared_inputs(db, workspace)
-        data = domain_snapshot(db, workspace, shared_inputs=shared[org.id])
-        # Only a single-rota summary can reuse this payload; lists must release each full snapshot.
-        if len(workspaces) == 1:
+        data = domain_snapshot(db, workspace, shared_inputs=shared[org.id], mandatory_rules=mandatory_rules)
+        # Only a single-rota check can reuse this payload; lists must release each full snapshot.
+        if len(workspaces) == 1 and mandatory_rules:
             db.info.setdefault('read_snapshots', {})[wid] = data
         return data['fingerprint']
     result.update(cached_reads(db, pending, 'fingerprint',
-        {wid: input_stamp(db, workspace) for wid, workspace in pending.items()}, build))
+        {wid: input_stamp(db, workspace, mandatory_rules=mandatory_rules) for wid, workspace in pending.items()}, build))
     return result
 
 
@@ -508,7 +509,7 @@ def _fingerprint_shared_inputs(db, workspace):
     return prepared_snapshot_inputs(db, organisation)
 
 
-def cheap_fingerprints(db, workspaces, *, checks):
+def cheap_fingerprints(db, workspaces, *, checks, mandatory_rules=False):
     """Return currencies proven by stored dirty hints without rebuilding snapshots.
 
     Collection and landing reads must never rebuild a department snapshot merely
@@ -541,7 +542,7 @@ def cheap_fingerprints(db, workspaces, *, checks):
                       'availability_revision': organisation.availability_revision,
                       'content_revision': workspace.content_revision,
                       'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace),
-                      **draft_policy_hint(workspace)})
+                      **(draft_policy_hint(workspace) if mandatory_rules else {})})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
             result[workspace.id] = manifest['token']
@@ -560,7 +561,7 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace) for wid, workspace in rows.items()}
+    stamps = {wid: input_stamp(db, workspace, mandatory_rules=False) for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
@@ -769,14 +770,14 @@ def input_current(recorded, current):
     return None if recorded is None or current is None else recorded == current
 
 
-def receipt_currencies(db, workspaces, candidates, build):
+def receipt_currencies(db, workspaces, candidates, build, *, mandatory_rules=False):
     """Hints prove unchanged inputs; every other retained receipt needs an authoritative fingerprint."""
     from .serialization import effective_input_fingerprint
     from packages.domain.input_manifest import digest, toolchain
     current_toolchain = digest(toolchain(quota_policy_limit()))
     currencies, pending = {}, []
     for workspace in workspaces:
-        expected = currency_hint(db, workspace)
+        expected = currency_hint(db, workspace, mandatory_rules=mandatory_rules)
         retained = False
         for job in candidates.get(workspace.id, []):
             projection = job.read_metadata or {'input_snapshot': {}, 'result': None}
@@ -857,7 +858,7 @@ def hint_with_event_local_date(db, workspace, hint, organisation):
     return {**hint, **({'event_local_date': value} if value is not None else {})}
 
 
-def currency_hint(db, workspace):
+def currency_hint(db, workspace, *, mandatory_rules=False):
     """Return the compact source currency stored with a feasibility receipt.
 
     Activation admission only needs to prove that the receipt was built from
@@ -874,7 +875,7 @@ def currency_hint(db, workspace):
         'availability_revision': organisation.availability_revision,
         'content_revision': workspace.content_revision,
         'baseline': _baseline_hint(db, workspace),
-        **draft_policy_hint(workspace),
+        **(draft_policy_hint(workspace) if mandatory_rules else {}),
     }, organisation)
     return current
 
@@ -963,7 +964,7 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = True, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:

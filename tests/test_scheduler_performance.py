@@ -382,6 +382,10 @@ def test_fractional_hours_amount_dial_compiles_at_department_scale(h):
 @pytest.mark.cpu_budget
 def test_overtime_only_zero_maximum_binds_extra_cover_for_a_department_month(h, request):
     from ortools.sat.python import cp_model
+
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.snapshots import domain_snapshot
     from tests.test_overtime_extra_cover import extra_type
 
     cover = extra_type(h)
@@ -392,7 +396,8 @@ def test_overtime_only_zero_maximum_binds_extra_cover_for_a_department_month(h, 
     h.policy({'kind': 'block_quota', 'starts_on': workspace['starts_on'], 'ends_on': workspace['ends_on'],
               'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
              {'person_id': person})
-    current = h.snapshot(workspace)
+    with transaction(h.app.state.engine) as db:
+        current = domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=True)
     data.update({key: current[key] for key in ('policies', 'quota_context') if key in current})
     data['types'][cover['id']] = cover
     target = next(s for s in data['shifts'] if s['assignment_type_id'] == info['types']['am'])

@@ -81,7 +81,7 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
                 stage = 'stored_check'
                 check = stored_checks(db, [workspace])
                 stage = 'fingerprint'
-                fingerprints(db, [workspace], checks=check)
+                fingerprints(db, [workspace], checks=check, mandatory_rules=True)
                 stage = 'summary_check'
                 summary_check(db, workspace)
         except (SQLAlchemyError, DatabaseWriteDeferred, DatabaseWriteTimeout):

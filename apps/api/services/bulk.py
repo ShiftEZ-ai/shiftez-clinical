@@ -1941,22 +1941,28 @@ def _impact_sources(db, actor, value, items):
                 'The complete batch impact exceeds the session limit; split the batch', 409)
     org = db.get(m.Organisation, actor.organisation_id) if targets else None
     shared = snapshot_inputs(db, org) if targets else None
-    before = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in targets}
+    mandatory_rules = _session_writes(value, items, _SESSION_EDITS)
+    before = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared,
+                                    mandatory_rules=mandatory_rules) for w in targets}
     return targets, before
+
+
+_SESSION_EDITS = {kind for kind in s.BULK_ITEM_KINDS if kind.startswith('shift.') or kind == 'issues.resolve'}
 
 
 def _attribute_impacts(db, actor, value, items, rows, sources, undo_source=None):
     from . import catalogue_preview
     from apps.api.snapshots import domain_snapshot, snapshot_inputs
     targets, before = sources
-    if _session_writes(value, items, {kind for kind in s.BULK_ITEM_KINDS
-                                    if kind.startswith('shift.') or kind == 'issues.resolve'}):
+    mandatory_rules = _session_writes(value, items, _SESSION_EDITS)
+    if mandatory_rules:
         admitted = {(reply.get('workspace') or {}).get('id') for row in rows for reply in row.get('results', [])}
         targets = [workspace for workspace in targets if workspace.id in admitted]
     org = db.get(m.Organisation, actor.organisation_id) if targets else None
     shared = snapshot_inputs(db, org) if targets else None
     captured = [{"workspace_id": w.id, "name": w.name, "status": w.status, "before": before[w.id],
-                 "after": domain_snapshot(db, w, operational=True, shared_inputs=shared), "saved": None} for w in targets]
+                 "after": domain_snapshot(db, w, operational=True, shared_inputs=shared,
+                                          mandatory_rules=mandatory_rules), "saved": None} for w in targets]
     impacts = catalogue_preview.evaluate_preview({"response": {}, "workspaces": captured})["impacts"] if captured else []
     warnings = [{"workspace_id": impact["workspace_id"], **finding} for impact in impacts for finding in impact["introduced"]]
     creation_only = _session_creation(value, items)

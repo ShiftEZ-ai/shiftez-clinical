@@ -34,9 +34,9 @@ def stored_findings(workspace):
 
 def chosen(db, workspace, keys):
     found = stored_findings(workspace)
-    if workspace.validation.get('fingerprint') != fingerprint(db, workspace):
+    if workspace.validation.get('fingerprint') != fingerprint(db, workspace, mandatory_rules=True):
         # Organisation revisions include unrelated edits; only a changed full check invalidates these issues.
-        fresh = evaluate(domain_snapshot(db, workspace))['findings']
+        fresh = evaluate(domain_snapshot(db, workspace, mandatory_rules=True))['findings']
         stored = normalized_check(workspace.validation)['findings']
         def evidence(value):
             # Candidate explanations may change while the checked breach stays the same.
@@ -77,7 +77,7 @@ def plan_replacements(db, actor, workspace, keys, findings=None):
         {**row, 'participants': [p for p in row['participants'] if (row['id'], p['person_id']) not in selected]}
         for row in before['shifts']]})
     targets = seats(chosen(db, workspace, keys) if findings is None else findings)
-    source = domain_snapshot(db, workspace)
+    source = domain_snapshot(db, workspace, mandatory_rules=True)
     require(len(source['shifts']) <= MAX_SCOPE_SHIFTS * 2, 'STAFFING_SCOPE_LIMIT', 'Narrow the planning period to replace people.', 409)
     people = {row['person_id'] for row in source['memberships'] if row['department_id'] == actor.department_id}
     inputs = snapshot_hash({'source': source, 'people': sorted(people), 'targets': sorted([*k, v] for k, v in targets.items())})

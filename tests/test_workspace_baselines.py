@@ -40,8 +40,9 @@ def test_workspace_create_captures_baseline_and_freezes_evaluation(h):
         frozen = next(item for item in verify(row)["policies"] if item["id"] == old_policy.id)
         assert frozen["definition"] == old_definition
 
-    # A draft evaluates the current mandatory revision while its capture remains immutable.
-    snapshot = h.snapshot(workspace)
+    # A draft check evaluates the current revision against its immutable capture.
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace["id"]), mandatory_rules=True)
     assert [item["definition"] for item in snapshot["policies"] if item["id"] == old_policy.id] == [new_definition]
 
     with pytest.raises(DatabaseError, match="immutable workspace baseline"):
