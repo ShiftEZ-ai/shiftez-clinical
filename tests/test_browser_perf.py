@@ -88,7 +88,17 @@ MONTH = """async ([weeks, findingCount, agenda]) => {
   const hooks = {name: p => (p && p.display_name) || '', code: () => 'X', details: () => {}, dnd: n => n, proposal: null,
     editable: true, fresh: true, selected: new Set(), onSelect: () => {}, refresh: async () => {}, tallies: true};
   const period = {days, page: 0, has_previous: false, has_next: false, unit: 'month'};
-  const draw = () => agenda ? m.dayAgenda(ctx, shifts, period, () => {}, hooks, {data}) : m.weekGrid(ctx, data, shifts, period, () => {}, hooks);
+  if (agenda) {
+    let findingReads = 0;
+    for (const finding of findings) {
+      const {shift_id} = finding;
+      Object.defineProperty(finding, 'shift_id', {get: () => { findingReads++; return shift_id; }});
+    }
+    const root = m.dayAgenda(ctx, shifts, period, () => {}, hooks, {data});
+    return {findingReads, sessions: root.querySelectorAll('.ag-item').length,
+      daysWithIssues: [...root.querySelectorAll('.ag-head')].filter(head => head.querySelector('.iss-mark')).length};
+  }
+  const draw = () => m.weekGrid(ctx, data, shifts, period, () => {}, hooks);
   draw();  // warm up
   const t = performance.now();
   const root = draw();
@@ -121,11 +131,12 @@ def test_phone_agenda_draws_findings_once(browser, live_server, h):
     try:
         navigate(page, 'people')
         none = page.evaluate(MONTH, [5, 0, True])
-        # Five times a department's findings, so the old per-day and per-item scans (millions of steps) stand out.
-        many = page.evaluate(MONTH, [5, 15000, True])
-        print('agenda draw', {'no findings': none, '15,000 findings': many})
-        slack = 3 if os.environ.get('CI') else 2
-        assert many['ms'] <= none['ms'] * slack + 20, (none, many)
+        finding_count = 15000
+        many = page.evaluate(MONTH, [5, finding_count, True])
+        assert none == {'findingReads': 0, 'sessions': 595, 'daysWithIssues': 0}
+        assert many['sessions'] == none['sessions'] and many['daysWithIssues'] == 35, many
+        # Bound a fixed number of passes over the findings. A scan per day or session exceeds this budget.
+        assert 0 < many['findingReads'] <= 12 * finding_count, many
     finally:
         context.close()
 

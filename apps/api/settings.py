@@ -9,12 +9,18 @@ from typing import Literal
 from urllib.parse import urlparse
 from pydantic import ValidationError
 from .data_crypto import data_key_from_secret  # noqa: F401  the one key parser (GitHub and mailbox secrets)
-from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, SESSION_IDLE_MINUTES_MIN,
+from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, DisplaySettingsInput,
+                                        SESSION_IDLE_MINUTES_MIN,
                                         SESSION_IDLE_MINUTES_DEFAULT, SESSION_MAX_HOURS_DEFAULT,
                                         valid_feedback_github_repo)
 
 # The compose health check allows a two-minute file age; keep configurable worker waits at half that window.
 WORKER_IDLE_MAX_SECONDS = 60
+
+
+def new_department_display_settings() -> dict[str, bool]:
+    """A new department stores the default Rules page; departments created before it store none and keep theirs."""
+    return {"rule_catalogue": DisplaySettingsInput.model_fields["rule_catalogue"].default}
 
 
 def new_department_session_limits() -> dict[str, int | None]:
@@ -410,3 +416,6 @@ class Settings:
         if (require_authentication and self.environment == "production" and password_login_enabled(self)
                 and self.password_login_progressive_delay and not self.fmuc_data_key):
             raise RuntimeError("FMUC_DATA_KEY is required for progressive password sign-in")
+        if require_authentication and self.environment == "production" and not self.fmuc_data_key:
+            # Sign-in event and rate-limit keys are keyed hashes; a keyless production cannot store them safely.
+            raise RuntimeError("FMUC_DATA_KEY is required for sign-in in production")
