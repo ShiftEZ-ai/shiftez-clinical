@@ -163,7 +163,7 @@ def manifest(data, *, content_revision=None):
             continue
         value = project(row, ('id', 'revision', 'department_id', 'starts_on', 'ends_on', 'active', 'definition',
             'template_line', 'count_bucket', '_count_scope', '_quota_full_window', '_protected_interval',
-            '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
+            '_live_zero', '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
             '_balance_sources', '_balance_people', '_balance_broad'))
         if row['id'] in bound_exceptions:
             value['exception_binding_revision'] = row.get('revision')

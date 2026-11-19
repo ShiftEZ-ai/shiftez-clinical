@@ -109,6 +109,16 @@ def test_shared_safety_exclusions_keep_finding_detail(h):
     assert finding['detail'] == {'from_shift_id': source['shifts'][0]['id'], 'to_shift_id': target['id']}
 
 
+def test_late_zero_duty_cap_appears_once_in_fill_options(h):
+    person = h.seed['people'][0]
+    session = h.shift(h.workspace(), people=[])
+    cap = h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'week'}, {'person_id': person})
+    row = next(row for row in options(h, session['workspace'], session['shift_id'])['candidates']
+               if row['person_id'] == person)
+    finding, = [finding for finding in row['findings'] if finding['rule_id'] == cap['id']]
+    assert (row['status'], finding['code'], finding['severity']) == ('blocked', 'MAX_DUTIES', 'error')
+
+
 def test_late_weekly_hours_cap_blocks_fill_and_save_and_checks_retained_duty(h):
     from tests.test_assignment_override_reason import payload
 

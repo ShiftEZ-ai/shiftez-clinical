@@ -313,9 +313,11 @@ def test_bulk_tag_change_refuses_mandatory_weekly_duty_cap(h, rule_timing):
 
     check = preview(h, "admin", value)
     assert check["counts"]["problem"] == 1
-    assert any(finding["code"] == "MAX_DUTIES" and finding["severity"] == "error"
-               and finding["rule_id"] == cap["id"] and finding["workspace_id"] == draft["id"]
-               and finding["person_id"] == person_id for finding in check["warnings"])
+    finding, = [finding for finding in check["warnings"] if finding["rule_id"] == cap["id"]]
+    assert (finding["code"], finding["severity"]) == ("MAX_DUTIES", "error")
+    assert (finding["workspace_id"], finding["person_id"]) == (draft["id"], person_id)
+    issue, = [issue for issue in check["items"][0]["issues"] if issue["code"] == "MAX_DUTIES"]
+    assert [option["id"] for option in issue["resolutions"]] == ["skip"]
     reply = h.command("admin", "bulk.apply", value, expected_fingerprint=check["source_fingerprint"], status=409)
     assert reply["error"]["code"] == "MAX_DUTIES"
     with transaction(h.app.state.engine) as db:

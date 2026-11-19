@@ -857,10 +857,39 @@ def _pairs(members, spans):
 
 
 @lru_cache(maxsize=8192)
-def _valid(text, stored_goal=True):
-    """A copy's definition through the old schemas (defaults written out, every safety validation)."""
-    return PolicyDefinition.model_validate(json.loads(text), context={
-        'historical': True, 'resolved_catalogue_line': True, 'stored_goal': stored_goal}).model_dump(mode='json')
+def _valid(text, stored_goal=True, *, resolved_catalogue_line=True):
+    """A stored definition through the old schemas, including historical zero prohibitions."""
+    definition = json.loads(text)
+    rule = definition.get('rule') if isinstance(definition, dict) else None
+    rule = rule if isinstance(rule, dict) else {}
+    consecutive = ('max_consecutive_days', 'max_consecutive_weekends')
+    legacy_zero = rule.get('kind') in consecutive and rule.get('maximum') == 0
+    zero_lines = []
+    if legacy_zero:
+        rule['maximum'] = 1  # Stored zero prohibitions remain readable; authored consecutive limits stay positive.
+    if rule.get('kind') == 'catalogue' and isinstance(rule.get('id'), str) and isinstance(rule.get('catalogue_version', 1), int):
+        entry = _entry(rule)
+        lines = rule.get('lines')
+        if entry and 'max' in entry['numbers'] and isinstance(lines, list):
+            for n, line in enumerate(lines):
+                numbers = line.get('numbers') if isinstance(line, dict) else None
+                maximum = numbers.get('max') if isinstance(numbers, dict) else None
+                if not isinstance(maximum, dict) or maximum.get('value') != 0:
+                    continue
+                try:
+                    slot = _slot(entry, 'max', rule, line, list(numbers))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue  # The schema still reports malformed definitions below.
+                if slot['kind'] in consecutive:
+                    maximum['value'] = 1
+                    zero_lines.append(n)
+    valid = PolicyDefinition.model_validate(definition, context={
+        'historical': True, 'resolved_catalogue_line': resolved_catalogue_line, 'stored_goal': stored_goal}).model_dump(mode='json')
+    if legacy_zero:
+        valid['rule']['maximum'] = 0
+    for n in zero_lines:
+        valid['rule']['lines'][n]['numbers']['max']['value'] = 0
+    return valid
 
 
 @lru_cache(maxsize=len(_MODELS))
@@ -1277,9 +1306,10 @@ def _expand(policy, outrank=True, stored_goal=True):
     sources = _source_lines(policy)
     source_keys = [source_key(policy, line) for line in lines]
     level_groups = {}
-    beaten = outranking_by_number(policy) if outrank else {}
+    beaten = outranking_by_number(policy) if outrank and not policy.get('_zero_max_projection') else {}
     broader = _broader_levels(lines, _by_number(rule)) if any(v.get('level', 'mandatory') is None for line in lines
                                                                for v in (line.get('numbers') or {}).values()) else {}
+    live_zero_lines = set(policy.get('_live_zero_line_ids', ()))
     plans = []  # per line: {(kind, fixed, level, winners): [first key, [(slot, value, key)]]}
     for n, line in enumerate(lines):
         settings, groups, keys = _settings(rule, line), {}, list(line.get('numbers') or {})
@@ -1289,6 +1319,10 @@ def _expand(policy, outrank=True, stored_goal=True):
             number = line['numbers'][key]
             slot = _slot(entry, key, rule, line, keys)
             for level, selector in _levels(lines, n, key, broader, entry, slot, sources, source_keys, level_groups):
+                if policy.get('_zero_max_projection') and level != 'mandatory':
+                    continue
+                if key == 'max' and level == 'mandatory' and line['id'] in live_zero_lines:
+                    continue
                 if slot['advisory'] and level == 'mandatory':
                     raise ValueError(f"{entry['name']}: a {key.replace('_', ' ')} here is a preference, not mandatory")
                 winners = tuple(beaten.get((n, key), ()))
