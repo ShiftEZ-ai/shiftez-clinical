@@ -1420,7 +1420,7 @@ function writeRoute(){
 // A background refresh (the live pulse) reads the server state but does not redraw under someone using the page: if a
 // menu, dialog or field opened while it read, it says so (refreshSkipped), the redraw is owed (redrawOwed, paid by the
 // next draw of any kind) and the pulse waits for them instead.
-let refreshForeground=false,refreshSkipped=false,redrawOwed=false;
+let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
@@ -1436,7 +1436,7 @@ function refresh(quiet=false,scopes?:Set<LiveScope>,changes?:LiveChange[],retry=
   forgetResolved();
   refreshScopes=scopes&&refreshScopes!==null?new Set([...refreshScopes||[],...scopes]):null;
   refreshChanges=scopes&&changes&&refreshChanges?[...refreshChanges,...changes]:null;
-  if(!quiet)refreshForeground=true;
+  if(!quiet)refreshForeground=pageStep();
   if(!retry)return refreshes.join();
   // A Retry reads the deferred lists afresh too (loadLists drops whichever answer is older).
   hydrating=null;return refreshes.retry();
@@ -1497,7 +1497,7 @@ const ME_SCOPES:LiveScope[]=['settings','access','catalogue','people'],LIST_SCOP
 async function refreshOnce(stale=()=>false){
   forgetReads(refreshScopes??null,refreshChanges);refreshChanges=[];  // maintenance/118: kept answers (api.ts keptRead) last across redraws until a change can alter them
   if(!me)return;accessRead=null;readAfresh();const saved=[...savedKinds];savedKinds.clear();const local=inPlace&&saved.length>0;inPlace=true;
-  const quiet=!refreshForeground;refreshForeground=false;refreshSkipped=false;
+  const from=refreshForeground,quiet=from===null;refreshForeground=null;refreshSkipped=false;
   const scopes=refreshScopes??null;refreshScopes=undefined;const touches=(of:LiveScope[])=>!scopes||of.some(s=>scopes.has(s));
   // Only draft edits since the last refresh, patched in place, on the Schedule: it redraws reading just the draft (the
   // session, lists in memory and the other counts cannot have changed). Anything else reads what it can affect.
@@ -1509,6 +1509,8 @@ async function refreshOnce(stale=()=>false){
     if(touches(LIST_SCOPES))await loadCatalogues();
     if(session!==sessionKey()||stale())return;
     refreshFailed=false;showConnection(true);void loadNavBadges(true,saved.length?saved:scopes?[]:undefined,scopes);
+    // A save can close its dialog before the follow-up reads finish. The page opened since then owns its draw.
+    if(!quiet&&pageStep()!==from)return;
     if(quiet&&readerBusy()){redrawOwed=true;refreshSkipped=true;return;}
     // Drawn from here on, by either path: an owed redraw is paid (else every pulse would refresh again).
     redrawOwed=false;
@@ -1696,7 +1698,9 @@ async function renderPage(){
   if(keep&&plannerRota&&plannerRota.id!==workspaceId)main.querySelector('.planner-main')?.setAttribute('inert','');
   // maintenance: Configuration keeps its section nav usable while the next section loads (another pick replaces it): only
   // the section left is inert, never the nav (an inert nav ignored every pointer click until the read finished).
-  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;}else body.append(sk!);}
+  // Moving the page detaches its scrollers, which resets their native positions: put them back at once (not only when
+  // the rebuilt page mounts), so a background redraw does not show the list at its top meanwhile.
+  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
   // maintenance: a read meeting rules being rebuilt (api.ts projectionReady): the old content gives way to the page's skeleton.
   let waiting=sk;const updating=()=>{if(serial!==renderSerial||waiting||keep)return;waiting=pageSkeleton();body.inert=false;body.replaceChildren(waiting);};
   window.addEventListener('projection-updating',updating);
@@ -1746,6 +1750,7 @@ async function renderPage(){
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
       body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
+      void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
       // Perf instrumentation (as rk-decorate): a page's render, start to drawn; requests included when it made any.
       // `keep`: a redraw of the page on screen (a save, a live update), which the PC measures read (PC-STEPS).
@@ -1766,7 +1771,7 @@ async function renderPage(){
   catch(e){if(serial===renderSerial){
     buildingPage(null);  // a failed build never stays the page being built (alive()); a superseded one was replaced by its successor's
     const unreachable=e instanceof ApiError&&(e.status===0||e.status>=500)&&!sessionChanged(e);
-    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;}
+    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;restoreTableScroll(main);restoreRulesScroll(main);}
       refreshFailed=true;main.setAttribute('data-loaded-view',view);showStale(true,e);orient();return;}
     // maintenance: this tab runs an older bundle than the server's: reload onto it once, or with something unsaved open
     // offer Reload to update (the update bar stays too). A connection failure is not the bundle's fault.
@@ -2260,10 +2265,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The open rota's auto-schedule jobs are asked for with its sessions, not after the page is drawn (one round trip
   // less before the Auto-schedule panel can show its setup or a run in progress); the panel takes this read once.
   jobsEarly=planner&&needDraft&&earlyId&&permits(CAPABILITY.COORDINATOR)&&!windowFirst(earlyId)&&!(memo&&lastJobs?.id===earlyId&&lastJobs.activity===seenActivity)
-    ?{id:earlyId,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
+    ?{id:earlyId,woke:panelWakes,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
   const savedViews=memo?.views?Promise.resolve(memo.views):fetchViews<PlannerSaved>('planner').catch(()=>[] as SavedView<PlannerSaved>[]);
   const listAhead=!memo&&!workspaceListOffset&&ahead?.id===workspaceId&&ahead.epoch===scheduleEpoch?ahead.list:null;
-  const page=planner?memo?.page||await (listAhead||get<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
+  // An automatic rota choice also writes the address. Wait for the current list instead of choosing from a kept reply.
+  const readList=workspaceId||draftNone||sourcePublication?get:background;
+  const page=planner?memo?.page||await (listAhead||readList<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
   const work:Row[]=[...page.workspaces];
   if(routeView){const saved=(await savedViews).find(x=>x.id===routeView);if(saved){applyPlannerView(saved.definition.planner,saved.definition.conditions,routeQuery);setTableColumns('planner-list',saved.definition);plannerViewId=saved.id;if(routeQuery.has('person'))schedFilters={...schedFilters,person_ids:[routeQuery.get('person')||'']};}routeView='';}
   // The Schedule's first opening this session shows its default view (the person's, else the department's), if chosen.
@@ -7190,7 +7197,7 @@ async function appliedAnyway(jobId:string,e:unknown):Promise<typeof APPLY_CONFIR
   if(job?.status!=='applied')throw e;
   window.dispatchEvent(new CustomEvent('rota-saved',{detail:{kind:'generation.apply',result:APPLY_CONFIRMED}}));return APPLY_CONFIRMED;
 }
-let lastJobs:{id:string;jobs:Row;activity?:number|null}|null=null;
+let lastJobs:{id:string;jobs:Row;activity?:number|null;woke:number}|null=null;
 /** The rota and revision last read again because a run was applied after the draft on screen (SW3-A-05): once each. */
 let behindRead='';
 /** The rota's latest auto-schedule run left a proposal that still fits it (not applied, discarded or out of date). */
@@ -7244,8 +7251,8 @@ function markProposal(data:WorkspaceData){
 /** The rota's job list when it is not held yet (Resolve issues or Submit opened first): one read, failures say nothing. */
 async function readJobs(data:WorkspaceData){
   if(!permits(CAPABILITY.COORDINATOR)||data.workspace.status!=='draft'||lastJobs?.id===data.workspace.id&&lastJobs.activity===seenActivity)return;
-  const r=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(data.workspace.id)).catch(()=>null);
-  if(r)lastJobs={id:data.workspace.id,jobs:r,activity:seenActivity};
+  const woke=panelWakes,r=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(data.workspace.id)).catch(()=>null);
+  if(r)lastJobs={id:data.workspace.id,jobs:r,activity:seenActivity,woke};
 }
 /** Resolve issues and Submit: the waiting proposal said once above the issues, with its review. */
 const proposalNote=(data:WorkspaceData,done:()=>void=()=>{})=>proposalShown(data)?el('div',{class:'span-2 issues-cta proposal-note'},
@@ -7309,8 +7316,12 @@ function liveHooks(data:WorkspaceData){
 /** A count or duration with its words never split across lines ("took < 1 s", "630 changes ready"). */
 const unbroken=(text:string)=>text.replaceAll(' ',' ');
 let panelVisibility:(()=>void)|null=null;
+/** Returns to the tab, counted whichever panel (if any) owned the listener then. Each job-list read carries the count
+ *  from when it started (`woke`): one that started before a return may predate what changed, so no panel draws it. A read
+ *  started after a return never joins one started before it (readAfresh). */
+let panelWakes=0;document.addEventListener('visibilitychange',()=>{if(!document.hidden){panelWakes++;readAfresh();}});
 /** The open rota's job list, read alongside its sessions by the Schedule (renderSchedule) for the panel's first draw. */
-let jobsEarly:{id:string;read:Promise<Row|null>}|null=null;
+let jobsEarly:{id:string;read:Promise<Row|null>;woke:number}|null=null;
 const panelPulse=ownedListener('jobs-changed');
 let panelJob='',releasePanelJob:(()=>void)|null=null;
 function watchPanelJob(id:string){if(id===panelJob)return;releasePanelJob?.();panelJob=id;releasePanelJob=id?watchJob(id):null;}
@@ -7329,8 +7340,11 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
   const handover=awaitAdoption(PEOPLE_POPOVER);
   try{
-  const prefetched=jobsEarly?.id===w.id?jobsEarly.read:null;jobsEarly=null;
-  const initialJobs=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs.jobs:(prefetched&&await prefetched)||await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});
+  const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
+  const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
+  let firstWoke=reused?reused.woke:prefetched?prefetched.woke:panelWakes;
+  let initialJobs:Row|null=reused?reused.jobs:prefetched&&await prefetched.read;
+  if(!initialJobs){firstWoke=panelWakes;initialJobs=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});}
   if(serial!==renderSerial)return;
   const capability=initialJobs.generation_capability||{},cpSat=capability.engine==='cp_sat',maxDays=Number(capability.max_period_days)||31;
   const defaults={...capability.default_options,...me!.department.generation_defaults} as GenerationOptions;
@@ -7637,7 +7651,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Back on the tab with a run going: read it at once instead of waiting out a slower poll.
   // One listener at a time: a redrawn panel replaces the previous one's, so an old panel (and the page around it) is not
   // kept alive by a tab that never changes visibility (perf SC-01).
-  const onVisible=()=>{if(!panel.isConnected)return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
+  // A panel in the page still being built (alive) is the one that will show: it reads too, or the wake-up is lost.
+  const onVisible=()=>{if(!alive(panel))return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
   if(panelVisibility)document.removeEventListener('visibilitychange',panelVisibility);
   panelVisibility=onVisible;document.addEventListener('visibilitychange',onVisible);
   // One polling chain: a newer load (panel opened, Retry, cancel) supersedes one still waiting for the server.
@@ -7654,7 +7669,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       review:()=>{st().open=true;st().step=3;target.hidden=false;document.querySelector('.auto-button')?.setAttribute('aria-expanded','true');jobsKey='';void load().catch(failed);},
       apply:editable&&changes&&currentGeneration(job,data)?async()=>{await applyJob(job);await refresh();}:null}:null);};
   // The live stream wakes a watched run at once (polling stays the fallback).
-  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(panel.isConnected&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
+  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(alive(panel)&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
   const finishShown=liveFinisher(st(),finishLive);
   const liveRead=async(id:string):Promise<Row>=>{const status=(await get('/api/jobs/'+id+'/status?events=true')).job as Row,
     job=DONE_JOB.includes(status.status)?(await get('/api/jobs/'+id)).job as Row:status,list=lastJobs!.jobs;
@@ -7677,8 +7692,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
         if(continued.preparation_expired)notify('Cached preparation expired. This attempt rebuilds from your saved inputs.','info');await load();},'Continue');},tone,{'data-run-continue':''});
     more.input.addEventListener('input',()=>{st().resume={job:latest.id,minutes:String(more.value())};go.textContent=`Continue for ${said()}`;});
     return {more,go};};
-  const load=async(firstRead?:Row)=>{
-    window.clearTimeout(timer);const mine=++loads;
+  const load=async(firstRead?:Row,since=panelWakes):Promise<void>=>{
+    window.clearTimeout(timer);const mine=++loads,woke=firstRead?since:panelWakes;
     // Opened before anything was read: its skeleton shows while this read is on its way.
     if(!known&&!st().step&&!target.hidden&&!body.querySelector(':scope>.loading'))drawStep();
     // A run shown live is read on its own (its progress) while it goes, not the rota's whole job list every second;
@@ -7686,7 +7701,10 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
     const response:Row=firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)));
     if(gone()||mine!==loads)return;
-    lastJobs={id:w.id,jobs:response,activity:seenActivity};markProposal(data);
+    // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
+    // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
+    if(woke!==panelWakes)return load();
+    lastJobs={id:w.id,jobs:response,activity:seenActivity,woke};markProposal(data);
     const jobs:Row[]=response.jobs.filter((j:Row)=>j.kind!=='feasibility'),running:Row|undefined=response.jobs.find((j:Row)=>['queued','running'].includes(j.status));
     // Polled only while a run is queued or running (PL-03): every 3 s while it is watched, every 30 s while the panel is
     // closed or the tab hidden (so a finish is still said), a queued run backing off 3 → 10 → 30 s (restarted by your own
@@ -7708,7 +7726,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     watchPanelJob(liveRunning?.id||'');
     const searching=liveRunning?.status==='running';
     const watched=(!target.hidden||searching)&&!document.hidden,delay=!running?(watched?30000:0):!watched?30000:running.status==='queued'?[3000,10000,30000][Math.min(queuedPolls,3)-1]:searching&&Date.now()-streamSeen>=45_000?1000:3000;
-    if(delay)timer=window.setTimeout(()=>{if(panel.isConnected)void load().catch(failed);},delay);
+    if(delay)timer=window.setTimeout(()=>{if(alive(panel))void load().catch(failed);},delay);
     const compiler=response.generation_capability?.algorithm;
     const nextKey=JSON.stringify([jobs,running,compiler]);
     // A run that finishes while you work elsewhere (panel closed, another tab) says so once.
@@ -7926,7 +7944,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     known=true;drawStep();
     if(keep&&document.activeElement!==had)refocusSpot(feedback,keep);
   };
-  await load(initialJobs);  // the jobs just read above: no second request
+  await load(initialJobs,firstWoke);  // the jobs just read above: no second request, unless back on the tab since
   // Opening the panel reads again; a failure says so in the panel (failed), not only in a toast over a skeleton.
   return ()=>load().catch(failed);
   }finally{handover();}

@@ -1015,8 +1015,11 @@ export function menu(anchor:HTMLElement,label:string,items:MenuEntry[]|(()=>Menu
     const next=document.querySelector<HTMLElement>(o.keep!);let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
     for(let n:Element|null=next;n&&!source;n=n.parentElement)source=menuSources.get(n);
     const entries=next&&source?source(next):[];if(!box||!entries.length)return null;
-    const at=box.contains(document.activeElement)?document.activeElement!.textContent:null;
+    const at=box.contains(document.activeElement)?document.activeElement!.textContent:null,was=box.querySelector<HTMLElement>('.armed')?.dataset.armedFrom;
     items=entries;box.replaceChildren(...list(shut));refocusItem(box,at);
+    // An armed confirm stays armed in the redrawn menu: its second press still confirms (not a fresh first press).
+    const again=was?[...box.querySelectorAll<HTMLElement>('[role^=menuitem]')].find(b=>(b.getAttribute('aria-label')||b.textContent||'').trim()===was):undefined;
+    if(again){again.click();again.focus();}
     return next;
   }:undefined;
   const item=(x:MenuItem,close:()=>void)=>{
@@ -1640,7 +1643,7 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
   const elsewhere = (e: Event) => { if (!b.contains(e.target as Node | null)) disarm(); };
   const disarm = () => {
     if (!saved) return;
-    document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width');
+    document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width'); delete b.dataset.armedFrom;
     if (name === null) b.removeAttribute('aria-label'); else b.setAttribute('aria-label', name);
     if (tip !== undefined) b.dataset.tip = tip;
   };
@@ -1657,7 +1660,7 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
     b.replaceChildren(icon('alert'), el('span', {class: 'armed-label'}, confirmLabel));
     // "Confirm retract?" already names the action: its name is not "Confirm retract? Retract".
     const said = confirmLabel.toLowerCase().includes(plain.toLowerCase()) ? confirmLabel : `${confirmLabel} ${plain}`;
-    b.classList.add('armed'); b.setAttribute('aria-label', said);
+    b.classList.add('armed'); b.setAttribute('aria-label', said); b.dataset.armedFrom = plain;
     if (tip !== undefined) b.dataset.tip = said;
     announce(`Press again to confirm: ${plain}`);
     document.addEventListener('pointerdown', elsewhere, true);

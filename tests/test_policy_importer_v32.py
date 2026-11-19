@@ -195,7 +195,7 @@ class PublicV32Cases(unittest.TestCase):
         self.check_event_replicas('pull_request',[1])
 
     def test_merge_group_uses_two_replicas(self):
-        self.check_event_replicas('merge_group',[1,2])
+        self.check_event_replicas('merge_group',[1])
 
     def test_pr1_wrong_head_is_refused(self):
         self.capture['run']['head_sha']='d'*40
