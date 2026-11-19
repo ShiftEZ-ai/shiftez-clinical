@@ -191,9 +191,12 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
         expect(all_who.locator('ol li')).to_have_count(rank_count)
         page.keyboard.press('Escape')
         expect(all_who).to_have_count(0)
-        scroll.evaluate('e=>e.scrollTop=Math.min(e.clientHeight/2,e.scrollHeight-e.clientHeight)')
         selected = page.get_by_role('checkbox', name='Select line 12 of Duties per week', exact=True)
-        selected.scroll_into_view_if_needed()
+        # Scrolled, with line 12 in view at any viewport height: its row just below the top of the list's own box.
+        selected.evaluate('''c => {const s=c.closest('.rt-scroll'),row=c.closest('li');
+            const top=row.getBoundingClientRect().top-s.getBoundingClientRect().top+s.scrollTop;
+            s.scrollTop=Math.max(1,Math.min(top-8,s.scrollHeight-s.clientHeight));}''')
+        expect(selected).to_be_in_viewport()
         before = position(scroll)
         assert before['y'] > 0, before
         selected.check()
