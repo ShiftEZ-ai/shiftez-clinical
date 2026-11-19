@@ -302,7 +302,8 @@ def test_catalogue_keeps_stored_tag_lines_and_acknowledgement_identity(h):
     from .test_rule_catalogue_conflicts import tag_people
     tag = tag_people(h, 'catalogue_group', [h.seed['people'][0]])
     policy = add_policy(h, {'kind': 'catalogue', 'id': 'duties_per_week', 'lines': [
-        {'id': str(uuid.uuid4()), 'numbers': {'max': {'value': 3}}},
+        {'id': str(uuid.uuid4()), 'who': {'conditions': [{'field': 'category_ids', 'values': [h.seed['category']]}]},
+         'numbers': {'max': {'value': 3}}},
         {'id': str(uuid.uuid4()), 'who': {'conditions': [{'field': 'person_ids', 'values': [tag]}]},
          'numbers': {'max': {'value': 2}}}]})
     stored = {line['id']: line for line in policy['definition']['rule']['lines']}
@@ -310,7 +311,7 @@ def test_catalogue_keeps_stored_tag_lines_and_acknowledgement_identity(h):
         page = h.get('auditor', '/api/rules/catalogue')
         shown = next(entry['rule'] for entry in page['entries'] if entry['id'] == 'duties_per_week')
         assert shown['definition'] == policy['definition']
-        issue = next(issue for issue in page['attention'] if issue['rule_id'] == policy['id'] and issue['kind'] == 'overlap')
+        issue = next(issue for issue in page['attention'] if issue['rule_id'] == policy['id'] and issue['kind'] == 'both')
         assert issue['fingerprint'] == fingerprint(issue, stored)
         return issue['fingerprint']
     before = read()
