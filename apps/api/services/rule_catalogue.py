@@ -84,8 +84,8 @@ def _solve_proof(db, actor, groups, proof):
     retire = [{**record(p), "status": "retired", "active": False} for p in db.scalars(select(m.Policy).where(m.Policy.id.in_(list(old) or [""])))]
     for r in proof["rotas"]:
         w = db.get(m.Workspace, r["workspace_id"])
-        before = domain_snapshot(db, w)
-        after = domain_snapshot(db, w, policy_overrides=retire + made)
+        before = domain_snapshot(db, w, mandatory_rules=False)
+        after = domain_snapshot(db, w, policy_overrides=retire + made, mandatory_rules=False)
         solve = lambda d, **o: cp_sat.generate(copy.deepcopy(d), 10, 1, deterministic=True, **o)  # noqa: E731
         solved = [solve(d) for d in (before, after)]
         r["cp_sat_status"] = solved[0].get("status")

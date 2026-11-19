@@ -292,11 +292,11 @@ def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, 
     with transaction(h.app.state.engine, write=True) as db:
         stored = db.get(m.Job, job['id'])
         workspace = db.get(m.Workspace, w['id'])
-        legacy = domain_snapshot(db, workspace)
+        legacy = domain_snapshot(db, workspace, mandatory_rules=False)
         stored.input_fingerprint = legacy['fingerprint']
         stored.input_snapshot = {**stored.input_snapshot, 'fingerprint': stored.input_fingerprint,
             'input_manifest': legacy['input_manifest'], 'audit_watermark': watermark(db, workspace.department_id),
-            'currency_hint': currency_hint(db, workspace)}
+            'currency_hint': currency_hint(db, workspace, mandatory_rules=False)}
         stored.result = {**stored.result, 'input_fingerprint': stored.input_fingerprint}
     if non_rule_change:
         h.command('coordinator', 'availability.record', {'person_id': h.seed['people'][-1],

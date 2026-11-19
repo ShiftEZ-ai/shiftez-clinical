@@ -369,7 +369,7 @@ def take_precondition(db, workspace):
     return held if (held.get('workspace_id'), held.get('content_revision')) == (workspace.id, workspace.content_revision) else {}
 
 
-def fingerprint(db, workspace, *, content_revision=None, mandatory_rules=False) -> str:
+def fingerprint(db, workspace, *, content_revision=None, mandatory_rules=True) -> str:
     data = domain_snapshot(db, workspace, shared_inputs=_fingerprint_shared_inputs(db, workspace),
                            mandatory_rules=mandatory_rules)
     if content_revision is None:
@@ -426,7 +426,7 @@ def draft_policy_hint(workspace):
     return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
 
 
-def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True, mandatory_rules=False):
+def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True, mandatory_rules=True):
     """One shared acquisition per organisation for a visible batch; never authority across transactions.
 
     With `rebuild`, a rota it rejects is never rebuilt: it gets its current stored manifest or
@@ -494,7 +494,7 @@ def _fingerprint_shared_inputs(db, workspace):
     return prepared_snapshot_inputs(db, organisation)
 
 
-def cheap_fingerprints(db, workspaces, *, checks, mandatory_rules=False):
+def cheap_fingerprints(db, workspaces, *, checks, mandatory_rules=True):
     """Return currencies proven by stored dirty hints without rebuilding snapshots.
 
     Collection and landing reads must never rebuild a department snapshot merely
@@ -546,7 +546,7 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace, mandatory_rules=False) for wid, workspace in rows.items()}
+    stamps = {wid: input_stamp(db, workspace) for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
@@ -755,7 +755,7 @@ def input_current(recorded, current):
     return None if recorded is None or current is None else recorded == current
 
 
-def receipt_currencies(db, workspaces, candidates, build, *, mandatory_rules=False):
+def receipt_currencies(db, workspaces, candidates, build, *, mandatory_rules=True):
     """Hints prove unchanged inputs; every other retained receipt needs an authoritative fingerprint."""
     from .serialization import effective_input_fingerprint
     from packages.domain.input_manifest import digest, toolchain
@@ -843,7 +843,7 @@ def hint_with_event_local_date(db, workspace, hint, organisation):
     return {**hint, **({'event_local_date': value} if value is not None else {})}
 
 
-def currency_hint(db, workspace, *, mandatory_rules=False):
+def currency_hint(db, workspace, *, mandatory_rules=True):
     """Return the compact source currency stored with a feasibility receipt.
 
     Activation admission only needs to prove that the receipt was built from
@@ -949,7 +949,7 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = True, own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:

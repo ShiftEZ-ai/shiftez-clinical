@@ -241,7 +241,6 @@ def create_job(db, actor, command, settings):
             return {'job': None, 'validation_current': True}
         return {'job': job_record(queue_current_validation(db, actor, workspace))}
     snapshot = domain_snapshot(db, workspace, operational=workspace.status == 'published',
-                               mandatory_rules=value.kind == 'generation',
                                wish_debt_cap=options.scoring.wish_debt_cap if options is not None else None,
                                lead_balance=options.scoring.lead_balance if options is not None else None)
     if value.kind == 'feasibility':
@@ -312,7 +311,7 @@ def create_job(db, actor, command, settings):
             snapshot['compiler_version'] = COMPILER_VERSION
     from apps.api.input_changes import watermark
     snapshot['audit_watermark'] = watermark(db, actor.department_id)
-    snapshot['currency_hint'] = currency_hint(db, workspace, mandatory_rules=value.kind == 'generation')
+    snapshot['currency_hint'] = currency_hint(db, workspace)
     snapshot['repair_unavailable'] = value.kind == 'generation'
     snapshot['repair_conflicts'] = value.kind == 'generation'
     if snapshot.get('planning_group_id') and snapshot.get('lookahead') == 'coupled':
