@@ -1,12 +1,35 @@
 # Changes to these paths merge only after a review by the code owners.
-/.github/                       @ShiftEZ-ai/maintainers
-/ci/                            @ShiftEZ-ai/maintainers
-/infra/                         @ShiftEZ-ai/maintainers
-/tests/conftest.py              @ShiftEZ-ai/maintainers
-/tests/quarantine.json          @ShiftEZ-ai/maintainers
-/tests/quarantine.py            @ShiftEZ-ai/maintainers
-/requirements/*.lock            @ShiftEZ-ai/maintainers
-/requirements/ci-runtimes.json  @ShiftEZ-ai/maintainers
-/package-lock.json              @ShiftEZ-ai/maintainers
-/pyproject.toml                 @ShiftEZ-ai/maintainers
-/package.json                   @ShiftEZ-ai/maintainers
+# Pipeline, test-runner and release files: everything the policy guard treats as Tier 1, plus the guards themselves.
+/.github/                                     @ShiftEZ-ai/maintainers
+/ci/                                          @ShiftEZ-ai/maintainers
+/infra/                                       @ShiftEZ-ai/maintainers
+/alembic.ini                                  @ShiftEZ-ai/maintainers
+/apps/web/tsconfig.json                       @ShiftEZ-ai/maintainers
+/migrations/safety.py                         @ShiftEZ-ai/maintainers
+/scripts/affected_tests.py                    @ShiftEZ-ai/maintainers
+/scripts/backup.py                            @ShiftEZ-ai/maintainers
+/scripts/backup_job.py                        @ShiftEZ-ai/maintainers
+/scripts/build_web.py                         @ShiftEZ-ai/maintainers
+/scripts/check_web_permission_literals.py     @ShiftEZ-ai/maintainers
+/scripts/compiled_client.py                   @ShiftEZ-ai/maintainers
+/scripts/generate_contracts.py                @ShiftEZ-ai/maintainers
+/scripts/initial_seed.py                      @ShiftEZ-ai/maintainers
+/scripts/manage.py                            @ShiftEZ-ai/maintainers
+/scripts/preflight.py                         @ShiftEZ-ai/maintainers
+/scripts/preload_web.py                       @ShiftEZ-ai/maintainers
+/scripts/restore_drill.py                     @ShiftEZ-ai/maintainers
+/scripts/system_command.py                    @ShiftEZ-ai/maintainers
+/scripts/ci_*.py                              @ShiftEZ-ai/maintainers
+/tests/conftest.py                            @ShiftEZ-ai/maintainers
+/tests/quarantine.json                        @ShiftEZ-ai/maintainers
+/tests/quarantine.py                          @ShiftEZ-ai/maintainers
+/tests/test_codeowners.py                     @ShiftEZ-ai/maintainers
+/tests/test_data_safety.py                    @ShiftEZ-ai/maintainers
+/tests/test_readme_empty.py                   @ShiftEZ-ai/maintainers
+/tests/test_repository_content.py             @ShiftEZ-ai/maintainers
+# Dependency locks and manifests.
+/requirements/*.lock                          @ShiftEZ-ai/maintainers
+/requirements/ci-runtimes.json                @ShiftEZ-ai/maintainers
+/package-lock.json                            @ShiftEZ-ai/maintainers
+/pyproject.toml                               @ShiftEZ-ai/maintainers
+/package.json                                 @ShiftEZ-ai/maintainers
