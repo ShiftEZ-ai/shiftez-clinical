@@ -103,9 +103,9 @@ export async function staffImportReview(ctx:Context,batchId:string){
           columns:[
             {key:'row',label:'Row',num:true,sort:r=>r.row_number,cell:r=>String(r.row_number)},
             {key:'person',label:'Person',text:r=>`${r.data.display_name} ${r.data.staff_number||''} ${r.data.short_code||''}`,sort:r=>String(r.data.display_name),
-              facet:r=>Object.keys(r.errors).length?'Has problems':r.person.action==='new'?'New person':r.person.action==='update'?'Person updated':'No person change',
+              facet:r=>Object.keys(r.errors).length?'Has problems':r.person.left?'Left · unchanged':r.person.action==='new'?'New person':r.person.action==='update'?'Person updated':'No person change',
               cell:r=>el('div',{},el('strong',{},r.data.display_name||nameOf(ctx,'people',r.person.id)),' ',
-                r.person.action==='new'?badge('New','info'):r.person.action==='update'?badge('Updated','warn','',{tip:Object.entries(r.person.changes).map(([k,v])=>`${k.replaceAll('_',' ')}: ${JSON.stringify((v as unknown[])[0])} → ${JSON.stringify((v as unknown[])[1])}`).join('\n')}):'',
+                r.person.left?badge('Left · unchanged','info'):r.person.action==='new'?badge('New','info'):r.person.action==='update'?badge('Updated','warn','',{tip:Object.entries(r.person.changes).map(([k,v])=>`${k.replaceAll('_',' ')}: ${JSON.stringify((v as unknown[])[0])} → ${JSON.stringify((v as unknown[])[1])}`).join('\n')}):'',
                 r.person.by&&r.person.by!=='import'?el('div',{class:'muted cell-note'},'Matched by '+r.person.by.replaceAll('_',' ').replace('display name','name')):'',...problems(r,'person'))},
             {key:'rank',label:'Rank',search:'related',text:r=>r.rank?nameOf(ctx,'categories',r.rank.category_id):'',facet:r=>r.rank?.action==='add'?'Rank change':'No rank change',
               cell:r=>el('div',{},r.rank?chip(ctx,'categories',r.rank.category_id,r.rank.action==='add',key):'',r.rank?.action==='add'?el('div',{class:'muted cell-note'},'From '+formatDate(r.rank.starts_on)+(r.rank.ends.length?' · ends '+r.rank.ends.map((id:string)=>nameOf(ctx,'categories',id)).join(', '):'')):'',...problems(r,'rank'))},

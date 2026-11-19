@@ -421,6 +421,16 @@ def mentions(path, test, text, names=True):
             or (names and any(w in Path(test).stem for w in words)))
 
 
+# Entry pages and shared UI modules reach almost every page; their browser owners are the whole browser suite.
+WEB_ENTRY_SOURCES = frozenset(f"apps/web/src/{name}" for name in ("app.ts", "main.ts", "startup.ts"))
+SHARED_WEB_SOURCES = frozenset(f"apps/web/src/{name}" for name in (
+    "dom.ts", "conditions.ts", "picker.ts", "side_panel.ts", "table_view.ts", "table_menu.ts",
+    "selection_bar.ts", "view_settings.ts"))
+# Every browser test drives these services over HTTP through the live server, so an import or name match cannot
+# find which browser tests a change reaches; their browser owners are the whole browser suite too.
+BROWSER_DRIVEN_API = ("apps/api/services/", "apps/api/commands.py", "apps/api/snapshots.py")
+
+
 def direct_test_owners(changed, candidate_tests):
     """Resolve each path through direct imports and file references in protected tests."""
     reverse, texts, _ = graph(ROOT)
@@ -430,6 +440,9 @@ def direct_test_owners(changed, candidate_tests):
         owners = reverse.get(path, set()) & files.keys()
         owners |= doc_tests([path], files)
         owners |= {test for test, text in files.items() if mentions(path, test, text, names=False)}
+        if path in SHARED_WEB_SOURCES | WEB_ENTRY_SOURCES or path.startswith(BROWSER_DRIVEN_API):
+            # Every page uses these modules, so a name match cannot find their browser consumers.
+            owners |= {test for test in files if suite(test) == "browser"}
         if path in candidate_tests:
             owners.add(path)
         if not owners:
@@ -486,11 +499,8 @@ def web_tests(changed, files):
     except ValueError:
         return "all"
     pending = [(ROOT / path).resolve() for path in changed]
-    entries = {(ROOT / "apps/web/src" / name).resolve() for name in ("app.ts", "main.ts", "startup.ts")}
-    # Shared UI also serves inline entry pages whose suites cannot be proven by module-name matches.
-    shared = {(ROOT / "apps/web/src" / name).resolve() for name in (
-        "dom.ts", "conditions.ts", "picker.ts", "side_panel.ts", "table_view.ts", "table_menu.ts",
-        "selection_bar.ts", "view_settings.ts")}
+    entries = {(ROOT / path).resolve() for path in WEB_ENTRY_SOURCES}
+    shared = {(ROOT / path).resolve() for path in SHARED_WEB_SOURCES}
     # Entries own inline pages, but importing a page there does not make its siblings consumers.
     if entries & set(pending):
         return "all"
