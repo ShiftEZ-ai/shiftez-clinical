@@ -44,3 +44,15 @@ def test_the_install_loop_retries_and_repairs(tmp_path, behaviour, repairs, code
     assert run.stdout.count("dpkg-repair") == repairs, run.stdout
     if code:
         assert "did not install in 3 attempts" in run.stdout
+
+
+def test_the_shard_evidence_upload_is_retried_once():
+    steps = yaml.load((ROOT / ".github/workflows/ci-tests.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]["tests"]["steps"]
+    names = [step.get("name") for step in steps]
+    first = steps[names.index("Retain first-attempt reports and failure evidence")]
+    retry = steps[names.index("Retry the evidence upload once")]
+    assert names.index("Retry the evidence upload once") == names.index("Retain first-attempt reports and failure evidence") + 1
+    assert first["id"] == "evidence" and first["continue-on-error"] == "true" and first["if"] == "always()"
+    assert retry["if"] == "always() && steps.evidence.outcome == 'failure'" and "continue-on-error" not in retry
+    assert retry["uses"] == first["uses"]
+    assert {**first["with"], "overwrite": "true"} == retry["with"]

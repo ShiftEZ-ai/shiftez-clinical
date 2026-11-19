@@ -175,7 +175,10 @@ jobs:
     - name: Run the exact planned shard once
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
     - name: Retain first-attempt reports and failure evidence
+      id: evidence
       if: always()
+      # A transient artifact-service timeout must not discard a finished shard; the next step retries once.
+      continue-on-error: true
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
@@ -186,6 +189,19 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
+    - name: Retry the evidence upload once
+      if: always() && steps.evidence.outcome == 'failure'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-test-${{ github.run_attempt }}-${{ inputs.suite }}-${{ inputs.shard }}-${{ inputs.replica }}
+        path: |-
+          candidate/.run/reports/
+          candidate/.run/traces/
+          candidate/.run/api-logs/
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7
+        overwrite: true
 'on':
   workflow_call:
     inputs:
