@@ -1,8 +1,10 @@
 """Manual attachment naming reserves scarce places without changing explicit decisions."""
 import pytest
 
+from packages.contracts.schemas import ParticipantInput
+
 from .test_alpha_calendar import programme
-from .test_attachments import END, START
+from .test_attachments import END, START, people, setup
 
 
 def pairing_setup(h, constraint):
@@ -42,6 +44,79 @@ def participants(trainees, supervisors, explicit=None):
     return [{'person_id': person, 'start': START, 'end': END, 'participation': 'trainee',
              'supervisor_person_id': (explicit or {}).get(person)} for person in trainees] + [
         {'person_id': person, 'start': START, 'end': END, 'participation': 'supervisor'} for person in supervisors]
+
+
+def edit_participants(h, workspace, shift, participants, *, status=200):
+    return h.command('coordinator', 'shift.update', {
+        'workspace_id': workspace['id'], 'shift_id': shift['id'],
+        **{key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')},
+        'participants': participants,
+    }, revision=workspace['revision'], status=status)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('case,ends_on', [
+    pytest.param('required', None, id='required'),
+    pytest.param('required', '2026-10-05', id='required-bounded'),
+    pytest.param('preferred', None, id='preferred'),
+    pytest.param('scarce-required', None, id='scarce-required'),
+])
+def test_edit_clearing_an_active_attachment_supervisor(h, case, ends_on):
+    if case == 'scarce-required':
+        flexible, trainee, supervisor, second, typ = pairing_setup(h, 'required')
+        draft_people = participants([flexible, trainee], [supervisor, second])
+        cleared = {flexible, trainee}
+    else:
+        trainee, other, supervisor, typ = setup(h, case, ends_on=ends_on)
+        draft_people = people(trainee, other, supervisor)
+        cleared = {trainee}
+    created = h.shift(h.workspace(), typ=typ, people=draft_people)
+    assert created['validation']['valid']
+    workspace = created['workspace']
+    before = h.detail(workspace)
+    shift = before['shifts'][0]
+    assert next(p['supervisor_person_id'] for p in shift['participants'] if p['person_id'] == trainee) == supervisor
+    edited_people = [{key: value for key, value in person.items() if key in ParticipantInput.model_fields}
+                     for person in shift['participants']]
+    for person in edited_people:
+        if person['person_id'] in cleared:
+            person['supervisor_person_id'] = None
+
+    if case == 'preferred':
+        edit_participants(h, workspace, shift, edited_people)
+        saved = h.detail(workspace)
+        assert saved['workspace']['validation']['valid']
+        assert next(p['supervisor_person_id'] for p in saved['shifts'][0]['participants']
+                    if p['person_id'] == trainee) is None
+    else:
+        reply = edit_participants(h, workspace, shift, edited_people, status=422)
+        error = reply['error']
+        assert error['code'] == 'EDIT_INVALID'
+        findings = {(item['code'], item['person_id']) for item in error['details']['findings']
+                    if item['shift_id'] == shift['id'] and item['severity'] == 'error'}
+        assert ('ATTACHMENT_PAIRING', trainee) in findings
+        if case == 'scarce-required':
+            assert any(code == 'SUPERVISION_PAIRING' and person in cleared for code, person in findings)
+        assert h.detail(workspace) == before
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_edit_names_a_new_trainee_without_changing_existing_pair(h):
+    flexible, trainee, first, second, typ = pairing_setup(h, 'required')
+    people_before = participants([flexible], [first, second], explicit={flexible: second})
+    created = h.shift(h.workspace(), typ=typ, people=people_before)
+    workspace = created['workspace']
+    shift = h.detail(workspace)['shifts'][0]
+    existing_pair = next(p for p in shift['participants'] if p['person_id'] == flexible)
+    assert existing_pair['supervisor_person_id'] == second
+
+    added = {'person_id': trainee, 'start': START, 'end': END, 'participation': 'trainee'}
+    edit_participants(h, workspace, shift, [*people_before, added])
+
+    saved = h.detail(workspace)['shifts'][0]
+    indexed = {p['person_id']: p for p in saved['participants']}
+    assert indexed[trainee]['supervisor_person_id'] == first
+    assert indexed[flexible] == existing_pair
 
 
 @pytest.mark.parametrize('constraint', ['required', 'only_attachment', 'rank_limit'])

@@ -36,79 +36,7 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-eeifalcaglpfnjoldgppnhdgmefbnmihojgnkbonhldfpnbicfbkmcjnpmbepbmb]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-incoklmmhbfphhabelnohbamomdbienedbpikjdghgcgkcmcgjlbfcmmllfbbdjp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-lhgojglnlmoemggdjkpbfccbgadhkpibaabjhcphmhggjacnnhfknblepcognkon]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-mjkdkngcdljfmhjjechbgcafockjfpaceoplbfikhlpefdjgagbdnmminecfbpjg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-ocldecncccbdnefpcmoedilopffpmffpmbmmagnigdbipjadmehkdlhikphbbeoa]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_automatic_scheduling_never_uses_manual_override[case-pcicfnhldmcbdninpjohkknjgbjgdkkdjbpppdfoklgpebojekcijlihpiochken]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_assignment_override_reason.py::test_changing_existing_participation_into_a_zero_maximum_needs_reason[case-oljdfbfgdfngppiehdemoiladdmnfnjddmphkpcghgboddhgeenobloamgmaocpe]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-cfdehinglobnopkjepadgafenoenainpaodjamkgnfagamffcokbpjbifllabeej]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-gmpfgbdnmcfhicblalcandhmepccbecbameibefmnfddenmfckikhkahominfgki]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-iabpkngkllckkbnkdghhlfamophclbaidhlpofcobbnmhjecpfidclhfoofjgjoj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-ikpiicanahjjpejahiembbfliilnoedjnadpmnbodhladlefajkhankpnlnhhmef]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-jadoencjpfjnfhkdbdppmbgmggkaiaocikehfbdjgnlamlangfmdbbmmaahhenbg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_assignment_override_reason.py::test_new_absent_assignment_requires_reason_and_keeps_blocking_findings[case-odjdbgloaalifdepainphmahfoapkagkffaomlajlkffolijnodllkobpgockoch]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -390,12 +318,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be16_published.py::test_real_changed_session_blocker_is_refused_server_side[case-johdmcjjccdgoeggbjjfnjmcpldojonhodgadjibkjplkehbhgjgkbpdenihfkjn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_be20_sweep.py::test_return_resubmit_approve_is_not_contribution_and_home_uses_step_authority[case-coaegggeopibebnejadikbagdloakcfnlcdbpghdnjffcphfcikcgkldopgbldli]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -426,12 +348,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be_wave4_draft_actions.py::test_move_cannot_leave_a_new_missing_team_lead",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_be_wave4_security.py::test_cross_origin_and_transport_security_headers[case-icilgnbbomimeeeobfhnipdfjpjgpmoinboaeknfpejjceamjiholbemjpmeccbg]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -451,12 +367,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_access_page.py::test_give_a_role_offers_only_new_roles_and_its_message_undoes_it[case-enbloijbadnkcecgmakmdfggjijbpdjihkjpfgegjcedhpjomaiianlgpcijmonh]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_attachments.py::test_attachment_defaults_the_trainee_supervisor_on_its_active_dates[case-nohhkdfcomfafcbgeahbbdjadiiglohnkjokkndplndpclegnjhpepbkmhaieklb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -487,18 +397,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_audit_rule_context.py::test_additional_rules_are_counted_context_with_complete_readable_effects[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_audit_rules_layout.py::test_phone_collection_toolbar_is_two_rows_with_named_icon_tools[case-fjgcgnflcaallkaegejlmpkkkibhdhekjpakljckpbbgjdjjpgbochohipaackaf]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_audit_rules_layout.py::test_phone_collection_toolbar_is_two_rows_with_named_icon_tools[case-mefjihmgaddfkfjkobbngmochihpgjnkogcaopoekmgganebnkmmkokmijglddfb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -672,12 +570,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_autoschedule_state.py::test_held_apply_keeps_review_and_live_strip_without_success_or_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_catalogue_hydration.py::test_lean_pages_load_setup_counts_without_hydrating_lists[case-ngoicaolbhpdbgnfmoiaafiiddcocpojgielpfcgclcgjnefeidhoagcckabjldl]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -840,12 +732,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_frontend_budget.py::test_a_page_opened_again_is_drawn_from_what_was_read_while_the_server_is_asked_again",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -967,12 +853,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_operator_governance_actions.py::test_ui_end_self_approval_permission_reloads_ended_and_refuses_own_rule_activation",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_overtime_volunteer.py::test_overtime_eligibility_recovers_from_a_failed_read_and_a_new_line",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1800,12 +1680,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_data_safety.py::test_deploy_script_gates_backs_up_then_migrates_once",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2022,12 +1896,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_fairness_dashboard.py::test_schedule_score_and_trend_for_planners_only",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_fairness_goals_performance.py::test_supervision_fairness_goals_at_department_scale",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2071,12 +1939,6 @@
     {
       "class": "baseline",
       "node": "tests/test_generation_controls_settings.py::test_extension_settings_preserve_inputs_checkpoint_other_display_and_support_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_generation_department.py::test_named_supervisor_preference_guides_pairing_without_granting_authority[case-pfdppofechbemaookdlloapimmdonmkapjcgbbahiingagoppinjgolmekhkamed]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -2310,18 +2172,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_overtime_extra_cover.py::test_extra_cover_overtime_does_not_bypass_safety_or_qualifications[case-cboopdniicbjcbdgkmfeifoahcfbhdlakchcboncfifdnoccnklldhailcpidkld]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_overtime_extra_cover.py::test_extra_cover_overtime_does_not_bypass_safety_or_qualifications[case-gmeokmmhjdfaaekopfiialgckjcffeembajmgmnhmlalbpnnidpcdkajahmdhcii]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_overtime_offered_contracts.py::test_catalogue_suggests_new_overtime_lines_without_changing_ordinary_defaults[case-eghcjfmgadijoencnddlejghkckaoelngeeaphbjkamnfihfcdhjpigobgoopnpf]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2341,54 +2191,6 @@
     {
       "class": "baseline",
       "node": "tests/test_password_login.py::test_production_passwords_require_store_and_legacy_oidc_values_do_not_configure_provider",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_live_worker_keeps_synchronous_restriction_and_zero_maximum_refusals[case-mebmijehgjnjhackjnmmhclmccphbopmfcbdamjpmihkomefjmgdigkojhllfkcc]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_live_worker_keeps_synchronous_restriction_and_zero_maximum_refusals[case-plplnhkloefabjcpclnchnllacmlbhbljdfilpajcpjoeebbiclhfedmkbflilaa]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions[case-hlmeflgoafipecfanciknbminmjkegmbdnfkcbpbobiokebmacfobgolcnbekjid]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions[case-jblfoeaflglcgkfmdfpbiblcdndmnghnphleflcpighiocnjhmkhhlnnehonfnij]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions[case-jdabgdoinfbkmnkkokbhjnojhaicbokbbjpoakkeonifjmokklojgaihchjdkmjd]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_checks_fresh_inputs_inside_writer_with_bounded_acquisitions[case-nbjdaighpmnlojcpbmhagcaijddmofdgfhhmmjkjfladebkefamiebdpnopojpnm]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_rejects_inputs_changed_after_read_basis[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_perf5_edit_reply.py::test_publish_rejects_inputs_changed_after_read_basis[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -3204,12 +3006,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_session_hardening.py::test_only_the_proxy_hop_is_trusted_for_client_addresses",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_session_hardening.py::test_policy_transitions_and_undo_never_revive_an_ended_session[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3348,25 +3144,7 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_distribution_planning_has_department_scale_model_budget[case-ikbnejlcdmnpbaigohdjpcemkjpojfdnkahgldlfnhojhcgkilheengdnldncpcn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_distribution_solver_compiles_the_evaluators_exact_deviations",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_source_parity_fairness.py::test_generic_share_uses_nested_conditions_and_frozen_published_history",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_week_spread_and_pair_limit_use_department_calendar_and_shared_marginal_cost",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -3396,18 +3174,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_override_database_check_has_only_a_lower_point_bound",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_standing_wishes.py::test_planned_replacement_applies_new_override_and_preserves_published_skip",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_standing_wishes.py::test_submission_keeps_its_check_fresh_while_invalidating_neighbour_allocations[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3421,42 +3187,6 @@
     {
       "class": "baseline",
       "node": "tests/test_supervision_pairing.py::test_named_supervision_requires_present_qualified_person_and_survives_amendment",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-cldblhmfjfgpgoacddicbchpcefbeocofpibanchmnpdieacgmeepcmcekgkmkop]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-elpmebbhgdfoohlkofcigacihcjokccgcokodgnabnngfbneefbnlonpnaekgede]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-gpgmhkijdlnjogkpmjnpaeenkplmhfpckdlmmijjacnonenphkiknjgbooeakaei]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-gpoceapdkeaiogndhmlpnjmjaplijmjjgdhadagpafpigkkicadcfboaognmfgkp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-mmbbcfikmfhgoheiijenehpmoggckgchanloicilodhmheiaaibipdegljngjknh]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_swap_approval_settings.py::test_late_scoped_neighbor_rule_blocks_swap_validation[case-pddkbejgebaifongkbmmabiejiicbchnieiaboikccmmdnepbcjbhoebhkomhfko]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },

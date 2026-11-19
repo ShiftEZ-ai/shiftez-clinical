@@ -1,29 +1,34 @@
 """Offered-hour projections share the domain basis across insights, workload and exports."""
 import csv
+import copy
 import io
 import uuid
 from datetime import date, timedelta
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.auth import authenticate
 from apps.api.db import transaction
 from apps.api.services.fairness import department_data
 from apps.api.snapshots import scheduling_inputs
-from packages.domain.fairness import balance_goals, goal_identity, goal_report
+from packages.domain.fairness import balance_goals, goal_identity, goal_report, offered_amounts
+from packages.domain.generation import overtime_cap_ids
 from packages.domain.time import aware
 from tests.test_scheduling_facts_api import decide
 
 
-def offer(h, person, first, last, start, end, previous=None):
+def offer(h, person, first, last, start, end, previous=None, required_policy_ids=()):
+    settings = {'volunteer_required': False}
+    if required_policy_ids:
+        settings['required_policy_ids'] = list(required_policy_ids)
     row = h.command('coordinator', 'person.overtime.propose', {
         'kind': 'overtime_offer', 'person_id': person, 'catalogue_id': 'overtime_offers',
         'line': {'id': previous['data']['line']['id'] if previous else str(uuid.uuid4()),
                  'starts_on': first, 'ends_on': last, 'start_time': start, 'end_time': end,
                  'numbers': {'apply': {'value': None, 'level': 'medium'}},
-                 'settings': {'allocation_overtime': {'volunteer_required': False}}},
+                 'settings': {'allocation_overtime': settings}},
         **({'replaces_id': previous['id'], 'expected_revision': previous['revision']} if previous else {}),
         'reason': 'Synthetic dated overtime offer'})['fact']
     return decide(h, row)['fact']
@@ -34,6 +39,36 @@ def absence(h, person, start, end, **extra):
         db.add(m.Availability(department_id=h.seed['department_id'], person_id=person,
             start=aware(start), end=aware(end), kind='recorded_leave',
             private_reason='Synthetic absence', recorded_by=h.seed['identities']['coordinator'], **extra))
+
+
+def test_workload_limit_version_keeps_offer_pinned_to_the_previous_catalogue_policy(h):
+    from tests.test_rule_catalogue_v2_api import proposed
+
+    person = h.seed['people'][0]
+    h.policy({'kind': 'block_quota', 'starts_on': '2026-10-01', 'ends_on': '2026-11-01',
+              'metric': 'scheduled_hours', 'comparison': 'maximum', 'amount': 40})
+    conversion = proposed(h)
+    h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
+              conversion['id'], conversion['revision'])
+    with transaction(h.app.state.engine) as db:
+        current = next(row for row in db.scalars(select(m.Policy))
+                       if row.status == 'active' and row.definition['rule'].get('id') == 'workload_limit')
+        current_id, current_revision = current.id, current.revision
+        lines = copy.deepcopy(current.definition['rule']['lines'])
+    offer(h, person, '2026-10-04', '2026-10-05', '08:00', '16:00', required_policy_ids=[current_id])
+    lines[0]['numbers']['max']['value'] = 8
+    proposal = h.command('coordinator', 'rule.propose', {
+        'catalogue_id': 'workload_limit', 'catalogue_version': 2,
+        'expected_policy_id': current_id, 'expected_revision': current_revision,
+        'lines': lines, 'reason': 'Reviewed workload limit version'})['record']
+    h.command('approver', 'policy.activate', {'reason': 'Independent workload version review'},
+              proposal['id'], proposal['revision'])
+    workspace = h.workspace(start='2026-10-04', end='2026-10-11')
+    data = h.snapshot(workspace)
+    assert data['source_bindings']
+    required_id = next(f for f in data['scheduling_facts'] if f['kind'] == 'overtime_offer')['data']['line']['settings']['allocation_overtime']['required_policy_ids'][0]
+    assert required_id in overtime_cap_ids(data)
+    assert offered_amounts(data, date(2026, 10, 4), date(2026, 10, 11), [person])[person] == 8
 
 
 @pytest.mark.parametrize('metric', ['overtime_duties', 'overtime_hours'])
