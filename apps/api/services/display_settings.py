@@ -8,6 +8,9 @@ from apps.api.serialization import record
 from packages.contracts import schemas as s
 from .common import expected, history, scoped
 
+# A department created before the catalogue became the default stores no value: it shows the current Rules page.
+STORED_BEFORE_DEFAULTS = {'rule_catalogue': False}
+
 
 def latest(db, department_id):
     return db.scalar(select(m.DisplaySettingsVersion).where(
@@ -37,14 +40,16 @@ def change(db, actor, command):
     require(command.target_id == actor.department_id, 'NOT_FOUND', 'Department not found', 404)
     department = db.scalar(select(m.Department).where(m.Department.id == actor.department_id).with_for_update())
     expected(department, command.expected_revision)
-    current = dict(department.display_settings or {})
-    previous = {key: value for key, value in current.items() if key in s.DisplaySettingsInput.model_fields}
+    stored = dict(department.display_settings or {})
+    previous = {key: value for key, value in stored.items() if key in s.DisplaySettingsInput.model_fields}
+    current = {**STORED_BEFORE_DEFAULTS, **stored}
     if command.kind == 'department.display.restore':
         value = s.DisplaySettingsRestore.model_validate(command.payload)
         source = scoped(db, m.DisplaySettingsVersion, value.version_id, actor)
         # Only restore display form fields, preserving newer unrelated controls in the shared projection.
         restored = s.DisplaySettingsInput.model_validate({
-            **{key: val for key, val in source.definition.items() if key in s.DisplaySettingsInput.model_fields},
+            **{key: val for key, val in {**STORED_BEFORE_DEFAULTS, **source.definition}.items()
+               if key in s.DisplaySettingsInput.model_fields},
             'reason': value.reason}).model_dump(mode='json', exclude={'reason'})
         definition = {**current, **restored}
     else:
