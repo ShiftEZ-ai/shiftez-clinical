@@ -602,3 +602,35 @@ def test_seeded_zero_default_binds_without_duplicate_obligations(h, timing):
     assert h.lifecycle(draft, 'submit', status=422)['error']['code'] == 'VALIDATION_FAILED'
     for generate in (greedy_generate, cp_sat_generate):
         assert generate(empty_for_person(data, h.seed['people'][0]), 2)['additions'] == []
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_apply_checks_both_the_positive_and_zero_limits_in_a_live_revision(request, backend):
+    from .test_generation_superseded_apply import group
+    from .test_rule_catalogue_api import approve, line, person, propose
+
+    h = request.getfixturevalue(backend)
+    positive_person, zero_person = h.seed['people'][:2]
+    general = line(numbers={'max': {'value': 5}})
+    source = approve(h, propose(h, 'duties_per_week', [general])['record'])
+    draft = h.shift(h.workspace('Synthetic mixed duty limits'), people=[positive_person])['workspace']
+    draft = h.shift(draft, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00',
+                    people=[positive_person])['workspace']
+    positive_slot = h.shift(draft, '2026-10-06T08:00:00+03:00', '2026-10-06T12:00:00+03:00', people=[])
+    zero_slot = h.shift(positive_slot['workspace'], '2026-10-07T08:00:00+03:00', '2026-10-07T12:00:00+03:00', people=[])
+    draft = zero_slot['workspace']
+    zero_proposal = run(h, draft, sessions=[zero_slot['shift_id']], population=group(zero_person))
+    tighten(h, source, {**source['definition']['rule'], 'lines': [
+        {**general, 'numbers': {'max': {'value': 2}}},
+        line(who=person(zero_person), numbers={'max': {'value': 0}}),
+    ]})
+    positive_proposal = run(h, draft, sessions=[positive_slot['shift_id']], population=group(positive_person))
+    before = h.snapshot(draft)
+    for job, pid, maximum in ((positive_proposal, positive_person, 2), (zero_proposal, zero_person, 0)):
+        receipt = apply(h, draft, job)['reconciliation']
+        assert receipt['status'] == 'unresolved'
+        assert receipt['addition_indexes'] == []
+        assert any(f['code'] == 'MAX_DUTIES' and f['rule_id'] == source['id']
+                   and f['person_id'] == pid and f['detail']['maximum'] == maximum
+                   for placement in receipt['conflicting_placements'] for f in placement['findings'])
+        assert h.snapshot(draft) == before

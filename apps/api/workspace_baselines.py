@@ -205,7 +205,13 @@ def _without_zero_limit(policy, covered_by):
     if scope(policy) != scope(covered_by):
         return deepcopy(policy)
     if rule.get("kind") != "catalogue":
-        return None if _zero_limit_policy(policy) == policy else policy
+        field = s.line_field(definition)
+        lines = [line for line in definition.get("per_person") or []
+                 if _ceiling(s.line_rule(rule, line, field)) != 0]
+        listed = definition.get("listed_only", False) or _ceiling(rule) == 0
+        if listed and not lines:
+            return None
+        return {**policy, "definition": {**definition, "per_person": lines, "listed_only": listed}}
     live_lines = {line.get("id"): line for line in
                   ((covered_by.get("definition") or {}).get("rule") or {}).get("lines") or []}
     lines = []
@@ -224,6 +230,13 @@ def _without_zero_limit(policy, covered_by):
         return None
     return {**deepcopy(policy), "definition": {**deepcopy(definition),
         "rule": {**deepcopy(rule), "lines": lines}}}
+
+
+def _mandatory_recheck_policy(policy):
+    projected = _without_positive_overtime_cap(policy)
+    if projected is not None and _zero_limit_policy(projected) is not None:
+        return _without_zero_limit(projected, projected)
+    return projected
 
 
 def _overlay_zero_limits(frozen, current, safety_ids=()):
@@ -642,11 +655,10 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                           if s.safety_rule(policy.get("definition") or {})}
     live_policies = [policy for policy in active_current_policies
                      if (policy["id"] in current_safety_ids or include_mandatory
-                         and (policy.get("definition") or {}).get("severity") == "mandatory"
-                         and _zero_limit_policy(policy) is None) and
+                         and (policy.get("definition") or {}).get("severity") == "mandatory") and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
     if include_mandatory:
-        filtered = [(policy, policy if policy["id"] in current_safety_ids else _without_positive_overtime_cap(policy))
+        filtered = [(policy, policy if policy["id"] in current_safety_ids else _mandatory_recheck_policy(policy))
                     for policy in live_policies]
         # A partly filtered policy still needs the captured numbers for the excluded slots.
         replaced = {policy["id"] for policy, projected in filtered if projected is policy}
