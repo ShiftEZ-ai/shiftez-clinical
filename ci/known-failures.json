@@ -420,12 +420,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be_wave4_draft_actions.py::test_move_cannot_leave_a_new_missing_team_lead",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_be_wave4_security.py::test_cross_origin_and_transport_security_headers[case-icilgnbbomimeeeobfhnipdfjpjgpmoinboaeknfpejjceamjiholbemjpmeccbg]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -445,12 +439,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_access_page.py::test_give_a_role_offers_only_new_roles_and_its_message_undoes_it[case-enbloijbadnkcecgmakmdfggjijbpdjihkjpfgegjcedhpjomaiianlgpcijmonh]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_attachments.py::test_attachment_defaults_the_trainee_supervisor_on_its_active_dates[case-nohhkdfcomfafcbgeahbbdjadiiglohnkjokkndplndpclegnjhpepbkmhaieklb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
