@@ -1,6 +1,7 @@
 """Synthetic contact data: per-type privacy, typed edits, immutable history and bounded reads."""
 from datetime import date
 import json
+import re
 from types import SimpleNamespace
 from time import perf_counter
 
@@ -99,7 +100,8 @@ def test_value_validation_undo_override_and_mirror(pg):
     with transaction(pg.app.state.engine) as db:
         assert db.get(m.Person, person).pager == restored['value']
         audit = json.dumps([record(r) for r in db.scalars(select(m.AuditEvent))])
-        assert '4418' not in audit and '4417' not in audit
+        # Whole values only: timestamps (.441793) and ids may contain the same digits.
+        assert not re.search(r'(?<![0-9A-Za-z.])441[78](?![0-9A-Za-z])', audit)
     set_value(pg, typ, '4420', pg.seed['people'][1], role='staff', status=403)
 
 

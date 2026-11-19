@@ -579,7 +579,10 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
 
 def authorization_command(command):
     """Keep only the non-private context needed to reauthorize a historical command."""
-    return {"kind": command.kind, "payload": {key: command.payload[key] for key in ("catalogue", "decision")
+    keys = ("catalogue", "decision")
+    if command.kind == "job.create":
+        keys = (*keys, "kind")
+    return {"kind": command.kind, "payload": {key: command.payload[key] for key in keys
                                              if key in command.payload}}
 
 
@@ -604,6 +607,19 @@ def authorize_receipt(db, actor, receipt):
         # Legacy catalogue/decision receipts have no context to resolve a narrower capability.
         if manifest is None:
             require_role(actor, *receipt.required_roles)
+    elif kind == "job.create":
+        # Reauthorize with the command context captured at write time; old receipts use their compact job result.
+        context = next((value for value in manifest or ()
+                        if value.get("kind") == kind and isinstance(value.get("payload"), dict)
+                        and "kind" in value["payload"]), None)
+        if context is None:
+            job = receipt.result.get("job")
+            job_kind = job.get("kind") if isinstance(job, dict) else None
+            context = {"kind": kind, "payload": {"kind": job_kind}} if job_kind is not None else None
+        if context is None:
+            require_role(actor, *command_roles(s.Command(kind=kind)))
+        else:
+            authorize_command_context(actor, context, checked)
     else:
         require_role(actor, *command_roles(s.Command(kind=kind)))
     if manifest is not None:
@@ -1044,7 +1060,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         result = {**json_value(compact_reply(reply), copy_containers=False)}
         from .services.workspace_access import audit_envelope, private_operation
         private_operation(db, command, result)
-        if command.kind.startswith("catalogue.") or command.kind == "request.decide":
+        if command.kind.startswith("catalogue.") or command.kind == "request.decide" or command.kind == "job.create":
             result["authorization_commands"] = [authorization_command(command)]
         authorization_kinds = [value["kind"] for value in result.get("authorization_commands", [])]
         if any(kind.startswith(('identity.', 'role.')) or kind == 'person.anonymise'
