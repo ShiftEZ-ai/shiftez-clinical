@@ -533,8 +533,6 @@ jobs:
     - synchronize
     - reopened
     - ready_for_review
-    - labeled
-    - unlabeled
   merge_group:
     types:
     - checks_requested
