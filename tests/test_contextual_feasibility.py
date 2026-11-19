@@ -1,13 +1,17 @@
+from datetime import timedelta
+
 from apps.api import models as m
 import pytest
 from apps.api.auth import authenticate
 from apps.api.db import transaction
 from apps.api.errors import Problem
+from apps.api.services.independence import today
 from apps.api.services.policies import activate_policies
 from apps.worker.main import process_one
 from packages.contracts.schemas import Command
 from dataclasses import replace
 from apps.api.main import create_app
+from sqlalchemy import select
 
 
 def activate(h, policy, job_id, acknowledge=False):
@@ -17,6 +21,34 @@ def activate(h, policy, job_id, acknowledge=False):
         return activate_policies(db, actor, [Command(kind='policy.activate', target_id=policy['id'],
             expected_revision=policy['revision'], payload={'reason': 'Independent contextual review',
             'check_job_ids': [job_id] if job_id else [], 'acknowledge_unresolved': acknowledge})], require_checks=True)
+
+
+def current_window(h, days=7):
+    with transaction(h.app.state.engine) as db:
+        start = today(db, h.seed['department_id'])
+    return start, start + timedelta(days=days)
+
+
+def publication_digest(db, publication_id):
+    """Hash the publication, its rota rows, revisions and audit evidence."""
+    import hashlib
+    import json
+    from apps.api.serialization import record
+    publication = db.get(m.Publication, publication_id)
+    workspace = db.get(m.Workspace, publication.workspace_id)
+    shifts = list(db.scalars(select(m.Shift).where(m.Shift.workspace_id == workspace.id).order_by(m.Shift.id)))
+    shift_ids = [row.id for row in shifts]
+    assignments = list(db.scalars(select(m.Assignment).where(m.Assignment.shift_id.in_(shift_ids)).order_by(m.Assignment.id))) if shift_ids else []
+    revisions = list(db.scalars(select(m.DefinitionHistory).where(
+        m.DefinitionHistory.object_id.in_({publication.id, workspace.id})).order_by(m.DefinitionHistory.id)))
+    audits = list(db.scalars(select(m.AuditEvent).where(
+        m.AuditEvent.target_id.in_({publication.id, workspace.id})).order_by(m.AuditEvent.id)))
+    payload = {
+        'publication': record(publication), 'workspace': record(workspace),
+        'shifts': [record(row) for row in shifts], 'assignments': [record(row) for row in assignments],
+        'revisions': [record(row) for row in revisions], 'audit': [record(row) for row in audits],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def test_safety_activation_survives_fair_share_read(h):
@@ -154,6 +186,71 @@ def test_published_rule_check_reports_exact_protected_rest_gap(h, monkeypatch):
         ('MIN_REST', h.seed['people'][0], {'required_hours': 24.0, 'actual_hours': 16.0,
          'previous_shift_id': previous['id'], 'next_shift_id': following['id'],
          'rule_severity': 'mandatory', 'rule_strength': 'medium'})]
+
+
+def test_published_rule_activation_keeps_issued_evidence_immutable(h):
+    start, end = current_window(h)
+    w = h.workspace('Published rule activation', str(start), str(end))
+    w = h.shift(w, start=f'{start}T16:00:00+03:00', end=f'{start + timedelta(days=1)}T00:00:00+03:00')['workspace']
+    w = h.shift(w, start=f'{start + timedelta(days=1)}T16:00:00+03:00',
+                end=f'{start + timedelta(days=1)}T20:00:00+03:00')['workspace']
+    published = h.publish(w)
+    policy = h.command('coordinator', 'policy.create', {
+        'name': 'Published minimum rest', 'owner': 'coordinator', 'source': 'Published rule review',
+        'starts_on': str(start), 'definition': {'rule': {'kind': 'min_rest', 'hours': 24}}})['record']
+    with transaction(h.app.state.engine) as db:
+        issued = publication_digest(db, published['publication_id'])
+    job = h.command('approver', 'job.create', {'workspace_id': published['workspace']['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': policy['id'], 'expected_revision': policy['revision']}]},
+        revision=published['workspace']['revision'])['job']
+    assert process_one(h.app.state.engine)
+    result = h.get('approver', f"/api/jobs/{job['id']}")['job']['result']
+    assert result['newly_introduced_contradiction']
+    assert any(f['code'] == 'MIN_REST' for f in result['new_or_worse_findings'])
+    review = h.get('approver', f"/api/policies/{policy['id']}/review")
+    assert review['effect'][0]['job_id'] == job['id']
+    assert review['effect'][0]['activation_blocker'] == 'RULE_INTRODUCES_CONFLICT' and not review['ready']
+    with transaction(h.app.state.engine) as db:
+        assert publication_digest(db, published['publication_id']) == issued
+    with pytest.raises(Problem) as error:
+        activate(h, policy, job['id'], acknowledge=True)
+    assert error.value.code == 'RULE_INTRODUCES_CONFLICT'
+    with transaction(h.app.state.engine) as db:
+        assert publication_digest(db, published['publication_id']) == issued
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_unarchived_amendment_allows_published_safety_check_and_archive_keeps_impact(request, database):
+    h = request.getfixturevalue(database)
+    start, end = current_window(h)
+    w = h.shift(h.workspace('Published amendment base', str(start), str(end)),
+                start=f'{start}T08:00:00+03:00', end=f'{start}T12:00:00+03:00')['workspace']
+    published = h.publish(w)
+    shift = h.get('coordinator', f"/api/publications/{published['publication_id']}")['snapshot']['shifts'][0]
+    amendment = h.command('coordinator', 'publication.change', {
+        'kind': 'replace', 'shift_id': shift['id'], 'assignment_id': shift['participants'][0]['id'],
+        'person_id': h.seed['people'][1], 'reason': 'Keep the published amendment open during rule review'},
+        target=published['publication_id'])['workspace']
+    policy = h.command('coordinator', 'policy.create', {
+        'name': 'Published impact before archive', 'owner': 'coordinator', 'source': 'Unarchived amendment review',
+        'starts_on': str(start), 'definition': {'rule': {'kind': 'min_rest', 'hours': 12}}})['record']
+    job = h.command('approver', 'job.create', {'workspace_id': published['workspace']['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': policy['id'], 'expected_revision': policy['revision']}]},
+        revision=published['workspace']['revision'])['job']
+    assert process_one(h.app.state.engine)
+    checked = h.get('approver', f"/api/jobs/{job['id']}")['job']['result']
+    assert checked['comparison_complete'] and checked['new_or_worse_findings'] == []
+    decision = activate(h, policy, job['id'])
+    assert decision['records'][0]['status'] == 'active'
+    assert any(row['workspace_id'] == published['workspace']['id'] for row in decision['context_check_evidence'])
+    h.command('coordinator', 'workspace.archive', {'reason': 'Discard the unsent amendment'},
+              amendment['id'], amendment['revision'])
+    with transaction(h.app.state.engine) as db:
+        actor = authenticate(db, h.client('approver').cookies['rota_session'],
+                             h.client('approver').cookies['rota_csrf'])
+        from apps.api.services.rule_effects import affected_workspaces
+        rows = affected_workspaces(db, actor, [db.get(m.Policy, policy['id'])])
+        assert [row.id for row in rows] == [published['workspace']['id']]
 
 
 def test_activation_requires_a_fresh_matching_receipt(h):

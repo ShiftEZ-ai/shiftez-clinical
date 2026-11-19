@@ -603,7 +603,7 @@ def policy_impact(db, actor, policy, *, details=True, acknowledge_unresolved=Fal
     policy_ids.update(pin['policy_id'] for p in policies for line in p.definition['rule'].get('lines') or []
                       for pin in (line.get('source_bindings') or {}).values())
     impact = []
-    # Only rotas still being planned and overlapping the rules' dates: published rotas keep the rules they were approved under.
+    # Current publications are checked read-only with the proposed rules; drafts still use their own inputs.
     from .rule_effects import affected_workspaces
     if workspaces is None:
         workspaces = affected_workspaces(db, actor, policies)

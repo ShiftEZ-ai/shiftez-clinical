@@ -36,6 +36,16 @@ def in_force_shifts(pub, shifts, zone, before=None):
     return [s for s in shifts if aware(s["start"] if isinstance(s, dict) else s.start) < limit]
 
 
+def in_force_filters(publication, start=None, end=None):
+    """SQL predicates for a current publication's half-open in-force window."""
+    filters = []
+    if start:
+        filters.append(func.coalesce(publication.effective_until, publication.ends_on) > start)
+    if end:
+        filters.append(publication.starts_on < end)
+    return filters
+
+
 def in_force_clause(pub, zone, before=None):
     """`in_force_shifts` as a condition on Shift rows (for queries over many publications)."""
     ends = [d for d in (pub.effective_until, before) if d]
@@ -96,10 +106,7 @@ def current_publications(db, department_ids, start=None, end=None, light=False, 
         P.department_id.in_(list(department_ids)), P.current.is_(True), m.Workspace.archived_at.is_(None))
     if workspace_ids is not None:
         query = query.where(P.workspace_id.in_(workspace_ids))
-    if end:
-        query = query.where(P.starts_on < end)
-    if start:
-        query = query.where(func.coalesce(P.effective_until, P.ends_on) > start)
+    query = query.where(*in_force_filters(P, start, end))
     if light:
         query = query.options(defer(P.snapshot), defer(P.validation))
     return list(db.scalars(query.order_by(P.starts_on, P.sequence)))

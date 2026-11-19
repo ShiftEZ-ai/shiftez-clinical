@@ -197,6 +197,29 @@ def test_native_fact_requires_exact_context_receipt_without_changing_inputs(h):
     assert activate_checked(h, row, job["id"])["fact"]["status"] == "active"
 
 
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_person_fact_reaching_published_rota_uses_read_only_check(request, database):
+    from .test_contextual_feasibility import current_window, publication_digest
+    h = request.getfixturevalue(database)
+    start, end = current_window(h)
+    published = h.publish(h.shift(h.workspace("Published fact context", str(start), str(end)),
+                                     start=f'{start}T08:00:00+03:00', end=f'{start}T12:00:00+03:00')["workspace"])
+    with transaction(h.app.state.engine) as db:
+        before = publication_digest(db, published["publication_id"])
+    row = h.command("coordinator", "person.workload.propose", workload(h, 2))["fact"]
+    job = h.command("approver", "job.create", {"workspace_id": published["workspace"]["id"], "kind": "feasibility",
+        "fact_changes": [{"fact_id": row["id"], "expected_revision": row["revision"]}]},
+        revision=published["workspace"]["revision"])["job"]
+    assert process_one(h.app.state.engine)
+    checked = h.get("approver", "/api/jobs/" + job["id"])["job"]
+    assert checked["result"]["full_feasibility_established"]
+    activated = activate_checked(h, row, job["id"])
+    assert activated["fact"]["status"] == "active"
+    assert any(item["workspace_id"] == published["workspace"]["id"] for item in activated["context_check_evidence"])
+    with transaction(h.app.state.engine) as db:
+        assert publication_digest(db, published["publication_id"]) == before
+
+
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
 def test_native_fact_checked_activation_api_accepts_non_orm_policy_adapter(h):
     """The checked HTTP activation path must project its lightweight policy adapter without ORM inspection."""
