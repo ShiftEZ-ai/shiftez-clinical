@@ -1088,7 +1088,20 @@ def diagnostic_ci(selection, source_sha, env=None):
             'hosted_unit_rows': 'false', 'hosted_browser_rows': 'false', 'hosted_test_rows': 'false'}
 
 
+def resolve_base(base):
+    """A bundle or plain clone may lack origin/dev; the local dev branch is the same base."""
+    exists = lambda ref: subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"], cwd=ROOT,
+                                        capture_output=True).returncode == 0
+    if exists(base):
+        return base
+    if base == "origin/dev" and exists("dev"):
+        print("Base origin/dev not found; using local dev", file=sys.stderr)
+        return "dev"
+    raise SystemExit(f"Base {base} not found in this clone: fetch it, or pass --base <ref> (or --files <paths>)")
+
+
 def changed_files(base):
+    base = resolve_base(base)
     out = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
     return sorted(set(out("diff", "--no-renames", "--name-only", base + "...HEAD") + out("diff", "--no-renames", "--name-only", "HEAD")
                       + out("ls-files", "--others", "--exclude-standard")))
@@ -1096,8 +1109,11 @@ def changed_files(base):
 
 def include_failures(picked, reports):
     """Pure local diagnostic union; failed CPU/wall budgets require separate qualification."""
+    import importlib.util
     import xml.etree.ElementTree as ET
-    from scripts.cloud_test_plan import pytest_ci
+    spec = importlib.util.spec_from_file_location("pytest_ci", ROOT / ".github/scripts/pytest_ci.py")
+    pytest_ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pytest_ci)
 
     combined = {kind: "all" if targets == "all" else set(targets) for kind, targets in picked.items()}
     for report in reports:
