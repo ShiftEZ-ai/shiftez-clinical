@@ -44,6 +44,11 @@ def listed_nodes(current):
     return set().union(*classes(current).values()) if current else set()
 
 
+def retry_run(plan):
+    return (os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "pull_request"}
+            and plan["replicas"] == [1] and not plan.get("smoke"))
+
+
 def retry_nodes(cases, listed):
     return [node for node in failed_nodes(cases) if canonical_node(node) not in listed]
 
@@ -203,8 +208,8 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
 
 
 def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False):
-    group = not historical_capture and os.getenv("GITHUB_EVENT_NAME") == "merge_group" and not plan.get("smoke")
-    if group and listed is None:
+    retry = not historical_capture and retry_run(plan)
+    if retry and listed is None:
         listed = listed_nodes(at_revision(plan["sha"]))
     recoveries = []
     expected = planned_shards(plan)
@@ -230,7 +235,7 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
         for row in receipt["reports"]:
             report = path.parent / row["file"]
             cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
-            recovered = recovered_nodes(report, row, retry_nodes(cases, listed) if group else ())
+            recovered = recovered_nodes(report, row, retry_nodes(cases, listed) if retry else (), allow_retry=retry)
             for case in cases:
                 node = report_node(case)
                 if node.split("::")[0] not in files:
@@ -247,7 +252,7 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
         raise ValueError("Missing shard: every planned producer must report")
     if len({tuple(sorted(run)) for run in runs.values()}) != 1:
         raise ValueError("Full runs collected different node sets")
-    if group and recoveries and output is not None:
+    if retry and recoveries and output is not None:
         output.mkdir(parents=True, exist_ok=True)
         (output / "recovered-tests.json").write_text(
             encoded(sorted(recoveries, key=lambda row: row["node"])), encoding="utf-8")
@@ -388,9 +393,8 @@ def outside_observations(current, runs, exceptions=frozenset()):
              "red_count": sum(run.get(node) in {"failed", "error"} for run in runs)} for node in sorted(outside)]
 
 
-def product_error_nodes(directory, *, listed=frozenset(), recovered=None):
+def product_error_nodes(directory, *, listed=frozenset(), recovered=None, allow_retry=False):
     """Classify individual errors after the producer and report checks."""
-    group = os.getenv("GITHUB_EVENT_NAME") == "merge_group"
     infrastructure = re.compile(r"connection refused|could not connect|server closed the connection|connection reset|could not translate host|temporary failure in name resolution|no route to host|network is unreachable|too many connections|remaining connection slots|password authentication failed|database is locked|database is busy|deadlock detected|no space left on device|out of memory|browser executable.*(?:missing|exist)|ECONNREFUSED|permission denied", re.I)
     product_types = {"AssertionError", "AttributeError", "KeyError", "NameError", "TypeError", "ValueError", "IndexError", "LookupError", "ZeroDivisionError", "NotImplementedError", "IntegrityError", "ProgrammingError", "DataError"}
     result = set()
@@ -400,7 +404,8 @@ def product_error_nodes(directory, *, listed=frozenset(), recovered=None):
         for row in receipt["reports"]:
             report = receipt_path.parent / row["file"]
             cases = list(ET.parse(report).getroot().iter("testcase"))
-            recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if "retry" in row else ())
+            recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if allow_retry and "retry" in row else (),
+                                            allow_retry=allow_retry)
             if recovered is not None:
                 recovered.update((canonical_node(report_node(case)), report_outcome(case))
                                  for case in cases if report_node(case) in recovered_raw)
@@ -414,11 +419,11 @@ def product_error_nodes(directory, *, listed=frozenset(), recovered=None):
                 message, text = element.get("message", ""), element.text or ""
                 if collection_error(case):
                     raise ValueError("Collection error in test evidence: " + node)
-                if node in listed and not group:
+                if node in listed and not allow_retry:
                     continue
                 summary = message + "\n" + "\n".join(line for line in text.splitlines() if line.startswith("E "))
                 if infrastructure.search(summary):
-                    if not group:
+                    if not allow_retry:
                         raise ValueError("Infrastructure failure in test evidence: " + node)
                     infrastructure_nodes.add(node)
                     if len(infrastructure_nodes) > 1:
@@ -489,7 +494,7 @@ def stale_report_dir(output):
 
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
-             group=False, recovered=frozenset(),
+             group=False, merge_group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
              selected_files=None, stale_output=None, expected_replicas=2):
     today = today or datetime.now(timezone.utc).date()
@@ -510,9 +515,9 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
         require_class_ratchet(current, base)
         moved = {row["node"] for row in base["fails"]} & groups["unstable"]
         if moved:
-            if group and not moved <= set(recovered):
+            if merge_group and not moved <= set(recovered):
                 raise ValueError("Moving failures to unstable requires verified recovery on retry")
-            if not group and (len(runs) != 2 or not moved <= differing(runs)):
+            if not merge_group and (len(runs) != 2 or not moved <= differing(runs)):
                 raise ValueError("Moving failures to unstable requires two full runs with different results")
     if group and base is not None:
         expected_replicas = 1
@@ -644,6 +649,7 @@ def main():
     selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
                       if "selection" in plan else None)
     listed = listed_nodes(ctx["current"])
+    retry = retry_run(plan)
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):
@@ -657,7 +663,8 @@ def main():
             recovered = {}
             product_errors = set()
             if not args.capture_root:
-                product_errors = product_error_nodes(args.reports, listed=listed, recovered=recovered)
+                product_errors = product_error_nodes(args.reports, listed=listed, recovered=recovered,
+                                                     allow_retry=retry)
             groups = classified_results(runs, baseline, exceptions, recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
             (args.output / "cleanup-failures.json").write_text(json.dumps(sorted(groups["cleanup"]), indent=2) + "\n", encoding="utf-8")
@@ -685,7 +692,8 @@ def main():
                 (args.output / "known-failures.candidate.json").write_text(encoded(candidate), encoding="utf-8")
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
-                     group=os.getenv("GITHUB_EVENT_NAME") == "merge_group", recovered=recovered,
+                     group=retry, merge_group=os.getenv("GITHUB_EVENT_NAME") == "merge_group",
+                     recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
                      stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]))
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
