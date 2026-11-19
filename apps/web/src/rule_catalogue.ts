@@ -29,7 +29,7 @@ import {RULE_FAMILIES,RULE_CATALOGUE,RULE_CATALOGUE_V2,MAX_SCORE_INPUT,NEVER_OVE
 import type {Row} from './types.js';
 import {mayDecide} from './independence.js';
 import {goalMeasure,METRIC_WORDS} from './balance_goal.js';
-import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
+import {menu,opens,refocusItem} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
 import {segmented} from './dom.js';  // the one segmented choice (UX › controls S6)
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
@@ -2045,12 +2045,30 @@ function historyDialog(ctx:Context,e:Entry,names:Namer){
 export function moreActions(label:string,items:Child[],pending=0):HTMLElement{
   const held=el('span',{hidden:true},...items);
   const visible=(b:HTMLButtonElement)=>{for(let n:HTMLElement|null=b;n&&n!==held;n=n.parentElement)if(n.hidden)return false;return !b.disabled;};
-  // Each entry wears its button's own icon and name (compact() gave it both).
-  const entry=(b:HTMLButtonElement,close:()=>void)=>{const x=el('button',{type:'button',role:'menuitem',class:'menu-item'},b.querySelector('svg')?.cloneNode(true)||'',
-    el('span',{},b.getAttribute('aria-label')||b.textContent?.trim()||''));x.addEventListener('click',()=>{close();b.click();});return x;};
   let close=()=>{};
+  // Keep each entry in place when a read relabels it. A hidden slot holds the order for actions that appear later.
+  const entries=[...held.querySelectorAll<HTMLButtonElement>('button')].map(b=>{
+    const caption=el('span',{}),slot=el('span',{hidden:true});
+    const item=el('button',{type:'button',role:'menuitem',class:'menu-item',tabindex:-1},b.querySelector('svg')?.cloneNode(true)||'',caption);
+    item.addEventListener('click',()=>{close();b.click();});
+    return {b,caption,slot,item};
+  });
+  const sync=()=>{
+    for(const {b,caption,slot,item} of entries){
+      const text=b.getAttribute('aria-label')||b.textContent?.trim()||'';
+      if(caption.textContent!==text)caption.textContent=text;
+      if(visible(b))slot.replaceWith(item);
+      else if(item.parentElement){
+        const panel=item.parentElement,focused=document.activeElement===item;
+        item.replaceWith(slot);
+        item.tabIndex=-1;
+        if(focused)refocusItem(panel,text);
+      }
+    }
+  };
+  new MutationObserver(sync).observe(held,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['aria-label','hidden','disabled']});
   const more:HTMLButtonElement=opens(iconButton(pending?`${label}, ${plural(pending,'item')} waiting`:label,'dots',()=>{
-    close=menu(more,label,()=>[...held.querySelectorAll<HTMLButtonElement>('button')].filter(visible).map(b=>entry(b,()=>close())),{placement:'below-end'});}),'menu');
+    close=menu(more,label,()=>{sync();return entries.map(({b,item,slot})=>visible(b)?item:slot);},{placement:'below-end'});}),'menu');
   if(pending)more.append(el('span',{class:'nav-count','aria-hidden':'true'},String(pending)));
   return el('span',{class:'rc-more'},more,held);
 }

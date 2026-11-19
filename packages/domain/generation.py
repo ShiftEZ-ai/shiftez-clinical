@@ -986,7 +986,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                     loads = [p.get('supervisor_person_id') for p in shift['participants']]
                     balanced = levelled_order(pairings, loads) if level else list(pairings)
                     pairings.sort(key=lambda supervisor_id: (supervisor_id not in attached, attached.get(supervisor_id) != 'required',
-                        balanced.index(supervisor_id),
+                        balanced.index(supervisor_id) if level else 0,
                         -allocation_settings(data, shift, pid, supervisor_id, history=history[pid],
                                              candidate_overtime=overtime)[0], supervisor_id))
                 for other, prior in displaced:
