@@ -607,6 +607,7 @@ def discard_finished_snapshot_input_state(session, transaction):
     if transaction.parent is None:
         session.info.pop('_request_parents', None)
         session.info.pop('_request_authority', None)
+        session.info.pop('_request_workspace_criteria', None)
         session.info.pop('_snapshot_input_revisions', None)
 
 
@@ -643,6 +644,8 @@ def transaction(engine, write: bool = False, *, deadline=None, context=None, ser
              "lock_deadline": started + settings.command_write_budget_ms / 1000}
     phase = "pool"
     session = Session(engine, expire_on_commit=False)
+    if request_db_time_ms.get() is not None:
+        session.info['_request_workspace_criteria'] = {}
     if deadline is not None:
         session.info['_check_budget'] = lambda: _remaining(deadline)
     try:

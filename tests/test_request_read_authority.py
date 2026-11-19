@@ -8,8 +8,10 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.auth import authenticate, held_roles
 from apps.api.db import transaction
+from apps.api.services import workspace_access
 from apps.api.services.independence import active_permissions, today
 from tests.governance_support import identity
+from tests.test_planning_groups_drafts import private
 
 
 @pytest.fixture(params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -109,3 +111,44 @@ def test_reused_session_does_not_retain_authority_across_commit(backend):
         return {'verified': True}
 
     assert h.get('admin', '/api/test/transaction-authority') == {'verified': True}
+
+
+def test_workspace_criteria_reuse_keeps_access_changes_visible(backend, monkeypatch):
+    h = backend
+    workspace_id = h.shift(private(h))['workspace']['id']
+    builds = []
+    visible_ids = workspace_access.visible_ids
+
+    def counted(identity_id, planner):
+        builds.append((identity_id, planner))
+        return visible_ids(identity_id, planner)
+
+    monkeypatch.setattr(workspace_access, 'visible_ids', counted)
+
+    @h.app.post('/api/test/workspace-access')
+    def change(request: Request):
+        with transaction(h.app.state.engine, write=True) as db:
+            actor = authenticate(db, request.cookies['rota_session'], request.headers['x-csrf-token'],
+                                 write=True, settings=h.settings)
+            workspaces = select(m.Workspace.id).where(m.Workspace.id == workspace_id)
+            shifts = select(m.Shift.id).where(m.Shift.workspace_id == workspace_id)
+            workspace = db.get(m.Workspace, workspace_id)
+            assert db.scalar(workspaces) == workspace_id and db.scalar(shifts)
+            with workspace_access.shared_scope(db, actor):
+                assert db.scalar(workspaces) is None and db.scalar(shifts) is None
+            workspace_access.append_access(db, actor, workspace, 'shared', 'sandbox', 'Share the synthetic draft')
+            with workspace_access.shared_scope(db, actor):
+                assert db.scalar(workspaces) == workspace_id and db.scalar(shifts)
+            assert db.scalar(workspaces) == workspace_id
+            db.commit()
+            assert db.scalar(workspaces) == workspace_id
+        return {'verified': True}
+
+    response = h.client('coordinator').post('/api/test/workspace-access')
+    assert response.status_code == 200
+    assert response.json() == {'verified': True}
+    coordinator = h.seed['identities']['coordinator']
+    assert builds == [(coordinator, True), (coordinator, False), (coordinator, True)]
+    visible = h.get('coordinator', '/api/workspaces')['workspaces']
+    assert workspace_id in {row['id'] for row in visible}
+    assert builds == [(coordinator, True), (coordinator, False), (coordinator, True), (coordinator, True)]
