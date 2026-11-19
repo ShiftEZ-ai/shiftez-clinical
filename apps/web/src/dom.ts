@@ -936,7 +936,7 @@ export function menuItem(label: string, name: IconName, action: () => unknown, a
 }
 /** The shared reason for a control that cannot be used now. */
 export const PAGE_WHY={first:'This is the first page.',last:'This is the last page.'} as const;
-const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.keepBestStopped;
+const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.nothingToPropose||why===TERMS.keepBestStopped;
 const whyOf=new WeakMap<HTMLElement,HTMLElement>();
 function sayWhy(b:HTMLElement,why:string,more:Child[]=[],at?:HTMLElement){
   let hint=at||whyOf.get(b);if(!hint){hint=el('small',{class:'why-unavailable'});whyOf.set(b,hint);}

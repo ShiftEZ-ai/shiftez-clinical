@@ -9,7 +9,7 @@ import pytest
 from playwright.sync_api import expect
 
 from .governance_support import identity
-from .test_browser import add_filter, browser, live_server, navigate, sign_in, press_escape  # noqa: F401
+from .test_browser import add_filter, browser, choose, live_server, navigate, sign_in, press_escape  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot, weekly
 
 pytestmark = pytest.mark.browser
@@ -84,9 +84,7 @@ def propose(page, reason):
         close.click()  # a phone's sheet covers the page
     page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
     dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-    understood = dialog.get_by_label('I have read which lines give way and that is intended')
-    if understood.count():
-        understood.check()
+    expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
     dialog.get_by_label('Reason', exact=True).fill(reason)
     dialog.get_by_role('button', name='Propose', exact=True).click()
     expect(dialog).to_have_count(0)
@@ -445,7 +443,7 @@ def test_a_new_line_opens_itself_advisory_and_empty_and_says_what_is_on_screen(b
         keep = panel.get_by_role('button', name='Keep change')
         expect(keep).to_have_attribute('aria-disabled', 'true')
         expect(keep).to_have_attribute('data-tip', 'Add a minimum, maximum or target')
-        expect(page.locator('#main .rc-checkbar')).to_contain_text('⚠ 1 overlap')
+        expect(page.locator('#main .rc-checkbar')).to_be_empty()
         expect(page.locator('#main .rc-checkbar')).not_to_contain_text('refused')
         expect(page.locator('#main tr[data-row], #main [data-row]').filter(has_text='Demo learners')).to_have_count(0)
         panel.get_by_label('Maximum', exact=True).fill('4')
@@ -502,6 +500,8 @@ def test_an_excluded_tag_reads_not_and_groups_as_combined_filters(browser, live_
     try:
         navigate(page, 'rules/duties_per_week')
         expect(page.locator(f'#main [data-row="{lines[0]["id"]}"] .tag-chip')).to_contain_text('not #Night')
+        # A rule's page groups its lines by place; grouped by who kind, a who of a group reads Combined filters.
+        choose(page.locator('#main'), 'Group', 'Group by', 'Who kind')
         expect(page.locator('#main').get_by_text('Combined filters', exact=True)).to_have_count(1)
         expect(page.locator('#main').get_by_text('Everyone', exact=True)).to_have_count(0)
     finally:

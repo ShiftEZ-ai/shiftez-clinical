@@ -1122,15 +1122,20 @@ def default_line_strengths(rule, given, previous_ids=(), would=None):
     return lines
 
 
-def both_apply(policy, *, same=None):
+def both_apply(policy, *, same=None, include_safety=False):
     """[(k, n)]: lines of equal tier that set the same number (with a value) with the same where and measure on
     overlapping dates — neither is more specific, so both apply to anyone both name (a rank and a #tag). The same line
-    twice aside (`duplicates`)."""
+    twice aside (`duplicates`). Include safety to report matching numbers that bind across tiers too."""
     rule = policy['definition']['rule']
     lines = rule.get('lines') or []
     same = set(duplicates(rule) if same is None else same)
     tiers, spans, out = [tier(line) for line in lines], _spans(rule, lines, policy), set()
+    entry = _entry(rule)
     for (number, _), group in _by_number(rule).items():
+        first = lines[group[0]]
+        if include_safety and _slot(entry, number, rule, first, list(first['numbers']))['kind'] in NEVER_OVERRIDDEN:
+            out.update(p for p in _pairs([n for n in group if has_value(lines[n], number)], spans) if p not in same)
+            continue
         together = {}  # person lines only meet lines naming one of their people; other lines meet their own tier
         for n in group:
             if has_value(lines[n], number):
@@ -1470,7 +1475,7 @@ def resolved_overtime_offers(data, person_id, start, end, shift=None):
 
 # Needs attention: what the checks above find in the rules in force, with fixes. ------
 
-ATTENTION = ('overlap', 'inherits', 'both', 'duplicate', 'ending', 'counting_ends', 'nobody', 'blocks')
+ATTENTION = ('inherits', 'shadowed', 'both', 'duplicate', 'ending', 'counting_ends', 'nobody', 'blocks')
 
 
 def counting_attention(policy):
@@ -1501,9 +1506,9 @@ def _ranked(fixes):
 
 def attention(rows, would, today, findings=(), soon=30):
     """Issues in the catalogue rules in force, each with a recommended fix and alternatives, in a stable order (kind,
-    then the rule's catalogue order, then its lines). Read through the same checks as propose: `outranking`,
-    `both_apply`, `duplicates`; `would` is the people each line holds for today alone (line id → set). Kinds:
-    overlap (a line gives way to a more specific one for people today), both (equal tiers both apply), duplicate,
+    then the rule's catalogue order, then its lines). Read through the same checks as propose: `both_apply`,
+    `duplicates`; `would` is the people each line holds for today alone (line id → set). Kinds:
+    shadowed (every number replaced for everyone today), both (equal tiers both apply), duplicate,
     ending (its last day within `soon` days), nobody (valid today, holds for no one: keep, as dated memberships may change),
     blocks (mandatory lines have errors in rotas being planned, one issue per set of lines with
     the drafts inside: `findings` carry `workspace_id`, `workspace` and the validator's `rule_id`, `detail.line`).
@@ -1520,33 +1525,29 @@ def attention(rows, would, today, findings=(), soon=30):
         entry, lines = _entry(rule), rule.get('lines') or []
         counting_ends = {warning['line']: warning for warning in counting_attention(row)}
         ids = [line['id'] for line in lines]
+        index = {i: n for n, i in enumerate(ids)}
         people = [would.get(i, set()) for i in ids]
+        active = [line_validity(row, line, today)['effective'] == 'active' for line in lines]
 
         def issue(kind, at, facts=None, fixes=(), count=None, key=''):
             return {'id': f"{kind}:{row['id']}:{key or '+'.join(ids[n] for n in at)}", 'kind': kind, 'rule_id': row['id'],
                     'catalogue_id': rule['id'], 'lines': list(at), 'line_ids': [ids[n] for n in at], 'people': count,
                     'facts': facts or {}, 'fixes': _ranked(list(fixes))}
-        index, keys_of = {i: n for n, i in enumerate(ids)}, {}
-        for (n, k), ws in outranking_by_number(row).items():
-            for w in ws:
-                keys_of.setdefault(n, {}).setdefault(w, []).append(k)
-        for n, by_winner in sorted(keys_of.items()):
-            wins = sorted(by_winner)
-            met = set().union(*(people[n] & people[w] for w in wins))
-            if not met:
-                continue
-            # What each winner replaces (a blank number is inherited, never lost); letting it inherit is the other way.
-            replaced = {ids[w]: sorted(by_winner[w]) for w in wins}
-            inherit = [_fix('inherit', False, [{'line_id': w, 'remove': True} if set(lines[index[w]]['numbers']) <= set(keys) else
-                                               {'line_id': w, 'numbers': {k: v for k, v in lines[index[w]]['numbers'].items() if k not in keys}}],
-                            line_id=w, numbers=keys) for w, keys in replaced.items()]
-            out.append(issue('overlap', [n, *wins], {'loser': ids[n], 'winners': [ids[w] for w in wins], 'replaced': replaced}, count=len(met),
-                             fixes=[_fix('acknowledge', True), *inherit]))
         for n, bad, got in contradictions(row, would):
             line = lines[n]
             none = {**line['numbers'], **{k: {'value': None, 'level': got[k].get('level', 'mandatory')} for k in bad}}
             out.append(issue('inherits', [n, *sorted({index[got[k]['from']] for k in bad})], {'line': ids[n], 'inherited': {k: got[k] for k in bad}},
                              count=len(people[n]), fixes=[_fix('none', True, [{'line_id': ids[n], 'numbers': none}], numbers=bad), _fix('acknowledge')]))
+        outranked = outranking_by_number(row)
+        for n, line in enumerate(lines):
+            keys = sorted(line.get('numbers') or {})
+            if active[n] and people[n] and keys and all(
+                    people[n] <= set().union(*(people[w] for w in outranked.get((n, key), ()) if active[w]))
+                    for key in keys):
+                winners = sorted({w for key in keys for w in outranked[(n, key)] if active[w] and people[w] & people[n]})
+                out.append(issue('shadowed', [n], {'winners': [ids[w] for w in winners], 'numbers': keys}, count=len(people[n]),
+                                 fixes=[_fix('acknowledge', True), _fix('remove', False,
+                                     [{'line_id': ids[n], 'remove': True}], line_id=ids[n])]))
         for k, n in both_apply(row):
             met = people[k] & people[n]
             if not met:
