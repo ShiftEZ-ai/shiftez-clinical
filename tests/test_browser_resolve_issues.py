@@ -632,15 +632,3 @@ def test_session_level_rows_name_their_session(browser, live_server, h):
         expect(rows.first.locator('td[data-col=reason]')).not_to_contain_text('Breaks an')
     finally:
         context.close()
-
-
-# PROOF (temporary, removed before merge): the in-place undo test 10 times on a 4x slower page CPU (open_app reads
-# PW_CPU_THROTTLE for every page it opens). The test itself stays as it is.
-@pytest.fixture
-def throttled(monkeypatch):
-    monkeypatch.setenv("PW_CPU_THROTTLE", "4")
-
-
-@pytest.mark.parametrize("_repeat", range(10))
-def test_proof_undo_in_place_throttled(browser, live_server, h, throttled, _repeat):
-    test_undo_applies_in_place_with_one_request_keeping_scroll_selection_and_focus(browser, live_server, h)
