@@ -173,7 +173,9 @@ def test_populated_catalogue_facts_wrap_and_native_scroll(browser, live_server, 
         size = scroll.evaluate('e=>({height:e.clientHeight,total:e.scrollHeight,width:e.clientWidth,wide:e.scrollWidth})')
         assert size['height'] < size['total'], size
         scroll.evaluate('e=>e.scrollTop=e.scrollHeight')
-        expect(lines.last).to_be_in_viewport()
+        # The list's last row (as the table's last tbody row was): the last group's last item. All rules opens the empty
+        # rules too, so the last line (.rt-ln) is not the bottom of the list.
+        expect(main.locator('.rt-scroll section.rt-q').last.locator(':scope > .rt-list > li').last).to_be_in_viewport()
         fit = scroll.evaluate('''e => {const main=document.querySelector('#main'),r=e.getBoundingClientRect(),
             m=main.getBoundingClientRect(),f=document.querySelector('.app-footer').getBoundingClientRect(),
             key=e.closest('.rt')?.querySelector(':scope > .view-legend:not([hidden])'),
