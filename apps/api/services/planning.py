@@ -2620,12 +2620,12 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
         if any(not item.accept for item in value.decisions):
             return acknowledged_gaps.reject_items(db, actor, workspace, value)
-        acknowledged_gaps.decide(db, actor, workspace, result, value)
+        acknowledged_gaps.require_gap_decisions(workspace, result, value)
         swaps.validate_publication(db, workspace)
-        reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
+        decision = reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
-        acknowledged_gaps.record_decision(db, actor, workspace, value)
+        acknowledged_gaps.record_decision(actor, workspace, value, decision)
     elif action == "publish":
         require(workspace.status == "approved", "WORKFLOW_STATE", "Only an approved candidate can be published", 409)
         from .notification_audience import is_test_identity, non_test_assignee_count
