@@ -359,6 +359,29 @@ def test_hidden_values_do_not_leak_through_edits_or_retained_receipts(pg):
     set_value(pg, typ, '555018812', role='coordinator', status=403)
 
 
+def test_people_edit_persists_legacy_extension_after_catalogue_reload(h):
+    person = h.seed['people'][0]
+    initial = h.get('coordinator', '/api/catalogues?include=people')
+    before = next(row for row in initial['people'] if row['id'] == person)
+    value = {key: before[key] for key in ('display_name', 'active', 'title', 'directory_section',
+                                          'work_phone', 'work_extension', 'pager', 'staff_number',
+                                          'directory_order', 'short_code', 'tags') if key in before}
+    value['work_extension'] = '4321'
+    command = {'kind': 'catalogue.update', 'target_id': person, 'expected_revision': before['revision'],
+               'payload': {'catalogue': 'people', 'value': value, 'reason': 'Set office extension'}}
+    preview = h.client('coordinator').post('/api/catalogue/preview', json=command)
+    assert preview.status_code == 200, preview.text
+    reply = h.command('coordinator', 'catalogue.update', command['payload'], person, before['revision'],
+                      expected_fingerprint=preview.json()['source_fingerprint'])
+    saved = reply['record']
+    assert saved['work_extension'] == '4321'
+    assert reply['previous_value']['work_extension'] == before.get('work_extension', '')
+    conditional = h.client('coordinator').get('/api/catalogues?include=people&known=' + initial['_versions']['people'])
+    assert conditional.status_code == 200, conditional.text
+    reloaded = next(row for row in conditional.json()['people'] if row['id'] == person)
+    assert reloaded['work_extension'] == '4321'
+
+
 def test_pager_expiry_invalidates_schedule_etag(pg, monkeypatch):
     from datetime import timedelta
     from tests.clock_support import freeze_clock

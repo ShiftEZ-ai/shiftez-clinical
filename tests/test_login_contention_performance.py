@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, insert, select, text
 
 from apps.api import models as m
-from apps.api.auth import digest
+from apps.api.auth import login_digest
 from apps.api.db import WRITE_LOCK_KEY, transaction
 from apps.worker import main as worker
 from tests.conftest import TEST_PASSWORD
@@ -73,7 +73,7 @@ def _auth_liveness_writes_bypass_global_writer_and_keep_security_guards(pg):
 
     with pg.app.state.engine.connect() as conn:
         assert conn.scalar(select(func.count()).select_from(m.AuthLoginEvent).where(
-            m.AuthLoginEvent.account_hash == digest("account:staff"),
+            m.AuthLoginEvent.account_hash == login_digest("account:staff", pg.settings),
             m.AuthLoginEvent.outcome == "INVALID_LOGIN")) >= 1
     return elapsed
 

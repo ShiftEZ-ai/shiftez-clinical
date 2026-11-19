@@ -43,9 +43,13 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
                 startup_reads.append(request);pending.add(request)
         page.on('request',started)
         page.on('requestfinished',lambda request: pending.discard(request))
+        # Every page read in flight (the stream aside): the idle window below starts once a refresh has finished.
+        reading=set()
+        page.on('request',lambda request: reading.add(request) if request.method=='GET' and urlsplit(request.url).path.startswith('/api/') and urlsplit(request.url).path!='/api/events' else None)
+        page.on('requestfinished',lambda request: reading.discard(request))
+        page.on('requestfailed',lambda request: reading.discard(request))
         navigate(page, 'inbox')
         expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
-        original_node = page.locator('.note-item').first.element_handle()
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=15000) as startup:
             # The pulse is the app's 10 s timer, on the page clock; with the stream live it reads once a minute. On a
             # loaded runner its first tick already ran in real time while signing in, so step past the next minute's check.
@@ -67,6 +71,14 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
             page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
         assert pinged, 'no ping from the live stream'
         cdp.detach()
+        # The idle window starts here. The start-up step above may refresh the page once (stepping past the minute's
+        # check outdates the stream until its next ping), so the inbox the idle checks must keep is the one shown now.
+        deadline = time.monotonic() + 30
+        while reading and time.monotonic() < deadline:
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        assert not reading, [r.url for r in reading]
+        expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
+        original_node = page.locator('.note-item').first.element_handle()
         reads = []
         page.on('request', lambda request: reads.append(urlsplit(request.url).path) if request.method == 'GET' else None)
         page.clock.run_for(20_000)
