@@ -634,3 +634,50 @@ def test_apply_checks_both_the_positive_and_zero_limits_in_a_live_revision(reque
                    and f['person_id'] == pid and f['detail']['maximum'] == maximum
                    for placement in receipt['conflicting_placements'] for f in placement['findings'])
         assert h.snapshot(draft) == before
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_live_person_zero_preserves_captured_caps_at_check_and_apply(request, backend):
+    from packages.contracts.schemas import PolicyDefinition
+    from packages.domain.proposal_reconciliation import overlay
+    from .test_generation_superseded_apply import group
+
+    h = request.getfixturevalue(backend)
+    capped_person, zero_person = h.seed['people'][:2]
+    programme = h.configure('programmes', {'name': 'Synthetic shared programme', 'starts_on': '2020-01-01'})['record']
+    for pid in (capped_person, zero_person):
+        h.configure('programme_memberships', {'person_id': pid, 'programme_id': programme['id'],
+                    'starts_on': '2020-01-01', 'ends_on': '2030-01-01'}, role='coordinator')
+    captured = h.policy({'kind': 'max_hours', 'hours': 48})
+    slot = h.shift(h.workspace('Synthetic captured hours cap'), '2026-10-10T08:00:00+03:00',
+                   '2026-10-10T16:00:00+03:00', people=[])
+    draft = slot['workspace']
+    capped_job = run(h, draft, sessions=[slot['shift_id']], population=group(capped_person))
+    zero_job = run(h, draft, sessions=[slot['shift_id']], population=group(zero_person))
+    for day in range(4, 10):
+        draft = h.shift(draft, f'2026-10-{day:02}T08:00:00+03:00', f'2026-10-{day:02}T16:00:00+03:00',
+                        people=[capped_person])['workspace']
+
+    live = h.policy({'kind': 'max_hours', 'hours': 40}, {'programme_id': programme['id']})
+    definition = PolicyDefinition.model_validate({**live['definition'], 'overrides': [captured['id']],
+        'per_person': [{'person_id': zero_person, 'amount': 0}]}).model_dump(mode='json')
+    tighten(h, live, live['definition']['rule'], definition=definition)
+    before = h.snapshot(draft)
+    for job, pid, rule, maximum in ((capped_job, capped_person, captured, 48), (zero_job, zero_person, live, 0)):
+        candidate = overlay(before, job['result'], [0], [])
+        assert any(f['code'] == 'MAX_HOURS' and f['rule_id'] == rule['id'] and f['person_id'] == pid
+                   and f['detail']['maximum'] == maximum for f in evaluate(candidate)['findings'])
+        receipt = apply(h, draft, job)['reconciliation']
+        assert receipt['status'] == 'unresolved' and receipt['addition_indexes'] == []
+        assert any(f['code'] == 'MAX_HOURS' and f['rule_id'] == rule['id'] and f['person_id'] == pid
+                   and f['detail']['maximum'] == maximum
+                   for placement in receipt['conflicting_placements'] for f in placement['findings'])
+        assert h.snapshot(draft) == before
+
+    # A matching zero adds its finding without replacing the captured hours finding.
+    overlapping = overlay(before, zero_job['result'], [0], [])
+    for shift in overlapping['shifts']:
+        for assignment in shift['participants']:
+            assignment['person_id'] = zero_person
+    assert {f['rule_id'] for f in evaluate(overlapping)['findings']
+            if f['code'] == 'MAX_HOURS' and f['person_id'] == zero_person} == {captured['id'], live['id']}

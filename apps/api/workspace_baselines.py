@@ -102,6 +102,8 @@ def _with_catalogue_numbers(line, numbers):
 def _zero_limit_policy(policy):
     """Return the mandatory at-most-zero part of a policy, if it has one."""
     definition = policy.get("definition") or {}
+    if definition.get("overrides"):
+        definition = {**definition, "overrides": []}
     rule = definition.get("rule") or {}
     if rule.get("kind") != "catalogue":
         if definition.get("severity") != "mandatory" or rule.get("kind") not in ZERO_LIMIT_KINDS:
@@ -109,7 +111,7 @@ def _zero_limit_policy(policy):
         default_zero = _ceiling(rule) == 0
         lines = definition.get("per_person") or []
         if not lines:
-            return deepcopy(policy) if default_zero and not definition.get("listed_only") else None
+            return deepcopy({**policy, "definition": definition}) if default_zero and not definition.get("listed_only") else None
         field = s.line_field(definition)
         zeros = [line for line in lines if _ceiling(s.line_rule(rule, line, field)) == 0]
         listed = definition.get("listed_only") or not default_zero
@@ -235,7 +237,10 @@ def _without_zero_limit(policy, covered_by):
 def _mandatory_recheck_policy(policy):
     projected = _without_positive_overtime_cap(policy)
     if projected is not None and _zero_limit_policy(projected) is not None:
-        return _without_zero_limit(projected, projected)
+        projected = _without_zero_limit(projected, projected)
+        # A partial live rule is additive. The captured definitions own any replacement.
+        if projected is not None and projected["definition"].get("overrides"):
+            projected = {**projected, "definition": {**projected["definition"], "overrides": []}}
     return projected
 
 
