@@ -7,8 +7,9 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
+from .test_browser import add_filter, browser, live_server, navigate, sign_in, wait_held  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, duplicate, flag, line, selection
+from .test_browser_rule_filter_builder import pick
 from .test_rule_catalogue_conflicts import tag_people
 
 pytestmark = pytest.mark.browser
@@ -41,21 +42,38 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
         navigate(page, 'rules/duties_per_week')
         main = page.locator('#main')
         bar, row = main.locator('.rc-checkbar'), lambda note: main.locator('tbody tr').filter(has_text=note)  # noqa: E731
-        expect(bar).to_contain_text('⚠ 3 overlaps · 1 both apply')
-        expect(row('Everyone line').get_by_role('button', name='⚠ Gives way')).to_be_visible()
-        expect(row('Rank line').get_by_role('button', name='⚠ Both apply')).to_be_visible()
-        expect(row('Tag line').get_by_role('button', name='⚠ Both apply')).to_be_visible()
-        row('Rank line').get_by_role('button', name='⚠ Both apply').click()
-        expect(page.get_by_role('dialog', name='Both apply')).to_contain_text('both apply to 1 person today')
+        expect(bar).to_contain_text('⚠ 1 both apply')
+        expect(bar).not_to_contain_text('overlaps')
+        expect(row('Everyone line').locator('.rc-overlap')).to_have_count(0)
+        for label in ('Rank line', 'Tag line'):
+            expect(row(label).locator('.rc-overlap[data-rule-mark=both]')).to_have_text('⚠ Both apply')
+        row('Rank line').locator('.rc-overlap[data-rule-mark=both]').click()
+        pop = page.get_by_role('dialog', name='Both apply')
+        expect(pop).to_contain_text('both apply to 1 person today')
+        ranks = h.get('coordinator', '/api/catalogues?include=categories')['categories']
+        rank_name = next(rank['name'] for rank in ranks if rank['id'] == h.seed['category'])
+        expect(pop).to_contain_text(rank_name)
+        expect(pop).to_contain_text('exceptional_trainee')
+        expect(pop.get_by_role('button', name='Show the other line')).to_be_visible()
         page.keyboard.press('Escape')
-        # The winning line lists every line it outranks; one "That is right" acknowledges them all.
-        row('Alex line').get_by_role('button', name='⚠ Overlaps').click()
-        pop = page.get_by_role('dialog', name='Two lines cover the same people')
-        expect(pop.locator('p')).to_have_count(3)
-        pop.get_by_role('button', name='That is right').click()
-        expect(row('Alex line').get_by_role('button', name='✓ Overlap seen')).to_be_visible()
-        expect(row('Everyone line').get_by_role('button', name='✓ Overlap seen')).to_be_visible()
-        expect(bar).to_have_text(re.compile('^⚠ 1 both apply'))
+        expect(row('Alex line').locator('.rc-overlap')).to_have_count(0)
+        expect(page.get_by_role('button', name='That is right')).to_have_count(0)
+
+        main.get_by_role('button', name=re.compile(r'^Filter\b')).click()
+        filter_panel = page.locator('.dt-pop')
+        add_filter(filter_panel)
+        pick(page, filter_panel.locator('.cond-line').last, 'Overlaps', ['Overlaps'])
+        expect(main.locator('tbody tr[data-row]')).to_have_count(2)
+        expect(row('Rank line')).to_be_visible()
+        expect(row('Tag line')).to_be_visible()
+        filter_panel.get_by_role('button', name='Clear all filters', exact=True).click()
+        page.keyboard.press('Escape')
+        expect(main.locator('tbody tr[data-row]')).to_have_count(4)
+        navigate(page, 'rules')
+        main.get_by_role('button', name='Duties per week lines', exact=True).click()
+        for part in (lines[1], lines[3]):
+            expect(main.locator(f'li.rt-ln[data-line="{part["id"]}"] .rt-ln-flags')).to_contain_text('⚠ Overlaps')
+        navigate(page, 'rules/duties_per_week')
         # The same line twice: Propose stops here, as rule.propose would (422), and sends nothing.
         row('Alex line').locator('input.bulk-check').check()
         duplicate(page)
@@ -77,7 +95,7 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
         expect(main.locator('.rc-overlap')).to_have_count(0)
         held[-1].continue_()
         page.unroute('**/api/rules/catalogue/duties_per_week/check')
-        # What is left gives way as acknowledged, so Propose asks for nothing more.
+        # The ordered exceptions stay quiet after a fresh check.
         expect(bar).to_have_text(re.compile('^⚠ 1 both apply'))
         row('Everyone line').get_by_label(re.compile('^Max: ')).click()
         page.get_by_role('dialog', name='Edit Max').get_by_label('Max', exact=True).fill('6')
@@ -95,7 +113,7 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
     assert len(proposed['check']['overlaps']) == 3
 
 
-def test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check(browser, live_server, h):
+def test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflicts(browser, live_server, h):
     flag(h)
     rule, lines = crafted(h)
     context, page = sign_in(browser, live_server, 'coordinator')
@@ -106,17 +124,15 @@ def test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check(
         row.get_by_label(re.compile('^Max: ')).click()
         page.get_by_role('dialog', name='Edit Max').get_by_label('Max', exact=True).fill('6')
         page.get_by_role('dialog', name='Edit Max').get_by_label('Max', exact=True).press('Enter')
-        expect(main.locator('.rc-checkbar')).to_contain_text('⚠ 3 overlaps')
+        expect(main.locator('.rc-checkbar')).to_contain_text('⚠ 1 both apply')
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-        expect(dialog.locator('.rc-diff').last.locator('li')).to_have_count(3)  # the overlaps rule.propose would refuse
+        expect(dialog).not_to_contain_text('Lines that give way to more specific ones')
+        expect(dialog.get_by_role('checkbox')).to_have_count(0)
         dialog.get_by_label('Reason', exact=True).fill('A busier winter')
-        # RU-09: the acknowledgement is required; Propose waits for it and says so (never the browser's bubble).
-        propose = dialog.get_by_role('button', name='Propose', exact=True)
-        expect(propose).to_be_disabled()
-        expect(propose).to_have_attribute('data-tip', re.compile('^Tick'))
-        dialog.get_by_label('I have read which lines give way and that is intended').check()
-        dialog.get_by_role('button', name='Propose', exact=True).click()
+        submit = dialog.get_by_role('button', name='Propose', exact=True)
+        expect(submit).to_be_enabled()
+        submit.click()
         expect(main.locator('.rc-waiting')).to_be_visible()
     finally:
         context.close()
@@ -128,7 +144,11 @@ def test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check(
         navigate(page, 'rules/duties_per_week')
         waiting = page.locator('#main .rc-waiting')
         expect(waiting.locator('.rc-prop-check li')).to_have_count(said)
+        # The approver still sees which line each proposed line gives way to, as information, not as a warning.
         expect(waiting.locator('.rc-prop-check')).to_contain_text('gives way to')
+        expect(waiting.locator('.rc-prop-warnings li')).to_have_count(len(proposed['check']['warnings']))
+        expect(waiting.locator('.rc-prop-gives li')).to_have_count(len(proposed['check']['overlaps']))
+        expect(waiting.locator('.rc-prop-warnings')).not_to_contain_text('gives way to')
         expect(waiting.locator('.rc-prop-check')).to_contain_text('both apply to 1 person today')
         expect(waiting.get_by_role('button', name='Review and approve')).to_be_visible()
     finally:
@@ -163,9 +183,8 @@ def test_a_line_that_inherits_a_conflict_is_marked_as_you_edit(browser, live_ser
         context.close()
 
 
-def test_a_tick_cleared_while_propose_fails_still_guards_the_retry(browser, live_server, h):
-    """tick, Propose, untick while the command runs, the command fails: Propose stays guarded (disabled,
-    and the tick's own validity) so the retry never sends every overlap acknowledged while it is unticked."""
+def test_a_failed_proposal_can_be_retried_without_acknowledging_ordered_overrides(browser, live_server, h):
+    """A refusal leaves the draft intact for a deliberate retry and sends no acknowledgement."""
     flag(h)
     crafted(h)
     context, page = sign_in(browser, live_server, 'coordinator')
@@ -176,28 +195,36 @@ def test_a_tick_cleared_while_propose_fails_still_guards_the_retry(browser, live
         row.get_by_label(re.compile('^Max: ')).click()
         page.get_by_role('dialog', name='Edit Max').get_by_label('Max', exact=True).fill('6')
         page.get_by_role('dialog', name='Edit Max').get_by_label('Max', exact=True).press('Enter')
-        expect(main.locator('.rc-checkbar')).to_contain_text('⚠ 3 overlaps')
+        expect(main.locator('.rc-checkbar')).to_contain_text('⚠ 1 both apply')
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
         dialog.get_by_label('Reason', exact=True).fill('A busier winter')
-        tick = dialog.get_by_label('I have read which lines give way and that is intended')
+        expect(dialog.get_by_role('checkbox')).to_have_count(0)
         propose = dialog.get_by_role('button', name='Propose', exact=True)
         held, sent = [], []
-        page.route('**/api/commands', lambda route: (sent.append(route.request.post_data or ''), held.append(route)))
-        tick.check()
+
+        def hold_first_proposal(route):
+            command = route.request.post_data_json
+            if command['kind'] != 'rule.propose':
+                route.continue_()
+                return
+            sent.append(command)
+            if len(sent) == 1:
+                held.append(route)
+            else:
+                route.continue_()
+
+        page.route('**/api/commands', hold_first_proposal)
         propose.click()
+        wait_held(page, held)
         expect(dialog.get_by_role('button', name='Saving…')).to_be_disabled()
-        tick.uncheck()
-        expect(dialog.get_by_role('button', name='Saving…')).to_be_disabled()  # still in flight
-        held[-1].fulfill(status=500, content_type='application/json', body=json.dumps({'detail': 'Server unavailable'}))
-        expect(propose).to_be_disabled()
-        expect(propose).to_have_attribute('data-tip', re.compile('^Tick'))
-        propose.click(force=True)
-        page.evaluate("document.querySelector('dialog[open] form').requestSubmit()")
-        assert len([x for x in sent if 'rule.propose' in x]) == 1
-        page.unroute('**/api/commands')
-        tick.check()
+        dialog.locator('form').evaluate('form => form.requestSubmit()')
+        held.pop().fulfill(status=500, json={'error': {'code': 'SERVER_ERROR', 'message': 'Synthetic refusal'}})
+        expect(dialog.get_by_text('Synthetic refusal', exact=True)).to_be_visible()
+        expect(propose).to_be_enabled()
+        assert len(sent) == 1 and sent[0]['payload']['acknowledged_overlaps'] == []
         propose.click()
         expect(main.locator('.rc-waiting')).to_be_visible()
+        assert len(sent) == 2 and sent[1]['payload'] == sent[0]['payload']
     finally:
         context.close()

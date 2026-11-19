@@ -16,7 +16,7 @@ from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
 from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
-from .validation import participation_for, trainee_intervals, named_people, session_matches, person_free
+from .validation import coverage_boundary_inputs, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
 from .supervision_levelling import levelled_order, session_spread_policies
@@ -25,7 +25,7 @@ from .recurrence import inactive, with_series_state, usual_assignee_fixed, serie
 from .fill_priority import STAGE_ORDER
 
 # 43: reject proposals that introduce or worsen missing supervision.
-ALGORITHM_VERSION = "bounded-greedy-43"
+ALGORITHM_VERSION = "bounded-greedy-44"
 # Person-level errors that only the person's own duties decide (overlap, rest, travel, transitions, hours and duty limits).
 OWN_DUTY_CODES = {'TIME_OVERLAP', 'MIN_REST', 'TRAVEL_BUFFER', 'FORBIDDEN_TRANSITION', 'MAX_HOURS', 'MAX_DUTIES',
                   'CONSECUTIVE_DAYS', 'CONSECUTIVE_WEEKENDS'}
@@ -217,14 +217,96 @@ def allocation_weight(policy, strengths):
 
 
 def overtime_cap_ids(data):
-    """Required overtime limits in force, including the source names retained by grouped rules."""
-    if '_overtime_cap_ids' in data:
-        return data['_overtime_cap_ids']
-    caps = [p for p in data['policies'] if p['status'] == 'active' and p.get('active', True)
-            and (p['definition']['rule']['kind'] == 'block_quota' and p['definition']['rule']['comparison'] in {'maximum', 'range'}
-                 or p['definition']['rule']['kind'] in {'forbidden_transition', 'max_consecutive_weekends'})
-            and p['definition']['severity'] == 'mandatory']
-    return {p['id'] for p in caps} | {i for p in caps for i in p['definition'].get('merged_ids') or []}
+    """Required overtime limits in force, resolved without mutating caller-owned input."""
+    policies = data.get('policies') or []
+
+    from .rule_lines import expand
+    from packages.contracts.rule_catalogue import CATALOGUE_MAPPING
+
+    def is_cap(policy):
+        rule, definition = policy['definition']['rule'], policy['definition']
+        return (policy.get('status') == 'active' and policy.get('active', True)
+                and definition.get('severity') == 'mandatory'
+                and (rule['kind'] == 'block_quota' and rule.get('comparison') in {'maximum', 'range'}
+                     or rule['kind'] in {'forbidden_transition', 'max_consecutive_weekends'}))
+
+    originals = list((data.get('_overtime_originals') or {}).values()) or list(policies)
+    if data.get('_overtime_originals'):
+        resolved = policies
+    else:
+        local = {**data, 'policies': list(originals)}
+        resolved = active_rules(list(originals), context=local)
+    rows = originals
+    by_id = {p['id']: p for p in rows}
+    by_catalogue = defaultdict(list)
+    catalogue_by_source = defaultdict(set)
+
+    def lineage_row(policy):
+        return ((policy.get('status') == 'active' and policy.get('active', True))
+                or (policy.get('status') == 'retired' and policy.get('approved_by')))
+
+    def add_catalogue_lineage(key, ident):
+        if not ident:
+            return
+        policy = by_id.get(ident)
+        if policy is not None and lineage_row(policy):
+            by_catalogue[key].append(ident)
+
+    for policy in rows:
+        rule = policy.get('definition', {}).get('rule', {})
+        if rule.get('kind') == 'catalogue' and lineage_row(policy):
+            by_catalogue[(policy.get('department_id'), rule.get('id'))].append(policy['id'])
+    for binding in data.get('source_bindings') or []:
+        binding = binding.get('data', binding)
+        source = binding.get('source') or {}
+        source_rule = (source.get('definition') or {}).get('rule') or {}
+        source_catalogue_id = binding.get('source_catalogue_id') or source_rule.get('id')
+        entry_id = CATALOGUE_MAPPING.get(source_catalogue_id, source_catalogue_id)
+        if not entry_id:
+            continue
+        department_id = binding.get('department_id') or source.get('department_id')
+        key = (department_id, entry_id)
+        if binding.get('source_policy_id'):
+            catalogue_by_source[binding['source_policy_id']].add(key)
+        add_catalogue_lineage(key, binding.get('source_policy_id'))
+        for destination in binding.get('destinations') or []:
+            if destination.get('kind') == 'policy':
+                add_catalogue_lineage(key, destination.get('id'))
+
+    roots = []
+    for policy in resolved:
+        if policy.get('status') != 'active' or not policy.get('active', True):
+            continue
+        rule = policy['definition']['rule']
+        if rule.get('kind') == 'catalogue':
+            roots.extend((copy, policy) for copy in expand(policy) if is_cap(copy))
+        elif is_cap(policy):
+            roots.append((policy, by_id.get(policy['id'], policy)))
+
+    ids, queued = set(), []
+    catalogue_keys = set()
+    for policy, source in roots:
+        queued.append(policy['id'])
+        queued.extend(policy['definition'].get('merged_ids') or [])
+        queued.append(policy['definition'].get('replaces_id'))
+        source_rule = source.get('definition', {}).get('rule', {})
+        if source_rule.get('kind') == 'catalogue':
+            catalogue_keys.add((source.get('department_id'), source_rule.get('id')))
+        catalogue_keys.update(catalogue_by_source.get(source.get('id') or policy.get('id'), ()))
+    for key in catalogue_keys:
+        queued.extend(by_catalogue.get(key, ()))
+    while queued:
+        ident = queued.pop()
+        if not ident or ident in ids:
+            continue
+        ids.add(ident)
+        policy = by_id.get(ident)
+        if policy is None:
+            continue
+        definition = policy.get('definition') or {}
+        queued.extend(definition.get('merged_ids') or [])
+        queued.append(definition.get('replaces_id'))
+    return ids
 
 
 def allocation_index(data, first, last):
@@ -425,7 +507,8 @@ def own_duty_blocked(data, shift, participant, own, known):
     pid = participant['person_id']
     kept = {s['id']: s for s in [*own, shift]}
     reduced = {**data, 'shifts': list(kept.values()), 'focus_ids': [i for i in data['focus_ids'] if i in kept],
-               '_partial': {'shifts': set(kept), 'people': {pid}}, 'quota_subjects': set(), 'skip_coverage': True}
+               '_partial': {'shifts': set(), 'people': {pid}, 'person_shifts': lambda _: kept.values()},
+               'quota_subjects': set()}
 
     def errors():
         result = evaluate(reduced, explain_findings=False)
@@ -444,20 +527,38 @@ def own_duty_blocked(data, shift, participant, own, known):
 class Recheck:
     """The run's whole-rota check kept in parts (each session's own checks, each person's), so a trial re-checks only the
     sessions it touches and the person it moves. Every part comes from the shared validator, computed exactly as a whole
-    check computes it (`_partial` in validation.evaluate); what a part leaves out (shapes and goals, advisory only;
-    resources and session setup, which do not depend on who works) cannot change a decision. The candidate is still
+    check computes it (`_partial` in validation.evaluate). Shapes, goals and advisory personal findings do not
+    guide trial decisions. Resource and session setup checks depend only on fixed inputs. The candidate is still
     checked whole at the end. tests/test_generation_recheck.py compares every trial with a whole check."""
 
     def __init__(self, data):
-        self.data = data
-        focus = set(data['focus_ids'])
-        live = [s for s in data['shifts'] if not inactive(s) and s['id'] in focus]
-        self.spans = [(aware(s['start']), aware(s['end']), s['id']) for s in live]
-        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
-        self.parts = self._check({s['id'] for s in live}, people)
+        from .quotas import applicable_policies
 
-    def _check(self, shift_ids, people):
-        r = evaluate({**self.data, '_partial': {'shifts': shift_ids, 'people': people}}, explain_findings=False)
+        self.data = data
+        self.prepared = prepare_assignment_trials(data)
+        self.prepared['_trial_boundary_inputs'] = coverage_boundary_inputs(self.prepared)
+        self.prepared['_quota_policies'] = applicable_policies(self.prepared)
+        self.setup_cache = {}
+        focus = set(data['focus_ids'])
+        self.active = {s['id']: s for s in self.prepared['shifts'] if not inactive(s)}
+        self.order = {sid: order for order, sid in enumerate(self.active)}
+        self.person_duties = defaultdict(set)
+        for sid, session in self.active.items():
+            for participant in session['participants']:
+                self.person_duties[participant['person_id']].add(sid)
+        self.live_ids = focus & self.active.keys()
+        self.spans = [(aware(s['start']), aware(s['end']), sid) for sid, s in self.active.items() if sid in focus]
+        self.peers = {}
+        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
+        self.parts = self._check(self.live_ids, people)
+
+    def _check(self, shift_ids, people, changed=frozenset()):
+        def person_shifts(pid):
+            ids = self.person_duties.get(pid, set()) | changed
+            return [self.active[sid] for sid in sorted(ids, key=self.order.__getitem__)]
+
+        r = evaluate({**self.prepared, '_partial': {'shifts': shift_ids, 'people': people,
+                     'setup_cache': self.setup_cache, 'person_shifts': person_shifts}}, explain_findings=False)
         sessions, persons, rows = {i: [] for i in shift_ids}, {i: [] for i in [*people, None]}, {i: [] for i in people}
         for f in r['session_findings']:
             sessions[f['shift_id']].append(f)
@@ -465,26 +566,46 @@ class Recheck:
             persons.setdefault(f['person_id'], []).append(f)
         for row in (r['quota_report'] or {}).get('rows', []):
             rows[row['person_id']].append(row)
+        for group in (sessions, persons):
+            for key, findings in group.items():
+                group[key] = list(finding_observations({'findings': findings}))
         return sessions, persons, rows
 
     def touched(self, changed):
         """The changed sessions and every session of this rota overlapping one (pooled cover and clinic-wide limits
         count the people on sessions at the same time)."""
         from .validation_scope import affected_sessions
-        return affected_sessions(self.data['shifts'], changed, spans=self.spans) | {
-            s['id'] for s in changed if any(i == s['id'] for _, _, i in self.spans)}
+        affected = set()
+        for shift in changed:
+            sid = shift['id']
+            if sid not in self.peers:
+                self.peers[sid] = affected_sessions((), [shift], spans=self.spans) | ({sid} & self.live_ids)
+            affected.update(self.peers[sid])
+        return affected
 
     def result(self, parts=None):
         merged = [{**whole, **part} for whole, part in zip(self.parts, parts or ({}, {}, {}))]
-        return {'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
+        return {'_plain_findings': True,
+                'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
                 'quota_report': {'rows': [r for items in merged[2].values() for r in items]}, '_parts': parts}
 
     def trial(self, changed, people):
-        return self.result(self._check(self.touched(changed), set(people)))
+        people = set(people)
+        changed_ids = {s['id'] for s in changed if s['id'] in self.active}
+        result = self.result(self._check(self.touched(changed), people, changed_ids))
+        # The caller restores the trial's assignments before deciding whether to accept.
+        result['_changed_duties'] = (changed_ids, {
+            pid: {s['id'] for s in changed if s['id'] in changed_ids and any(p['person_id'] == pid for p in s['participants'])}
+            for pid in people})
+        return result
 
     def accept(self, result):
         for whole, part in zip(self.parts, result['_parts'] or ({}, {}, {})):
             whole.update(part)
+        changed, duties = result['_changed_duties']
+        for pid, active in duties.items():
+            self.person_duties[pid].difference_update(changed)
+            self.person_duties[pid].update(active)
 
 
 def pair_attached(data, shifts, added, removals, period):
@@ -545,7 +666,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         return {"status": "unsupported_size", "algorithm_version": ALGORITHM_VERSION,
                 "message": "Narrow the planning period or employee scope to the published bounds", "capability_manifest": MANIFEST}
     # Every rule as the checks read it: a catalogue rule's lines are the kinds they write.
-    data['policies'] = active_rules(data['policies'], context=data)
+    raw_policies = list(data['policies'])
+    data['policies'] = active_rules(raw_policies, context=data)
+    data['_overtime_originals'] = {p['id']: p for p in raw_policies}
     leadership.prepare(data)
     unsupported = [p["kind"] for p in data['policies'] if p["kind"] not in MANIFEST["supported_rule_kinds"]]
     if unsupported:
@@ -902,12 +1025,12 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                     loads = [p.get('supervisor_person_id') for p in shift['participants']]
                     balanced = levelled_order(pairings, loads) if level else list(pairings)
                     pairings.sort(key=lambda supervisor_id: (supervisor_id not in attached, attached.get(supervisor_id) != 'required',
-                        balanced.index(supervisor_id),
+                        balanced.index(supervisor_id) if level else 0,
                         -allocation_settings(data, shift, pid, supervisor_id, history=history[pid],
                                              candidate_overtime=overtime)[0], supervisor_id))
                 for other, prior in displaced:
                     other['participants'].remove(prior)
-                if own_duty_blocked(data, shift, participant, [s for s, _ in history[pid]], own_errors):
+                if own_duty_blocked(recheck.prepared, shift, participant, [s for s, _ in history[pid]], own_errors):
                     pairings = []  # the whole-rota check below would refuse every pairing
                 for supervisor_id in pairings:
                     if time.monotonic() >= deadline:
@@ -966,7 +1089,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         name_leads()
         pair_attached(data, shifts, added, removals, period)
     for cache in ('_scope_interval_cache', '_policy_applies_cache', '_policy_applies_people', '_allocation_match_cache', '_person_rows', '_person_dates_cache', '_line_index_cache', '_bucket_keys_cache', '_workload_matches_cache', '_quota_cache', '_counted_policies', '_workload_normalization_cache'):
-        data.pop(cache)
+        data.pop(cache, None)
+    if hasattr(data, '_fair_share_measurement_cache'):
+        del data._fair_share_measurement_cache
     validation = evaluate(data)
     unexpected = [f for f in finding_observations(validation) if f['severity'] == 'error'
         and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM', 'ATTACHMENT_PAIRING'}
