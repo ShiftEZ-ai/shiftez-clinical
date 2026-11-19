@@ -1,5 +1,6 @@
 """Build and enforce a shrinking baseline from complete, source-bound hosted JUnits."""
 import argparse
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import hashlib
 import importlib.util
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
 from canary_evidence import collection_error, failed_nodes, node as report_node, outcome as report_outcome, recovered_nodes, report_cases
-from latest_reports import planned_shards, producing_attempt
+from latest_reports import artifact_shard, earlier_reports, planned_shards, producing_attempt
 
 KNOWN = "ci/known-failures.json"
 BASE_NODE = r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py::(?:[A-Za-z_][A-Za-z0-9_]*::)*test_[A-Za-z0-9_]+"
@@ -207,31 +208,42 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
             raise ValueError("Entry class disagrees with the frozen baseline input")
 
 
-def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False):
+@dataclass
+class ReportEvidence:
+    recovered: dict[str, str] = field(default_factory=dict)
+    reruns: dict[str, int] = field(default_factory=dict)
+    unobserved: list[dict] = field(default_factory=list)
+
+
+def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False,
+                    evidence=None):
     retry = not historical_capture and retry_run(plan)
     if retry and listed is None:
         listed = listed_nodes(at_revision(plan["sha"]))
-    recoveries = []
+    if evidence is None:
+        evidence = ReportEvidence()
     expected = planned_shards(plan)
-    seen, runs = set(), {replica: {} for replica in plan["replicas"]}
-    for path in sorted(directory.rglob("shard-receipt.json")):
+    seal = digest(plan)
+
+    def read_shard(path, root):
         receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         identity = (receipt["suite"], receipt["shard"], receipt["replica"])
         if (receipt.get("schema") != 1 or type(receipt["shard"]) is not int or type(receipt["replica"]) is not int
-                or identity not in expected or identity in seen or receipt["sha"] != plan["sha"]
-                or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != digest(plan)
-                or receipt["run_id"] != run_id
-                or receipt["run_attempt"] != (run_attempt if historical_capture else
-                                              producing_attempt(directory, path, identity, run_attempt))):
+                or identity not in expected or receipt["sha"] != plan["sha"]
+                or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != seal
+                or receipt["run_id"] != run_id):
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
-        seen.add(identity)
-        suite, index, replica = identity
+        attempt = run_attempt if historical_capture else producing_attempt(root, path, identity, run_attempt)
+        if receipt["run_attempt"] != attempt:
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        suite, index, _ = identity
         files = plan["suites"][suite]["shards"][index - 1]["files"]
         report_names = ["junit.xml"]
         if suite == "unit" and TIMING_NODE.split("::")[0] in files:
             report_names.append("junit-timing.xml")
         if [row["file"] for row in receipt["reports"]] != report_names:
             raise ValueError("Missing or unexpected invocation report")
+        outcomes, retries = {}, {}
         for row in receipt["reports"]:
             report = path.parent / row["file"]
             cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
@@ -241,21 +253,62 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
                 if node.split("::")[0] not in files:
                     raise ValueError("Reported node lies outside its planned shard")
                 canonical = canonical_node(node)
-                if canonical in runs[replica]:
+                if canonical in outcomes:
                     raise ValueError("A node executed more than once in a full run")
                 outcome = report_outcome(case)
+                outcomes[canonical] = outcome
                 if node in recovered:
-                    recoveries.append({"node": canonical, "class": "unstable", "observations": [outcome, "passed"]})
-                    outcome = "passed"
-                runs[replica][canonical] = outcome
-    if seen != expected:
+                    retries[canonical] = outcome
+        return identity, int(attempt), outcomes, retries
+
+    latest, runs = {}, {replica: {} for replica in plan["replicas"]}
+    for path in sorted(directory.rglob("shard-receipt.json")):
+        identity, attempt, outcomes, retries = read_shard(path, directory)
+        if identity in latest:
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        latest[identity] = attempt
+        run = runs[identity[2]]
+        if run.keys() & outcomes.keys():
+            raise ValueError("A node executed more than once in a full run")
+        run.update(outcomes)
+        run.update(dict.fromkeys(retries, "passed"))
+        evidence.recovered.update(retries)
+    if latest.keys() != expected:
         raise ValueError("Missing shard: every planned producer must report")
     if len({tuple(sorted(run)) for run in runs.values()}) != 1:
         raise ValueError("Full runs collected different node sets")
-    if retry and recoveries and output is not None:
+
+    if not historical_capture:
+        archive = earlier_reports(directory)
+        if archive.is_symlink():
+            raise ValueError("Invalid earlier shard artifact directory")
+        seen = {(identity, attempt) for identity, attempt in latest.items()}
+        for folder in sorted(archive.iterdir()) if archive.exists() else ():
+            named_attempt, identity = artifact_shard(folder)
+            attempt = int(named_attempt)
+            if identity not in expected or not 1 <= attempt < latest[identity]:
+                raise ValueError("Earlier shard evidence differs from the artifact identity or attempt")
+            for path in folder.rglob("shard-receipt.json"):
+                _, _, outcomes, _ = read_shard(path, archive)
+                if (identity, attempt) in seen:
+                    raise ValueError("Duplicate shard artifact attempt: " + folder.name)
+                seen.add((identity, attempt))
+                for node, outcome in outcomes.items():
+                    if (outcome in {"failed", "error"} and all(run.get(node) == "passed" for run in runs.values())
+                            and (node not in evidence.reruns or attempt < evidence.reruns[node])):
+                        evidence.recovered[node] = outcome
+                        evidence.reruns[node] = attempt
+        evidence.unobserved.extend(
+            {"suite": suite, "shard": shard, "replica": replica, "attempt": attempt}
+            for suite, shard, replica in sorted(expected) for attempt in range(1, int(run_attempt))
+            if ((suite, shard, replica), attempt) not in seen)
+
+    if evidence.recovered and output is not None:
         output.mkdir(parents=True, exist_ok=True)
-        (output / "recovered-tests.json").write_text(
-            encoded(sorted(recoveries, key=lambda row: row["node"])), encoding="utf-8")
+        (output / "recovered-tests.json").write_text(encoded([
+            {"node": node, "class": "unstable", "observations": [outcome, "passed"]}
+            for node, outcome in sorted(evidence.recovered.items())
+        ]), encoding="utf-8")
     return [runs[replica] for replica in plan["replicas"]]
 
 
@@ -448,16 +501,22 @@ def mixed_listed_nodes(current, runs, recovered=()):
     if not current:
         return set()
     listed = set.union(*classes(current).values())
-    if len(runs) == 1:
-        return listed & set(recovered)
-    if len(runs) != 2 or set(runs[0]) != set(runs[1]):
-        return set()
-    return {node for node in listed & set(runs[0])
-            if {run[node] for run in runs} in ({"passed", "failed"}, {"passed", "error"})}
+    mixed = listed & set(recovered)
+    if len(runs) == 2 and set(runs[0]) == set(runs[1]):
+        mixed.update(node for node in listed & set(runs[0])
+                     if {run[node] for run in runs} in ({"passed", "failed"}, {"passed", "error"}))
+    return mixed
 
 
-def report_outside(current, runs, output, exceptions=frozenset(), recovered=None):
+def report_outside(current, runs, output, exceptions=frozenset(), recovered=None, *, reruns=None, unobserved=()):
     recovered = recovered or {}
+    reruns = reruns or {}
+
+    def recovery_note(node, default=""):
+        if node in reruns:
+            return f" | recovered on re-run (attempt {reruns[node]})"
+        return " | recovered on retry" if node in recovered else default
+
     groups = classes(current) if current else {}
     known = set().union(*groups.values())
     rows = outside_observations(current, runs, exceptions)
@@ -473,14 +532,17 @@ def report_outside(current, runs, output, exceptions=frozenset(), recovered=None
                "status": "ALREADY_UNSTABLE" if node in unstable else "PROPOSED_REMARK"}
               for node in sorted(mixed_listed_nodes(current, runs, recovered))]
     (output / "outside-observations.json").write_text(encoded({"observations": rows, "unstable_count": len(proposed),
-        "proposed_list_entries": proposed, "listed_unstable_count": len(listed), "listed_unstable": listed}), encoding="utf-8")
+        "proposed_list_entries": proposed, "listed_unstable_count": len(listed), "listed_unstable": listed,
+        "unobserved_attempts": list(unobserved)}), encoding="utf-8")
     lines = ["UNSTABLE " + row["node"] + " | test file " + row["test_file"]
-             + (" | recovered on retry" if row["node"] in recovered else " | red 1/2")
+             + recovery_note(row["node"], " | red 1/2")
              + " | proposed for reviewed list" for row in proposed]
     lines.insert(0, "UNSTABLE outside-list nodes: " + str(len(proposed)))
     lines.append("UNSTABLE listed nodes: " + str(len(listed)))
     lines.extend("UNSTABLE " + row["node"] + " | test file " + row["test_file"] + " | " + row["status"]
-                 + (" | recovered on retry" if row["node"] in recovered else "") for row in listed)
+                 + recovery_note(row["node"]) for row in listed)
+    lines.extend("unobserved attempt | {suite} | shard {shard} | replica {replica} | attempt {attempt}".format(**row)
+                 for row in unobserved)
     for line in lines:
         print(line)
     if lines and os.getenv("GITHUB_STEP_SUMMARY"):
@@ -522,7 +584,7 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     if group and base is not None:
         expected_replicas = 1
     observed = set(runs[0])
-    mixed_listed = mixed_listed_nodes(current, runs, recovered if group else ())
+    mixed_listed = mixed_listed_nodes(current, runs, recovered)
     problems = []
     outside = outside_observations(current, runs, exceptions)
     transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
@@ -595,7 +657,7 @@ def verify_privacy(data, matcher_path, table_path, staff_path):
     return {**policy.hashes(), "matcher_sha256": matcher_hash}
 
 
-def main():
+def main(*, runs=None, evidence=None, product_errors=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--reports", type=Path)
@@ -641,7 +703,11 @@ def main():
               root_path=args.root_evidence, removed_path=args.removed_tests)
     if plan["replicas"] != ([1] if plan["smoke"] else ctx["replicas"]) or plan["base_sha"] != ctx["base_sha"]:
         raise ValueError("Aggregate context differs from the checked plan")
-    runs = collect_reports(plan, args.reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.output)
+    if evidence is None:
+        evidence = ReportEvidence()
+    if runs is None:
+        runs = collect_reports(plan, args.reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                               args.output, evidence=evidence)
     add_only = (os.getenv("GITHUB_EVENT_NAME") in {"pull_request", "merge_group"}
                 and git("diff", "--name-status", "--no-renames", ctx["base_sha"], "HEAD") == "A\t" + KNOWN)
     tree = git("rev-parse", ctx["base_sha"] + "^{tree}") if add_only else plan["tree"]
@@ -660,11 +726,10 @@ def main():
             print("Frozen baseline sha256=" + baseline_sha)
             if exceptions:
                 print("::warning::Applying " + str(len(exceptions)) + " explicit hosted environment exceptions; evidence and review references are committed")
-            recovered = {}
-            product_errors = set()
-            if not args.capture_root:
-                product_errors = product_error_nodes(args.reports, listed=listed, recovered=recovered,
-                                                     allow_retry=retry)
+            if product_errors is None:
+                product_errors = set() if args.capture_root else product_error_nodes(
+                    args.reports, listed=listed, allow_retry=retry)
+            recovered = evidence.recovered
             groups = classified_results(runs, baseline, exceptions, recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
             (args.output / "cleanup-failures.json").write_text(json.dumps(sorted(groups["cleanup"]), indent=2) + "\n", encoding="utf-8")
@@ -683,7 +748,8 @@ def main():
                 return
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
             require_root_binding(ctx["current"], root_evidence, root_sha)
-            report_outside(ctx["current"], runs, args.output, exceptions, recovered)
+            report_outside(ctx["current"], runs, args.output, exceptions, recovered,
+                           reruns=evidence.reruns, unobserved=evidence.unobserved)
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,

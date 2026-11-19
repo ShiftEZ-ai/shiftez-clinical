@@ -15,7 +15,7 @@ import canary_evidence
 import node_census
 import hardening
 from trusted_ci import PR_SMOKE, census_files, pr_scope, require_pr_merge, settings
-from latest_reports import validate_selected_reports
+from latest_reports import earlier_reports, validate_selected_reports
 
 
 def git(*args):
@@ -73,12 +73,23 @@ def required_producers(raw):
         raise ValueError("Every producer must run and succeed")
 
 
+def verify_canaries(reports, *, allow_product_errors, **options):
+    canary_evidence.verify_directory(reports, allow_product_errors=allow_product_errors, **options)
+    archive = earlier_reports(reports)
+    if archive.is_symlink():
+        raise ValueError("Invalid earlier shard artifact directory")
+    if any(archive.rglob("shard-receipt.json")):
+        canary_evidence.verify_directory(archive, allow_product_errors=True, **options)
+
+
 def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags):
     if plan["replicas"] != [1, 2] or policy.read_file(candidate, policy.KNOWN) is not None:
         raise ValueError("Bootstrap measurement requires two replicas and no allowance list")
     if flags['canaries']:
-        canary_evidence.verify_directory(reports, allow_product_errors=False)
-    runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+        verify_canaries(reports, allow_product_errors=False)
+    evidence = maker.ReportEvidence()
+    runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                                 output, evidence=evidence)
     known_skips.comparison_runs(runs, set(), release=False)
     if flags['node_census']:
         raw_files = policy.paths(git("ls-tree", "-r", "--name-only", "-z", census_base, "--", "tests"))
@@ -91,10 +102,13 @@ def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker
         allowed = node_census.removed_nodes(ledger, maker.SAFE_NODE.fullmatch)
         node_census.emit(node_census.compare(before, set(runs[0]), allowed), output)
     output.mkdir(parents=True, exist_ok=True)
-    evidence = {"schema": 1, "bootstrap": True, "sha": candidate, "tree": plan["tree"],
+    if evidence.recovered or evidence.unobserved:
+        maker.report_outside(None, runs, output, recovered=evidence.recovered, reruns=evidence.reruns,
+                             unobserved=evidence.unobserved)
+    measurement = {"schema": 1, "bootstrap": True, "sha": candidate, "tree": plan["tree"],
         "base_sha": base, "run_id": os.environ["GITHUB_RUN_ID"],
         "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "replicas": plan["replicas"], "runs": runs}
-    (output / "bootstrap-measurement.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    (output / "bootstrap-measurement.json").write_text(json.dumps(measurement, indent=2) + "\n", encoding="utf-8")
     (output / "verdict.json").write_text(json.dumps({"passed": True, "bootstrap": True,
         "reason": "Complete bootstrap measurement; list-cut admission remains required"}) + "\n", encoding="utf-8")
     print("BOOTSTRAP: complete measurement; no existing failure allowance was assumed")
@@ -153,7 +167,7 @@ def main():
     import make_known_failures as maker
     retry = maker.retry_run(plan)
     if flags['canaries']:
-        canary_evidence.verify_directory(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
+        verify_canaries(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
     root_raw = policy.read_file(base, "ci/root-run-evidence.json")
     skips_raw = policy.read_file(base, "ci/known-skips.json")
     if root_raw is None or skips_raw is None:
@@ -193,7 +207,9 @@ def main():
                 raise ValueError("Replica count differs from the trusted reader context")
             # After the replica check, so the more specific refusal names a wrong replica count.
             validate_selected_reports(plan, reports)
-            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], output)
+            evidence = maker.ReportEvidence()
+            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                                         output, listed=failure_nodes, evidence=evidence)
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
@@ -208,16 +224,14 @@ def main():
             if branch == "main" and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
-            recovered = {}
-            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, recovered=recovered,
-                                                     allow_retry=retry)
+            recovered = evidence.recovered
+            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, allow_retry=retry)
             if recovered and (branch == "main" or allowed_skips & recovered.keys()):
                 raise ValueError("Release/known-skip execution contains a failure or error")
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
             outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
             error_nodes |= product_errors & outside
             compared, skipped = known_skips.comparison_runs(runs, allowed_skips, release=branch == "main", allowed_errors=error_nodes)
-            maker.collect_reports = lambda *args: compared
             print("Known skips: reviewed=" + str(len(allowed_skips)) + "; observed=" + str(len(skipped)))
             if os.getenv("GITHUB_STEP_SUMMARY"):
                 with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
@@ -228,7 +242,7 @@ def main():
                         "--unstable-issue", str(config["unstable_issue"] or 0),
                         "--unstable-expires-on", str(config["unstable_expires_on"] or ""),
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
-            maker.main()
+            maker.main(runs=compared, evidence=evidence, product_errors=product_errors)
             verdict = policy.decode((output / "verdict.json").read_bytes())
             if partial:
                 missing_skips = sorted(node for node in allowed_skips if node.split("::", 1)[0] not in selected_files)
