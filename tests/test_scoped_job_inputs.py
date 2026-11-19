@@ -242,6 +242,13 @@ def test_apply_compare_boundary_retains_proposal_without_writes(pg,monkeypatch,c
     with transaction(pg.app.state.engine) as db:
         stored=db.get(m.Job,job['id']); assert stored.status=='succeeded'
         assert stored.result['additions']==original['additions']
+    path = '/api/jobs/' + job['id']
+    detail = pg.get('coordinator', path)['job']
+    assert detail['reconciliation']['id'] == receipt['id']
+    assert detail['reconciliation']['status'] == 'revalidation_required'
+    page = pg.get('coordinator', path + '/reconciliation?limit=1')
+    assert page['receipt_id'] == receipt['id']
+    assert page['changed_facts'] == receipt['changed_facts'][:1]
 
 
 def h_assignments(h,w):

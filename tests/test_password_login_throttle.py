@@ -43,7 +43,7 @@ def test_parallel_progressive_reservations_are_bounded(throttle_store, monkeypat
     assert sorted(result.status for result in results) == [401] * admitted + [429] * (8 - admitted)
     assert len(verified) == admitted
     with transaction(h.app.state.engine) as db:
-        account = auth.login_keys("staff", "unused")[0]
+        account = auth.login_keys("staff", "unused", settings)[0]
         key, _ = counter_key("login-account", account, settings.password_login_window_seconds, moment)
         assert db.scalar(select(m.RateLimit.hits).where(m.RateLimit.key_hash == key)) == admitted
         if not same_pair:
@@ -56,7 +56,7 @@ def test_postgres_delay_lock_uses_time_after_wait(pg, monkeypatch):
     moment = [m.now()]
     monkeypatch.setattr(auth, "now", lambda: moment[0])
     engine, waiting = pg.app.state.engine, Event()
-    delay_key = auth.digest("login-delay:" + auth.login_keys("staff", "victim-peer")[2])
+    delay_key = auth.digest("login-delay:" + auth.login_keys("staff", "victim-peer", pg.settings)[2])
     with transaction(engine, write=True) as db:
         db.add(m.RateLimit(key_hash=delay_key, hits=0, expires_at=moment[0] + timedelta(seconds=1)))
     def attempting_lock(conn, cursor, statement, parameters, context, executemany):
@@ -130,7 +130,7 @@ def test_intervening_success_cannot_refund_a_new_pair_failure(throttle_store, mo
             resume.set()
         assert not isinstance(older.result(timeout=15), Problem)
     with transaction(engine) as db:
-        key, _ = counter_key("login-pair", auth.login_keys("staff", peer)[2],
+        key, _ = counter_key("login-pair", auth.login_keys("staff", peer, h.settings)[2],
                              h.settings.password_login_window_seconds, moment[0])
         assert db.get(m.RateLimit, key).hits == 1
     moment[0] += timedelta(seconds=1)
@@ -155,7 +155,7 @@ def test_refused_rotating_inputs_leave_no_new_delay_rows(throttle_store, monkeyp
     for index in range(12):
         name = "staff" if scope == "account" else f"unknown-{index}"
         peer = f"new-peer-{index}" if scope == "account" else "first-peer"
-        keys = auth.login_keys(name, peer)
+        keys = auth.login_keys(name, peer, settings)
         placeholders.append(auth.digest("login-delay:" + keys[2]))
         if scope == "address":
             placeholders.extend(key for key in auth.login_account_bucket_keys(name, settings) if key not in existing)
@@ -168,7 +168,7 @@ def test_refused_rotating_inputs_leave_no_new_delay_rows(throttle_store, monkeyp
             key = auth.login_account_bucket_keys("staff", settings)[1]
             assert aware(db.get(m.RateLimit, key).expires_at) == moment + timedelta(seconds=1)
         else:
-            key, _ = counter_key("login-address", auth.login_keys("unused", "first-peer")[1],
+            key, _ = counter_key("login-address", auth.login_keys("unused", "first-peer", settings)[1],
                                  settings.password_login_window_seconds, moment)
             assert db.get(m.RateLimit, key).hits == 1
 
@@ -180,7 +180,7 @@ def test_postgres_expired_delay_prune_between_upsert_and_lock(pg, monkeypatch, a
     moment = m.now()
     monkeypatch.setattr(auth, "now", lambda: moment)
     engine = pg.app.state.engine
-    keys = auth.login_keys("staff", "pruned-peer")
+    keys = auth.login_keys("staff", "pruned-peer", pg.settings)
     pair_key = auth.digest("login-delay:" + keys[2])
     account_key = auth.login_account_bucket_keys("staff", pg.settings)[1]
     expired = moment - timedelta(seconds=1)
@@ -468,7 +468,7 @@ def test_progressive_deadlines_stop_at_datetime_max(throttle_store, monkeypatch)
     moment = latest - timedelta(microseconds=500_000)
     monkeypatch.setattr(auth, "now", lambda: moment)
     counter, account_delay = auth.login_account_bucket_keys("staff", h.settings)
-    pair_delay = auth.digest("login-delay:" + auth.login_keys("staff", "last-peer")[2])
+    pair_delay = auth.digest("login-delay:" + auth.login_keys("staff", "last-peer", h.settings)[2])
     with transaction(h.app.state.engine, write=True) as db:
         db.add(m.RateLimit(key_hash=counter, hits=99, expires_at=latest - timedelta(microseconds=1)))
     verified = []
@@ -495,7 +495,7 @@ def test_saturated_consecutive_stamp_refuses_without_reusing_a_reservation(throt
     moment = latest - timedelta(days=2)
     monkeypatch.setattr(auth, "now", lambda: moment)
     counter, account_delay = auth.login_account_bucket_keys("staff", h.settings)
-    pair_delay = auth.digest("login-delay:" + auth.login_keys("staff", "saturated-peer")[2])
+    pair_delay = auth.digest("login-delay:" + auth.login_keys("staff", "saturated-peer", h.settings)[2])
     with transaction(h.app.state.engine, write=True) as db:
         db.add(m.RateLimit(key_hash=counter, hits=failures, expires_at=latest))
     monkeypatch.setattr(auth, "PASSWORDS", SimpleNamespace(verify=lambda *_: pytest.fail("No distinct reservation stamp remains")))

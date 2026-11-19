@@ -50,7 +50,7 @@ def test_rules_filter_is_the_shared_builder_with_groups_saved_as_a_view(browser,
         rules_by_family(h, page)  # this test's groups are the catalogue families
         navigate(page, 'rules')
         main = page.locator('#main')
-        families = main.locator('tr.rt-family strong')
+        families = main.locator('section.rt-q .rt-qhead h3')
         names = families.all_inner_texts()
         assert len(names) >= 3, names
         pop = toolbar(main, 'Filter')
@@ -67,7 +67,7 @@ def test_rules_filter_is_the_shared_builder_with_groups_saved_as_a_view(browser,
         or_group(pop, 'Family', names[0], names[1])
         close_popover(page)
         expect(families).to_have_text(names[:2])
-        rules = main.locator('tr.rt-rule').all_inner_texts()
+        rules = main.locator('li.rt-item').all_inner_texts()
         expect(main.get_by_role('button', name=re.compile(r'^Filter: .*\(3 active\)$'))).to_be_visible()
         save_view(main, 'Two families')
         saved = next(v for v in h.get('coordinator', '/api/table-views?table=rule-tree')['views'] if v['name'] == 'Two families')
@@ -108,7 +108,7 @@ def test_rules_filter_is_the_shared_builder_with_groups_saved_as_a_view(browser,
         close_popover(page)
         expect(main.get_by_role('button', name='Saved views: Two families', exact=True)).to_be_visible()
         expect(families).to_have_text(names[:2])
-        assert main.locator('tr.rt-rule').all_inner_texts() == rules
+        assert main.locator('li.rt-item').all_inner_texts() == rules
         # Clear all brings every family back; the view is then marked changed.
         toolbar(main, 'Filter').get_by_role('button', name='Clear all filters', exact=True).click()
         close_popover(page)

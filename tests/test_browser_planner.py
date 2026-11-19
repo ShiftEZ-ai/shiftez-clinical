@@ -64,7 +64,9 @@ def test_idle_planner_poll_preserves_input_and_detects_real_changes(browser,live
         expect(search).to_be_focused()
         main=page.locator('#main .planner-main').element_handle()
         with page.expect_response(lambda r: '/api/pulse' in r.url,timeout=20000):
-            page.clock.run_for(11000)  # a live update check (the app's 10 s timer, on the page clock) arrives while the search box has focus
+            # A live update check arrives while the search box has focus: the app's 10 s timer reads the pulse once a minute
+            # with the stream live, and its first tick may already have run in real time, so step past the next minute's check.
+            page.clock.run_for(71_000)
         assert main.evaluate('(el) => el.isConnected')
         expect(search).to_have_value('Unsubmitted search')
         expect(search).to_be_focused()
