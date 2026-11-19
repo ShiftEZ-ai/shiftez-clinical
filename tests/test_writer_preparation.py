@@ -49,16 +49,20 @@ def public(check):
 
 
 def test_publication_reuses_approved_check_without_evaluating_under_the_writer(harness, writer_evaluations):
+    """Submit and approve leave the writer free of checks. Publish runs its complete check there."""
     h = harness
     workspace = h.shift(h.workspace())['workspace']
+    writer_evaluations.clear()
     workspace = h.lifecycle(workspace, 'submit')['workspace']
     workspace = h.lifecycle(workspace, 'approve', 'approver')['workspace']
+    assert not any(writer_evaluations), 'Submit and approve run no complete check under the writer'
     writer_evaluations.clear()
 
     published = h.lifecycle(workspace, 'publish')
 
     assert published['publication_id']
-    assert writer_evaluations == [], 'Admission reuses current evidence; the final writer only verifies its fingerprint'
+    assert published['workspace']['status'] == 'published'
+    assert writer_evaluations == [True], 'Publish evaluates once under the writer and never during admission'
 
 
 def test_batch_check_prepares_validation_and_overlap_flags_together(harness, writer_evaluations, monkeypatch):
@@ -229,32 +233,54 @@ def save_unrelated(h, kind, name):
 
 @pytest.mark.parametrize('unrelated', ['saved_view', 'other_department_inputs'])
 def test_publish_preparation_does_not_block_an_unrelated_write(harness, monkeypatch, unrelated):
+    """An unrelated write waits for the final publication check, then both writes succeed."""
     h = harness
     w = h.shift(h.workspace())['workspace']
     w = h.lifecycle(w, 'submit')['workspace']
     w = h.lifecycle(w, 'approve', 'approver')['workspace']
     h.client('staff')
-    entered, release = Event(), Event()
-    domain_snapshot = planning.domain_snapshot
+    entered, waiting, release, checked = Event(), Event(), Event(), Event()
+    revalidate = planning.revalidate
+    engine = h.app.state.engine
+    lock_statement = 'BEGIN IMMEDIATE' if engine.dialect.name == 'sqlite' else 'SELECT pg_advisory_xact_lock('
 
-    def paused(db, *args, **kwargs):
-        if not entered.is_set():
-            assert not db.connection().info.get('rota_write'), 'Pause admission, before the final safety writer'
-            entered.set()
-            assert release.wait(30), 'Test did not release the publish preparation'
-        return domain_snapshot(db, *args, **kwargs)
+    def paused(db, workspace, *args, **kwargs):
+        writer = db.connection().info.get('rota_write')
+        assert writer is not None and not writer['serializing'], 'Pause after taking the publication writer'
+        entered.set()
+        assert release.wait(30), 'Test did not release the final publication check'
+        result = revalidate(db, workspace, *args, **kwargs)
+        checked.set()
+        return result
 
-    monkeypatch.setattr(planning, 'domain_snapshot', paused)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        published = pool.submit(h.lifecycle, w, 'publish')
-        try:
-            assert entered.wait(10)
-            saved = pool.submit(save_unrelated, h, unrelated, 'During publication')
-            assert saved.result(timeout=10)
-            assert not published.done()
-        finally:
-            release.set()
-        assert published.result(timeout=30)['publication_id']
+    def attempting_lock(_connection, _cursor, statement, *_):
+        if entered.is_set() and statement.startswith(lock_statement):
+            waiting.set()
+
+    def acquired_lock(_connection, _cursor, statement, *_):
+        if entered.is_set() and statement.startswith(lock_statement):
+            assert checked.is_set(), 'The unrelated write acquired the writer during the publication check'
+
+    monkeypatch.setattr(planning, 'revalidate', paused)
+    event.listen(engine, 'before_cursor_execute', attempting_lock)
+    event.listen(engine, 'after_cursor_execute', acquired_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            published = pool.submit(h.lifecycle, w, 'publish')
+            try:
+                assert entered.wait(10), 'Publish did not enter its final check'
+                saved = pool.submit(save_unrelated, h, unrelated, 'During publication')
+                assert waiting.wait(10), 'The unrelated write did not reach the writer lock'
+                assert not saved.done() and not published.done()
+            finally:
+                release.set()
+            publication = published.result(timeout=30)
+            assert publication['publication_id']
+            assert publication['workspace']['status'] == 'published'
+            assert saved.result(timeout=30)
+    finally:
+        event.remove(engine, 'before_cursor_execute', attempting_lock)
+        event.remove(engine, 'after_cursor_execute', acquired_lock)
 
 
 @pytest.mark.parametrize('unrelated', ['saved_view', 'other_department_inputs'])

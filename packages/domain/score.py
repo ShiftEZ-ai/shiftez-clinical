@@ -569,6 +569,11 @@ def score_review_lines(data, validation, options=None, scored=None):
     This is deliberately derived from the same expanded rules and score contributions as ``schedule_score``.  A line
     with no loss still appears, so a review can decide whether a zero is expected or an unused configuration.
     """
+    context = type(data)(data) if hasattr(data, '__dict__') else dict(data)
+    if hasattr(data, 'read_quality'):
+        context.read_quality = data.read_quality
+    context.setdefault('_line_index_cache', {})
+    data = context
     scored = scored or schedule_score(data, validation, options, limit=0)
     rules = data['_active_policies'] if '_active_policies' in data else active_rules(data['policies'], context=data)
     counted = data['_counted_policies'] if '_counted_policies' in data else counting_views(data, rules)

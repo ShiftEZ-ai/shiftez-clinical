@@ -25,6 +25,8 @@ def record_refusal(engine, actor, command, error, key, correlation_id):
               'roles': [role for role in attempted_roles if isinstance(role, str)]}
     if isinstance(payload.get('display_name'), str) and payload['display_name']:
         detail['target_label'] = payload['display_name'][:160]
+    if isinstance(error.details, dict) and error.details.get('stale_approval'):
+        detail['stale_approval'] = True
     special = command.kind == 'department.settings' and command.payload.get('score_check_enabled') is True and error.code == 'FORBIDDEN'
     insert = pg_insert if engine.dialect.name == 'postgresql' else sqlite_insert
     # This append needs no scheduling writer lock and touches no business/authority state.
