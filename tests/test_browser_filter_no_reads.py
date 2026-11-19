@@ -95,7 +95,7 @@ def test_a_filter_change_on_an_open_draft_past_the_rota_list_reads_nothing(brows
     page.on('request', read)
     try:
         navigate(page, f"schedule/week/{far}?edit={w['id']}")
-        expect(page.locator('#schedule-view:not([inert])')).to_have_attribute('aria-label', 'Week view', timeout=PAGE_LOAD_MS)
+        expect(page.locator('#schedule-view:not([data-reading])')).to_have_attribute('aria-label', 'Week view', timeout=PAGE_LOAD_MS)
         expect(page.locator('#main[data-loaded-view=schedule]')).to_have_count(1)
         page.wait_for_function(f"() => ({SHOWN_SESSIONS})() === 2")
         pop = planner_filter(page)
