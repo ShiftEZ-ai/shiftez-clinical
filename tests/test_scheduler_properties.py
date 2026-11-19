@@ -298,3 +298,4 @@ def test_same_meaning_gives_the_same_schedule_whatever_the_row_order_or_extra_fi
     noisy['shifts'].reverse()
     noisy['policies'].reverse()
     assert base and picks(noisy) == base
+# Include this file in hosted supervision and team-lead qualification.

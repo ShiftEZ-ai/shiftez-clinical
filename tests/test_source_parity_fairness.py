@@ -284,3 +284,4 @@ def test_dense_present_pair_product_fails_with_configured_diagnostic(h):
     assert not result['additions']
     data['generation_options']['pair_limit_max_opportunities'] = 10
     assert cp_generate(data, 20)['status'] == 'candidate_feasible'
+# Include this file in hosted supervision and team-lead qualification.

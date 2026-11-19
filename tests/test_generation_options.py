@@ -608,3 +608,4 @@ def test_run_wish_catchup_keeps_the_saved_draft_score_before_and_after_apply(h):
     assert h.detail(applied['workspace'])['workspace']['validation']['score']['score'] == result['summary']['score']['score']
     assert h.detail(applied['workspace'])['workspace']['validation']['score']['score'] == result['summary']['score']['score']
     assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['result']['summary'] == result['summary']
+# Include this file in hosted supervision and team-lead qualification.

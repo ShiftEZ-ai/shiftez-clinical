@@ -360,3 +360,4 @@ def test_long_rota_is_scheduled_a_month_at_a_time(h):
     process_one(h.app.state.engine)
     result=h.get('coordinator','/api/jobs/'+month['id'])['job']['result']
     assert result['status'] in {'candidate_feasible','candidate_with_gaps'} and {a['shift_id'] for a in result['additions']}=={shifts[0]['id']}
+# Include this file in hosted supervision and team-lead qualification.

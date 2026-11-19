@@ -386,3 +386,4 @@ def test_missing_group_capability_hides_group_control(browser, cp_server, h):
         expect(panel.get_by_role('button', name=re.compile('^People to schedule:'))).to_have_count(0)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

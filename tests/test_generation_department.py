@@ -808,3 +808,4 @@ def test_last_resort_overtime_priority_preserves_regular_order_and_safety(h):
     assert generate(data)['additions'][0]['participant']['person_id'] == first
     data['eligibilities'] = []
     assert generate(data)['additions'] == []
+# Include this file in hosted supervision and team-lead qualification.

@@ -40,3 +40,4 @@ def test_personal_team_print_preserves_names_ranks_and_times(browser, live_serve
         page.screenshot(path=str(folder / f'personal-team-print-{width}.png'), full_page=True)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

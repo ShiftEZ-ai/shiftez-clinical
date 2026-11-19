@@ -107,3 +107,4 @@ def test_session_tabs_steps_preference_short_form_fallback_saves_exact_values(br
         fields=('person_id','participation','supervisor_person_id','team_lead','start','end','overtime','fixed','segments')
         assert [{key:p[key] for key in fields} for p in saved['participants']]==[{key:p[key] for key in fields} for p in original['participants']]
     finally:context.close()
+# Include this file in hosted supervision and team-lead qualification.

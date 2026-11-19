@@ -375,3 +375,4 @@ def test_operator_retries_failed_event_and_auditor_cannot(browser, live_server, 
     finally:
         auditor_context.close()
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

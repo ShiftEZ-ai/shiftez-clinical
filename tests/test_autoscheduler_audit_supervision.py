@@ -164,3 +164,4 @@ def test_nonoverlapping_trainee_segments_share_one_supervisor_place(h, engine):
     assigned = {p["person_id"]: p for p in candidate["shifts"][0]["participants"]}
     assert all(assigned[person]["supervisor_person_id"] == supervisor for person in (first, second))
     assert evaluate(candidate)["valid"]
+# Include this file in hosted supervision and team-lead qualification.

@@ -513,3 +513,4 @@ def test_real_cp_sat_worker_apply_and_persisted_benchmark_journey(h, cp_sat_engi
         assert db.scalar(select(func.count()).select_from(m.AiCall)) == 0
     history = h.get('auditor', '/api/benchmarks?starts_on=2026-10-04&ends_on=2026-10-11')['benchmarks']
     assert [report['id'] for report in history] == [persisted['id']]
+# Include this file in hosted supervision and team-lead qualification.

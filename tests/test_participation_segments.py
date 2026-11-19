@@ -259,3 +259,4 @@ def test_supervisor_off_cover_gap_never_supervises_a_present_trainee(h):
     assert 'SUPERVISION_GAP' in codes(w['validation'])
     finding=next(f for f in w['validation']['findings'] if f['code']=='SUPERVISION_GAP')
     assert aware(finding['start'])==aware(at('10:00')) and aware(finding['end'])==aware(at('10:30'))
+# Include this file in hosted supervision and team-lead qualification.

@@ -112,3 +112,4 @@ def test_catalogue_start_does_not_clip_earlier_defaults(h, seeder):
     assert all(goal_intervals(data, p, h.seed['people'][0], date(2026, 9, 6), date(2026, 9, 13)) == [
         (date(2026, 9, 6), date(2026, 9, 13))] for p in goals)
     assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' for f in evaluate(data)['findings'])
+# Include this file in hosted supervision and team-lead qualification.

@@ -175,3 +175,4 @@ def test_supervision_extra_places_require_complete_capacity_configuration():
                      'overflow_maximum': 1, 'overflow_category_ids': [rank]}):
         with pytest.raises(ValidationError):
             SupervisionLimit.model_validate({'kind': 'supervision_limit', 'mode': 'capacity', 'maximum': 1, **invalid})
+# Include this file in hosted supervision and team-lead qualification.

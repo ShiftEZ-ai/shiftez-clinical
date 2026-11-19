@@ -53,3 +53,4 @@ def test_week_first_paint_with_pills_teams_and_markers_stays_within_the_plain_gr
         assert new <= base * RATIO + SLACK_MS, times
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

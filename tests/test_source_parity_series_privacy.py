@@ -125,3 +125,4 @@ def test_team_permission_map_controls_skipped_placement_disclosure_in_both_reads
             current = h.get(role, paths[0] + '/coverage')['evaluation']
             assert bool(current['findings']) is allowed
             assert h.client(role).get('/api/reports/' + publication + '?person_id=' + other).status_code == (200 if allowed else 403)
+# Include this file in hosted supervision and team-lead qualification.

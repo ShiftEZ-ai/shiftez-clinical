@@ -197,3 +197,4 @@ def test_unchanged_supervision_gap_outside_selected_sessions_does_not_block_safe
     assert {a["shift_id"] for a in result["additions"]} == {selected["id"]}, result
     assert {a["participant"]["person_id"] for a in result["additions"]} == {trainee, supervisor}, result
     assert not result["removals"], result
+# Include this file in hosted supervision and team-lead qualification.

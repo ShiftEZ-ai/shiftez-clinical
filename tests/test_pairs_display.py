@@ -33,3 +33,4 @@ def test_staff_see_their_supervisor_and_planners_see_everyone(h):
     publication = h.get('staff', '/api/publications')['publications'][0]['id']
     projected = h.get('staff', '/api/publications/' + publication)['snapshot']
     assert set(projected['people']) == {trainee, supervisor}
+# Include this file in hosted supervision and team-lead qualification.

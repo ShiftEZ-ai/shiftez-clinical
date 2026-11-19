@@ -160,3 +160,4 @@ def test_bulk_people_updates_and_both_sides_of_an_attachment_are_subject_history
     for person in (own, other):
         assert attachment['id'] in {e['target_id'] for e in history(h, person)['events']}
     assert history(h, third)['events'] == []
+# Include this file in hosted supervision and team-lead qualification.

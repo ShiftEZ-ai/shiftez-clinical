@@ -105,3 +105,4 @@ def test_protected_approved_leave_keeps_identity_through_final_check_and_apply(h
 def test_finding_identity_retains_mandatory_magnitudes():
     before = {'code': 'SCOPED_COVERAGE_GAP', 'shift_id': 'duty', 'detail': {'required': 2, 'available': 1}}
     assert citation_finding_key(before) != citation_finding_key({**before, 'detail': {'required': 2, 'available': 0}})
+# Include this file in hosted supervision and team-lead qualification.

@@ -44,3 +44,4 @@ def test_rotation_board_removal_and_undo_restore_the_attachment(browser, live_se
         assert restored['mentor_id'] == value['mentor_id']
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

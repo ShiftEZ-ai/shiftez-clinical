@@ -54,3 +54,4 @@ def test_staff_rotation_reads_follow_attachment_edits_and_ignore_the_retired_men
     assert_rotation_access(h, 'staff_successor', successor, trainee, rotation['id'], False)
     assert_rotation_access(h, 'staff_stale_mentor', stale, trainee, rotation['id'], False)
     assert_rotation_access(h, 'staff_trainee', trainee, trainee, rotation['id'], True)
+# Include this file in hosted supervision and team-lead qualification.

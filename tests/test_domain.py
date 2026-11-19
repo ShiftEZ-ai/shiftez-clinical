@@ -142,3 +142,4 @@ def test_recorded_external_duty_counts_toward_hours_and_rest(h):
     data["availability"].append({"id":str(uuid.uuid4()),"department_id":h.seed["department_id"],"person_id":h.seed["people"][0],"start":"2026-10-04T00:00:00Z","end":"2026-10-04T04:00:00Z","kind":"external_commitment"})
     found={f["code"] for f in evaluate(data)["findings"]}
     assert {"MAX_HOURS","MIN_REST"}<=found
+# Include this file in hosted supervision and team-lead qualification.

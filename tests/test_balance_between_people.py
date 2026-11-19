@@ -511,3 +511,4 @@ def test_monthly_target_scores_use_the_same_full_or_partial_amounts(h, full_wind
     else:
         assert all((row['proration']['working_days'], row['proration']['full_working_days']) == (5, 22)
                    for row in rows)
+# Include this file in hosted supervision and team-lead qualification.

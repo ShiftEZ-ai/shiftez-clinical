@@ -93,3 +93,4 @@ def test_worker_records_code_location_without_exception_or_rota_data(h, caplog):
     with transaction(h.app.state.engine) as db:
         job = db.get(m.Job, job_id)
         assert job.status == 'failed' and job.error_code == 'TypeError' and job.result is None
+# Include this file in hosted supervision and team-lead qualification.

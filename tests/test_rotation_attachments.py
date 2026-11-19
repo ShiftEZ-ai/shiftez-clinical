@@ -456,3 +456,4 @@ def test_rotation_attachment_and_manual_pairing_postgres(pg):
             'capability_id': pg.seed['supervisor_capability'], 'trainees_per_supervisor': 1}}})['record']
     reply = pg.shift(pg.workspace(), typ=typ['id'], people=people(trainee, b, c))
     assert supervisor(reply['shifts'][0], trainee) == c
+# Include this file in hosted supervision and team-lead qualification.

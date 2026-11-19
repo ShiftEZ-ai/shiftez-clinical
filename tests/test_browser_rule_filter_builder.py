@@ -504,3 +504,4 @@ def test_an_excluded_tag_reads_not_and_groups_as_combined_filters(browser, live_
         expect(page.locator('#main').get_by_text('Everyone', exact=True)).to_have_count(0)
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

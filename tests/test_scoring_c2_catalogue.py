@@ -49,3 +49,4 @@ def test_retained_lead_still_rejects_legacy_cap_changes(h, changed):
     refusal = h.configure('assignment_types', {'name': created['name'], 'starts_on': created['starts_on'],
         'definition': definition}, created['id'], created['revision'], status=422)
     assert refusal['error']['code'] == 'USE_RULE_CATALOGUE'
+# Include this file in hosted supervision and team-lead qualification.

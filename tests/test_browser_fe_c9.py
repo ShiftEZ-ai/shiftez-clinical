@@ -589,3 +589,4 @@ def test_a_doctors_view_and_export_settings_offer_no_planning_choices(browser, l
             expect(panel).not_to_contain_text('Rule marks')
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

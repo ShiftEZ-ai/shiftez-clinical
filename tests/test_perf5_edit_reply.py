@@ -568,3 +568,4 @@ def test_late_merge_claim_cannot_override_cancellation_changed_inputs_or_authori
             with pytest.raises(Problem):
                 retry_write(h.app.state.engine, lambda db: finish_job(db, claim, plan, None))
     assert not h.get('admin', '/api/workspaces/' + w['id'])['shifts'][0]['participants']
+# Include this file in hosted supervision and team-lead qualification.

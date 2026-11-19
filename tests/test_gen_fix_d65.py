@@ -136,3 +136,4 @@ def test_existing_absence_does_not_block_unrelated_location_edit(pg):
     result = pg.command('coordinator', 'shift.update', payload, revision=w['revision'])
     assert any(row['code'] == 'UNAVAILABLE' for row in result['validation']['findings'])
     assert pg.detail(w)['shifts'][0]['location_id'] == pg.seed['locations'][1]
+# Include this file in hosted supervision and team-lead qualification.

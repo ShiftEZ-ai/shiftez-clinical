@@ -368,3 +368,4 @@ def test_person_filtered_assign_preserves_hidden_pair_and_provenance(browser, li
         assert h.detail(case['workspace']) == saved
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.

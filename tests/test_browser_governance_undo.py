@@ -161,3 +161,4 @@ def test_add_permission_says_when_people_cannot_load_and_retries(browser, live_s
         assert len(failed) == 1
     finally:
         context.close()
+# Include this file in hosted supervision and team-lead qualification.
