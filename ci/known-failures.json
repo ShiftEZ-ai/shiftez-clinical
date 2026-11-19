@@ -1758,12 +1758,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_data_safety.py::test_deploy_script_gates_backs_up_then_migrates_once",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3109,12 +3103,6 @@
     {
       "class": "baseline",
       "node": "tests/test_session_hardening.py::test_only_login_and_refresh_set_cookies_for_absolute_deadline_and_unlimited_transport_cap[case-nicefpebmamaplmbclaeednabbeanlmoafgnbpgpkokikkepabehbfnbnhnbjljg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_session_hardening.py::test_only_the_proxy_hop_is_trusted_for_client_addresses",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
