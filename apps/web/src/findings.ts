@@ -17,7 +17,7 @@ export const plainCode=(code:unknown)=>PLAIN[String(code)]||'';
 /** A finding code in a person's words (the planner's session panel, and a refused edit): what is wrong. */
 export const FINDING_WORDS:Readonly<Record<string,string>>={SUPERVISOR_REQUIRED:'Needs a named supervisor on this duty before their supervision limit can be checked.',SUPERVISION_PAIRING:'This session has no named, qualified supervisor.',ATTACHMENT_PAIRING:'A trainee in this session isn’t paired with the consultant they’re attached to.',TIME_OVERLAP:'Already working another duty at this time.',UNAVAILABLE:'Recorded leave or unavailability at this time.'};
 /** What to do, by the same code, when it refuses an edit (D65, DL-048). */
-export const FINDING_NEXT:Readonly<Record<string,string>>={SUPERVISION_PAIRING:'Assign or restore one first.',ATTACHMENT_PAIRING:'Pair them first.'};
+export const FINDING_NEXT:Readonly<Record<string,string>>={SUPERVISION_PAIRING:'Assign or restore one first.',ATTACHMENT_PAIRING:'Pair them first.',LEAD_GAP:'Set who leads that session first, or make both changes together.',SUPERVISION_GAP:'Add a supervisor first, or add both together.'};
 /** Why an auto-schedule run stopped or did not start, by its error code (DL-049): the one place these words live. */
 export const RUN_ERROR_WORDS={
   SOLVER_RULE_INCOMPATIBLE:{head:(n:number)=>n?`${plural(n,'rule line')} can’t be scheduled automatically`:'A rule can’t be scheduled automatically',
@@ -53,12 +53,14 @@ const GENERIC=[/This edit introduces a conflict that a manual reason cannot over
  *  distinct one says them in place of the generic server sentence; a specific server prefix (the blocker it names) stays.
  *  With no such code the server's message is unchanged. */
 export function refusalText(message:string,details:unknown):string{
-  const found=(details as {findings?:{code?:unknown}[]}|null|undefined)?.findings;
-  const codes=[...new Set(Array.isArray(found)?found.map(f=>String(f?.code)):[])].filter(c=>FINDING_WORDS[c]&&FINDING_NEXT[c]);
+  const found=(details as {findings?:{code?:unknown;message?:unknown}[]}|null|undefined)?.findings,list=Array.isArray(found)?found:[];
+  // What is wrong: the client's words, else the finding's own message (a lead gap is also "more leads than allowed").
+  const wrong=(c:string)=>FINDING_WORDS[c]||String(list.find(f=>String(f?.code)===c)?.message||'');
+  const codes=[...new Set(list.map(f=>String(f?.code)))].filter(c=>FINDING_NEXT[c]&&wrong(c));
   if(!codes.length)return message;
   const said=message.trim().replace(/\.$/,''),generic=GENERIC.map(g=>g.exec(said)).find(Boolean);
   const prefix=generic?said.slice(0,generic.index).trim():message.trim();
-  return [prefix,...codes.flatMap(c=>[FINDING_WORDS[c],FINDING_NEXT[c]])].filter(Boolean).map(s=>/[.!?]$/.test(s)?s:s+'.').join(' ');
+  return [prefix,...codes.flatMap(c=>[wrong(c),FINDING_NEXT[c]])].filter(Boolean).map(s=>/[.!?]$/.test(s)?s:s+'.').join(' ');
 }
 
 /** How leave shows (Configuration › Department settings): the server only sends `leave` as far as the setting allows

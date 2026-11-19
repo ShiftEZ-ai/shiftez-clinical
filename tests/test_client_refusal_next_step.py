@@ -37,3 +37,16 @@ def test_unknown_or_missing_codes_keep_the_server_message_unchanged(client_modul
     assert said(client_modules, REFUSAL, found('TIME_OVERLAP')) == REFUSAL
     assert said(client_modules, REFUSAL, None) == REFUSAL
     assert said(client_modules, REFUSAL, [{'field': 'x', 'message': 'y'}]) == REFUSAL
+
+
+def test_a_new_lead_or_supervision_gap_says_the_way_through(client_modules):
+    move = 'The move introduces a mandatory problem; no assignment was moved'
+    supervision = {'findings': [{'code': 'SUPERVISION_GAP', 'severity': 'error',
+                                 'message': 'Qualified available supervision capacity is insufficient'}]}
+    assert said(client_modules, move, supervision) == (
+        'Qualified available supervision capacity is insufficient. Add a supervisor first, or add both together.')
+    lead = {'findings': [{'code': 'LEAD_GAP', 'severity': 'error', 'message': 'Team lead requirement not met'}]}
+    assert said(client_modules, REFUSAL, lead) == (
+        'Team lead requirement not met. Set who leads that session first, or make both changes together.')
+    # Without a message for it there is nothing to say what is wrong: the server's sentence stays.
+    assert said(client_modules, REFUSAL, found('LEAD_GAP')) == REFUSAL
