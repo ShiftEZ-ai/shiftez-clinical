@@ -8,6 +8,26 @@ from .test_bulk_rule_lines import _active, _body, _pending
 from .test_rule_catalogue_api import approve, line, person
 
 
+def _check_without_ending(h, body, *, ordered):
+    row = preview(h, "coordinator", body)["items"][0]
+    if ordered:
+        assert row["result"] == "waiting" and row["issues"] == []
+        # A retained choice has no issue to resolve and cannot end the personal line.
+        body["resolutions"] = {"0": "end_previous_lines"}
+    else:
+        issue = row["issues"][0]
+        assert issue["code"] == "OVERLAPS_UNACKNOWLEDGED"
+        assert [option["id"] for option in issue["resolutions"]] == ["keep_previous_lines", "skip"]
+        # A cached or forged choice must also be rejected when resolutions are re-derived.
+        unavailable = {**deepcopy(body), "resolutions": {issue["group_key"]: "end_previous_lines"}}
+        refused = preview(h, "coordinator", unavailable)["items"][0]
+        assert refused["result"] == "problem" and refused["issues"][0]["code"] == "BULK_RESOLUTION_STALE"
+        assert h.command("coordinator", "bulk.apply", unavailable, status=409)["error"]["code"] == "BULK_RESOLUTION_STALE"
+        body["resolutions"] = {issue["group_key"]: "keep_previous_lines"}
+    assert _pending(h) == []
+    assert preview(h, "coordinator", body)["items"][0]["result"] == "waiting"
+
+
 @pytest.mark.parametrize("database", ["h", pytest.param("pg", marks=pytest.mark.postgres)])
 @pytest.mark.parametrize("dimension", ["person", "rank", "tag"])
 def test_shared_personal_line_cannot_be_ended_by_a_partial_person_rank_or_tag_change(request, database, dimension):
@@ -29,17 +49,7 @@ def test_shared_personal_line_cannot_be_ended_by_a_partial_person_rank_or_tag_ch
                     numbers={"max": {"value": 5}}, starts_on="2026-10-01")
     policy = _active(h, [existing])
     body = _body(policy, [{"who": condition, "numbers": {"max": {"value": 3}}, "starts_on": "2026-11-01"}])
-    issue = preview(h, "coordinator", body)["items"][0]["issues"][0]
-    assert issue["code"] == "OVERLAPS_UNACKNOWLEDGED"
-    assert [option["id"] for option in issue["resolutions"]] == ["keep_previous_lines", "skip"]
-    # A cached or forged choice must also be rejected when resolutions are re-derived.
-    unavailable = {**deepcopy(body), "resolutions": {issue["group_key"]: "end_previous_lines"}}
-    refused = preview(h, "coordinator", unavailable)["items"][0]
-    assert refused["result"] == "problem" and refused["issues"][0]["code"] == "BULK_RESOLUTION_STALE"
-    assert h.command("coordinator", "bulk.apply", unavailable, status=409)["error"]["code"] == "BULK_RESOLUTION_STALE"
-    assert _pending(h) == []
-    body["resolutions"] = {issue["group_key"]: "keep_previous_lines"}
-    assert preview(h, "coordinator", body)["items"][0]["result"] == "waiting"
+    _check_without_ending(h, body, ordered=dimension != "person")
     proposed = h.command("coordinator", "bulk.apply", body)["items"][0]["results"][0]["record"]
     kept = next(old for old in proposed["definition"]["rule"]["lines"] if old["id"] == existing["id"])
     assert kept.get("ends_on") is None
@@ -75,16 +85,7 @@ def test_personal_limit_survives_when_the_new_group_stops_covering_the_person(re
     policy = _active(h, [existing])
     body = _body(policy, [{"who": {"conditions": conditions}, "numbers": {"max": {"value": 3}},
                            "starts_on": "2026-11-01"}])
-    issue = preview(h, "coordinator", body)["items"][0]["issues"][0]
-    assert issue["code"] == "OVERLAPS_UNACKNOWLEDGED"
-    assert [option["id"] for option in issue["resolutions"]] == ["keep_previous_lines", "skip"]
-    unavailable = {**deepcopy(body), "resolutions": {issue["group_key"]: "end_previous_lines"}}
-    refused = preview(h, "coordinator", unavailable)["items"][0]
-    assert refused["result"] == "problem" and refused["issues"][0]["code"] == "BULK_RESOLUTION_STALE"
-    assert h.command("coordinator", "bulk.apply", unavailable, status=409)["error"]["code"] == "BULK_RESOLUTION_STALE"
-    assert _pending(h) == []
-    body["resolutions"] = {issue["group_key"]: "keep_previous_lines"}
-    assert preview(h, "coordinator", body)["items"][0]["result"] == "waiting"
+    _check_without_ending(h, body, ordered=dimension in {"rank", "tag"})
     proposed = h.command("coordinator", "bulk.apply", body)["items"][0]["results"][0]["record"]
     kept = next(old for old in proposed["definition"]["rule"]["lines"] if old["id"] == existing["id"])
     assert kept.get("ends_on") is None

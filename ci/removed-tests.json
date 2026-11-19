@@ -1,0 +1,96 @@
+{
+  "schema": 2,
+  "removed": [],
+  "removed_nodes": [
+    {
+      "node": "tests/test_browser_audit_rules_layout.py::test_search_keeps_horizontal_scroll_and_row_actions_capture_immediate_native_scroll",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_audit_rules_layout.py::test_switching_rule_and_issue_columns_starts_at_their_identifying_facts[case-mnnanfkigcdpfabkjacapdhhbampobljmmgojnkmnpknaejckgekciginockalng]",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_audit_rules_layout.py::test_switching_rule_and_issue_columns_starts_at_their_identifying_facts[case-mpcjdkfjjaijoajdmcflimcglcekebkfggkfbmfmkpkpagjnfinpcbkcinoemndg]",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue.py::test_the_rules_table_fits_and_wraps_a_column_from_its_menu",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue_conflicts.py::test_a_tick_cleared_while_propose_fails_still_guards_the_retry",
+      "owner": "maintainer",
+      "reason": "Overlap acknowledgement is removed by design: a winning exception is not a conflict and nothing asks to acknowledge it; equal-tier conflicts are asserted in the rule exception and attention tests."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue_conflicts.py::test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check",
+      "owner": "maintainer",
+      "reason": "Overlap acknowledgement is removed by design: a winning exception is not a conflict and nothing asks to acknowledge it. Its approver assertions (the check lists each gives-way line and the both-apply warning) are kept in test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflicts."
+    },
+    {
+      "node": "tests/test_browser_rules_column_menus.py::test_rules_column_menus_sort_filter_wrap_hide_and_move",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rules_database.py::test_list_orders_lines_broad_to_specific",
+      "owner": "maintainer",
+      "reason": "Lines are now grouped by place with the broadest line first and its exceptions under it; that order is asserted by the rule exception tree tests."
+    },
+    {
+      "node": "tests/test_bulk_rule_lines.py::test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions[case-dlpmiejdobjndppjnhjgoiickgagokiogifbdpbklikebnpplfemclhphgkapnim]",
+      "owner": "maintainer",
+      "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
+      "owner": "maintainer",
+      "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
+      "owner": "maintainer",
+      "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-dabioglbkkkcninpiihdhnmocljhclgabjgogbbndhojhkceomgddckibmhkceep]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-hkhignlpfdbjejlefchinocdbcgadcpkbamaegmfjbcbacjcnhhhlegpcpembifd]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-hnmieklojkdefkjkpdeacdpacjcdfdckijflkgaaekjcccnmeieehddndapkknli]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-pcifjcfabagehgcgdjedmodkdibffkkkmgmapoppjkgcclickpjijlchlebfcahe]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
+      "owner": "maintainer",
+      "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
+      "owner": "maintainer",
+      "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
+    },
+    {
+      "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
+      "owner": "maintainer",
+      "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
+    }
+  ]
+}

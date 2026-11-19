@@ -6,7 +6,7 @@ from playwright.sync_api import expect
 from apps.api.db import transaction
 from apps.api import models as m
 from .test_operations_observability import outbox, NOW
-from .test_browser import browser, live_server, sign_in, navigate, save_dialog
+from .test_browser import browser, condition, holding, live_server, sign_in, navigate, save_dialog, wait_held
 from .test_browser_operations_history_query import caption
 
 pytestmark = pytest.mark.browser
@@ -35,6 +35,9 @@ def test_operator_can_find_old_failed_event_and_retry_from_ui(browser, live_serv
         dialog.get_by_label("Reason", exact=True).fill("Explicit fictional operator retry")
         save_dialog(dialog, "Confirm")
         caption(page, "Showing 0–0 of 0")
+        # The retry gives the worker work, so Operations re-reads every 10 s (app.ts opsBusy) and a redraw can move the
+        # Filter popover under the click. A hidden tab skips only that periodic check; Clear all still reads the list.
+        page.evaluate("() => Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'hidden'})")
         # The filter that emptied the list stays visible, so it can be cleared.
         page.get_by_role("button", name=re.compile("^Filter: failed")).click()  # active filters live in the Filter popover
         page.get_by_role("button", name="Clear all filters", exact=True).click()  # its rule is a builder row; Clear all drops it
@@ -71,6 +74,49 @@ def test_operations_follows_the_worker_only_while_it_has_work(browser, live_serv
         page.clock.run_for(65_000)
         page.wait_for_timeout(500)
         assert len(reads) == idle
+    finally:
+        context.close()
+
+
+def test_open_outbox_filter_keeps_clear_button_during_worker_poll(browser, live_server, h):
+    with transaction(h.app.state.engine, write=True) as db:
+        outbox(db, h.seed["department_id"], "queued")
+        outbox(db, h.seed["department_id"], "failed")
+    context, page = sign_in(browser, live_server, "operator")
+    try:
+        page.clock.install()
+        page.reload()
+        navigate(page, "system/operations")
+        caption(page, "Showing 1–2 of 2")
+        operations = "**/api/operations?*"
+        clear = page.get_by_role("button", name="Clear all filters", exact=True)
+        filtered = page.get_by_role("button", name=re.compile("^Filter: failed"))
+        with holding(page) as held:
+            held.hold(operations)
+            page.get_by_role("button", name="Filter", exact=True).click()
+            condition(page.locator(".dt-pop"), "State", ["failed"])
+            wait_held(page, held[operations])
+            before = clear.element_handle()
+            held.release(operations)
+            caption(page, "Showing 1–1 of 1")
+            assert clear.evaluate("(node, before) => node === before && before.isConnected", before)
+
+            held.hold(operations)
+            page.keyboard.press("Escape")
+            page.clock.fast_forward(10_001)
+            wait_held(page, held[operations])
+            # Open after the poll starts reading the page, so it has passed its first check for an open popover.
+            filtered.click()
+            anchor, before = filtered.element_handle(), clear.element_handle()
+            poll_url = held[operations][0].request.url
+            with page.expect_request_finished(lambda request: request.url == poll_url):
+                held.release(operations)
+            expect(page.locator("#main")).to_have_attribute("data-loaded-view", "system")
+            page.clock.fast_forward(10_001)
+            assert filtered.evaluate("(node, anchor) => node === anchor && anchor.isConnected", anchor)
+            assert clear.evaluate("(node, before) => node === before && before.isConnected", before)
+            before.click()
+            caption(page, "Showing 1–2 of 2")
     finally:
         context.close()
 

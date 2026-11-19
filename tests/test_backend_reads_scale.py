@@ -73,7 +73,8 @@ def read_department(h, goals=False):
 def person_fairness_measurement(request, scale_harness):
     h = scale_harness(request.param)
     w = read_department(h, goals=True)
-    data = h.snapshot(w)
+    with transaction(h.app.state.engine) as db:
+        data = person_fairness.domain_snapshot(db, db.get(m.Workspace, w['id']), current_scheduling=True)
     person = data['shifts'][0]['participants'][0]['person_id']
     h.client('coordinator')
     # Each request rebuilds its snapshot: .69-.83 CPU s locally; one CI sample narrowly crossed 8.75 s at 8.773 s.
