@@ -666,12 +666,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_autoschedule_state.py::test_held_apply_keeps_review_and_live_strip_without_success_or_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_catalogue_hydration.py::test_lean_pages_load_setup_counts_without_hydrating_lists[case-ngoicaolbhpdbgnfmoiaafiiddcocpojgielpfcgclcgjnefeidhoagcckabjldl]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."

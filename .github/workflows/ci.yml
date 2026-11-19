@@ -528,6 +528,8 @@ jobs:
     types:
     - checks_requested
   workflow_dispatch: {}
+  schedule:
+  - cron: '0 2 * * *'
   push:
     branches:
     - dev
