@@ -261,7 +261,7 @@ def test_a_lists_own_filter_is_not_on_and_the_popover_opens_on_its_rule(browser,
         button.click()
         pop = page.get_by_role('dialog', name='Filter')
         expect(pop.locator('.dt-filter-builder .cond-line')).to_have_count(1)  # the default rule, once, as a row
-        expect(pop.locator('.dt-active-list')).to_have_count(0)
+        expect(pop.locator('.dt-active-list')).to_have_count(0)  # not even an empty, hidden one: no second list of the rules
         expect(pop.get_by_role('button', name='Clear all filters')).to_be_visible()  # one click back to every row
         assert pop.evaluate("p => !!document.activeElement.closest('.dt-filter-builder')")
         # A change of the person's own lights it, and Clear all appears without a second list of the same rules.

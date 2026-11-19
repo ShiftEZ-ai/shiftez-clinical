@@ -1,6 +1,7 @@
 """Build and enforce a shrinking baseline from complete, source-bound hosted JUnits."""
 import argparse
 from datetime import date, datetime, timezone
+from functools import partial
 import hashlib
 import importlib.util
 import json
@@ -493,10 +494,38 @@ def stale_report_dir(output):
     return output if os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "push"} else None
 
 
+def write_stale_report(output, sha, nodes, *, reported=None):
+    run_id = os.environ["GITHUB_RUN_ID"]
+    if not re.fullmatch(r"[1-9][0-9]*", run_id) or not re.fullmatch(r"[a-f0-9]{40}", sha or ""):
+        raise ValueError("Stale report requires the producing run and commit")
+    report = {"run_id": run_id, "sha": sha, "nodes": sorted(nodes)}
+    if reported:
+        report["reported"] = dict(sorted(reported.items()))
+    (output / "stale-report.json").write_text(encoded(report), encoding="utf-8")
+
+
+def write_stale_summary(lines):
+    text = "\n".join(lines)
+    print(text)
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(text + "\n")
+
+
+def report_pr_stale(output, sha, lookup, nodes):
+    reported = lookup(nodes) if nodes else {}
+    if reported:
+        write_stale_report(output, sha, nodes, reported=reported)
+        write_stale_summary([f"- {node}: stale on dev (run {run_id}); removal candidate"
+                             for node, run_id in sorted(reported.items())])
+    return reported
+
+
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              group=False, merge_group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
-             selected_files=None, stale_output=None, expected_replicas=2):
+             selected_files=None, stale_output=None, expected_replicas=2, stale_sha=None,
+             observe_stale=None):
     today = today or datetime.now(timezone.utc).date()
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
@@ -535,14 +564,13 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     if expected - observed:
         problems.append("Vanished listed nodes: delete their lines from ci/known-failures.json")
     stable = (groups["baseline"] | groups["cleanup"] | groups["baseline-error"]) - set(recovered)
+    all_stale = {node for node in stable if len(runs) == expected_replicas
+                 and all(run.get(node) == "passed" for run in runs)}
+    reported = all_stale & set(observe_stale(all_stale) or ()) if observe_stale is not None else set()
     if stale_output is not None:
-        stale = sorted(node for node in stable if len(runs) == expected_replicas and all(run.get(node) == "passed" for run in runs))
-        (stale_output / "stale-report.json").write_text(encoded(stale), encoding="utf-8")
-        lines = ["Stale passing failure entries: " + str(len(stale)), *("- " + node for node in stale)]
-        print("\n".join(lines))
-        if os.getenv("GITHUB_STEP_SUMMARY"):
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                summary.write("\n".join(lines) + "\n")
+        write_stale_report(stale_output, stale_sha, all_stale)
+        write_stale_summary(["Stale passing failure entries: " + str(len(all_stale)),
+                             *("- " + node for node in sorted(all_stale))])
     for run in runs:
         if any(run[node] == "skipped" for node in current_nodes & observed):
             problems.append("A listed test did not execute; skipped is not passing")
@@ -551,7 +579,7 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
         if new_errors:
             problems.append("New errors outside the baseline-error class: " + ", ".join(sorted(new_errors)))
         stale = stable & {node for node, outcome in run.items() if outcome == "passed"}
-        stale -= mixed_listed
+        stale -= mixed_listed | reported
         if stale and stale_output is None:
             problems.append("Stale passing failure entries: delete their lines from ci/known-failures.json: " + ", ".join(sorted(stale)))
         failures = {node for node, outcome in run.items() if outcome == "failed"}
@@ -595,7 +623,7 @@ def verify_privacy(data, matcher_path, table_path, staff_path):
     return {**policy.hashes(), "matcher_sha256": matcher_hash}
 
 
-def main():
+def main(*, stale_lookup=None, nightly=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--reports", type=Path)
@@ -690,12 +718,18 @@ def main():
                                         exceptions=exceptions) if ctx["bootstrap"] else ctx["current"])
             if candidate:
                 (args.output / "known-failures.candidate.json").write_text(encoded(candidate), encoding="utf-8")
+            observe_stale = None
+            if stale_lookup is not None:
+                observe_stale = partial(report_pr_stale, args.output, plan["sha"], stale_lookup)
+            elif nightly:
+                observe_stale = partial(write_stale_report, args.output, plan["sha"])
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
                      group=retry, merge_group=os.getenv("GITHUB_EVENT_NAME") == "merge_group",
                      recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
-                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]))
+                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]),
+                     stale_sha=plan["sha"], observe_stale=observe_stale)
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:
