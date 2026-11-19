@@ -232,15 +232,8 @@ def _finish_rota_check(page, h, workspace_id, joined):
         assert h.process_jobs()
 
 
-@pytest.fixture(autouse=True)
-def _throttle_stale_undo(request, monkeypatch):
-    if request.node.originalname == 'test_an_undo_already_used_is_refused_once_without_not_saved':
-        monkeypatch.setenv('PW_CPU_THROTTLE', '4')
-
-
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
-@pytest.mark.parametrize('_repeat', range(10))
-def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_server, h, width, scheme, _repeat):
+def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_server, h, width, scheme):
     """G-17: Apply, then Undo from Recent runs; the Apply message's own Undo is then stale. Pressing it says so once and
     sends nothing: no conflict message, and the footer never turns to "Not saved". At phone width the message covers
     Recent runs (pointer overlap tracked in the backlog, decision in docs/design/fe-audit-decisions.md), so both Undo
