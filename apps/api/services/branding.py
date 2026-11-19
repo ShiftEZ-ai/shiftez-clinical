@@ -7,6 +7,7 @@ from itertools import groupby
 from zoneinfo import ZoneInfo
 from PIL import Image
 from sqlalchemy import select
+from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.web_assets import asset_url
 from apps.api import models as m
@@ -95,8 +96,8 @@ def change(db, actor, command):
         row.data, row.previous = updated, previous
         row.revision += 1
         history(db, actor, 'application_branding', row, value.reason)
-    from .pwa import render_icons
-    render_icons(db)
+    from .pwa import current_icons
+    current_icons(db, render_missing=True)
     return status(db, actor)
 
 
@@ -150,12 +151,13 @@ def store_image(db, actor, content, correlation_id):
     return {'image_id': row.id, 'url': image_url(row.id), 'sha256': row.sha256}
 
 
-def published_image(db, image_id):
+def published_image(db, image_id, *, include_content=True):
     # Staged uploads stay private until a branding change publishes their local reference.
     referenced = select(m.DefinitionHistory.id).where(m.DefinitionHistory.kind == 'application_branding',
         m.DefinitionHistory.object_id == SINGLETON,
         (m.DefinitionHistory.snapshot['data']['emblem_image_id'].as_string() == image_id)
         | (m.DefinitionHistory.snapshot['data']['wordmark_image_id'].as_string() == image_id)).exists()
-    row = db.scalar(select(m.BrandingImage).where(m.BrandingImage.id == image_id, referenced))
+    query = select(m.BrandingImage).where(m.BrandingImage.id == image_id, referenced)
+    row = db.scalar(query if include_content else query.options(defer(m.BrandingImage.content)))
     require(row is not None, 'NOT_FOUND', 'Branding image not found', 404)
     return row

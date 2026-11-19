@@ -100,8 +100,9 @@ def test_family_rows_carry_no_unexplained_hue(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
-        family = page.locator('#main tr.rt-family').first
+        family = page.locator('#main section.rt-q').first
         expect(family).to_be_visible()
-        expect(family.locator('.rt-family-name > *')).to_have_count(2)  # the name and its count
+        expect(family.locator('.rt-qhead h3')).to_be_visible()
+        expect(family.locator('.rt-qhead .dt-group-count')).to_be_visible()
     finally:
         context.close()

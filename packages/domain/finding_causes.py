@@ -18,10 +18,10 @@ COVERAGE_CODES = frozenset({'COVERAGE_GAP', 'OPEN_EXTRA_COVER', 'COVERAGE_TARGET
                            'SCOPED_COVERAGE_GAP', 'CAPABILITY_GAP', 'DISTINCT_PERSON_GAP',
                            'SUPERVISION_GAP', 'LEAD_GAP'})
 
-# Mandatory person minimums remain must-fix findings, but a draft may create or worsen
-# them while people are rearranged incrementally.
+# Open-place coverage and person minima may worsen while a draft is rearranged.
+# A new or worsened lead or supervision gap is a safety failure and refuses the edit.
 MINIMUM_SHORTFALL_CODES = frozenset({'QUOTA_BELOW_MINIMUM'})
-EDIT_NON_REFUSING_CODES = COVERAGE_CODES | MINIMUM_SHORTFALL_CODES
+EDIT_NON_REFUSING_CODES = (COVERAGE_CODES - {'LEAD_GAP', 'SUPERVISION_GAP'}) | MINIMUM_SHORTFALL_CODES
 
 # One server-owned classification for an approved leave that still has a duty.
 # Home and the draft Fix list use the same value; the user-facing wording belongs
