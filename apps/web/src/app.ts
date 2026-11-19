@@ -1513,7 +1513,7 @@ async function refreshOnce(stale=()=>false){
     // error and keeps the stale banner.
     const related=routeParts.indexOf('related'),inPlace=related>=0?await refreshRelated(routeParts[related+1]):undefined;
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
-    foregroundRender=!quiet;await renderPage();}
+    foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
     // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
     if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
@@ -1623,7 +1623,8 @@ function keepFocus(old:Element,swap:()=>void){
 /** What a page kept on screen while the next one loads may not be used: a Configuration section's pane (its nav stays
  *  live), else everything kept. */
 const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pane')||kept;
-async function renderPage(){
+async function renderPage(quiet=false){
+  const previousLeave=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
@@ -1677,16 +1678,21 @@ async function renderPage(){
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
   const previous=changedPage||!(view==='configuration'||view==='schedule'&&schedSubPage()||!waited)?[]:[...document.querySelector('#main')?.childNodes||[]];
   // The same page already on screen: if this read fails at the server or the connection, it stays (with the stale banner).
-  const shownBefore=!changedPage&&!keep&&document.querySelector('#main')?.getAttribute('data-loaded-view')===view&&document.querySelector('#main')?.getAttribute('data-loaded-tab')===(routeParts[0]||'')?[...document.querySelector('#main')!.childNodes]:[];
-  const sk=keep||previous.length?null:pageSkeleton();
-  dragWorkspace=null;dropHoverCard();if(!keep)shell();const main=document.querySelector<HTMLElement>('#main')!;
-  main.classList.toggle('page-planner',view==='schedule'&&!schedSubPage());  // the Fix list is a list: the window scrolls it
-  main.classList.toggle('page-contained',view==='rules');main.classList.toggle('page-wide',['schedule','people','configuration','insights'].includes(view));
+  const currentMain=document.querySelector<HTMLElement>('#main');
+  const shownBefore=!changedPage&&!keep&&currentMain?.dataset.loadedView===view&&currentMain.dataset.loadedTab===(routeParts[0]||'')?[...currentMain.childNodes]:[];
   // SW3-C-12: a planning address (a draft to edit, the Fix list) is restricted for a reader who plans nothing, on any
   // device, as other pages they cannot open are (not "Best on a desktop", which suggests they could plan there).
   const planningLink=view==='schedule'&&((routeQuery.get('edit')||'none')!=='none'||schedSubPage(routeParts))&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ADMIN);
-  if(!allowed(view)||planningLink){main.append(empty('Restricted page','Your account does not have access to this page.',button('Go to Home',()=>navigate('home'),'secondary'),'lock'));main.setAttribute('data-loaded-view','restricted');orient();return;}
-  if(phoneLite()&&!fitsPhone(view,routeParts,routeQuery)){main.append(desktopOnly());main.setAttribute('data-loaded-view','desktop-only');orient();return;}
+  const restricted=!allowed(view)||planningLink,phoneOnly=phoneLite()&&!fitsPhone(view,routeParts,routeQuery);
+  // Keep the mounted page through a quiet read. The reader can open a control while the next page is being built.
+  const keepShown=quiet&&!waited&&shownBefore.length>0&&!restricted&&!phoneOnly;
+  const sk=keep||keepShown||previous.length?null:pageSkeleton();
+  const mount=()=>{if(!keep)shell();const next=document.querySelector<HTMLElement>('#main')!;
+    next.classList.toggle('page-planner',view==='schedule'&&!schedSubPage());
+    next.classList.toggle('page-contained',view==='rules');next.classList.toggle('page-wide',['schedule','people','configuration','insights'].includes(view));return next;};
+  dragWorkspace=null;dropHoverCard();let main=keepShown?currentMain!:mount();
+  if(restricted){main.append(empty('Restricted page','Your account does not have access to this page.',button('Go to Home',()=>navigate('home'),'secondary'),'lock'));main.setAttribute('data-loaded-view','restricted');orient();return;}
+  if(phoneOnly){main.append(desktopOnly());main.setAttribute('data-loaded-view','desktop-only');orient();return;}
   const body=el('div',{});
   // Another rota is loading: the previous rota's grid stays visible but cannot be used (a click there would act on the
   // rota being left, e.g. open a session panel the new rota then drops).
@@ -1695,9 +1701,9 @@ async function renderPage(){
   // the section left is inert, never the nav (an inert nav ignored every pointer click until the read finished).
   // Moving the page detaches its scrollers, which resets their native positions: put them back at once (not only when
   // the rebuilt page mounts), so a background redraw does not show the list at its top meanwhile.
-  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
+  if(keep)main.removeAttribute('data-loaded-view');else if(!keepShown){main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
   // maintenance: a read meeting rules being rebuilt (api.ts projectionReady): the old content gives way to the page's skeleton.
-  let waiting=sk;const updating=()=>{if(serial!==renderSerial||waiting||keep)return;waiting=pageSkeleton();body.inert=false;body.replaceChildren(waiting);};
+  let waiting=sk;const updating=()=>{if(serial!==renderSerial||waiting||keep||keepShown)return;waiting=pageSkeleton();body.inert=false;body.replaceChildren(waiting);};
   window.addEventListener('projection-updating',updating);
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
@@ -1740,7 +1746,10 @@ async function renderPage(){
   await (waited?track(building):building).finally(()=>{openingPage(false);window.removeEventListener('projection-updating',updating);});
   // A skeleton that showed stays its 400 ms, then the page fades in; one that never showed gives way at once.
   const shown=serial===renderSerial&&await settle(waiting);
-  if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
+  if(serial===renderSerial){
+      if(keepShown&&(readerBusy()||previousLeave?.())){leaveCheck=previousLeave;buildingPage(null);redrawOwed=refreshSkipped=true;return;}
+      if(keepShown){main=mount();main.append(body);}
+      pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
       body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
@@ -1765,12 +1774,15 @@ async function renderPage(){
   catch(e){if(serial===renderSerial){
     buildingPage(null);  // a failed build never stays the page being built (alive()); a superseded one was replaced by its successor's
     const unreachable=e instanceof ApiError&&(e.status===0||e.status>=500)&&!sessionChanged(e);
-    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;restoreTableScroll(main);restoreRulesScroll(main);}
+    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){
+      if(keepShown)leaveCheck=previousLeave;
+      else if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;restoreTableScroll(main);restoreRulesScroll(main);}
       refreshFailed=true;main.setAttribute('data-loaded-view',view);showStale(true,e);orient();return;}
     // maintenance: this tab runs an older bundle than the server's: reload onto it once, or with something unsaved open
     // offer Reload to update (the update bar stays too). A connection failure is not the bundle's fault.
     const update=updateAfter(!(e instanceof ApiError&&e.status===0));
     if(update==='reload')return;
+    if(keepShown){main=mount();main.append(body);}
     pageFailed=true;if(keep)main.replaceChildren(body);body.inert=false;const failed=readFailed(failedPageName(),e,update==='ask'?undefined:retryRefresh);
     if(update==='ask'&&!refused(e))failed.firstChild!.after(' ',button('Reload to update',()=>{if(!reloadFor(serverBuild))reloadToUpdate();},'primary small'));
     body.replaceChildren(failed,
@@ -1814,7 +1826,7 @@ function liftHeader(content:HTMLElement){
     const info=document.querySelector<HTMLElement>('.topbar .page-info');
     if(info){if(!info.dataset.tip?.includes(text))info.dataset.tip=`${info.dataset.tip} ${text}`;}else document.querySelector('.topbar .page-title h1')?.after(pageInfo(text));};
   document.querySelector('.topbar [data-page-context]')?.remove();
-  const head=content.firstElementChild;
+  const head=(content.querySelector(':scope > .page-tabs-wrap > :last-child')||content).firstElementChild;
   if(head?.classList.contains('section-head')){
     tip(head.querySelector('p')?.textContent);
     const context=head.querySelector<HTMLElement>('[data-page-context]');if(context)document.querySelector('.topbar .page-title')?.append(context);
@@ -1840,7 +1852,7 @@ async function pageTabs(target:HTMLElement,build:Record<string,(t:HTMLElement)=>
   // One tab: no strip, so the panel is a plain region of the page (a tabpanel needs its tab).
   const panel=list.length>1?el('div',{role:'tabpanel',id:'page-tab-panel','aria-labelledby':`page-tab-${open.key}`}):el('div',{});
   // Counts (when the page has them cheaply) as in Rules: a number beside the name, which stays the tab's name.
-  const [,n]=await Promise.all([build[open.key](panel),counts?.()]);liftHeader(panel);
+  const [,n]=await Promise.all([build[open.key](panel),counts?.()]);
   if(n)for(const b of strip.querySelectorAll<HTMLElement>('[role=tab]')){const k=b.id.replace('page-tab-','');if(n[k]!==undefined){b.setAttribute('aria-label',b.textContent||'');b.append(el('span',{class:'tab-count','aria-hidden':'true'},String(n[k])));}}
   // One tab: no tab strip (nothing to switch to); the page title says what it is.
   target.append(el('div',{class:'page-tabs-wrap'},list.length>1?strip:'',panel));
