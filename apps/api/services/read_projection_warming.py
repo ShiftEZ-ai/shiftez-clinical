@@ -19,7 +19,6 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
     failed, report_failure = None, False
     with transaction(reader) as db:
         W, D, O, C = m.Workspace, m.Department, m.Organisation, m.WorkspaceReadProjection
-        source = source_identity(db)
         compiler = digest(toolchain(quota_policy_limit()))
         fields = {'input': O.input_revision, 'availability': O.availability_revision,
                   'workspace': W.revision, 'content': W.content_revision, 'department': D.revision}
@@ -46,6 +45,7 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
         workspace = db.scalar(query)
         if workspace is None:
             return False
+        source = source_identity(db)
         if engine.dialect.name == 'postgresql':
             from sqlalchemy.dialects.postgresql import insert
         else:

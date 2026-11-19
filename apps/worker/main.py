@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
 from sqlalchemy import delete, select, func, or_, update, text
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import defer, load_only
 from apps.api import models as m
@@ -951,11 +953,15 @@ def heartbeat(engine, *, deadline=None, record_worker=True):
     if time.monotonic() - _beat.get(id(engine), -60.0) < 10:
         return
     def write(db):
-        row = db.get(m.WorkerHeartbeat, WORKER_ID)
-        if row is None:
-            row = m.WorkerHeartbeat(worker_id=WORKER_ID, started_at=m.now(), last_seen_at=m.now(), passes=0)
-            db.add(row)
-        row.last_seen_at, row.passes, row.release = m.now(), (row.passes or 0) + 1, build()["release"]
+        H = m.WorkerHeartbeat
+        insert = postgres_insert if engine.dialect.name == 'postgresql' else sqlite_insert
+        now = m.now()
+        stmt = insert(H).values(worker_id=WORKER_ID, started_at=now, last_seen_at=now, passes=1,
+                                release=build()["release"])
+        db.execute(stmt.on_conflict_do_update(index_elements=[H.worker_id], set_={
+            "last_seen_at": stmt.excluded.last_seen_at, "passes": func.coalesce(H.passes, 0) + 1,
+            "release": stmt.excluded.release,
+        }))
     try:
         retry_write(engine, write, deadline=deadline, serialize=False)
         _beat[id(engine)] = time.monotonic()

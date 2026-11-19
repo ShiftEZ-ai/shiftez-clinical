@@ -41,7 +41,7 @@ from packages.domain.validation import evaluate
 from packages.domain.conditions import active_rules, scope_matches_throughout
 from . import models as m
 from . import oidc
-from .auth import (authenticate, password_login, password_login_enabled, login_event, digest, keep_alive, require_permission, require_role, current_roles, effective_roles, revoke_session, revoke_session_installations, require_catalogue_read,
+from .auth import (authenticate, password_login, password_login_enabled, login_event, login_digest, digest, keep_alive, require_permission, require_role, current_roles, effective_roles, revoke_session, revoke_session_installations, require_catalogue_read,
                    session_event, session_cookie_max_age, identifier_method, rotate_session)
 from .commands import execute, authorize_receipt, logged_command_kind, command_roles, receipt_result
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
@@ -291,7 +291,8 @@ def create_app(settings: Settings | None = None, engine=None):
             # Rejected origins and malformed bodies have no trusted username; never parse their credentials for audit.
             try:
                 await run_in_threadpool(liveness_write, engine, lambda db: login_event(
-                    db, [digest("account:"), digest("peer:" + (request.client.host if request.client else "unknown"))],
+                    db, [login_digest("account:", settings),
+                         login_digest("peer:" + (request.client.host if request.client else "unknown"), settings)],
                     getattr(request.state, "error_code", "LOGIN_REJECTED"), correlation,
                     window=settings.password_login_window_seconds),
                     context={"route": "auth.login", "phase": "fallback_audit"})
@@ -656,12 +657,16 @@ def create_app(settings: Settings | None = None, engine=None):
     def peer(request):
         return request.client.host if request.client else "unknown"
 
+    def peer_key(request):
+        # Client addresses are low in entropy: rate-limit rows store only their keyed hash (#930).
+        return login_digest("peer:" + peer(request), settings)
+
     # One-time invitation and password-reset links: per-link limits and a shared-address abuse backstop,
     # same-origin POST only (the guard above), audited. Tokens are never logged: the request log
     # records the route template, not the path.
     @app.get("/api/account-links/{token}")
     def account_link(token: str, request: Request):
-        enforce(engine, "account-link-address", [peer(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
+        enforce(engine, "account-link-address", [peer_key(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
         enforce(engine, "account-link", [digest(token)], 60, 900, "Too many attempts; wait a few minutes and try again")
         from .services import accounts
         with transaction(engine) as db:
@@ -669,7 +674,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account-links/{token}")
     def use_account_link(token: str, data: s.PasswordSet, request: Request):
-        enforce(engine, "account-link-address", [peer(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
+        enforce(engine, "account-link-address", [peer_key(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
         enforce(engine, "account-link-use", [digest(token)], 10, 900, "Too many attempts; wait a few minutes and try again")
         from .services import accounts
         return liveness_write(engine, lambda db: accounts.accept_link(db, token, data.password, settings, request.state.correlation_id),
@@ -677,7 +682,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer(request)], 5, 900,
+        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
@@ -771,7 +776,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         "cause_traceback": traceback.format_tb(cause.__traceback__) if cause else []})
             try:
                 liveness_write(engine, lambda db: login_event(
-                    db, [digest("oidc-callback"), digest("peer:" + peer(request))], outcome,
+                    db, [digest("oidc-callback"), login_digest("peer:" + peer(request), settings)], outcome,
                     request.state.correlation_id, window=settings.password_login_window_seconds),
                     context={"route": "auth.oidc_callback", "phase": "fallback_audit"})
             except (SQLAlchemyError, DatabaseWriteTimeout):
@@ -2876,7 +2881,7 @@ def create_app(settings: Settings | None = None, engine=None):
         from .services.calendar_feeds import feed_calendar
         message = "This calendar link is being refreshed too often; your calendar app will retry later"
         # Address first: guessed tokens from one address stop before each adds its own counter row.
-        enforce(engine, "feed-address", [request.client.host if request.client else "unknown"], settings.rate_feed_address_per_hour, 3600, message)
+        enforce(engine, "feed-address", [peer_key(request)], settings.rate_feed_address_per_hour, 3600, message)
         enforce(engine, "feed", [digest(token)], settings.rate_feed_per_hour, 3600, message)
         with transaction(engine, write=True) as db:
             body = feed_calendar(db, token).encode("utf-8")
@@ -3871,7 +3876,7 @@ def create_app(settings: Settings | None = None, engine=None):
         raw = await request.body()
 
         def receive():
-            enforce(engine, "monitor-address", [peer(request)], 600, 60, "Too many monitor requests; wait a minute and try again")
+            enforce(engine, "monitor-address", [peer_key(request)], 600, 60, "Too many monitor requests; wait a minute and try again")
             with transaction(engine) as db:
                 department_id = monitors.authenticate(db, request.headers.get("authorization"))
             enforce(engine, "monitor-events", [department_id], settings.monitor_events_per_minute, 60,

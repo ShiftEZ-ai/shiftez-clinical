@@ -1,12 +1,13 @@
 """Deciding your own work: refused by default, allowed only under an active permission, always with a reason and a trail."""
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.services.independence import today
 from apps.worker.main import process_one
-from packages.contracts.schemas import INDEPENDENT_ACTIONS
+from packages.contracts.schemas import INDEPENDENT_ACTIONS, ROLE_NAMES
 from .governance_support import identity
 
 
@@ -59,6 +60,148 @@ def test_role_permission_lets_a_builder_approve_and_publish_their_own_rota(h):
     # The approval stays valid at publication even after the permission ends.
     h.command('admin', 'self_approval.revoke', {'reason': 'Cover over'}, permission['id'], permission['revision'])
     assert h.command('solo', 'workspace.publish', {'reason': 'Publish'}, own['id'], own['revision'])['workspace']['status'] == 'published'
+
+
+def rota_review_access(h, *, second_reviewer=False, permission_state=None):
+    operator = h.seed['identities']['coordinator']
+    enabled = {operator, h.seed['identities']['approver']} if second_reviewer else {operator}
+    department = h.seed['department_id']
+    with transaction(h.app.state.engine, write=True) as db:
+        for ident in h.seed['identities'].values():
+            if ident not in enabled:
+                db.get(m.Identity, ident).disabled = True
+        held = set(db.scalars(select(m.RoleBinding.role).where(
+            m.RoleBinding.identity_id == operator, m.RoleBinding.department_id == department)))
+        for role in set(ROLE_NAMES) - held:
+            db.add(m.RoleBinding(identity_id=operator, department_id=department, role=role, starts_on=date(2020, 1, 1)))
+        day = today(db, department)
+    if permission_state:
+        end = day if permission_state == 'expired' else day + timedelta(days=1)
+        permission = h.command('coordinator', 'self_approval.grant', {
+            'identity_id': operator, 'actions': ['rota.approve'], 'starts_on': (day - timedelta(days=1)).isoformat(),
+            'ends_on': end.isoformat(), 'reason': 'Temporary cover for rota review',
+        })['permission']
+        assert permission['ends_on'] == end.isoformat()
+        return permission['id']
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('second_reviewer,permission_state', [
+    (False, 'active'), (False, None), (False, 'expired'), (True, None), (True, 'active'),
+], ids=['sole-current', 'sole-missing', 'sole-expired', 'peer-missing', 'peer-current'])
+def test_rota_item_approval_uses_the_same_permission_as_the_rota(h, second_reviewer, permission_state):
+    quota = {'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11', 'metric': 'duties'}
+    h.policy({**quota, 'comparison': 'minimum', 'amount': 3}, {'person_id': h.seed['people'][0]})
+    target = h.policy({**quota, 'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'comparison': 'target',
+                       'amount': 4, 'prorate_department_days': True}, severity='advisory')
+    permission_id = rota_review_access(h, second_reviewer=second_reviewer, permission_state=permission_state)
+    w = h.shift(h.workspace())['workspace']
+    w = h.command('coordinator', 'workspace.target_override', {
+        'policy_id': target['id'], 'person_id': h.seed['people'][1], 'amount': 2, 'reason': 'Adjust the planned target',
+    }, w['id'], w['revision'])['workspace']
+    cause, = [c for c in h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")['causes'] if c['acknowledgeable']]
+    submitted = h.command('coordinator', 'workspace.submit', {
+        'reason': 'Submit for review', 'acknowledgements': [{'cause_id': cause['id'], 'reason': 'Acknowledge the shortfall'}],
+    }, w['id'], w['revision'])
+    w = submitted['workspace']
+    items = {item['kind']: item['id'] for item in submitted['review_items']}
+    assert set(items) == {'target_override', 'acknowledged_gap'}
+    decisions = [
+        {'item_id': items['target_override'], 'kind': 'adjustment', 'accept': True, 'reason': 'Target reviewed'},
+        {'item_id': items['acknowledged_gap'], 'kind': 'gap', 'accept': True, 'reason': 'Shortfall reviewed'},
+    ]
+    reason = 'Reviewed the adjustment and the shortfall'
+    path = f"/api/workspaces/{w['id']}"
+    can_self_approve = permission_state == 'active'
+    for view in (path, path + '?view=compact'):
+        assert h.get('coordinator', view)['review_progress']['can_decide'] is can_self_approve
+    if not can_self_approve:
+        refused = h.command('coordinator', 'workspace.approve', {'reason': reason, 'rejected_review_item_ids': [cause['id']]},
+                            w['id'], w['revision'], status=403)
+        assert refused['error']['code'] == 'SELF_APPROVAL'
+        refused = h.command('coordinator', 'workspace.approve', {'reason': reason, 'decisions': decisions},
+                            w['id'], w['revision'], status=403)
+        assert refused['error']['code'] == 'SELF_APPROVAL'
+        assert refused['error']['message'] == 'Rota review items require an independent approver'
+        assert h.detail(w)['workspace']['status'] == 'submitted'
+        if second_reviewer:
+            assert h.get('approver', path)['review_progress']['can_decide']
+            approved = h.command('approver', 'workspace.approve', {'decisions': decisions}, w['id'], w['revision'])
+            assert approved['workspace']['status'] == 'approved'
+            assert [(row.get('self_approval_id'), row['reason']) for row in approved['review_item_decisions']] == [
+                (None, choice['reason']) for choice in decisions]
+        return
+    refused = h.command('coordinator', 'workspace.approve', {'decisions': decisions}, w['id'], w['revision'], status=422)
+    assert refused['error']['code'] == 'SELF_APPROVAL_REASON'
+    approved = h.command('coordinator', 'workspace.approve', {'reason': reason, 'decisions': decisions},
+                         w['id'], w['revision'])
+    assert approved['workspace']['status'] == 'approved'
+    rows = approved['review_item_decisions']
+    assert {row['item_id']: (row['reason'], row['self_approval_id']) for row in rows} == {
+        choice['item_id']: (choice['reason'], permission_id) for choice in decisions}
+    detail = h.detail(w)
+    assert detail['workspace']['validation']['review_item_decisions'] == rows
+    reviewer, = detail['review_progress']['steps'][0]['reviewers']
+    assert (reviewer['self_approval_id'], reviewer['reason']) == (permission_id, reason)
+    gap, = approved['gap_acknowledgements']
+    gap_decision, = gap['decisions']
+    assert (gap_decision['self_approval_id'], gap_decision['reason'], gap_decision['review_decision_id']) == (
+        permission_id, decisions[1]['reason'], reviewer['id'])
+    event, = (e for e in h.get('coordinator', '/api/audit?self_approved=true')['events'] if e['action'] == 'workspace.approve')
+    assert event['target_id'] == w['id'] and event['reason'] == reason
+    assert event['detail']['self_approved'] == [{'action': 'rota.approve', 'permission_id': permission_id}]
+    assert event['detail']['review_item_decisions'] == rows
+    assert event['detail']['gap_acknowledgements'] == [gap]
+    with transaction(h.app.state.engine) as db:
+        announcements = list(db.scalars(select(m.Outbox.payload).where(m.Outbox.kind == 'self_approval')))
+    assert [notice for notice in announcements if notice['action'] == 'rota.approve'] == [
+        {'action': 'rota.approve', 'target_id': w['id'], 'actor_id': reviewer['approved_by']}]
+    assert h.lifecycle(approved['workspace'], 'publish')['workspace']['status'] == 'published'
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_rota_item_rejection_uses_the_same_permission_as_approval(h):
+    person = h.seed['people'][0]
+    h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+              'metric': 'duties', 'comparison': 'minimum', 'amount': 3}, {'person_id': person})
+    permission_id = rota_review_access(h, permission_state='active')
+    w = h.shift(h.workspace(), people=[person])['workspace']
+    cause, = [c for c in h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")['causes'] if c['acknowledgeable']]
+    w = h.command('coordinator', 'workspace.submit', {
+        'reason': 'Submit for review', 'acknowledgements': [{'cause_id': cause['id'], 'reason': 'Acknowledge the shortfall'}],
+    }, w['id'], w['revision'])['workspace']
+    decisions = [{'item_id': cause['id'], 'kind': 'gap', 'accept': False, 'reason': 'Fill the remaining duties'}]
+    refused = h.command('coordinator', 'workspace.approve', {'decisions': decisions}, w['id'], w['revision'], status=422)
+    assert refused['error']['code'] == 'SELF_APPROVAL_REASON'
+    reason = 'Return this rota for revision'
+    returned = h.command('coordinator', 'workspace.approve', {'reason': reason, 'decisions': decisions}, w['id'], w['revision'])
+    assert returned['workspace']['status'] == 'draft' and returned['workspace']['return_note']['reason'] == reason
+    assert [item['id'] for item in returned['rejected_review_items']] == [cause['id']]
+    assert returned['gap_acknowledgements'] == []
+    detail = h.detail(w)
+    assert detail['workspace']['status'] == 'draft' and not detail['approvals']
+    event, = (e for e in h.get('coordinator', '/api/audit?self_approved=true')['events'] if e['action'] == 'workspace.approve')
+    assert event['reason'] == reason
+    assert event['detail']['self_approved'] == [{'action': 'rota.approve', 'permission_id': permission_id}]
+    assert event['detail']['review_item_decisions'][0]['reason'] == decisions[0]['reason']
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_rota_self_approval_grant_cannot_pass_safety_findings(h):
+    duty_type = h.configure('assignment_types', {'name': 'Two-person duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 2, 'maximum': 2}]}})['record']
+    assert rota_review_access(h, permission_state='active')
+    w = h.shift(h.workspace(), typ=duty_type['id'])['workspace']
+    fix_list = h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")
+    cause, = [c for c in fix_list['causes'] if c['safety']]
+    assert not cause['acknowledgeable']
+    refused = h.command('coordinator', 'workspace.submit', {
+        'reason': 'Request safety review', 'acknowledgements': [{'cause_id': cause['id'], 'reason': 'Attempt to accept'}],
+    }, w['id'], w['revision'], status=409)
+    assert refused['error']['code'] == 'SAFETY_RULE'
+    refused = h.lifecycle(w, 'submit', status=422)
+    assert refused['error']['code'] == 'VALIDATION_FAILED'
+    assert h.detail(w)['workspace']['status'] == 'draft'
 
 
 def test_permission_input_is_validated_and_actions_come_from_one_list(h):

@@ -68,6 +68,10 @@ def delta(before, after):
             or a.get('series_snapshot') != b.get('series_snapshot') or a.get('closed', False) != b.get('closed', False)]
 
 
+def active_change(change):
+    return change['status'] != 'withdrawn'
+
+
 def owns_publication_changes(db, workspace, publication):
     row = change_list(db, publication.id)
     if row and (row.workspace_id == workspace.id or any(c['workspace_id'] == workspace.id for c in row.changes)):
@@ -76,9 +80,10 @@ def owns_publication_changes(db, workspace, publication):
         m.SwapRequest.workspace_id == workspace.id,
         m.SwapRequest.publication_id == publication.id)):
         return True
-    return not row and (getattr(workspace, 'base_publication_id', None) == publication.id
-                        and getattr(workspace, 'archived_at', None) is None
-                        and getattr(workspace, 'status', None) in schedule.LIVE)
+    return (not row or not any(active_change(c) for c in row.changes)) and (
+        getattr(workspace, 'base_publication_id', None) == publication.id
+        and getattr(workspace, 'archived_at', None) is None
+        and getattr(workspace, 'status', None) in schedule.LIVE)
 
 
 def validation_scope(db, workspace, data, *, own=None):
@@ -194,7 +199,7 @@ def review_payload(db, workspace, actor=None):
     row = change_list(db, publication.id) if publication else None
     why = {}
     for c in row.changes if row else []:
-        if c.get('workspace_id') == workspace.id and c['status'] != 'withdrawn':
+        if c.get('workspace_id') == workspace.id and active_change(c):
             for sid in {sh['id'] for sh in c['after']} | set(c.get('submitted_session_ids', {}).values()):
                 disclosed = _disclosed_change(c, db, actor)
                 why.setdefault(sid, []).append({'kind': disclosed['kind'], **(
@@ -500,7 +505,7 @@ def undo(db, actor, row, workspace, command):
     require(change is not None and change['status'] == 'draft', 'CHANGE_IN_REVIEW', 'Only an unsent change can be undone', 409)
     ids = {r['id'] for r in change['after']}
     index = changes.index(change)
-    require(not any(c['status'] != 'withdrawn' and ids & {r['id'] for r in c['after']} for c in changes[index + 1:]),
+    require(not any(active_change(c) and ids & {r['id'] for r in c['after']} for c in changes[index + 1:]),
             'CHANGE_HAS_DEPENDENTS', 'Undo the later change to this session first', 409)
     before = workspace_content(db, workspace)
     restore_rows(db, actor, workspace, change['before'])
