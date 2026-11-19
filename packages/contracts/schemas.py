@@ -4933,8 +4933,14 @@ class RuleInForce(Schema):
     safety: bool
 
 
+class RuleLineReplacement(Schema):
+    replaced_line_id: ID
+    numbers: list[str]
+
+
 class RuleCatalogueInForceEntry(Schema):
     also_in_force: list[RuleInForce]
+    line_replaces: dict[ID, list[RuleLineReplacement]] = Field(default_factory=dict)
 
 
 class RuleCatalogueCounts(Schema):
@@ -5693,7 +5699,7 @@ class CatalogueUpdating(Schema):
 
 class RuleProposalInput(Decision):
     """A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):
-    on or off, its settings and every line. Lines that give way to more specific ones are acknowledged by line id."""
+    on or off, its settings and every line. Ordered overrides need no acknowledgement."""
     legacy_lead_conversion: LegacyLeadConversion | None = None
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 1
@@ -5704,7 +5710,7 @@ class RuleProposalInput(Decision):
     balance_between_people: bool = Field(default=True, strict=True, json_schema_extra={"bulk": True})
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=8, json_schema_extra={"bulk": True})
     lines: list[RuleLine] = Field(default_factory=list, max_length=2000, json_schema_extra={"bulk": True})
-    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, json_schema_extra={"writeOnly": True})
+    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, description='Ignored legacy input; ordered overrides need no acknowledgement.', json_schema_extra={"writeOnly": True})
 
 
 class RuleMapProposal(Schema):
@@ -8041,8 +8047,8 @@ class DisplaySettingsInput(Schema):
     ignore_al_prefix: bool = True
     avoid_duplicate_codes: bool = True
     tags: list[TagDefinition] = Field(default_factory=list, max_length=30)
-    # The Rules page shows the rule catalogue while it is being proven.
-    rule_catalogue: bool = False
+    # The Rules page shows the rule catalogue (owner decision, 19 Nov 2026: the default for new departments).
+    rule_catalogue: bool = True
     whereabouts: WhereaboutsSettings = Field(default_factory=WhereaboutsSettings)
     reason: Reason
 
