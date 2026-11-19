@@ -74,7 +74,7 @@ def _dashboard_etag(db, actor, kind, *values, workspace_id=None):
 
 
 def goals_etag(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-    return _dashboard_etag(db, actor, "fairness-goals", workspace_id, who, starts_on, ends_on,
+    return _dashboard_etag(db, actor, "fairness-goals-v2", workspace_id, who, starts_on, ends_on,
                            workspace_id=workspace_id)
 
 
@@ -775,8 +775,7 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
     return {'workspace': {'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                           'starts_on': workspace.starts_on.isoformat(), 'ends_on': workspace.ends_on.isoformat()},
             'goals': result if planner else personal_goals(result, actor.person_id),
-            'schedule': schedule(db, workspace, current_fingerprint=data['fingerprint']
-                                 if workspace.status != 'published' else None) if planner else None,
+            'schedule': schedule(db, workspace) if planner else None,
             'score_trend': score_trend(db, actor.department_id, first, last) if planner else []}
 
 
@@ -812,14 +811,17 @@ def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None, 
                   lambda _: _goals_uncached(db, actor, workspace_id, who, starts_on, ends_on))[workspace.id]
 
 
-def schedule(db, workspace, *, current_fingerprint=None):
+def schedule(db, workspace):
     """The rota's schedule score from its last check (None when never checked); `fresh`: nothing changed since."""
-    from apps.api.snapshots import fingerprints
+    from apps.api.snapshots import domain_snapshot
+    from .planning import complete_check
     score = (normalized_check(workspace.validation) or {}).get('score')
     if not score or score['score'] is None:
         return None
+    department = db.get(m.Department, workspace.department_id)
+    data = domain_snapshot(db, workspace)
     return {**{k: score.get(k) for k in ('score', 'publishable', 'gate', 'components', 'why')},
-            'fresh': workspace.validation.get('fingerprint') == (current_fingerprint or fingerprints(db, [workspace])[workspace.id])}
+            'fresh': complete_check(workspace.validation, data, department.generation_defaults)}
 
 
 def score_trend(db, department_id, first, last):

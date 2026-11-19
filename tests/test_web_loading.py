@@ -17,7 +17,7 @@ def _code(path):
 # says) and nothing else. A tooltip or accessible name that says why a control waits is not a loading state.
 LOADING = re.compile(r"""(['"`])(Loading\b[^'"`\n]*)\1""")
 SKELETON_LABEL = re.compile(r'skeleton\((?:[^()]|\([^()]*\))*,\s*$')
-TOOLTIP_REASONS = {('app.ts', 'Loading the whole rota…')}  # Auto-schedule's data-tip while it is disabled
+TOOLTIP_REASONS = {('app.ts', 'Loading the whole rota…')}  # D59: why a held write waits (its tip) and the footer's busy pill
 
 
 def test_no_bare_loading_text():

@@ -660,8 +660,9 @@ def transaction(engine, write: bool = False, *, deadline=None, context=None, ser
                     else:
                         session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": WRITE_LOCK_KEY})
             state["serializing"] = False
-            log.info("write_lock_acquired", extra={**state["context"], "backend_pid": state.get("backend_pid"),
-                     "lock_wait_ms": round((time.monotonic() - phase_started) * 1000, 2)})
+            if serialize:
+                log.info("write_lock_acquired", extra={**state["context"], "backend_pid": state.get("backend_pid"),
+                         "lock_wait_ms": round((time.monotonic() - phase_started) * 1000, 2)})
             if engine.dialect.name == "postgresql" and state["context"].get("lock_diagnostic"):
                 # A lock timeout must be observed on this connection before the outer rollback.
                 state["lock_diagnostic_savepoint"] = session.begin_nested()
