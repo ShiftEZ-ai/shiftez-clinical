@@ -7,9 +7,10 @@ from . import reviews
 from .rota_adjustments import adjustment_review_items, remove_rejected_adjustments
 
 
-def projection(workspace, validation=None):
-    value = rota_summary(validation if validation is not None else workspace.validation,
-                         accepted_issues=workspace.accepted_issues or [])['fix_list']
+def projection(workspace, validation=None, *, summary=None):
+    value = (summary if summary is not None else rota_summary(
+        validation if validation is not None else workspace.validation,
+        accepted_issues=workspace.accepted_issues or []))['fix_list']
     value = {**value, 'summary': {**value['summary'], 'check_status': None, 'check_queued_at': None}}
     return {**value, 'workspace_id': workspace.id, 'revision': workspace.revision,
             'review_items': review_items(workspace, current=value)}

@@ -14,7 +14,8 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from sqlalchemy import func, inspect, select
-from apps.api.settings import Settings, new_department_session_limits, refuse_test_flags, secret_from_env
+from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
+                               refuse_test_flags, secret_from_env)
 from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
@@ -232,7 +233,8 @@ def main():
                     raise RuntimeError("Refusing to bootstrap a nonempty installation")
                 org = m.Organisation(name=args.organisation, timezone=args.timezone, week_start=args.week_start)
                 db.add(org); db.flush()
-                dept = m.Department(organisation_id=org.id, name=args.department, **new_department_session_limits())
+                dept = m.Department(organisation_id=org.id, name=args.department,
+                                    display_settings=new_department_display_settings(), **new_department_session_limits())
                 identity = m.Identity(issuer=args.issuer, subject=args.subject, display_name=args.display_name)
                 db.add_all([dept, identity]); db.flush()
                 from apps.api.services.event_defaults import seed_department
