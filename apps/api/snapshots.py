@@ -1353,15 +1353,16 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     db.flush()
     key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs})
     if state and not state['replay']:
-        # This cache lives only for the rolled-back preparation. Replay uses a fresh transaction/cache.
-        cache, epoch = state['snapshots'], None
+        # Reuse across rollback rounds at the same check position. Later checks may
+        # follow assignment writes that leave the workspace row unchanged.
+        cache, epoch = state['snapshots'], state['next_check']
     else:
         cache, epoch = db.info.setdefault('write_domain_snapshots', {}), writer.get('snapshot_epoch', 0)
         # A new write epoch can never reuse an earlier snapshot. Drop its pickle
         # buffers immediately instead of retaining every full copy until commit.
         if cache and next(iter(cache))[0] != epoch:
             cache.clear()
-        key = (epoch, key)
+    key = (epoch, key)
     if key not in cache:
         value = _domain_snapshot(db, workspace, *args, **kwargs)
         # Bytes are produced here only; preserve graph types/aliases without repeated Python deep copies.
