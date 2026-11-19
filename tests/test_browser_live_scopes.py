@@ -100,6 +100,9 @@ def test_a_rota_change_only_refreshes_the_open_rota(browser, live_server, h):
         expect(page.locator('#main[data-loaded-view]')).to_have_count(1, timeout=PAGE_LOAD_MS)
         navigate(page, f'schedule/week/2026-10-04?edit={rota_b["id"]}')
         page.wait_for_function('() => window.livePulses.length > 0', timeout=15000)
+        # The app's own minute check (a poll of /api/pulse, in full when the state moved) runs on real time and lands
+        # in this window on a loaded runner. A hidden tab skips it; pushed pulses are still applied (app.ts setInterval).
+        page.evaluate("() => Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'hidden'})")
         reads = Reads(page)
         before = page.evaluate('window.livePulses.length')
         reads.seen.clear()

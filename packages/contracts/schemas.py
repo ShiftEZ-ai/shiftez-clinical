@@ -8042,8 +8042,8 @@ class DisplaySettingsInput(Schema):
     ignore_al_prefix: bool = True
     avoid_duplicate_codes: bool = True
     tags: list[TagDefinition] = Field(default_factory=list, max_length=30)
-    # The Rules page shows the rule catalogue while it is being proven.
-    rule_catalogue: bool = False
+    # The Rules page shows the rule catalogue (owner decision, 19 Nov 2026: the default for new departments).
+    rule_catalogue: bool = True
     whereabouts: WhereaboutsSettings = Field(default_factory=WhereaboutsSettings)
     reason: Reason
 

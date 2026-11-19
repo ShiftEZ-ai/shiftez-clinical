@@ -13258,7 +13258,7 @@
         "type": "array"
       },
       "rule_catalogue": {
-        "default": false,
+        "default": true,
         "title": "Rule Catalogue",
         "type": "boolean"
       },

@@ -92,3 +92,46 @@ saving=false;liveTick();await settle();                          // the command 
 console.log(JSON.stringify({during,kept,stillSaving,after:refreshes,left:deferredPulse}));""")
     assert (got['during'], got['kept'], got['stillSaving']) == (0, True, 0), got  # no redraw under the command
     assert got['after'] == [['people']] and got['left'] is None, got             # the owed redraw ran, once
+
+
+def test_save_refresh_does_not_rebuild_the_page_opened_during_its_reads(client_modules):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    refresh = cut(source, r'\n(async function refreshOnce\(stale.*?\n\})\n')
+    got = node(r"""
+let me={}, page='schedule/', release, refreshForeground=page, refreshScopes, refreshChanges=[],
+  accessRead, inPlace=true, refreshSkipped, refreshFailed, redrawOwed=false, foregroundRender=false;
+const savedKinds=new Set(['workspace.publish']), routeParts=[], draws=[];
+const pageStep=()=>page, sessionKey=()=>1, view='insights';
+const forgetReads=()=>{}, readAfresh=()=>{}, applyDisplay=()=>{}, showConnection=()=>{}, loadNavBadges=()=>{};
+const ME_SCOPES=[], LIST_SCOPES=[], loadCatalogues=async()=>{}, readerBusy=()=>false;
+const background=()=>new Promise(resolve=>{release=()=>resolve(me);});
+const renderPage=async()=>draws.push([page,foregroundRender]);
+const sessionChanged=()=>false, document={querySelector:()=>null};
+const notify=message=>{throw new Error(message);};
+""" + refresh + r"""
+const pending=refreshOnce();
+page='insights/workload';
+release();
+await pending;
+refreshForeground=page;
+const samePage=refreshOnce();
+release();
+await samePage;
+console.log(JSON.stringify(draws));""")
+    assert got == [['insights/workload', True]]
+
+
+def test_schedule_does_not_choose_its_opening_rota_from_a_kept_list(client_modules):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    read_list = cut(source, r'\n\s*(const readList = .*?\n\s*const page = .*?;)\n')
+    got = node(r"""
+const planner=true, memo=null, listAhead=null, workspaceListOffset=0;
+const get=async()=>({workspaces:[{status:'draft'}]});
+const background=async()=>({workspaces:[{status:'submitted'}]});
+async function read(workspaceId='',draftNone=false,sourcePublication=''){
+""" + read_list + r"""
+  return page.workspaces[0].status;
+}
+console.log(JSON.stringify([await read(),await read('selected'),await read('',true),await read('',false,'version')]));
+""")
+    assert got == ['submitted', 'draft', 'draft', 'draft']
