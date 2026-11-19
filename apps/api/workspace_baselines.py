@@ -1,13 +1,16 @@
 """Immutable department-input baselines and auditable three-way refreshes."""
+from collections import OrderedDict
 from copy import deepcopy
 import json
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import object_session
 
 from . import models as m
 from .errors import require
 from .serialization import json_value, record, records_many
+from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs, snapshot_window
 from packages.contracts import schemas as s
 from packages.domain.generation_scope import selected_session_ids
@@ -44,6 +47,7 @@ DEPARTMENT_SETTING_FIELDS = {
 }
 ALWAYS_KEYS = {"organisation", "departments", "department_ids"}
 LIVE_SAFETY_KINDS = frozenset(s.NEVER_OVERRIDDEN)
+ZERO_LIMIT_KINDS = frozenset({"max_duties", "max_hours", "max_consecutive_days", "max_consecutive_weekends", "block_quota"})
 LIVE_QUALIFICATION_KEYS = ("memberships", "eligibilities", "grants", "rotations", "programme_memberships", "mentorships")
 LIVE_QUALIFICATION_DEFINITIONS = ("programmes", "rotation_types", "cohorts", "tags", "tag_members", "capabilities", "categories")
 LIVE_OPERATIONAL_KEYS = ("operating_calendars", "closures", "date_sets", "resource_pools")
@@ -79,6 +83,227 @@ def _distinct_live_policy(policy):
     ident = str(uuid.uuid5(uuid.NAMESPACE_URL,
                            f"fmuc:live-safety:{policy.get('id')}:{policy.get('revision')}:{payload}"))
     return {**deepcopy(policy), "id": ident, "_source_policy_id": policy.get("id")}
+
+
+def _ceiling(rule):
+    kind = rule.get("kind")
+    if kind == "block_quota":
+        return {"maximum": rule.get("amount"), "range": rule.get("maximum_amount")}.get(rule.get("comparison"))
+    if kind in ZERO_LIMIT_KINDS:
+        return rule.get("hours" if kind == "max_hours" else "maximum")
+    return None
+
+
+def _with_catalogue_numbers(line, numbers):
+    projected = {**deepcopy(line), "numbers": deepcopy(numbers)}
+    if "source_bindings" in projected:
+        projected["source_bindings"] = {key: value for key, value in projected["source_bindings"].items()
+                                         if key in numbers}
+    return projected
+
+
+def _indexed_catalogue_lines(lines):
+    return [line if source_index == index else {**line, "_source_index": line.get("_source_index", source_index)}
+            for index, (source_index, line) in enumerate(lines)]
+
+
+def _zero_limit_policy(policy):
+    """Return the mandatory at-most-zero part of a policy, if it has one."""
+    definition = policy.get("definition") or {}
+    if definition.get("overrides"):
+        definition = {**definition, "overrides": []}
+    rule = definition.get("rule") or {}
+    if rule.get("kind") != "catalogue":
+        if definition.get("severity") != "mandatory" or rule.get("kind") not in ZERO_LIMIT_KINDS:
+            return None
+        default_zero = _ceiling(rule) == 0
+        lines = definition.get("per_person") or []
+        if not lines:
+            return deepcopy({**policy, "definition": definition}) if default_zero and not definition.get("listed_only") else None
+        field = s.line_field(definition)
+        zeros = [(index, line) for index, line in enumerate(lines)
+                 if _ceiling(s.line_rule(rule, line, field)) == 0]
+        listed = definition.get("listed_only") or not default_zero
+        if not zeros and listed:
+            return None
+        projected = {**deepcopy(policy), "definition": {
+            **deepcopy(definition), "per_person": [deepcopy(line) for _, line in zeros], "listed_only": listed}}
+        if rule.get("kind") == "block_quota":
+            projected["_quota_line_indices"] = [index for index, _ in zeros]
+        return projected
+
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+    entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
+    if not entry or "max" not in entry["numbers"] or not rule.get("on", True):
+        return None
+    source = rule.get("lines") or []
+    zeros = {}
+    inherited = set()
+    for index, line in enumerate(source):
+        numbers = line.get("numbers") or {}
+        maximum = numbers.get("max") or {}
+        level = maximum.get("level", "mandatory")
+        if maximum.get("value") != 0 or level not in ("mandatory", None):
+            continue
+        slot = slot_for_number(entry, "max", rule, line, numbers)
+        if slot["kind"] not in ZERO_LIMIT_KINDS or slot["advisory"]:
+            continue
+        zeros[index] = _project_maximum(entry, rule, line)
+        if level is None:
+            inherited.add(index)
+    if not zeros:
+        return None
+    if inherited:
+        from packages.domain.rule_lines import _by_number, _broader_levels
+        donors = {index for (line, key), candidates in _broader_levels(source, _by_number(rule)).items()
+                  if line in inherited and key == "max" for index in candidates}
+        for index in donors - zeros.keys():
+            zeros[index] = {**_project_maximum(entry, rule, source[index]), "_source_default_only": True}
+    return {**deepcopy(policy), "_zero_max_projection": True, "definition": {**deepcopy(definition),
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(sorted(zeros.items()))}}}
+
+
+def _project_maximum(entry, rule, line):
+    from packages.contracts.rule_catalogue import slot_for_number
+
+    kind = slot_for_number(entry, "max", rule, line, line["numbers"])["kind"]
+    projected = _with_catalogue_numbers(line, {"max": line["numbers"]["max"]})
+    # A removed minimum or target can otherwise change which measure the maximum counts.
+    if slot_for_number(entry, "max", rule, projected, projected["numbers"])["kind"] != kind:
+        projected.setdefault("settings", {}).setdefault(kind, {})
+    return projected
+
+
+def _without_positive_overtime_cap(policy):
+    """Apply's live mandatory recheck leaves positive overtime ceilings captured."""
+    rule = policy["definition"]["rule"]
+    if rule.get("kind") != "catalogue":
+        cap = _ceiling(rule)
+        # The zero overlay carries any prohibitions from a legacy overtime quota.
+        return None if rule.get("overtime") == "only" and cap is not None else policy
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+    from packages.domain.rule_lines import _settings
+    entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
+    if not entry or "max" not in entry["numbers"]:
+        return policy
+    lines = []
+    original = rule.get("lines") or []
+    for index, line in enumerate(original):
+        numbers = line.get("numbers") or {}
+        maximum = (numbers.get("max") or {}).get("value")
+        if (maximum is not None and maximum > 0
+                and slot_for_number(entry, "max", rule, line, numbers)["kind"] == "block_quota"
+                and _settings(rule, line).get("block_quota", {}).get("overtime") == "only"):
+            number_map = {key: value for key, value in numbers.items() if key != "max"}
+            if number_map:
+                lines.append((index, _with_catalogue_numbers(line, number_map)))
+        else:
+            lines.append((index, line))
+    if [line for _, line in lines] == original:
+        return policy
+    if not lines:
+        return None
+    return {**policy, "definition": {**policy["definition"],
+                                    "rule": {**rule, "lines": _indexed_catalogue_lines(lines)}}}
+
+
+def _without_zero_limit(policy, covered_by):
+    """Remove only frozen zeros whose complete scope is also zero live."""
+    definition = policy.get("definition") or {}
+    rule = definition.get("rule") or {}
+
+    def scope(row):
+        value = row.get("definition") or {}
+        return {**{key: row.get(key) for key in ("department_id", "starts_on", "ends_on")},
+                "definition": {**value, "rule": {key: value for key, value in
+                    (value.get("rule") or {}).items() if key != "lines"}}}
+
+    # Equality proves coverage without guessing containment of condition trees.
+    if scope(policy) != scope(covered_by):
+        return deepcopy(policy)
+    if rule.get("kind") != "catalogue":
+        field = s.line_field(definition)
+        original = definition.get("per_person") or []
+        lines = [(index, line) for index, line in enumerate(original)
+                 if _ceiling(s.line_rule(rule, line, field)) != 0]
+        listed = definition.get("listed_only", False) or _ceiling(rule) == 0
+        if listed and not lines:
+            return None
+        retained = {**policy, "definition": {
+            **definition, "per_person": [line for _, line in lines], "listed_only": listed}}
+        if rule.get("kind") == "block_quota" and len(lines) < len(original):
+            # A captured quota's default still excludes people with their own block.
+            retained["_quota_template_people"] = sorted({line["person_id"] for line in original if line.get("person_id")})
+            retained["_quota_line_indices"] = [index for index, _ in lines]
+        return retained
+    live_lines = {line.get("id"): line for line in
+                  ((covered_by.get("definition") or {}).get("rule") or {}).get("lines") or []}
+    lines = []
+    for index, line in enumerate(rule.get("lines") or []):
+        live = live_lines.get(line.get("id")) or {}
+        covered = ({key: value for key, value in line.items() if key != "numbers"} ==
+                   {key: value for key, value in live.items() if key != "numbers"}
+                   and (live.get("numbers") or {}).get("max", {}).get("value") == 0
+                   and (live.get("numbers") or {}).get("max", {}).get("level", "mandatory") == "mandatory")
+        numbers = {key: deepcopy(number) for key, number in (line.get("numbers") or {}).items()
+                   if not (covered and key == "max" and number.get("value") == 0 and
+                           number.get("level", "mandatory") == "mandatory")}
+        if numbers:
+            lines.append((index, _with_catalogue_numbers(line, numbers)))
+    if not lines:
+        return None
+    return {**deepcopy(policy), "definition": {**deepcopy(definition),
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(lines)}}}
+
+
+def _mandatory_recheck_policy(policy):
+    projected = _without_positive_overtime_cap(policy)
+    if projected is not None and _zero_limit_policy(projected) is not None:
+        projected = _without_zero_limit(projected, projected)
+        # A partial live rule is additive. The captured definitions own any replacement.
+        if projected is not None and projected["definition"].get("overrides"):
+            projected = {**projected, "definition": {**projected["definition"], "overrides": []}}
+    return projected
+
+
+def _overlay_zero_limits(frozen, current, safety_ids=()):
+    """Overlay live zero ceilings without relaxing frozen draft obligations."""
+    def newest(rows):
+        result = {}
+        for row in sorted(rows, key=lambda item: (item.get("revision", 0),
+                                                   str(item.get("approved_at") or ""),
+                                                   str(item.get("created_at") or ""),
+                                                   str(item.get("id") or ""))):
+            result[row.get("id")] = row
+        return result
+
+    current_by_id = newest(current)
+    out = []
+    for policy in frozen:
+        if _zero_limit_policy(policy) is None:
+            out.append(policy)
+            continue
+        if policy.get("id") in safety_ids or s.safety_rule(policy.get("definition") or {}):
+            # Safety lines are never overridden; retain every frozen zero obligation.
+            out.append(policy)
+            continue
+        latest = current_by_id.get(policy.get("id"))
+        if (latest is None or latest.get("status") != "active" or not latest.get("active", True)
+                or _zero_limit_policy(latest) is None):
+            out.append(policy)
+            continue
+        retained = _without_zero_limit(policy, latest)
+        if retained is not None:
+            out.append(retained)
+    retained_ids = {policy.get("id") for policy in out}
+    for policy in current_by_id.values():
+        if policy.get("status") != "active" or not policy.get("active", True):
+            continue
+        zero = _zero_limit_policy(policy)
+        if zero is not None:
+            zero.update(_live_zero=True, _source_policy_id=policy.get("id"))
+            out.append(_distinct_live_policy(zero) if policy.get("id") in retained_ids else zero)
+    return out
 
 
 def _strict_value(kind, field, left, right):
@@ -262,6 +487,7 @@ def _live_safety_snapshot(db, workspace):
         "date_sets": (m.DateSet, m.DateSet.department_id.in_(department_ids)),
         "policies": (m.Policy, m.Policy.department_id.in_(department_ids)),
         "exceptions": (m.PolicyException, m.PolicyException.policy_id.in_(policy_ids)),
+        "policy_seed_lines": (m.PolicySeedLine, m.PolicySeedLine.policy_id.in_(policy_ids)),
         "scheduling_facts": (m.SchedulingFact, m.SchedulingFact.department_id.in_(department_ids)),
         # Keep retracted rows in the currency so both adding and removing a leave
         # invalidates a bound check; the evaluator still receives only active rows.
@@ -289,7 +515,7 @@ def _live_safety_snapshot(db, workspace):
                                                                "tag_members": acquired["tag_members"]}),
             **{key: acquired[key] for key in (*LIVE_QUALIFICATION_KEYS, *LIVE_QUALIFICATION_DEFINITIONS,
                                                "policies", "exceptions", "availability", "type_lead_ownership",
-                                               "departments") if key != "tags"},
+                                               "departments", "policy_seed_lines") if key != "tags"},
             "scheduling_facts": scheduling_facts}
 
 
@@ -452,14 +678,23 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                   for policy in frozen_policies}
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
+    current_safety_ids = {policy["id"] for policy in active_current_policies
+                          if s.safety_rule(policy.get("definition") or {})}
     live_policies = [policy for policy in active_current_policies
-                     if (s.safety_rule(policy.get("definition") or {}) or include_mandatory
+                     if (policy["id"] in current_safety_ids or include_mandatory
                          and (policy.get("definition") or {}).get("severity") == "mandatory") and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
     if include_mandatory:
-        replaced = {policy.get("id") for policy in live_policies}
+        filtered = [(policy, policy if policy["id"] in current_safety_ids else _mandatory_recheck_policy(policy))
+                    for policy in live_policies]
+        # A partly filtered policy still needs the captured numbers for the excluded slots.
+        replaced = {policy["id"] for policy, projected in filtered if projected is policy}
+        live_policies = [projected if projected is policy else
+                         _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
+                         for policy, projected in filtered if projected is not None]
         frozen_policies = [policy for policy in frozen_policies
-                           if policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})]
+                           if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
+                               or _zero_limit_policy(policy) is not None)]
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}
@@ -519,6 +754,11 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         latest_leadership[((policy.get("definition") or {}).get("rule") or {}).get("id")] = policy
     live_leadership = list(latest_leadership.values())
     result["policies"] = list(frozen_policies)
+    # Apply can carry a positive replacement alongside a stricter captured zero.
+    if include_mandatory:
+        retained_ids = {policy["id"] for policy in frozen_policies}
+        live_policies = [_distinct_live_policy({**policy, "_live_mandatory_recheck": True}) if policy["id"] in retained_ids
+                         and policy["id"] not in current_safety_ids else policy for policy in live_policies]
     result["policies"] += live_leadership
     result["policies"] += [policy for policy in live_policies if policy not in live_leadership]
     # A revised safety row keeps one policy id for every downstream consumer;
@@ -542,7 +782,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)
-    result["policies"] = merged
+    from packages.domain.rule_lines import seeded_policies
+    # Make migration defaults available to the zero projection without changing safety merging.
+    saved_seeds = result.get("policy_seed_lines") or []
+    live_seeds = current.get("policy_seed_lines") or []
+    result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
+        seeded_policies(current_policies, live_seeds), current_safety_ids)
+    if saved_seeds:
+        result["policy_seed_lines"] = []
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])
     for key in LIVE_QUALIFICATION_KEYS:
@@ -562,6 +809,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     live_exceptions = current.get("exceptions") or []
     result["exceptions"] = [row for row in frozen_exceptions if row.get("policy_id") in safety_ids]
     result["exceptions"] += [row for row in live_exceptions if row.get("policy_id") not in safety_ids]
+    aliases = {}
+    for policy in result["policies"]:
+        if policy.get("_live_zero") or policy.get("_live_mandatory_recheck"):
+            source_id = policy["_source_policy_id"]
+            if source_id != policy["id"]:
+                aliases.setdefault((source_id, policy["revision"]), []).append(policy["id"])
+    result["exceptions"] += [{**row, "policy_id": alias} for row in live_exceptions
+                             for alias in aliases.get((row.get("policy_id"), row.get("policy_revision")), ())]
     result["scheduling_facts"] = current.get("scheduling_facts", result.get("scheduling_facts", []))
     result["people"] = {ident: dict(row) for ident, row in (current.get("people") or {}).items()}
     result["_live_safety_staleness"] = {
@@ -610,7 +865,8 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     saved = latest(db, workspace.id)
     require(saved is not None and saved.id == row.id, "BASELINE_CAPTURE_FAILED",
             "The draft baseline could not be saved; scheduling is unavailable", 409)
-    verify(saved)
+    verify_in_transaction(db, saved)
+    baseline_rows(db)[(workspace.id, workspace.revision)] = saved
     return saved
 
 
@@ -631,6 +887,36 @@ def verify(row):
     require(set(row.included_sources) <= set(SOURCE_NAMES), "BASELINE_INVALID",
             "The saved draft baseline contains an unknown source", 409)
     return payload
+
+
+def baseline_rows(db):
+    transaction = db.get_transaction()
+    if db.info.get('_verified_baseline_transaction') is not transaction:
+        db.info['_verified_baseline_transaction'] = transaction
+        db.info.pop('_baseline_rows', None)
+        db.info.pop('_verified_baselines', None)
+        db.info.pop('_verified_baseline_keys', None)
+    return db.info.setdefault('_baseline_rows', {})
+
+
+def verify_in_transaction(db, row):
+    """Return a verified payload for read-only use by this transaction."""
+    if row is None:
+        return None
+    if object_session(row) is not db or not db.in_transaction() or row in db.dirty:
+        return verify(row)
+    baseline_rows(db)
+    cache = db.info.setdefault('_verified_baselines', OrderedDict())
+    keys = db.info.setdefault('_verified_baseline_keys', set())
+    key = row.id, row.payload_hash
+    if key not in cache:
+        cache[key] = json_value(row.canonical_payload) if key in keys else verify(row)
+        keys.add(key)
+    cache.move_to_end(key)
+    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
+    while len(cache) > settings.verified_baseline_cache_entries:
+        cache.popitem(last=False)
+    return cache[key]
 
 
 def verify_generation_snapshot(db, workspace, snapshot):
@@ -656,8 +942,10 @@ def generation_manifest(row, snapshot, *, job_id=None, requester_id=None, job=No
     payload = verify(row)
     info = projection(row)
     source_hashes = {source: group_hash(payload, source) for source in info["included_sources"]}
-    input_manifest = snapshot.get("input_manifest") or {}
-    result = result or {}
+    from packages.domain.input_manifest import bind_generation_admission
+    from .serialization import job_result_with_reconciliation
+    input_manifest = bind_generation_admission(snapshot.get("input_manifest") or {}, snapshot)
+    result = job_result_with_reconciliation(job, result) or {}
     result_copy = {key: value for key, value in result.items() if key != "generation_manifest"}
     result_hash = snapshot_hash(result_copy) if result_copy else None
     candidate_hash = result.get("candidate_hash") or (snapshot_hash({key: result.get(key) for key in ("additions", "removals")})
@@ -731,8 +1019,8 @@ def baseline_reference(row):
     }
 
 
-def attach(db, workspace, value):
-    row = latest(db, workspace.id)
+def attach(db, workspace, value, *, baseline=None):
+    row = latest(db, workspace.id) if baseline is None else baseline
     if row is None:
         return value
     info = projection(row)

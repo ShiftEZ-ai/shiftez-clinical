@@ -341,11 +341,12 @@ def _tagged(data, rows):
     return with_tags({**preview, "policies": rows})["policies"]
 
 
-def _both(row, would, *, same=None):
-    """[(k, n, people)]: lines of equal tier that both apply to people today (neither is more specific)."""
+def _both(row, would, *, same=None, include_safety=False):
+    """[(k, n, people)]: lines that both apply to people today."""
     from packages.domain.rule_lines import both_apply
     lines = row["definition"]["rule"].get("lines") or []
-    found = ((k, n, len(would.get(lines[k]["id"], set()) & would.get(lines[n]["id"], set()))) for k, n in both_apply(row, same=same))
+    pairs = both_apply(row, same=same, include_safety=include_safety)
+    found = ((k, n, len(would.get(lines[k]["id"], set()) & would.get(lines[n]["id"], set()))) for k, n in pairs)
     return [x for x in found if x[2]]
 
 
@@ -359,7 +360,7 @@ def explained_conflicts(data, *, starts_on=None, ends_on=None):
     from datetime import date
     import uuid
     from packages.domain.conditions import scope_applies
-    from packages.domain.rule_lines import outranking, scope_of
+    from packages.domain.rule_lines import scope_of
     from packages.domain.time import local_midnight
     from packages.domain.validation import within_dates
 
@@ -375,16 +376,13 @@ def explained_conflicts(data, *, starts_on=None, ends_on=None):
     if not rows:
         return []
     tagged = _tagged(data, rows)
-    would, _ = _reach(data, tagged, a, b)
+    would, _ = _reach(data, tagged, a, b, include_held=False)
     focus = set(data.get('focus_ids') or ())
     people = tuple(sorted(data.get('people') or {}))
     conflicts = []
     for row in sorted(tagged, key=lambda item: item['id']):
         lines = row['definition']['rule'].get('lines') or []
-        pairs = {(left, right) for left, winners in outranking(row).items()
-                 for right in winners if would.get(lines[left]['id'], set()) & would.get(lines[right]['id'], set())}
-        pairs.update((left, right) for left, right, _ in _both(row, would))
-        for left, right in sorted(pairs):
+        for left, right, _ in _both(row, would, include_safety=True):
             first_line, second_line = lines[left], lines[right]
             line_ids = [first_line['id'], second_line['id']]
             line_refs = [left + 1, right + 1]
@@ -649,6 +647,19 @@ def _line_overlaps(row, would, *, outranked=None, both=None):
     return out
 
 
+def _line_replaces(row, would):
+    """Per winning line: the broader lines and numeric slots replaced in the resolver's precedence partition."""
+    from packages.domain.rule_lines import outranking_by_number
+    lines, replaced = row['definition']['rule'].get('lines') or [], {}
+    for (n, key), winners in outranking_by_number(row).items():
+        for w in winners:
+            loser, winner = lines[n]['id'], lines[w]['id']
+            if would.get(loser, set()) & would.get(winner, set()):
+                replaced.setdefault(winner, {}).setdefault(loser, []).append(key)
+    return {winner: [{'replaced_line_id': loser, 'numbers': sorted(keys)} for loser, keys in broader.items()]
+            for winner, broader in replaced.items()}
+
+
 def _gives_way(line_overlaps):
     """How many lines give way to a more specific one."""
     return sum(any(o["winner"] not in (line, None) for o in items) for line, items in line_overlaps.items())
@@ -870,13 +881,15 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
                                                                          'created_by_name': authors.get(waiting.get('created_by')),
                                                                          "check": {k: found[k] for k in ("duplicates", "overlaps", "warnings", "issues", "counting_attention")},
                                                                          "line_specificity": found.get('line_specificity', {}),
-                                                                         'relations': found.get('relations', {})},
+                                                                         'relations': found.get('relations', {}),
+                                                                         'line_replaces': found['line_replaces']},
                         "line_specificity": {line['id']: tier(line) for line in tagged[rule['id']]['definition']['rule']['lines']} if rule else {},
                         "line_validity": {line['id']: line_validity(rule, line, day) for line in lines} if rule else {},
                         "reach": {line["id"]: len(reach.get(line["id"], ())) for line in lines},
                         # The rule's reach: each person once, however many of its lines hold for them.
                         "people": len(set().union(*(reach.get(line["id"], ()) for line in lines))),
                         "line_overlaps": overlaps, "overlaps": _gives_way(overlaps),
+                        'line_replaces': _line_replaces(tagged[rule['id']], would) if rule else {},
                         # Blank inherits: the numbers each line takes from a broader line (shown, never hidden).
                         "inherited": inherited(tagged[rule["id"]], would) if rule else {}})
         if entry['id'] == 'fair_share':
@@ -948,7 +961,7 @@ def _catalogue_stamp(db, actor):
             m.RuleAcknowledgement.department_id == actor.department_id)).one()
     # SQLAlchemy returns aggregate rows as Row objects; convert the workspace
     # row to primitives before using the stamp in the canonical digest.
-    return ('rules-in-force-v2', department.revision, department.catalogue_revision, organisation.revision,
+    return ('rules-in-force-v3', department.revision, department.catalogue_revision, organisation.revision,
             organisation.input_revision, organisation.availability_revision, tuple(workspaces), tuple(policies),
             tuple(acknowledgements))
 
@@ -1188,7 +1201,7 @@ def _numbers_text(line):
     return ", ".join(f"{k} {n['value']:g}" if n.get("value") is not None else k for k, n in (line.get("numbers") or {}).items()) or "no number"
 
 
-def check(db, actor, catalogue_id, body, overlap_fingerprints=False):
+def check(db, actor, catalogue_id, body):
     """What a catalogue rule with these lines would do, before anything is saved: duplicates (the same line twice on
     overlapping dates and days), overlaps (a more specific line outranking another, for how many people today, and what
     changes), warnings (a narrower safety line weaker than a broader one: the broader still binds; lines of equal tier
@@ -1201,10 +1214,9 @@ def check(db, actor, catalogue_id, body, overlap_fingerprints=False):
         from .leadership import conversion_plan
         preview = conversion_plan(db, actor, s.LegacyLeadCheckInput.model_validate(
             {'legacy_effective_on': body['legacy_effective_on']}).legacy_effective_on)
-        found = _check(db, actor, entry, {**body, 'lines': preview['lines']},
-                       overlap_fingerprints=overlap_fingerprints, reach_preview=True)
+        found = _check(db, actor, entry, {**body, 'lines': preview['lines']}, reach_preview=True)
         return {**found, **preview}
-    result = _check(db, actor, entry, body, overlap_fingerprints=overlap_fingerprints, reach_preview=True)
+    result = _check(db, actor, entry, body, reach_preview=True)
     if body.get('include_affected_drafts') and not result['issues'] and not result['duplicates']:
         from .rule_effects import affected_workspaces
         current = catalogue_version(db, actor, catalogue_id, 'active')
@@ -1221,7 +1233,7 @@ def check(db, actor, catalogue_id, body, overlap_fingerprints=False):
     return result
 
 
-def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reach_preview=False, *, policy_ends_on=None, stored=False):
+def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_ends_on=None, stored=False):
     from pydantic import ValidationError
     from packages.domain.rule_lines import _overlap, contradictions, counting_attention, inherited, measure, outranking, outranking_by_number, tier, when
     from packages.domain.solver_rules import definition_issues
@@ -1243,7 +1255,7 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
     except ValidationError as error:
         if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
             raise
-        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {}, "issues": [
+        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {}, "issues": [
             ({"field": ("definition.rule." + ".".join(map(str, e["loc"]))[len("rule.catalogue."):]),
               "message": e["msg"].removeprefix("Value error, ")}
              if e['type'] == 'invalid_number_range' else
@@ -1258,7 +1270,7 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
     duplicates = [{"lines": [k, n], "line_ids": [lines[k]["id"], lines[n]["id"]],
                    "message": f"Lines {k + 1} and {n + 1} are the same line (what they count, who, where, days and dates overlap)"}
                   for k, n in duplicate_pairs]
-    overlaps, warnings, line_overlaps, inherited_now, fingerprints = [], [], {}, {}, {}
+    overlaps, warnings, line_overlaps, inherited_now, line_replaces = [], [], {}, {}, {}
     details = {'lines': []}
     if not issues and not duplicates:
         row = {"id": "00000000-0000-4000-9000-000000000000", "name": entry["name"], "kind": "catalogue", "status": "active", "active": True,
@@ -1280,7 +1292,7 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
         try:
             check_definition_count_budget(data, definition)
         except ValueError as error:
-            return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "warnings": [], "counting_attention": counting, "dated": dated, "inherited": {},
+            return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": counting, "dated": dated, "inherited": {},
                     "issues": [{"field": "rule.lines", "code": "INVALID_RULE_DEFINITION", "message": str(error)}]}
         [row] = _tagged(data, [row])  # a #tag who is a group, as every check reads it
         would, _ = _reach(data, [row], a, b, include_held=False)
@@ -1317,7 +1329,7 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
                        'message': f'Lines {k + 1} and {n + 1} are the same line (what they count, who, where, days and dates overlap)'}
                       for k, n in duplicate_pairs]
         if issues or duplicates:
-            return {'duplicates': duplicates, 'overlaps': [], 'line_overlaps': {}, 'warnings': [],
+            return {'duplicates': duplicates, 'overlaps': [], 'line_overlaps': {}, 'line_replaces': {}, 'warnings': [],
                     'counting_attention': counting, 'dated': dated, 'inherited': {}, 'issues': issues,
                     'lines': lines, 'relations': {}, 'line_specificity': {}}
         row = {**row, 'definition': definition}
@@ -1343,14 +1355,7 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
                     'message': staffing_pool_message(entry['name'], minimum['value'], pool)})
         outranked, both = outranking(row), _both(row, would, same=duplicate_pairs if rule == definition['rule'] else None)
         line_overlaps = _line_overlaps(row, would, outranked=outranked, both=both)
-        if overlap_fingerprints:  # propose: the Needs attention overlap each line that gives way would be, once in force
-            from packages.domain.rule_lines import attention, fingerprint
-            # As propose stores them: earlier lines keep their stored form; new lines are stored checked, with the
-            # settings and levels they inherit, so Needs attention later computes this same fingerprint.
-            stored = {line["id"]: line if line["id"] in previous_ids else checked
-                      for line, checked in zip(body["lines"], lines)}
-            fingerprints = {x["facts"]["loser"]: fingerprint(x, stored) for x in attention([row], would, independence.today(db, actor.department_id))
-                            if x["kind"] == "overlap"}
+        line_replaces = _line_replaces(row, would)
         replaced = {}
         for line_index, k in outranking_by_number(row):
             replaced.setdefault(line_index, set()).add(k)
@@ -1380,35 +1385,43 @@ def _check(db, actor, entry, body, people=None, overlap_fingerprints=False, reac
             # Where, days, hours and what a line counts; when it counts; how specific its who is.
             measures = [measure(rule, line) for line in tagged]
             keys = [(s.line_key(catalogue_id, {**line, "who": None}), json.dumps(m, sort_keys=True, default=str)) for line, m in zip(tagged, measures)]
+            safety_kinds = [{key: slot_for_number(entry, key, rule, line, line['numbers'])['kind']
+                             for key in line['numbers'] if key in ('min', 'max')} for line in tagged]
             dates, tiers, same = [when(rule, line) for line in tagged], [tier(line) for line in tagged], {}
             for n, key in enumerate(keys):
                 same.setdefault(key, []).append(n)
             for n, line in enumerate(lines):
                 for k in same[keys[n]]:
                     other = lines[k]
-                    if tiers[n] <= tiers[k] or not _overlap(dates[n], dates[k]):
+                    if (tiers[n] <= tiers[k] or not _overlap(dates[n], dates[k])
+                            or not (would.get(line['id'], set()) & would.get(other['id'], set()))):
                         continue
-                    # A minimum of people on a session counts only the people its who names: a narrower minimum is
-                    # another requirement, not a weaker one. Every other narrower number is weaker when it binds less.
-                    weaker = [key for key, number in line["numbers"].items() if key in other["numbers"] and number["value"] is not None
-                              and (key == "min" and "minimum_cover" not in measures[n] and number["value"] < other["numbers"][key]["value"]
-                                   or key == "max" and number["value"] > other["numbers"][key]["value"])]
+                    # A narrower minimum cover counts a different pool, so it is a separate requirement.
+                    weaker = []
+                    for key, kind in safety_kinds[n].items():
+                        if kind not in s.NEVER_OVERRIDDEN or kind != safety_kinds[k].get(key):
+                            continue
+                        value, broader = line['numbers'][key]['value'], other['numbers'][key]['value']
+                        if value is None or broader is None:
+                            continue
+                        if (key == 'min' and kind != 'minimum_cover' and value < broader
+                                or key == 'max' and value > broader):
+                            weaker.append(key)
                     if weaker:
                         warnings.append({"kind": "weaker", "line": n, "line_id": line["id"], "broader": k, "other": k, "other_id": other["id"],
                                          "message": f"Line {n + 1} is narrower but weaker than line {k + 1} ({', '.join(weaker)}): "
                                                     f"safety lines all apply, so line {k + 1} still binds"})
-    return {"duplicates": duplicates, "overlaps": overlaps, "line_overlaps": line_overlaps, "warnings": warnings, "counting_attention": counting, "issues": issues, "dated": dated,
+    return {"duplicates": duplicates, "overlaps": overlaps, "line_overlaps": line_overlaps, "line_replaces": line_replaces, "warnings": warnings, "counting_attention": counting, "issues": issues, "dated": dated,
             'relations': line_relations(row, would) if not issues and not duplicates else {},
             'lines': lines,
             "inherited": inherited_now, **({'reach_details': details} if reach_preview else {}),
-            "line_specificity": {line['id']: tier(line) for line in tagged} if not issues and not duplicates else {},
-            **({"overlap_fingerprints": fingerprints} if overlap_fingerprints else {})}
+            "line_specificity": {line['id']: tier(line) for line in tagged} if not issues and not duplicates else {}}
 
 
 def propose(db, actor, command):
     """A new version of a catalogue rule (or its first), waiting for an independent approver; activating it retires the
     version before, retiring it brings that back. Refused: a second waiting proposal (409), a stale version (409), the
-    same line twice (422), overlaps not acknowledged (409)."""
+    same line twice (422). Ordered overrides need no acknowledgement."""
     from packages.contracts.rule_catalogue import catalogue_entry
     from packages.domain.rule_lines import expand
     from . import independence
@@ -1473,16 +1486,13 @@ def propose(db, actor, command):
                     line["id"], True))
     balance = (value.balance_between_people if 'balance_between_people' in value.model_fields_set
                else current.definition.get('balance_between_people', True) if current else True)
-    found = check(db, actor, value.catalogue_id, {**body, 'balance_between_people': balance}, overlap_fingerprints=True)
+    found = check(db, actor, value.catalogue_id, {**body, 'balance_between_people': balance})
     for line, checked_line in zip(body['lines'], found.get('lines', [])):
         if line['id'] not in previous:
             line['numbers'] = checked_line['numbers']
             line['settings'] = checked_line['settings']
-    fingerprints = found.pop("overlap_fingerprints", {})
     require(not found["issues"], "SOLVER_RULE_INCOMPATIBLE", "Adjust the highlighted lines before proposing", 422, found["issues"])
     require(not found["duplicates"], "DUPLICATE_LINES", "Two lines are the same line; remove one or change its dates or days", 422, found["duplicates"])
-    unacknowledged = [o for o in found["overlaps"] if o["line_id"] not in set(value.acknowledged_overlaps)]
-    require(not unacknowledged, "OVERLAPS_UNACKNOWLEDGED", "Some lines give way to more specific ones; review and acknowledge them", 409, unacknowledged)
     validated = s.PolicyDefinition.model_validate({"legacy_lead_conversion": conversion, "rule": {"kind": "catalogue", "id": value.catalogue_id, **body},
                                                     'balance_between_people': balance,
                                                     "merged_ids": [current.id] if current else [],
@@ -1512,7 +1522,5 @@ def propose(db, actor, command):
     db.add(row)
     db.flush()
     history(db, actor, "policy", row, value.reason)
-    # The overlaps acknowledged here are the same acknowledgement Needs attention shows once the version is in force.
-    _acknowledge(db, actor, [fingerprints[i] for i in value.acknowledged_overlaps if i in fingerprints], f"When proposed: {value.reason}"[:500])
     return {"record": record(row), "check": found,
             "message": "Proposed; it applies once another authorised person approves it (retiring it later brings back the version before)."}

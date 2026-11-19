@@ -51,6 +51,26 @@ def converted_general(h):
     return next(e['rule'] for e in page['entries'] if e['id'] == 'workload_limit')
 
 
+def test_migrated_sources_that_both_apply_report_no_line_replacement(h):
+    everyone = h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
+    ranked = h.policy({'kind': 'max_duties', 'maximum': 3, 'window': 'week'},
+                      scope={'category_ids': [h.seed['category']]})
+    convert(h)
+    entry = next(e for e in h.get('coordinator', '/api/rules/catalogue?version=2')['entries'] if e['id'] == 'workload_limit')
+    lines = entry['rule']['definition']['rule']['lines']
+    sources = [row for row in lines if (row.get('source_bindings', {}).get('max') or {}).get('policy_id') in {everyone['id'], ranked['id']}]
+    assert len(sources) == 2
+    assert len({row['source_bindings']['max']['precedence_partition'] for row in sources}) == 2
+    assert entry['line_replaces'] == {} and entry['line_overlaps'] == {}
+    from packages.domain.rule_lines import expand
+    expanded = expand(entry['rule'])
+    assert {row['definition']['rule']['maximum'] for row in expanded if row['definition']['rule']['kind'] == 'max_duties'} == {3, 5}
+    checked = h.client('coordinator').post('/api/rules/catalogue/workload_limit/check', json={
+        'catalogue_version': 2, 'lines': lines}).json()
+    assert checked['issues'] == []
+    assert checked['line_replaces'] == {} and checked['overlaps'] == []
+
+
 def test_converted_obligation_cannot_acquire_an_unmapped_numeric_slot(h):
     current = converted_general(h)
     lines = copy.deepcopy(current['definition']['rule']['lines'])

@@ -19,7 +19,6 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
     failed, report_failure = None, False
     with transaction(reader) as db:
         W, D, O, C = m.Workspace, m.Department, m.Organisation, m.WorkspaceReadProjection
-        source = source_identity(db)
         compiler = digest(toolchain(quota_policy_limit()))
         fields = {'input': O.input_revision, 'availability': O.availability_revision,
                   'workspace': W.revision, 'content': W.content_revision, 'department': D.revision}
@@ -46,6 +45,7 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
         workspace = db.scalar(query)
         if workspace is None:
             return False
+        source = source_identity(db)
         if engine.dialect.name == 'postgresql':
             from sqlalchemy.dialects.postgresql import insert
         else:
@@ -100,6 +100,11 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
             revisions['failure'] = {'identity': identity, 'error_code': type(exc).__name__,
                 'projection_kind': stage, 'error_location': location, 'retry_seconds': retry_seconds,
                 'retry_at': m.now().timestamp() + retry_seconds}
+        if db.info.get('read_projection_store_skipped'):
+            # A reader that lost the SQLite write race cannot publish a successful warm receipt.
+            if blocking:
+                raise RuntimeError('Read projection warming could not store a projection')
+            return False
         value = dict(workspace_id=workspace.id, audience=CANONICAL_AUDIENCE, kind='warm', stamp=stamp, value=revisions)
         db.execute(insert(C).values(**value).on_conflict_do_update(
             index_elements=['workspace_id', 'audience', 'kind'], set_={'stamp': stamp, 'value': revisions}))

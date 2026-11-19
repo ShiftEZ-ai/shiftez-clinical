@@ -9,6 +9,7 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.api.services.rule_catalogue import attention_counts
+from .test_rule_catalogue_conflicts import lines_for
 from .test_browser import add_filter, browser, live_server, navigate, sign_in, route_fetch  # noqa: F401
 from .rules_support import rules_by_family
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, selection, set_numbers, weekly
@@ -21,11 +22,10 @@ def entry(h, key, role='approver'):
     return next(e for e in h.get(role, '/api/rules/catalogue')['entries'] if e['id'] == key)
 
 
-def propose_all(page, text, acknowledge=False):
+def propose_all(page, text):
     page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
     dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-    if acknowledge:
-        dialog.get_by_label('I have read which lines give way and that is intended').check()
+    expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
     dialog.get_by_label('Reason', exact=True).fill(text)
     dialog.get_by_role('button', name='Propose', exact=True).click()
     expect(dialog).to_have_count(0)
@@ -45,7 +45,7 @@ def test_lines_selected_across_rules_change_together_and_an_approver_approves(br
         rules_by_family(h, page)  # Group: Family (Question, A–F, is the default)
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Expand all rules').click()
+        main.get_by_role('button', name='All rules', exact=True).click()
         expect(page.locator('.topbar .page-actions')).to_have_attribute('data-fitted', '1')
         main.get_by_label('Select line 1 of Duties per week').check()
         main.get_by_label('Select line 1 of People per session').check()
@@ -59,15 +59,15 @@ def test_lines_selected_across_rules_change_together_and_an_approver_approves(br
         shot(page, f'rules-selected-{width}-{scheme}')
         set_numbers(page, max=4)  # checked by the server before it is applied
 
-        expect(main.locator('tr.rt-line.rc-changed')).to_have_count(2)
-        expect(main.locator('tr.rt-line.rc-changed').first).to_contain_text('≤ 4 Mandatory')
+        expect(main.locator('li.rt-ln.rc-changed')).to_have_count(2)
+        expect(main.locator('li.rt-ln.rc-changed').first.locator('.rt-ln-num')).to_contain_text('≤ 4')
         expect(page.locator('.app-footer')).to_contain_text('2 changes not yet proposed')
-        expect(main.locator('tr.rt-rule').filter(has_text='Duties per week')).to_contain_text('1 change')
+        expect(main.locator('li.rt-item').filter(has_text='Duties per week')).to_contain_text('1 change')
         expect(page.locator('.topbar').get_by_role('button', name='Propose 2 changes', exact=True)).to_be_in_viewport(ratio=1)
         shot(page, f'rules-changed-actions-{width}-{scheme}')
         # One proposal per rule, sent together; the line for everyone still gives way to Alex Morgan's.
-        propose_all(page, 'Busier winter', acknowledge=True)
-        expect(main.locator('tr.rt-rule').filter(has_text='Waiting for approval')).to_have_count(2)
+        propose_all(page, 'Busier winter')
+        expect(main.locator('li.rt-item').filter(has_text='Waiting for approval')).to_have_count(2)
         expect(page.locator('.topbar').get_by_role('button', name='Propose', exact=True)).to_be_disabled()
     finally:
         context.close()
@@ -127,7 +127,7 @@ def test_a_line_opens_beside_the_table_moves_with_the_arrows_and_keeps_an_edit(b
         # The change is kept with the Rules page: the list counts it, and coming back finds it.
         main.get_by_role('button', name='← Rules').click()
         expect(page.locator('.app-footer')).to_contain_text('2 changes not yet proposed')
-        main.locator('tr.rt-rule').get_by_role('button', name='Duties per week', exact=True).click()  # within the Rules page: no question
+        main.locator('li.rt-item').get_by_role('button', name='Duties per week', exact=True).click()  # within the Rules page: no question
         expect(main.locator('tr[data-row]').filter(has_text='Alex Morgan').get_by_label(re.compile('^Max: '))).to_have_text('2 Mandatory')
         # Remove line (press twice), then Esc closes the panel.
         main.locator('tr[data-row]').filter(has_text='Alex Morgan').locator('td[data-col="where"]').click()
@@ -141,8 +141,7 @@ def test_a_line_opens_beside_the_table_moves_with_the_arrows_and_keeps_an_edit(b
 
 
 def test_exact_mandatory_line_reads_exactly_in_its_rule_row(browser, live_server, h):
-    """The exact wording is the server's (rule_explainer, 29fd37b97): the row shows its sentence; the line's numbers
-    stay the two bounds as stored."""
+    """the one-row Rules list keeps the row to one count line and leaves both stored bounds visible when opened."""
     flag(h)
     catalogue_rule(h, 'duties_per_month', [line({
         'min': {'value': 16, 'level': 'mandatory'},
@@ -151,10 +150,11 @@ def test_exact_mandatory_line_reads_exactly_in_its_rule_row(browser, live_server
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
-        item = page.locator('tr.rt-rule').filter(has_text='Duties per month')
-        expect(item.locator('.rt-sentence')).to_contain_text('exactly 16 duties')  # the row's one sentence (cf5b4115f)
-        page.get_by_role('button', name='Open Duties per month').click()
-        expect(page.locator('tr.rt-line .rule-num')).to_have_text(re.compile(r'^16\D+16\s+Mandatory$'))
+        item = page.locator('li.rt-item').filter(has_text='Duties per month')
+        expect(item.locator('.rt-sentence')).to_have_count(0)
+        expect(item.locator('.rt-meta')).to_contain_text('1 line')
+        page.get_by_role('button', name='Duties per month lines').click()
+        expect(page.locator('li.rt-ln .rt-ln-num')).to_contain_text(re.compile(r'16\D+16'))
     finally:
         context.close()
 
@@ -170,9 +170,10 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
                                            line({'max': {'value': 0, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex on leave')])
     catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}}, ends_on=str(today + timedelta(days=11)))])
     found = h.get('coordinator', '/api/rules/catalogue')['attention']
-    assert [(x['kind'], x['fixes'][0]['kind']) for x in found] == [('overlap', 'acknowledge'), ('inherits', 'none'), ('ending', 'acknowledge')]
-    # The overlap was acknowledged when it was proposed (the same acknowledgement): it is under Acknowledged.
-    assert [bool(x['acknowledged']) for x in found] == [True, False, False]
+    assert [(x['kind'], x['fixes'][0]['kind']) for x in found] == [('inherits', 'none'), ('ending', 'acknowledge')]
+    assert all(x['acknowledged'] is None for x in found)
+    ending_issue = next(x for x in found if x['kind'] == 'ending')
+    h.command('coordinator', 'rule.acknowledge', {'fingerprints': [ending_issue['fingerprint']], 'note': 'End date reviewed'})
     context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
@@ -180,43 +181,42 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         main = page.locator('#main')
-        # RU-02 counts lines: the inherits issue names Alex's line and the Everyone line, the ending issue its own line.
-        # F-R1: said once, on the saved-view button (one warning icon), not again in the footer.
-        expect(main.locator('button.dt-saved .dt-view-warn')).to_have_text('3 lines need attention')
+        # RU-02 counts lines: the inherits issue names Alex's line and the Everyone line (the ending issue is
+        # acknowledged above). F-R1: said once, on the saved-view button (one warning icon), not again in the footer.
+        expect(main.locator('button.dt-saved .dt-view-warn')).to_have_text('2 lines need attention')
         expect(main.locator('button.dt-saved .dt-view-warn svg')).to_have_count(1)
         expect(page.locator('.app-footer')).not_to_contain_text('need attention')
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Acknowledged')).click()
         acked = main.locator('tr.rt-issue')
         expect(acked).to_have_count(1)
-        expect(acked).to_contain_text('When proposed: Catalogue fixture')
+        expect(acked).to_contain_text('End date reviewed')
         acked.get_by_role('button', name=re.compile('^Take back')).click()  # back to Needs attention, for everyone
         expect(main.get_by_role('heading', name='Nothing acknowledged')).to_be_visible()
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
         rows = main.locator('tr.rt-issue')
-        expect(rows).to_have_count(3)
-        expect(rows.nth(0)).to_contain_text('Line 1 gives way to line 2 on its max, for 1 person; its other numbers still hold for them')
-        expect(rows.nth(0)).to_contain_text('Let line 2 inherit its max')  # the other way
-        conflict = rows.nth(1)
+        expect(rows).to_have_count(2)
+        expect(rows.filter(has_text='gives way')).to_have_count(0)
+        conflict = rows.nth(0)
         expect(conflict).to_contain_text('Line 2 inherits min 1 from line 1, which contradicts its own numbers')
         expect(conflict).to_contain_text('★ Recommended')
         expect(conflict).to_contain_text('Give line 2 no min (None)')
-        expect(rows.nth(2)).to_contain_text('(10 days)')
+        expect(rows.nth(1)).to_contain_text('(10 days)')
         shot(page, f'needs-attention-{width}-{scheme}')
         # Select all (the header box), Apply recommended: None goes into the draft, the others are acknowledged.
         main.get_by_label('Select every issue shown').check()
         selection(page).get_by_role('button', name='Apply recommended').click()
         dialog = page.get_by_role('dialog', name='Apply recommended fixes')
-        expect(dialog).to_contain_text('2 issues will be acknowledged for everyone now')
+        expect(dialog).to_contain_text('1 issue will be acknowledged for everyone now')
         expect(dialog).to_contain_text('1 fix will be staged locally')
         dialog.get_by_role('button', name='Apply', exact=True).click()
         expect(main.get_by_text('Nothing needs attention')).to_be_visible()
         expect(page.locator('.app-footer')).to_contain_text('1 change not yet proposed')
-        propose_all(page, 'No monthly minimum while Alex is on leave', acknowledge=True)
+        propose_all(page, 'No monthly minimum while Alex is on leave')
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile(r'^All rules\b')).click()
-        expect(main.locator('tr.rt-rule').filter(has_text='Duties per month')).to_contain_text('Waiting for approval')
+        expect(main.locator('li.rt-item').filter(has_text='Duties per month')).to_contain_text('Waiting for approval')
     finally:
         context.close()
     assert not errors
@@ -235,11 +235,11 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per month').click()
-        alex = main.locator('tr.rt-line').filter(has=page.locator('.rp.person'))
-        expect(alex.locator('.rule-num')).to_have_text('1↰ – 10 Mandatory')
+        main.get_by_role('button', name='Duties per month lines').click()
+        alex = main.locator('li.rt-ln').filter(has=page.locator('.rp.person'))
+        expect(alex.locator('.rt-ln-num .rule-num')).to_have_text('1↰ – 10 duties')  # the number and its measure, one phrase
         expect(alex.locator('.rc-inh')).to_have_attribute('data-tip', 'Inherited from Everyone · All clinics')
-        main.locator('tr.rt-rule').get_by_role('button', name='Duties per month', exact=True).click()
+        main.locator('li.rt-item').get_by_role('button', name='Duties per month', exact=True).click()
         row = main.locator('tr[data-row]').filter(has_text='Alex line')
         expect(row.get_by_label(re.compile('^Min: '))).to_have_text('1↰ Mandatory')
         row.locator('td[data-col="who"]').click()
@@ -252,7 +252,7 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
         expect(row.get_by_label(re.compile('^Min: '))).to_have_text('None')
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-        dialog.get_by_label('I have read which lines give way and that is intended').check()
+        expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
         dialog.get_by_label('Reason', exact=True).fill('No minimum for Alex')
         dialog.get_by_role('button', name='Propose', exact=True).click()
         expect(main.locator('.rc-waiting')).to_be_visible()
@@ -266,6 +266,10 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
 def test_read_only_roles_read_the_database_and_needs_attention_without_changing_anything(browser, live_server, h, role):
     flag(h)
     weekly(h)
+    _, groups = lines_for(h, 'tag and rank')
+    catalogue_rule(h, 'duties_per_month', groups)
+    both = next(x for x in h.get('coordinator', '/api/rules/catalogue')['attention'] if x['kind'] == 'both')
+    h.command('coordinator', 'rule.acknowledge', {'fingerprints': [both['fingerprint']], 'note': 'Group conflict reviewed'})
     today = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
     catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}},
                    ends_on=str(today + timedelta(days=11)))])
@@ -274,26 +278,26 @@ def test_read_only_roles_read_the_database_and_needs_attention_without_changing_
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per week').click()
-        expect(main.locator('tr.rt-line')).to_have_count(2)
+        main.get_by_role('button', name='Duties per week lines').click()
+        expect(main.locator('li.rt-ln')).to_have_count(2)
         expect(main.locator('input.bulk-check')).to_have_count(0)
         expect(main.get_by_role('button', name=re.compile('^\\+ New line'))).to_have_count(0)
         # A read-only role reads On / Off, not a switch it cannot use (U-19).
         expect(page.get_by_role('switch', name='Duties per week on or off')).to_have_count(0)
-        expect(main.locator('tr.rt-rule').filter(has_text='Duties per week').locator('.rt-state')).to_have_text('On')
+        expect(main.locator('li.rt-item').filter(has_text='Duties per week').locator('.rt-state')).to_have_text('On')
         expect(page.locator('.topbar').get_by_role('button', name=re.compile('^Propose'))).to_have_count(0)
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
         expect(main.locator('tr.rt-issue')).to_have_count(1)
         expect(main.locator('.rt-choice')).to_have_text('Let it end')
         expect(main.locator('.rt-recommended-action, .rt-fixes button')).to_have_count(0)
-        # The overlap its proposer acknowledged: read with who and when, never taken back from here.
+        # A reviewed equal-tier conflict: read with who and when, never taken back from here.
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Acknowledged')).click()
         expect(main.locator('tr.rt-issue')).to_have_count(1)
         expect(main.locator('tr.rt-issue')).to_contain_text('★ Recommended')
-        expect(main.locator('tr.rt-issue td.rt-acked')).to_contain_text('When proposed: Catalogue fixture')
-        expect(main.locator('.rt-choice')).to_have_text('Keep lines')
+        expect(main.locator('tr.rt-issue td.rt-acked')).to_contain_text('Group conflict reviewed')
+        expect(main.locator('.rt-choice')).to_have_text('Keep both')
         expect(main.get_by_role('button', name=re.compile('^(Apply|Take back)'))).to_have_count(0)
         expect(main.locator('.rt-recommended-action, .rt-fixes button')).to_have_count(0)
         assert h.get('auditor', '/api/rules/catalogue') == before
@@ -345,8 +349,8 @@ def test_an_empty_group_is_kept_one_issue_lists_every_blocked_draft_and_clinics_
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Hours per week').click()
-        expect(main.locator('tr.rt-line .rp').filter(has_text=re.compile('^Can work at '))).to_have_count(1)
+        main.get_by_role('button', name='Hours per week lines').click()
+        expect(main.locator('li.rt-ln .rp').filter(has_text=re.compile('^Can work at '))).to_have_count(1)
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
         nobody = main.locator('tr.rt-issue').filter(has_text='Keep off')
@@ -444,17 +448,20 @@ def test_keyboard_focus_stays_on_the_control_through_redraws(browser, live_serve
     """Every tick and toggle redraws the database: the control pressed keeps keyboard focus (WCAG 2.4.3)."""
     flag(h)
     weekly(h)
-    # Its overlap was acknowledged when proposed: taken back, so Needs attention has a row to tick.
-    h.command('coordinator', 'rule.unacknowledge', {'fingerprints': [x['fingerprint'] for x in h.get('coordinator', '/api/rules/catalogue')['attention']]})
+    end = str(date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day']) + timedelta(days=11))
+    catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}}, ends_on=end)])
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per week').focus()
+        toggle = main.get_by_role('button', name='Duties per week lines')
+        toggle.focus()
         page.keyboard.press('Enter')
-        expect(main.get_by_role('button', name='Close Duties per week')).to_be_focused()
+        expect(toggle).to_be_focused()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
         page.keyboard.press('Enter')
-        expect(main.get_by_role('button', name='Open Duties per week')).to_be_focused()
+        expect(toggle).to_be_focused()
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
         page.keyboard.press('Enter')
         box = main.get_by_label('Select line 1 of Duties per week')
         box.focus()
@@ -475,7 +482,7 @@ def test_keyboard_focus_stays_on_the_control_through_redraws(browser, live_serve
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (1440, 'dark'), (390, 'light'), (390, 'dark')],
                          ids=['light', 'dark', '390-light', '390-dark'])
 def test_attention_badge_counts_lines_not_pairs(browser, live_server, h, width, scheme):
-    """RU-02: overlaps are one issue per pair of lines; the rule's badge and the footer count the lines involved."""
+    """RU-02: equal-tier conflicts are one issue per pair; the rule's badge counts the lines involved."""
     flag(h)
     # Everyone plus one line per seeded person (the seed has three).
     lines = [line({'max': {'value': 10, 'level': 'mandatory'}})] + [line({'max': {'value': n + 1, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [p]}]}) for n, p in enumerate(h.seed['people'][:3])]
@@ -487,7 +494,7 @@ def test_attention_badge_counts_lines_not_pairs(browser, live_server, h, width, 
     def six_pairs(route):
         response = route_fetch(route)
         body = response.json()
-        body['attention'] = [{'id': f'overlap-{n}', 'kind': 'overlap', 'rule_id': rule['id'], 'catalogue_id': 'duties_per_month',
+        body['attention'] = [{'id': f'both-{n}', 'kind': 'both', 'rule_id': rule['id'], 'catalogue_id': 'duties_per_month',
                               'lines': [], 'line_ids': list(pair), 'people': None, 'facts': {}, 'fixes': [], 'fingerprint': f'f{n}',
                               'acknowledged': None} for n, pair in enumerate(pairs)]
         body['attention_counts'] = attention_counts([issue for issue in body['attention'] if not issue.get('acknowledged')])
@@ -509,9 +516,8 @@ def test_attention_badge_counts_lines_not_pairs(browser, live_server, h, width, 
         context.close()
 
 
-def test_list_orders_lines_broad_to_specific(browser, live_server, h):
-    """RU-01: unsorted, a rule's lines read broad to specific (the order the most specific who wins in) and keep their own
-    numbers; the page carries no sentence explaining it."""
+def test_list_orders_lines_anchor_then_exception_and_keeps_stored_numbers(browser, live_server, h):
+    """Unsorted Rules lines show the anchor first, then its exception, with their stored numbers."""
     flag(h)
     a = h.seed['people'][0]
     catalogue_rule(h, 'duties_per_month', [line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line'),
@@ -521,11 +527,12 @@ def test_list_orders_lines_broad_to_specific(browser, live_server, h):
         navigate(page, 'rules')
         main = page.locator('#main')
         expect(page.get_by_text('the most specific line wins', exact=False)).to_have_count(0)
-        main.get_by_role('button', name='Open Duties per month').click()
-        rows = main.locator('tr.rt-line')
+        main.get_by_role('button', name='Duties per month lines').click()
+        rows = main.locator('li.rt-ln')
         expect(rows.nth(0)).to_contain_text('Everyone')
-        expect(rows.nth(0).locator('.rt-n')).to_have_text('2')  # its stored number, not its place in the list
+        expect(rows.nth(0).locator('.rt-n')).to_have_text('2')
         expect(rows.nth(1).locator('.rp.person')).to_be_visible()
+        expect(rows.nth(1).locator('.rt-n')).to_have_text('1')  # The nested exception keeps its stored line number.
     finally:
         context.close()
 

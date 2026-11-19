@@ -50,7 +50,10 @@ def _additions(db, actor, item, payload, reason):
     # The editor validates the full rule, including settings, numeric slots and dated scope semantics.
     found = rule_catalogue.check(db, actor, proposal["catalogue_id"], proposal)
     pairs = _personal_overlaps(db, actor, policy, proposal, previous, added) if not found["issues"] else []
-    return policy, proposal, previous, added, pairs
+    # The proposal check already resolves ordered overrides. Only the remaining pairs need a bulk resolution.
+    ordered = {frozenset((overlap["line_id"], winner))
+               for overlap in found["overlaps"] for winner in overlap["winner_ids"]}
+    return policy, proposal, previous, added, [pair for pair in pairs if frozenset(pair) not in ordered]
 
 
 def _personal_overlaps(db, actor, policy, proposal, previous, added):
