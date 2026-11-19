@@ -188,8 +188,8 @@ def test_production_password_key_preflight_rejects_missing_or_invalid_keys_witho
 
 
 @pytest.mark.parametrize('enabled', [False, True])
-def test_production_fixed_mode_preflight_needs_the_sign_in_key(tmp_path, monkeypatch, enabled):
-    # Fixed mode stays supported, but sign-in event and rate-limit keys are keyed hashes (#930), so a keyless
+def test_production_password_key_preflight_preserves_fixed_mode(tmp_path, monkeypatch, enabled):
+    # Fixed mode stays supported with a key; sign-in event and rate-limit keys are keyed hashes (#930), so a keyless
     # production cannot store them safely and is refused at startup, naming the setting only.
     clean_env(monkeypatch)
     users = tmp_path / 'users.yml'
