@@ -1,13 +1,16 @@
 """Immutable department-input baselines and auditable three-way refreshes."""
+from collections import OrderedDict
 from copy import deepcopy
 import json
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import object_session
 
 from . import models as m
 from .errors import require
 from .serialization import json_value, record, records_many
+from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs, snapshot_window
 from packages.contracts import schemas as s
 from packages.domain.generation_scope import selected_session_ids
@@ -611,7 +614,8 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     saved = latest(db, workspace.id)
     require(saved is not None and saved.id == row.id, "BASELINE_CAPTURE_FAILED",
             "The draft baseline could not be saved; scheduling is unavailable", 409)
-    verify(saved)
+    verify_in_transaction(db, saved)
+    baseline_rows(db)[(workspace.id, workspace.revision)] = saved
     return saved
 
 
@@ -632,6 +636,36 @@ def verify(row):
     require(set(row.included_sources) <= set(SOURCE_NAMES), "BASELINE_INVALID",
             "The saved draft baseline contains an unknown source", 409)
     return payload
+
+
+def baseline_rows(db):
+    transaction = db.get_transaction()
+    if db.info.get('_verified_baseline_transaction') is not transaction:
+        db.info['_verified_baseline_transaction'] = transaction
+        db.info.pop('_baseline_rows', None)
+        db.info.pop('_verified_baselines', None)
+        db.info.pop('_verified_baseline_keys', None)
+    return db.info.setdefault('_baseline_rows', {})
+
+
+def verify_in_transaction(db, row):
+    """Return a verified payload for read-only use by this transaction."""
+    if row is None:
+        return None
+    if object_session(row) is not db or not db.in_transaction() or row in db.dirty:
+        return verify(row)
+    baseline_rows(db)
+    cache = db.info.setdefault('_verified_baselines', OrderedDict())
+    keys = db.info.setdefault('_verified_baseline_keys', set())
+    key = row.id, row.payload_hash
+    if key not in cache:
+        cache[key] = json_value(row.canonical_payload) if key in keys else verify(row)
+        keys.add(key)
+    cache.move_to_end(key)
+    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
+    while len(cache) > settings.verified_baseline_cache_entries:
+        cache.popitem(last=False)
+    return cache[key]
 
 
 def verify_generation_snapshot(db, workspace, snapshot):
@@ -733,8 +767,8 @@ def baseline_reference(row):
     }
 
 
-def attach(db, workspace, value):
-    row = latest(db, workspace.id)
+def attach(db, workspace, value, *, baseline=None):
+    row = latest(db, workspace.id) if baseline is None else baseline
     if row is None:
         return value
     info = projection(row)
