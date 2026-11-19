@@ -1637,7 +1637,7 @@ def target_override(db, actor, command):
     return changed(db, actor, workspace, before, value.reason)
 
 
-def name_attached_supervisors(db, workspace, row, *, shared_inputs=None):
+def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explicit_clears=()):
     """Fill missing manual pairings through the same qualification and rule checks as the rota."""
     from packages.domain.conditions import active_rules
     from packages.domain.supervision_levelling import levelled_order, session_spread_policies
@@ -1648,12 +1648,14 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None):
         # Dated trainee classification reads canonical memberships/categories, not other duties.
         # Only actual missing pairs need the full rota context and mandatory comparison below.
         current = shift_record(db, row)
-        if not any(not person.get('supervisor_person_id') and trainee_intervals(shared_inputs, current, person)
+        if not any(person['person_id'] not in explicit_clears and not person.get('supervisor_person_id')
+                   and trainee_intervals(shared_inputs, current, person)
                    for person in current['participants']):
             return
     data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
     shift = next(s for s in data['shifts'] if s['id'] == row.id)
-    missing = [(p, intervals) for p in shift['participants'] if not p.get('supervisor_person_id')
+    missing = [(p, intervals) for p in shift['participants']
+               if p['person_id'] not in explicit_clears and not p.get('supervisor_person_id')
                and (intervals := trainee_intervals(data, shift, p))]
     if not missing:
         return
@@ -1836,7 +1838,12 @@ def save_shift(db, actor, command, update=False):
     row = write_shift(db, actor, workspace, value, existing, inputs=inputs,
                       override_refusal=override_check)
     if value.participants:
-        name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'))
+        # Keep an explicit clear visible to admission even when an attachment could fill it again.
+        explicit_clears = {p.person_id for p in value.participants
+                           if 'supervisor_person_id' in p.model_fields_set and p.supervisor_person_id is None
+                           and previous.get(p.person_id, {}).get('supervisor_person_id')}
+        name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
+                                  explicit_clears=explicit_clears)
     admission = (admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID', shared_inputs=inputs.get('shared_inputs'),
                                          override_reason=value.override_reason, message=refusal)
                  # A new session may be saved with its findings (they block submission); the per-person,
