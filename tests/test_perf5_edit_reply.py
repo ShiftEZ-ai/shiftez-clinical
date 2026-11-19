@@ -514,7 +514,11 @@ def test_live_worker_keeps_synchronous_restriction_and_zero_maximum_refusals(h, 
     h.policy(rule, {'person_id': pid})
     worker_up(h)
     result = edit(h, w, shift, [{'person_id': pid, 'start': shift['start'], 'end': shift['end']}], status=422)
-    assert result['error']['code'] == 'EDIT_INVALID'
+    kind = rule['kind']
+    assert result['error']['code'] == ('EDIT_INVALID' if kind == 'restriction' else 'PERSON_UNAVAILABLE')
+    if kind != 'restriction':
+        code = 'MAX_DUTIES' if kind == 'max_duties' else 'QUOTA_ABOVE_MAXIMUM'
+        assert any(finding['code'] == code for finding in result['error']['details']['findings'])
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Workspace, w['id']).revision == w['revision']
         assert not db.scalar(select(m.Job.id).where(m.Job.workspace_id == w['id']))
