@@ -200,6 +200,8 @@ def manifest(data, *, content_revision=None):
                   'baseline': [(data.get('baseline') or {}).get('id'),
                                (data.get('baseline') or {}).get('snapshot_hash')
                                or (data.get('baseline') or {}).get('hash')]}
+    if basis := data.get('_draft_policy_basis'):
+        dirty_hint['draft_policy_basis'] = basis
     if data.get('_live_safety_departments') is not None:
         dirty_hint['department_revisions'] = sorted(
             [row.get('id'), row.get('revision'), row.get('catalogue_revision')]

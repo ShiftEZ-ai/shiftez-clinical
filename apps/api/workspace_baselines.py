@@ -535,7 +535,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         grouped_rows = [policies[0]]
         for policy in policies[1:]:
             safety = (kind in LIVE_SAFETY_KINDS or kind == "team_lead_requirement"
-                      or kind == "catalogue" and s.safety_rule(policy.get("definition") or {}))
+                      or kind == "catalogue" and (s.safety_rule(policy.get("definition") or {})
+                          or include_mandatory and s.safety_rule(grouped_rows[0].get("definition") or {})))
             if safety:
                 base = grouped_rows.pop(0)
                 grouped_rows = _strictest_policy(base, policy, kind)

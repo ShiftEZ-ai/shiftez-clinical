@@ -829,7 +829,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 if command.kind != 'workspace.publish':
                     captured = []
                     checked = planning.revalidate(db, workspace, store=False, data_out=captured,
-                        reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True)
+                        reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True,
+                        mandatory_rules=command.kind != 'workspace.submit')
                     context = (actor.identity_id, actor.department_id, workspace.content_revision,
                                workspace.status, workspace.archived_at, captured[0]['fingerprint'])
                     workspace_check = (context, checked, captured[0], input_changes.watermark(db, actor.department_id),
@@ -1191,7 +1192,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
-                    current_data = planning.domain_snapshot(db, workspace)
+                    current_data = planning.domain_snapshot(db, workspace,
+                        mandatory_rules=command.kind != 'workspace.submit')
                     check_context(db, actor, workspace, current_data)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})

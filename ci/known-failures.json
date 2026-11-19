@@ -2286,18 +2286,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_overtime_extra_cover.py::test_extra_cover_overtime_does_not_bypass_safety_or_qualifications[case-cboopdniicbjcbdgkmfeifoahcfbhdlakchcboncfifdnoccnklldhailcpidkld]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_overtime_extra_cover.py::test_extra_cover_overtime_does_not_bypass_safety_or_qualifications[case-gmeokmmhjdfaaekopfiialgckjcffeembajmgmnhmlalbpnnidpcdkajahmdhcii]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_overtime_offered_contracts.py::test_catalogue_suggests_new_overtime_lines_without_changing_ordinary_defaults[case-eghcjfmgadijoencnddlejghkckaoelngeeaphbjkamnfihfcdhjpigobgoopnpf]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
