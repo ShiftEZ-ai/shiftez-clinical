@@ -107,7 +107,8 @@ def import_runs(capture, plan, reports, root, maker):
     if any(row.get('status') != 'completed' or row.get('conclusion') not in {'success','failure'}
            for row in capture.get('performance',[]) if row.get('suite') is not None):
         raise ValueError('Every PR1 shard must complete without infrastructure cancellation/error')
-    runs = maker.collect_reports(plan, reports, run_id, "1")
+    # Historical archives were unpacked by artifact ID rather than by name.
+    runs = maker.collect_reports(plan, reports, run_id, "1", historical_capture=True)
     if len(runs) != 2 or not runs[0] or set(runs[0]) != set(runs[1]):
         raise ValueError("Both replicas must execute the same complete node set")
     measurements = []
