@@ -172,8 +172,12 @@ const policies=(c:Row|undefined)=>((c?.requirements||[]) as Row[]).filter(x=>x.k
 /** The contract's words for a stop reason (GENERATION_STOP_REASONS), read by the receipt and the panel header alike.
  *  The worker sends 'optimal' when every model step was proven; it says "proven best" only when the final proposal is
  *  (generation_outcome OPTIMAL), else ''. */
+/** The final proposal is proven best: its outcome's status is OPTIMAL (an outcome stored before it had a status says
+ *  optimality_proven); without an outcome, the result's own optimality_proven. Undefined when the result does not say. */
+const proven=(r:Row):boolean|undefined=>{const o=r.generation_outcome;
+  return o?(o.status?o.status==='OPTIMAL':o.optimality_proven===true):r.optimality_proven;};
 export function stopWords(r:Row,code:string):string{
-  if(code==='optimal'&&(r.generation_outcome?r.generation_outcome.status!=='OPTIMAL':r.optimality_proven===false))return '';
+  if(code==='optimal'&&proven(r)===false)return '';
   return (GENERATION_STOP_REASONS as Record<string,string>)[code]||'';
 }
 /** Why the search ended, as one short clause: the result's typed `search_stop.reason` in the contract's words
@@ -182,7 +186,7 @@ export function stopWords(r:Row,code:string):string{
 export function searchEnded(r:Row|null|undefined):string{
   if(!r)return '';
   const typed=stopWords(r,String(r.search_stop?.reason||''));if(typed)return typed;
-  if(r.generation_outcome?r.generation_outcome.status==='OPTIMAL':r.optimality_proven===true)return GENERATION_STOP_REASONS.optimal;
+  if(proven(r)===true)return GENERATION_STOP_REASONS.optimal;
   const rows=(r.objectives||[]) as Row[],reason=String(r.fair_share_search?.stop_reason||rows.map(x=>x.search?.stop_reason).find(Boolean)||'');
   if(reason==='operator_stop')return 'stopped by you';
   if(reason==='plateau'||rows.some(x=>x.stopped_without_improvement))return 'stopped when it stopped improving';
