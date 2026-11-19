@@ -340,7 +340,12 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
             or scope.get('location_id') and scope['location_id'] not in ancestor_ids(data, shift['location_id'])):
         return None
     start, end = aware(p['start']), aware(p['end'])
-    if not overlaps(a, b, start, end):
+    zone = data['organisation']['timezone']
+    if policy.get('starts_on'):
+        a = max(a, local_midnight(date.fromisoformat(policy['starts_on']), zone))
+    if policy.get('ends_on'):
+        b = min(b, local_midnight(date.fromisoformat(policy['ends_on']), zone))
+    if a >= b or not overlaps(a, b, start, end):
         return None
     # Credit requires the full scope throughout the assignment; its placement is owned at duty start.
     if not scope_matches_throughout(data, scope, pid, shift, start, end, rotation_at=start):
@@ -494,7 +499,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                 calculation = {'default_amount': rule['amount'], 'reference_days': rule['reference_days'],
                                'department_days': full_days, 'unrounded_amount': round(raw, 4), 'rounding': rule['rounding'], 'calculated_amount': amount}
             override = next((r for r in data['workspace'].get('target_overrides', [])
-                             if r['policy_id'] == policy['id'] and r['person_id'] == pid), None) if calculation else None
+                             if r['policy_id'] == policy['id'] and r['person_id'] == pid), None) if calculation and comparison == 'target' else None
             if override and override['policy_revision'] != policy['revision']:
                 unresolved('TARGET_OVERRIDE_STALE', 'Reconfirm the rota target adjustment after its default changed', policy, pid)
                 override = None
