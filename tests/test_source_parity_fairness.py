@@ -202,7 +202,8 @@ def test_numeric_weight_changes_score_without_changing_validation_or_default_goa
 
 @pytest.mark.parametrize('engine', [greedy_generate, cp_generate], ids=['greedy', 'cp-sat'])
 def test_each_engine_avoids_repeated_named_supervision(h, engine):
-    trainee, first, second = h.seed['people'][:3]
+    trainee = h.seed['people'][0]
+    first, second = sorted(h.seed['people'][1:3])
     h.command('coordinator', 'membership.create', {'person_id': trainee,
         'category_id': h.seed['trainee_category'], 'starts_on': '2020-01-01'})
     h.policy({'kind': 'balance_goal', 'distribution': 'pair_limit', 'metric': 'pair_exposure',

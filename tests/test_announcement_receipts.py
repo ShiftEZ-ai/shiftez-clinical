@@ -13,6 +13,7 @@ from apps.worker import main as worker
 from tests.outbox_support import dispatch_batch_after_undo, process_one_after_undo as process_one
 from packages.contracts.schemas import CONTENT_PAGE_SIZE, ROLE_NAMES
 from packages.domain.time import aware
+from .clock_support import freeze_clock
 from .governance_support import identity
 
 
@@ -253,6 +254,7 @@ def test_active_notice_adds_late_joiners_without_duplicate_receipts(h, notify):
 
 @pytest.mark.postgres
 def test_seen_does_not_take_global_writer_or_scan_department_recipients(pg, monkeypatch):
+    freeze_clock(monkeypatch)  # Keep rate-limit cleanup out of this statement-count guard.
     engine = pg.app.state.engine
     pg.client("staff")
     statements = []
