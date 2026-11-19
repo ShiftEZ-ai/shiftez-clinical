@@ -352,7 +352,7 @@ export type LiveHooks={data:WorkspaceData;settings:()=>AnimationSettings;day:(sh
   /** Draw the schedule again (the grid shows the draft as saved). */redraw:()=>void;
   /** The job's detail: its progress carries the latest complete solution (catching up after missed events). */read:(id:string)=>Promise<Row>};
 export type FinishCard={gain:number|null;review:()=>void;apply:(()=>Promise<unknown>)|null};
-type Run={id:string;hooks:LiveHooks;update:(job:Row)=>void;finish:(job:Row,card:FinishCard|null)=>void;dispose:()=>void;ended:()=>boolean};
+type Run={id:string;hooks:LiveHooks;update:(job:Row)=>void;finish:(job:Row,card:FinishCard|null)=>void;dispose:()=>void;ended:()=>boolean;tick:()=>void};
 let current:Run|null=null;
 
 /** The live view of one auto-schedule run; asking again for the same job gives the same one (redraws keep it). */
@@ -362,7 +362,7 @@ export function liveRun(jobId:string,hooks:LiveHooks):Run{
   const run=start(jobId,hooks);current=run;return run;
 }
 function start(id:string,first:LiveHooks):Run{
-  const run:Run={id,hooks:first,update,finish,dispose,ended:()=>done};
+  const run:Run={id,hooks:first,update,finish,dispose,ended:()=>done,tick:()=>tick()};
   // The department's settings, Off for a viewer who chose Still (read each tick: a change applies mid-run).
   const settings=():AnimationSettings=>{const s=run.hooks.settings();return motionStill()?{...s,mode:'off'}:s;};
   const shifts=new Map(first.data.shifts.map(s=>[String(s.id),s]));
@@ -489,6 +489,8 @@ function start(id:string,first:LiveHooks):Run{
   return run;
 }
 
+/** A page was shown (app.ts renderPage): its footer replaced the strip, which goes back in at once, as the next tick would. */
+export function pageShown(){current?.tick();}
 /** A finished run's result was discarded: its strip and card go (a run still going stays). */
 export function endFinished(){if(current?.ended()){current.dispose();document.querySelector('.asl-result')?.remove();}}
 /** Another account signs in: the run, its strip and its card go. */
