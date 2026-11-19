@@ -1,6 +1,6 @@
 """A catalogue rule's page (#rules/<id>) as a lines database: cells edit in place in an anchored editor, + New line
 picks who or where with the shared picker (a line that already exists says so), selected lines change together, and
-every edit stays in a local draft until "Propose N changes" (overlaps acknowledged) and another person approves.
+every edit stays in a local draft until "Propose N changes" and another person approves.
 The page uses rule_catalogue.ts, shared table_view.ts/table_menu.ts column controls, and apps/web/public/assets/app.css."""
 import re
 
@@ -11,7 +11,7 @@ from apps.api import models as m
 from apps.api.db import transaction
 
 from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
-from .test_browser_rule_catalogue import rule_action, catalogue_rule, duplicate, flag, line, set_numbers, shot, weekly
+from .test_browser_rule_catalogue import rule_action, catalogue_rule, duplicate, flag, line, set_numbers, shot, weekly, weekly_group_conflict
 
 pytestmark = pytest.mark.browser
 
@@ -104,11 +104,11 @@ def test_lines_are_edited_in_a_draft_and_proposed_together(browser, live_server,
         page.evaluate("location.hash='rules/duties_per_week'")
         leave.get_by_role('button', name=re.compile(r'^Go to Rules')).click()
         expect(page.locator('#main')).to_have_attribute('data-loaded-tab', 'duties_per_week')
-        # Propose: the changes and the lines that give way, acknowledged, with a reason.
+        # Propose the changes with a reason. Ordered overrides need no acknowledgement.
         page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
         dialog = page.get_by_role('dialog')
         expect(dialog.locator('.rc-diff-added')).to_contain_text('Continuity clinic')
-        dialog.get_by_label('I have read which lines give way and that is intended').check()
+        expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
         dialog.get_by_label('Reason', exact=True).fill('Weekly caps agreed')
         dialog.get_by_role('button', name='Propose', exact=True).click()
         expect(main.locator('.rc-waiting')).to_contain_text('waiting for approval')
@@ -174,7 +174,7 @@ def test_settings_are_chosen_in_their_popover_and_proposed_with_the_lines(browse
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog')
         expect(dialog.locator('.rc-settings-diff tbody tr')).to_contain_text(['Counts overtime'])  # RU-22: Setting · Was · Now
-        dialog.get_by_label('I have read which lines give way and that is intended').check()
+        expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
         dialog.get_by_label('Reason', exact=True).fill('Overtime does not count')
         dialog.get_by_role('button', name='Propose', exact=True).click()
         expect(page.locator('#main .rc-waiting')).to_be_visible()
@@ -193,7 +193,7 @@ def test_a_rule_with_settings_to_choose_opens_its_page_first(browser, live_serve
         switch = page.get_by_role('switch', name='Not after on or off')
         expect(switch).to_be_disabled()
         expect(switch).to_have_attribute('data-tip', re.compile('in Settings first$'))
-        page.locator('#main tr.rt-rule').filter(has_text='Not after').get_by_role('button', name='Not after', exact=True).click()
+        page.locator('#main li.rt-item').filter(has_text='Not after').get_by_role('button', name='Not after', exact=True).click()
         expect(page).to_have_url(re.compile('#rules/not_after$'))
         # Its first line is ready; the duty types (needed) are chosen in Settings, then it is proposed.
         types = [t['name'] for t in h.get('admin', '/api/catalogues')['assignment_types']]
@@ -249,17 +249,17 @@ def test_many_issues_show_as_one_summary_and_a_badge_per_line(browser, live_serv
 
 
 def test_the_check_bar_reads_on_one_line_counts_in_words_and_the_rule_reaches_each_person_once(browser, live_server, h):
-    """The check bar is one row (its words, then "Show these lines"), counts overlaps in words, the header of the
+    """The check bar is one row (its words, then "Show these lines"), counts equal-tier conflicts in words, the header of the
     unsortable Check column keeps its label readable and aligned, and reach counts each person once (not its widest line)."""
     flag(h)
-    weekly(h)  # a line for everyone and one for Alex Morgan: the rule reaches all 3 people
+    weekly(h, extra_lines=weekly_group_conflict(h))  # Everyone still covers all three people.
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules/duties_per_week')
         main = page.locator('#main')
         expect(main).to_contain_text('reaches 3 people')
         bar = main.locator('.rc-checkbar')
-        expect(bar).to_contain_text('⚠ 1 overlap')
+        expect(bar).to_contain_text('⚠ 1 both apply')
         words, show = bar.locator('span').first.bounding_box(), bar.get_by_role('button', name='Show these lines').bounding_box()
         assert show['x'] > words['x'] + words['width'] and abs(show['y'] + show['height'] / 2 - words['y'] - words['height'] / 2) < 4
         check = main.get_by_role('columnheader', name='Check', exact=True)
@@ -286,7 +286,9 @@ def test_the_check_bar_reads_on_one_line_counts_in_words_and_the_rule_reaches_ea
         panel = page.locator('.rc-line-panel')
         panel.get_by_label('Maximum', exact=True).fill('5')  # a new line starts without numbers
         panel.get_by_role('button', name='Keep change').click()
-        expect(bar).to_contain_text('⚠ 2 overlaps')
+        expect(page.locator('.app-footer')).to_contain_text('1 change not yet proposed')
+        expect(bar).to_contain_text('⚠ 1 both apply')
+        expect(bar).not_to_contain_text('overlap')
     finally:
         context.close()
 
@@ -302,8 +304,8 @@ def test_line_numbers_agree_between_list_page_and_panel(browser, live_server, h)
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per month').click()
-        everyone = main.locator('tr.rt-line').filter(has_text='Everyone')
+        main.get_by_role('button', name='Duties per month lines').click()
+        everyone = main.locator('li.rt-ln').filter(has_text='Everyone')
         expect(everyone.locator('.rt-n')).to_have_text('2')
         everyone.get_by_role('button', name='Open line 2 of Duties per month').click()
         expect(page.locator('.rc-line-panel')).to_contain_text('Line 2 of 2')

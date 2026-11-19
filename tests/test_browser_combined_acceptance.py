@@ -104,13 +104,13 @@ def test_rule_level_tag_reference_matches_the_real_rules_tree(browser, live_serv
     try:
         navigate(page, 'rules')
         bar = page.locator('.dt-toolbar').first
-        workload = page.locator('.rt-rule').filter(has_text='Workload')
-        unrelated = page.locator('.rt-rule').filter(has_text='Fair share')
+        workload = page.locator('.rt-item').filter(has_text='Workload')
+        unrelated = page.locator('.rt-item').filter(has_text='Fair share')
         expect(workload).to_be_visible()
         expect(unrelated).to_be_visible()
         reference(bar, 'Tags', tag['name'])
         shot(page, 'combined-rules-tag-reference', full_page=False)
-        expect(page.locator('.rt-rule').filter(has_text='Workload')).to_be_visible()
+        expect(page.locator('.rt-item').filter(has_text='Workload')).to_be_visible()
         expect(unrelated).to_have_count(0)
         scopes = {x['value']: x['label'] for x in s.SEARCH_SCOPES}
         option(bar, 'Search in', scopes['self'])
@@ -125,10 +125,10 @@ def test_rule_level_tag_reference_matches_the_real_rules_tree(browser, live_serv
         expect(unrelated).to_have_count(0)
         shot(page, 'combined-rules-tag-related-text', full_page=False)
         option(bar, 'Search in', scopes['self'])
-        expect(page.locator('.rt-rule')).to_have_count(0)
+        expect(page.locator('.rt-item')).to_have_count(0)
         # Reset keeps legacy plain-text search: policy tags are related records only with explicit options.
         options(bar).get_by_role('button', name='Reset search options', exact=True).click()
-        expect(page.locator('.rt-rule')).to_have_count(0)
+        expect(page.locator('.rt-item')).to_have_count(0)
         bar.get_by_role('searchbox').fill('')
         expect(workload).to_be_visible()
         expect(unrelated).to_be_visible()
