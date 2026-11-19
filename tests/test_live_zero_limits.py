@@ -116,7 +116,8 @@ def test_catalogue_zero_reader_keeps_only_mandatory_zero_numbers(version, entry)
         current['settings'] = {kind: {}}
     before = deepcopy(row)
     zero = _zero_limit_policy(row)
-    selected, = zero['definition']['rule']['lines']
+    # Only emitted maxima count here. Selector-only lines retain catalogue precedence.
+    selected, = [line for line in zero['definition']['rule']['lines'] if not line.get('_source_default_only')]
     assert selected['id'] == 'all' and selected['numbers'] == {'max': {'value': 0}}
     original = row['definition']['rule']['lines'][0]
     assert slot_for_number(contract, 'max', row['definition']['rule'], original, original['numbers'])['kind'] == (
@@ -427,24 +428,31 @@ def test_more_specific_nonzero_live_line_cannot_loosen_zero(request, backend):
                              acknowledged=[everyone['id']])['record'])
     snapshot = h.snapshot(draft)
     carried = next(row for row in snapshot['policies'] if row['id'] == rule['id'])
-    assert len(carried['definition']['rule']['lines']) == 1
-    assert carried['definition']['rule']['lines'][0]['numbers']['max']['value'] == 0
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    zero, = [row for row in carried['definition']['rule']['lines'] if not row.get('_source_default_only')]
+    assert zero['numbers']['max']['value'] == 0
     validation = h.lifecycle(draft, 'validate')['validation']
     blocked = {f['person_id'] for f in validation['findings'] if f['code'] == 'MAX_DUTIES' and f['severity'] == 'error'}
-    assert set(h.seed['people'][:2]) <= blocked
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    allowed, capped = h.seed['people'][:2]
+    assert blocked == {capped}
     for generate in (greedy_generate, cp_sat_generate):
         empty = h.snapshot(draft)
         empty['shifts'] = [{**row, 'participants': []} for row in empty['shifts']]
         empty['people'] = {pid: empty['people'][pid] for pid in h.seed['people'][:2]}
         result = generate(empty, 2)
-        assert result['additions'] == []
+        # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+        assert [row['participant']['person_id'] for row in result['additions']] == [allowed]
     from .test_assignment_override_reason import payload
     draft = h.detail(draft)['workspace']
     value = payload(h, draft, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00')
-    for pid in h.seed['people'][:2]:
-        refused = h.command('coordinator', 'shift.create', {**value, 'participants': [
-            {**value['participants'][0], 'person_id': pid}]}, revision=draft['revision'], status=422)
-        assert refused['error']['code'] == 'PERSON_UNAVAILABLE'
+    refused = h.command('coordinator', 'shift.create', {**value, 'participants': [
+        {**value['participants'][0], 'person_id': capped}]}, revision=draft['revision'], status=422)
+    assert refused['error']['code'] == 'PERSON_UNAVAILABLE'
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    admitted = h.command('coordinator', 'shift.create', {**value, 'participants': [
+        {**value['participants'][0], 'person_id': allowed}]}, revision=draft['revision'])
+    assert not any(f['code'] == 'MAX_DUTIES' and f['person_id'] == allowed for f in admitted['validation']['findings'])
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

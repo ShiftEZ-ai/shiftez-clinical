@@ -290,13 +290,11 @@ def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
                         end=f'2026-10-{day:02}T12:00:00+03:00')['workspace']
     settings = {'block_quota': {'metric': 'duties', 'overtime': 'only',
                                  'starts_on': draft['starts_on'], 'ends_on': draft['ends_on']}}
-    # The approved person line relaxes a positive default. The other person's zero still binds.
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
     lines = [
-        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 1, 'level': 'mandatory'}}},
+        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 0, 'level': 'mandatory'}}},
         {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 2, 'level': 'mandatory'}},
          'who': {'match': 'all', 'conditions': [{'field': 'person_ids', 'op': 'any', 'values': [allowed]}]}},
-        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 0, 'level': 'mandatory'}},
-         'who': {'match': 'all', 'conditions': [{'field': 'person_ids', 'op': 'any', 'values': [capped]}]}},
     ]
     proposed = h.command('coordinator', 'rule.propose', {'catalogue_id': 'workload_limit', 'catalogue_version': 2,
         'lines': lines, 'acknowledged_overlaps': [lines[0]['id']], 'reason': 'Synthetic overtime limits'})['record']

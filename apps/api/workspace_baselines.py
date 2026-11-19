@@ -107,6 +107,23 @@ def _indexed_catalogue_lines(lines):
             for index, (source_index, line) in enumerate(lines)]
 
 
+def _legacy_projection_scope(projected, original, indexes):
+    """Keep the original identities and selectors when part of a legacy template is projected."""
+    definition = projected["definition"]
+    if definition["rule"]["kind"] == "block_quota":
+        projected["_quota_line_indices"] = indexes
+        if len(indexes) < len(original):
+            projected["_quota_template_people"] = sorted({line["person_id"] for line in original if line.get("person_id")})
+    elif not definition.get("listed_only") and len(indexes) < len(original):
+        kept = set(indexes)
+        projected["_legacy_shadow_rows"] = [
+            *projected.get("_legacy_shadow_rows", []),
+            *[{key: line[key] for key in ("person_id", "starts_on", "ends_on") if key in line}
+              for index, line in enumerate(original) if index not in kept and line.get("person_id")],
+        ]
+    return projected
+
+
 def _zero_limit_policy(policy):
     """Return the mandatory at-most-zero part of a policy, if it has one."""
     definition = policy.get("definition") or {}
@@ -128,9 +145,7 @@ def _zero_limit_policy(policy):
             return None
         projected = {**deepcopy(policy), "definition": {
             **deepcopy(definition), "per_person": [deepcopy(line) for _, line in zeros], "listed_only": listed}}
-        if rule.get("kind") == "block_quota":
-            projected["_quota_line_indices"] = [index for index, _ in zeros]
-        return projected
+        return _legacy_projection_scope(projected, lines, [index for index, _ in zeros])
 
     from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
     entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
@@ -139,7 +154,6 @@ def _zero_limit_policy(policy):
     source = rule.get("lines") or []
     delegated = set(policy.get("_live_zero_line_ids", ()))
     zeros = {}
-    inherited = set()
     for index, line in enumerate(source):
         numbers = line.get("numbers") or {}
         maximum = numbers.get("max") or {}
@@ -150,16 +164,12 @@ def _zero_limit_policy(policy):
         if slot["kind"] not in ZERO_LIMIT_KINDS or slot["advisory"]:
             continue
         zeros[index] = _project_maximum(entry, rule, line)
-        if level is None:
-            inherited.add(index)
     if not zeros:
         return None
-    if inherited:
-        from packages.domain.rule_lines import _by_number, _broader_levels
-        donors = {index for (line, key), candidates in _broader_levels(source, _by_number(rule)).items()
-                  if line in inherited and key == "max" for index in candidates}
-        for index in donors - zeros.keys():
-            zeros[index] = {**_project_maximum(entry, rule, source[index]), "_source_default_only": True}
+    # Resolve precedence after tag expansion, with positive maxima and level donors still available.
+    for index, line in enumerate(source):
+        if index not in zeros and "max" in (line.get("numbers") or {}):
+            zeros[index] = {**_project_maximum(entry, rule, line), "_source_default_only": True}
     return {**deepcopy(policy), "_zero_max_projection": True, "definition": {**deepcopy(definition),
         "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(sorted(zeros.items()))}}}
 
@@ -180,14 +190,19 @@ def _without_zero_limit(policy, covered_by):
     definition = policy.get("definition") or {}
     rule = definition.get("rule") or {}
 
-    def scope(row):
-        value = row.get("definition") or {}
+    def scope(row, *, omit_person_lines=False):
+        value = {key: value for key, value in (row.get("definition") or {}).items()
+                 if key not in {"merged_ids", "replaces_id"}}
+        if omit_person_lines:
+            value.pop("per_person", None)
         return {**{key: row.get(key) for key in ("department_id", "starts_on", "ends_on")},
                 "definition": {**value, "rule": {key: value for key, value in
                     (value.get("rule") or {}).items() if key != "lines"}}}
 
     # Equality proves coverage without guessing containment of condition trees.
-    if scope(policy) != scope(covered_by):
+    captured_default = (rule.get("kind") != "catalogue" and _ceiling(rule) == 0
+                        and not definition.get("per_person") and not definition.get("listed_only"))
+    if scope(policy, omit_person_lines=captured_default) != scope(covered_by, omit_person_lines=captured_default):
         return deepcopy(policy)
     if rule.get("kind") != "catalogue":
         field = s.line_field(definition)
@@ -199,11 +214,8 @@ def _without_zero_limit(policy, covered_by):
             return None
         retained = {**policy, "definition": {
             **definition, "per_person": [line for _, line in lines], "listed_only": listed}}
-        if rule.get("kind") == "block_quota" and len(lines) < len(original):
-            # A captured quota's default still excludes people with their own block.
-            retained["_quota_template_people"] = sorted({line["person_id"] for line in original if line.get("person_id")})
-            retained["_quota_line_indices"] = [index for index, _ in lines]
-        return retained
+        return (_legacy_projection_scope(retained, original, [index for index, _ in lines])
+                if len(lines) < len(original) else retained)
     live_lines = {line.get("id"): line for line in
                   ((covered_by.get("definition") or {}).get("rule") or {}).get("lines") or []}
     lines = []
@@ -258,14 +270,52 @@ def _overlay_zero_limits(frozen, current, safety_ids=()):
             result[row.get("id")] = row
         return result
 
+    def obligation(row):
+        definition = {key: value for key, value in row["definition"].items()
+                      if key not in {"merged_ids", "replaces_id"}}
+        rule = definition["rule"]
+        if rule.get("kind") == "catalogue":
+            definition = {**definition, "rule": {**rule, "lines": [
+                {key: value for key, value in line.items() if key != "_source_index"}
+                for line in rule.get("lines", ()) if not line.get("_source_default_only")]}}
+        return (row.get("department_id"), row.get("starts_on"), row.get("ends_on"), definition)
+
     current_by_id = newest(current)
     live_zeros = {key: zero for key, policy in current_by_id.items()
                   if policy.get("status") == "active" and policy.get("active", True)
                   and (zero := _zero_limit_policy(policy)) is not None}
+
+    def predecessors(row):
+        definition = row["definition"]
+        return [*(definition.get("merged_ids") or ()), definition.get("replaces_id")]
+
+    successors = {}
+    for ident in live_zeros:
+        row = current_by_id[ident]
+        rule = row["definition"]["rule"]
+        if rule.get("kind") != "catalogue" or not row.get("approved_by"):
+            continue
+        # Approved catalogue edits create new IDs. Only follow retired versions of the same entry.
+        seen, pending = {ident}, predecessors(row)
+        while pending:
+            previous = pending.pop()
+            if previous in seen:
+                continue
+            seen.add(previous)
+            old = current_by_id.get(previous)
+            if not old or old.get("status") != "retired" or old.get("department_id") != row.get("department_id"):
+                continue
+            old_rule = old["definition"]["rule"]
+            if old_rule.get("kind") == "catalogue" and old_rule.get("id") == rule.get("id"):
+                successors.setdefault(previous, set()).add(ident)
+                pending.extend(predecessors(old))
+
     out = []
     for policy in frozen:
         source_id = policy.get("_source_policy_id", policy.get("id"))
-        live_zero = live_zeros.get(source_id)
+        candidates = successors.get(source_id, ())
+        live_id = next(iter(candidates)) if source_id not in live_zeros and len(candidates) == 1 else source_id
+        live_zero = live_zeros.get(live_id)
         if live_zero is None or (saved_zero := _zero_limit_policy(policy)) is None:
             out.append(policy)
             continue
@@ -273,11 +323,10 @@ def _overlay_zero_limits(frozen, current, safety_ids=()):
         inherits_level = any(line["numbers"]["max"].get("level", "mandatory") is None for line in zero_lines)
         if inherits_level or policy.get("id") in safety_ids or s.safety_rule(policy.get("definition") or {}):
             # Inherited and mixed-safety lines require equivalent zero projections before suppressing a copy.
-            same_zero = all(saved_zero.get(key) == live_zero.get(key)
-                            for key in ("definition", "department_id", "starts_on", "ends_on"))
+            same_zero = obligation(saved_zero) == obligation(live_zero)
             retained = _without_projected_catalogue_zeros(policy, saved_zero) if same_zero else policy
         else:
-            retained = _without_zero_limit(policy, current_by_id[source_id])
+            retained = _without_zero_limit(policy, current_by_id[live_id])
         if retained is not None:
             out.append(retained)
     retained_ids = {policy.get("id") for policy in out}

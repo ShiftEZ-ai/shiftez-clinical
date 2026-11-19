@@ -17,6 +17,7 @@ SEMANTIC_PREPARATION_KEYS = frozenset({
     '_allocation_strengths', '_catalogue_v2_materialized', '_catalogue_sources',
     '_count_scope', '_quota_full_window', '_protected_interval',
     '_live_zero', '_live_zero_line_ids', '_live_mandatory_recheck',
+    '_legacy_shadow_rows', '_legacy_own_lines',
     '_quota_line_indices', '_quota_template_people', '_zero_max_projection',
     '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
     '_source_default_only', '_source_identity', '_source_index', '_source_policy_id',

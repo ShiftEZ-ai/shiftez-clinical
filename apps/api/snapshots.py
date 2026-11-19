@@ -417,7 +417,7 @@ def _baseline_inputs_view(payload):
             for key, value in payload.items()}
 
 
-DRAFT_POLICY_BASIS = 'live_mandatory_with_zero_limits'
+DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
 
 
 def draft_policy_hint(workspace):
