@@ -81,29 +81,30 @@ def _history_world(h, people, publications, sessions):
 
 @pytest.mark.parametrize('people,publications,sessions', [(3, 2, 4), (150, 12, 560)])
 def test_counted_history_loads_snapshots_once_for_multiple_goals(h, monkeypatch, people, publications, sessions):
-    from apps.api.services import schedule
-
     data, snapshot_bytes = _history_world(h, people, publications, sessions)
     goals = balance_goals(data)
     assert len(goals) == 8
-    original = schedule.current_publications
     loads, queries = [], []
 
     def load(*args, **kwargs):
         started = time.perf_counter()
-        rows = original(*args, **kwargs)
-        loads.append((len(rows), time.perf_counter() - started))
-        return rows
+        sample = [0, 0.0]
+        loads.append(sample)
+        for row in original(*args, **kwargs):
+            sample[0] += 1
+            yield row
+        sample[1] = time.perf_counter() - started
 
     def query(_connection, _cursor, statement, _parameters, _context, _many):
         if 'FROM publications' in statement and 'publications.snapshot' in statement:
             queries.append(statement)
 
-    monkeypatch.setattr(schedule, 'current_publications', load)
     engine = h.app.state.engine
     event.listen(engine, 'before_cursor_execute', query)
     try:
         with transaction(engine) as db:
+            original = db.scalars
+            monkeypatch.setattr(db, 'scalars', load)
             started = time.perf_counter()
             result = history(db, data, goals)
             elapsed = time.perf_counter() - started
@@ -117,4 +118,4 @@ def test_counted_history_loads_snapshots_once_for_multiple_goals(h, monkeypatch,
     assert all(len(report['people']) == people for report in result.values())
     print('counted goal history', {'people': people, 'sessions_per_month': sessions, 'publications': publications,
         'goals': len(goals), 'snapshot_bytes': snapshot_bytes, 'snapshot_queries': len(queries),
-        'snapshot_load_seconds': round(loads[0][1], 4), 'history_seconds': round(elapsed, 4)})
+        'snapshot_stream_seconds': round(loads[0][1], 4), 'history_seconds': round(elapsed, 4)})
