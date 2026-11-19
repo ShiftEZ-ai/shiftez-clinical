@@ -936,7 +936,7 @@ export function menuItem(label: string, name: IconName, action: () => unknown, a
 }
 /** The shared reason for a control that cannot be used now. */
 export const PAGE_WHY={first:'This is the first page.',last:'This is the last page.'} as const;
-const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.keepBestStopped;
+const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.nothingToPropose||why===TERMS.keepBestStopped;
 const whyOf=new WeakMap<HTMLElement,HTMLElement>();
 function sayWhy(b:HTMLElement,why:string,more:Child[]=[],at?:HTMLElement){
   let hint=at||whyOf.get(b);if(!hint){hint=el('small',{class:'why-unavailable'});whyOf.set(b,hint);}
@@ -960,6 +960,17 @@ const sayReason=(b:HTMLButtonElement)=>{const r=reasons.get(b)!;sayWhy(b,b.disab
 function because<T extends HTMLButtonElement>(b:T,why:string,more:Child[]=[],at?:HTMLElement):T{
   ensureReasonObserver();
   reasons.set(b,{why,more,at});sayReason(b);return b;
+}
+/** A control in place but not usable yet (DL-007; D59: the whole rota still loading): aria-disabled, so it keeps its
+ *  focus and its tip, with `why` as its description; a press only says why again and never runs later. A field is
+ *  read-only meanwhile. Drawn again once usable, so it is never released here. */
+export function notYet<T extends HTMLElement>(n:T,why:string):T{
+  n.setAttribute('aria-disabled','true');n.dataset.tip=why;if(n instanceof HTMLInputElement)n.readOnly=true;
+  // A menu item's reason is its tip and its press (a menu holds only items).
+  if(!n.matches('[role^=menuitem]')){sayWhy(n,why);whyOf.get(n)!.classList.add('sr-only');}
+  // Capture, on the control itself: before its own click handler (and the footer's delegated one), which never runs.
+  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();say(why);},true);
+  return n;
 }
 /** A disabled button's reason is visible beside it and referenced by aria-describedby. */
 export function disabledWhy<T extends HTMLButtonElement>(b:T,why:string,more:Child[]=[],at?:HTMLElement):T{
@@ -1004,8 +1015,11 @@ export function menu(anchor:HTMLElement,label:string,items:MenuEntry[]|(()=>Menu
     const next=document.querySelector<HTMLElement>(o.keep!);let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
     for(let n:Element|null=next;n&&!source;n=n.parentElement)source=menuSources.get(n);
     const entries=next&&source?source(next):[];if(!box||!entries.length)return null;
-    const at=box.contains(document.activeElement)?document.activeElement!.textContent:null;
+    const at=box.contains(document.activeElement)?document.activeElement!.textContent:null,was=box.querySelector<HTMLElement>('.armed')?.dataset.armedFrom;
     items=entries;box.replaceChildren(...list(shut));refocusItem(box,at);
+    // An armed confirm stays armed in the redrawn menu: its second press still confirms (not a fresh first press).
+    const again=was?[...box.querySelectorAll<HTMLElement>('[role^=menuitem]')].find(b=>(b.getAttribute('aria-label')||b.textContent||'').trim()===was):undefined;
+    if(again){again.click();again.focus();}
     return next;
   }:undefined;
   const item=(x:MenuItem,close:()=>void)=>{
@@ -1457,7 +1471,7 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   const label=redo?'Redo':'Undo';
   const b=[...document.querySelectorAll<HTMLButtonElement>('#toast-tray .toast:not([hidden]) .toast-action')].find(b=>b.textContent===label)
     // The page's Redo only while no dialog covers the page (it would act behind the dialog).
-    ||(redo&&!document.querySelector('dialog[open]')?document.querySelector<HTMLButtonElement>('button[data-shortcut="redo"]:not([disabled])'):null);
+    ||(redo&&!document.querySelector('dialog[open]')?document.querySelector<HTMLButtonElement>('button[data-shortcut="redo"]:not([disabled],[aria-disabled=true])'):null);
   if(!b)return;
   e.preventDefault();announce(redo?'Redoing the last undone change':'Undoing the last change');b.click();
 });
@@ -1485,7 +1499,7 @@ export function footerAct<T extends HTMLElement>(b:T,key:string,act:(e:MouseEven
 }
 function wireFooterActs(){
   const at=(n:EventTarget|null)=>n instanceof Element?n.closest<HTMLElement>('[data-footer-act]'):null;
-  const run=(b:HTMLElement|null,e:MouseEvent)=>{const act=b&&!(b as HTMLButtonElement).disabled?footerActs.get(b):undefined;
+  const run=(b:HTMLElement|null,e:MouseEvent)=>{const act=b&&!(b as HTMLButtonElement).disabled&&b.getAttribute('aria-disabled')!=='true'?footerActs.get(b):undefined;
     if(!act)return false;try{const r=act(e);if(r instanceof Promise)r.catch(reportError);}catch(error){reportError(error);}return true;};
   // `ran`: the press already acted on pointer-up; the click the same input may still send (it follows in the same task) is not a second press.
   let down:{node:HTMLElement;key:string}|null=null,ran=false;
@@ -1629,7 +1643,7 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
   const elsewhere = (e: Event) => { if (!b.contains(e.target as Node | null)) disarm(); };
   const disarm = () => {
     if (!saved) return;
-    document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width');
+    document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width'); delete b.dataset.armedFrom;
     if (name === null) b.removeAttribute('aria-label'); else b.setAttribute('aria-label', name);
     if (tip !== undefined) b.dataset.tip = tip;
   };
@@ -1646,7 +1660,7 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
     b.replaceChildren(icon('alert'), el('span', {class: 'armed-label'}, confirmLabel));
     // "Confirm retract?" already names the action: its name is not "Confirm retract? Retract".
     const said = confirmLabel.toLowerCase().includes(plain.toLowerCase()) ? confirmLabel : `${confirmLabel} ${plain}`;
-    b.classList.add('armed'); b.setAttribute('aria-label', said);
+    b.classList.add('armed'); b.setAttribute('aria-label', said); b.dataset.armedFrom = plain;
     if (tip !== undefined) b.dataset.tip = said;
     announce(`Press again to confirm: ${plain}`);
     document.addEventListener('pointerdown', elsewhere, true);

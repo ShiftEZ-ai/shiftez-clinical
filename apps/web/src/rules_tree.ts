@@ -1,19 +1,20 @@
-/** The Rules page as one database (mockups R9, R9b, R10): families as group rows,
+/** The Rules page as one database (mockups R9, R9b, R10; docs/design/rule-catalogue.md §6, §8): families as group rows,
  *  each catalogue rule a row that opens to its numbered lines, tri-state boxes rolling up line › rule › family ›
- *  select-all, one selection bar, a column menu (Wrap this column), and the Needs attention view. Every change goes into
+ *  select-all, one selection bar, and the Needs attention view. A rule row is its name and one count line. Every change goes into
  *  the rules' drafts and is proposed together ("Propose N changes"): one version per rule, each approved by another
  *  person. */
-import {el,badge,statusTone,disabledWhy,type BadgeTone,button,check,compact,confirmAction,empty,footerStatus,formatDate,icon,multiPick,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
+import {el,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
 import {TABLE_CONDITION_DEFINITIONS,type Conditions} from './generated.js';
 import {command,sessionKey,type Undone} from './api.js';
 import {savingMark,failedMark,conflict} from './loading.js';
-import {collectionToolbar,shownProperties,conditionFilter,holds,joinFilter,mentions,savedViewItems,fetchViews,openingView,type SavedView,type SortKey} from './table_view.js';
+import {collectionToolbar,conditionFilter,holds,joinFilter,mentions,savedViewItems,fetchViews,openingView,type SavedView,type SortKey} from './table_view.js';
 import {selectionBar,type SelectionAction} from './selection_bar.js';
 import {setTriState,triStateOf} from './check_tree.js';
-import {columnHeader,wrapAllColumns,columnGrip,headerReorder,sized,sizeColumn,trackWidths} from './table_menu.js';
-import {ruleMark,proposalPanel,movedNotes,groupings,broadToSpecific,reachNode,levelOf,validFacets,effectiveOf,proposeTip,tickGates,unitText,appliesWord,measureText,periodText,countingEndText} from './rule_catalogue.js';
+import {columnHeader,wrapAllColumns,columnGrip,sized,sizeColumn} from './table_menu.js';
+import {ruleMark,proposalPanel,movedNotes,groupings,specificFirst,exceptionTree,ruleCounts,ruleLevels,whoWins,reachNode,levelOf,validFacets,effectiveOf,proposeTip,proposeButton,replacedWords,whenWords,unitWords,setsSafety,safetyLock,tickGates,unitText,appliesWord,measureText,periodText,countingEndText} from './rule_catalogue.js';
 import {openPicker} from './picker.js';
-import {unexplainedLine,type DepartmentRules,type RuleSummary,type ExplainedPeopleTable} from './rules_explained.js';
+import {unexplainedLine,type DepartmentRules,type RuleSummary} from './rules_explained.js';
+import {levelBadge} from './rule_view.js';
 import {issueGlyph} from './issue_marker.js';
 import {tagsFor} from './tags.js';
 import {ruleProposing,ruleKey,redrawWhenSettled} from './bulk.js';
@@ -74,19 +75,19 @@ export function restoreRulesViews(done:Undone){
     write(treeStore,{...state,viewId});
   }
 }
-/** The columns after Rule / who: each can be hidden and wrapped (Wrap this column; View settings wraps all). */
-const COLS=[{key:'where',label:'Where'},{key:'numbers',label:'Numbers'},{key:'days',label:'Days'},{key:'valid',label:'Valid'},{key:'reach',label:'Reach'}];
 const ISSUE_COLS=[{key:'issue-rule',label:'Rule'},{key:'issue-lines',label:'Lines'},{key:'issue-what',label:'What happens'},{key:'issue-recommendation',label:'Recommendation'}];
 /** Issue kinds, in the order the server sorts them, with their words. */
 export const KINDS:Record<string,{label:string;tone:BadgeTone;about:string}>={
-  overlap:{label:'Overlap',tone:'err',about:'two lines cover the same people; the more specific one wins on the numbers it sets'},
   inherits:{label:'Inherits a conflict',tone:'err',about:'a blank number taken from a broader line contradicts the line’s own'},
+  shadowed:{label:'Applies to no one',tone:'warn',about:'more specific lines replace every number it sets, for all its people today'},
   both:{label:'Both apply',tone:'warn',about:'equally specific lines both count; the stricter number binds'},
   duplicate:{label:'Duplicate',tone:'err',about:'the same who, where and days twice'},
   ending:{label:'Ending soon',tone:'info',about:`valid dates end within ${RULE_ENDING_DAYS} days`},
   counting_ends:{label:'Counting ends early',tone:'warn',about:'a counting period ends before the line stops applying'},
   nobody:{label:'Reaches nobody',tone:'',about:'no active person matches today'},
   blocks:{label:'Blocks a draft',tone:'err',about:'a mandatory line causes schedule issues'}};
+/** A kind's words; one the server adds before this client knows it still shows, under its own name (never dropped). */
+const kindOf=(k:string)=>KINDS[k]||{label:k.charAt(0).toUpperCase()+k.slice(1).replace(/_/g,' '),tone:'' as BadgeTone,about:''};
 // Acknowledged issues are shared by the department (rule.acknowledge): they leave Needs attention for everyone, show under
 // Acknowledged with who and when, and come back when their lines change. Fixes applied to a draft stay hidden until it
 // is proposed or discarded.
@@ -117,20 +118,20 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   // Read through draftView (no copy of every line per question): the list asks these several times per rule per draw.
   const availability=(e:Entry)=>!draftView(e).lines.length?'Empty':!isOn(e)?'Off':draftView(e).lines.every(ended)?'Ended only':'In use';
   const current=(e:Entry)=>!v2||!!e.proposed||changesOf(e)>0||isOn(e)&&draftView(e).lines.some(l=>!ended(l));
-  const columns=v2?[COLS[0],{key:'measure',label:'Measure'},{key:'period',label:'Period'},...COLS.slice(1)]:COLS;
-  s.order??=[];
-  // Column menus (as every shared table): each column filters the lines by its values and sorts them within
-  // their rule; Rule / who and Reach sort the rules. No Group by: rules group by Family, lines stay under their rule.
+  // the list has no columns; a saved view's column settings (wrap, hidden, order, widths) load and are ignored.
+  // Line facets stay in Filter and line sorts in Sort.
+  const everyDay=daysText({numbers:{}} as unknown as RuleLine);  // a line on every day, all day: no When words
   const g=groupings(ctx,names,data.day);
   const LINE_FACETS:Record<string,[string,(l:RuleLine)=>string|string[]]>={who:['Who',l=>g.kind(l)],
     where:['Where',l=>g.of(l.where,['service_ids','location_ids','assignment_type_ids'],'All clinics')],numbers:['Numbers',l=>levelOf(l)],
     days:['Days',l=>daysText(l)],valid:['Valid',l=>validFacets(l,data.day)],
     ...(v2?{measure:['Measure',l=>measureText(l)||'No measure'],period:['Period',l=>periodText(l)||'No period']} as Record<string,[string,(l:RuleLine)=>string]>:{})};
+  const LINE_SORT_LABELS:[string,string][]=[['where','Where'],...(v2?[['measure','Measure'],['period','Period']] as [string,string][]:[]),['numbers','Numbers'],['days','Days'],['valid','Valid']];
   const LINE_SORT:Record<string,(e:Entry,l:RuleLine)=>string>={name:(_,l)=>treeText(l.who,names,'Everyone'),where:(_,l)=>treeText(l.where,names,'All clinics'),
     numbers:(e,l)=>numbersText(l,e.inherited?.[l.id]),days:(_,l)=>(l.weekdays||[0,1,2,3,4,5,6]).join(),valid:(_,l)=>l.ends_on||'9999',measure:(_,l)=>measureText(l),period:(_,l)=>periodText(l)};
   const facetValues=(k:string)=>[...new Set(all.flatMap(e=>lines(e).flatMap(l=>[LINE_FACETS[k][1](l)].flat())))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   /** The Rules collection's properties, defined once (keys: the contract's `rule-tree` table): [name, values, group].
-   *  The Filter offers them, column headers filter by the line ones, and `shown()` evaluates the tree over them: a rule's
+   *  The Filter offers them, and `shown()` evaluates the tree over them: a rule's
    *  own values, and each line's for the Lines ones (a rule shows with the lines that match). */
   const properties=(attention:boolean):Record<string,[string,string[],string]>=>{
     const all:Record<string,[string,string[],string]>=attention?{kind:['Issue',Object.keys(KINDS).map(k=>KINDS[k].label),'Issue'],rule:['Rule',[...new Set(data.attention.map(x=>byId.get(x.catalogue_id)?.name||''))],'Issue']}
@@ -180,15 +181,15 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
 
   // ---- Header: Which rule applies?, Discard and Propose N changes ----
   // The button waits for the work (busy while the check runs) and reports what stops it: never a silent press.
-  const proposeBtn=button('Propose',()=>proposeAll(),'primary',{disabled:true,why:'Nothing to propose yet: change a line first.'});
+  const proposeBtn=proposeButton(()=>proposeAll());
   const discardBtn=armed(button('Discard changes',()=>{for(const e of changedRules(all))discardDraft(e.id);applied.clear();redraw();},'secondary'),'Discard all?');
   const context=otherRulesContext(ctx,keptRules(ctx),o,refresh);
   const pendingExceptions=(ctx.catalogues.exceptions||[]).filter(r=>r.status==='proposed').length;
   // How many are shown (E13: one place, the footer, as on every list); the totals follow it.
   const status=el('span',{class:'footer-total'}),count=el('span',{class:'dt-count muted',role:'status'});
   const body=el('div',{class:'rt-body'}),bar=selectionBar({label:'Selected rules and lines'});
-  const holder=el('div',{class:'rt'}),marks=ruleViewKey(),keyRoot=marks.watch(body);  // the key after the table it explains
-  const wrapKeys=()=>s.mode==='rules'?['who',...columns.map(c=>c.key)]:ISSUE_COLS.map(c=>c.key);
+  const holder=el('div',{class:'rt'}),marks=ruleViewKey(),keyRoot=marks.watch(body);  // the key after the list it explains
+  const wrapKeys=()=>ISSUE_COLS.map(c=>c.key);  // only Needs attention is a table
   const allWrapped=()=>wrapKeys().every(key=>s.wrap.includes(key));
   const setWrapped=(key:string,on:boolean)=>{s.wrap=s.wrap.filter(k=>k!==key);if(on)s.wrap.push(key);changed();};
   const setWrapAll=(on:boolean)=>{const keys=wrapKeys();s.wrap=s.wrap.filter(k=>!keys.includes(k));if(on)s.wrap.push(...keys);changed();};
@@ -243,15 +244,16 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
         get:()=>({filters:s.filters,conditions:s.conditions}),set:n=>{s.filters=n.filters;s.conditions=n.conditions;changed();},
         // The view's own filter (a saved view's, or Waiting for approval's): not counted, and Show all keeps it.
         baseline:()=>{const a=saved.find(x=>x.id===viewId);return a?{filters:a.definition.filters||{},conditions:a.definition.conditions||null}:{filters:on()?.label===WAITING?{state:[WAITING]}:{},conditions:null};}}),
-      group:{options:attention?[{key:'kind',label:'Issue'}]:[...(byQuestion?[{key:'question',label:'Question'}]:[]),{key:'family',label:'Family'}],value:()=>attention?(s.group===''?'':'kind'):grouping(),set:k=>{s.group=k||'';changed();},active:()=>s.group===''},
+      group:{options:attention?[{key:'kind',label:'Issue'}]:[...(byQuestion?[{key:'question',label:'Question'}]:[]),{key:'family',label:'Family'}],value:()=>attention?(s.group===''?'':'kind'):grouping(),set:k=>{s.group=k||'';changed();}},  // in use = a grouping applied (the shared default), so the phone's Group dot shows it
       sort:attention?undefined:{options:[{key:'name',label:'Name'},{key:'reach',label:'Reach'},{key:'lines',label:'Lines'},
-        ...columns.filter(c=>c.key in LINE_SORT).map(c=>({key:c.key,label:`Lines by ${c.label.toLowerCase()}`}))],value:()=>s.sort,set:v=>{s.sort=v;s.then_sort=[];changed();},defaultLabel:'Catalogue order',active:()=>!!s.sort,
+        ...LINE_SORT_LABELS.map(([key,label])=>({key,label:`Lines by ${label.toLowerCase()}`}))],value:()=>s.sort,set:v=>{s.sort=v;s.then_sort=[];changed();},defaultLabel:'Catalogue order',active:()=>!!s.sort,
         then:{value:()=>s.then_sort,set:k=>{s.sort=k[0]||null;s.then_sort=k.slice(1);changed();}}},
-      view:{active:()=>(!attention&&s.hidden.length>0)||wrapKeys().some(key=>s.wrap.includes(key))||Object.keys(s.widths).length>0,build:(panel,done)=>{
+      view:{active:()=>attention&&(wrapKeys().some(key=>s.wrap.includes(key))||Object.keys(s.widths).length>0),build:(panel,done)=>{
+        // Rules: one setting, every rule shown open or collapsed, kept as the view's open rules.
+        if(!attention){const ids=shown().map(x=>x.e.id),openAll=ids.length>0&&ids.every(id=>s.open.includes(id));
+          panel.append(el('div',{class:'dt-pop-label'},'Layout'),segmented<'open'|'collapsed'>('Layout',[['open','Open all rules'],['collapsed','Collapsed']],openAll?'open':'collapsed',v=>{setOpen(ids,v==='open');done();}));return;}
         panel.append(wrapAllColumns(allWrapped(),on=>{setWrapAll(on);done();}));
-        if(Object.keys(s.widths).length)panel.append(button('Reset column widths',()=>{s.widths={};save();redraw();toolbar.sync();done();},'ghost small',{class:'dt-reset-widths'}));
-        // The shared Shown properties (show, hide, move), as on every collection.
-        if(!attention)panel.append(...shownProperties(ordered,{hidden:()=>s.hidden,setHidden:h=>{s.hidden=h;changed();done();},setOrder:keys=>{s.order=keys;changed();done();}}));}}});
+        if(Object.keys(s.widths).length)panel.append(button('Reset column widths',()=>{s.widths={};save();redraw();toolbar.sync();done();},'ghost small',{class:'dt-reset-widths'}));}}});
     holder.replaceChildren(t.root,body,keyRoot,bar.root);
     return t;
   }
@@ -288,8 +290,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   const issuesOf=(e:Entry)=>issues().filter(x=>x.catalogue_id===e.id);
   // What needs attention, counted in lines (RU-02): an overlap is one issue per pair of lines, so 150 person lines read
   // as "146"; the lines involved are what someone acts on. An issue with no line counts as one.
-  const attentionWords=(list:Issue[])=>{if(!list.length)return '';const lines=new Set(list.flatMap(x=>x.line_ids||[])).size,n=attentionCount(list);
-    return lines?`${plural(n,'line')} need${n===1?'s':''} attention`:`${n} need${n===1?'s':''} attention`;};
+  const attentionWords=(list:Issue[])=>{if(!list.length)return '';const n=attentionCount(list);return `${plural(n,'line')} need${n===1?'s':''} attention`;};
   // The whole catalogue's count: the server's (unique rules and lines, attention_counts) until a fix is applied in this
   // draft; then the issues still open here.
   const attentionNow=()=>{const c=data.attention_counts;if(applied.size||!c)return attentionWords(issues());
@@ -311,8 +312,8 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       let ls=lines(e).map((line,n)=>({line,n})).filter(x=>!ended(x.line)||endedToo);
       if(t&&keys.length){ls=ls.filter(x=>holds(t,have(x.line),choice));if(!ls.length&&(lines(e).length||!holds(t,have(),choice)))continue;}
       else if(t&&!holds(t,have(),choice))continue;
-      // Unsorted, a rule's lines read broad to specific (as on its page): the line that wins sits below the one it beats.
-      if(!lineSorts.length)ls.sort((a,b)=>broadToSpecific(a.line)-broadToSpecific(b.line));
+      // Unsorted, a rule's lines read most specific first (as on its page): the line that wins comes first.
+      if(!lineSorts.length)ls.sort((a,b)=>specificFirst(a.line)-specificFirst(b.line));
       else ls.sort((a,b)=>{for(const [k,dir] of lineSorts){const n=LINE_SORT[k](e,a.line).localeCompare(LINE_SORT[k](e,b.line),undefined,{numeric:true})*(dir==='desc'?-1:1);if(n)return n;}return 0;});
       if(!q){out.push({e,lines:ls,hit:keys.length>0});continue;}
       // A rule's name or, grouped by question, the server's sentence for it (LEAD-UIUX: search matches both).
@@ -324,42 +325,18 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     return out;
   }
   const isOpen=(x:Shown)=>s.open.includes(x.e.id)||x.hit;
-  const ordered=()=>{const rank=(k:string)=>{const i=s.order.indexOf(k);return i<0?100+columns.findIndex(c=>c.key===k):i;};return [...columns].sort((a,b)=>rank(a.key)-rank(b.key));};
-  const cols=()=>ordered().filter(c=>!s.hidden.includes(c.key));
   const wrapped=(key:string)=>s.wrap.includes(key)?' dt-wrap':'';
-  /** What select-all and a family box pick: the lines shown (an empty rule is picked by its own box, never by
+  /** What select-all and a group's box pick: the lines shown (an empty rule is picked by its own box, never by
    *  select-all, so "Rule on" cannot switch on rules with no lines). */
   const lineLeaves=(rows:Shown[])=>rows.flatMap(shownLeaves).filter(k=>k.startsWith('l:'));
+  /** The list's head: select every line shown, and open or close every rule (no column headings). */
   function header(rows:Shown[]){
-    const keys=lineLeaves(rows),boxAll=box('Select all lines shown',keys,!keys.length);
-    const allOpen=rows.length>0&&rows.every(isOpen);
-    const toggleAll=el('button',{type:'button',class:'icon-button bare rt-toggle','data-key':'toggle-all','aria-label':allOpen?'Collapse all rules':'Expand all rules','aria-expanded':String(allOpen),'data-tip':allOpen?'Collapse all':'Expand all'},icon(allOpen?'chevronDown':'chevronRight'));
+    const keys=lineLeaves(rows),allOpen=rows.length>0&&rows.every(isOpen);
+    const toggleAll=el('button',{type:'button',class:'icon-button bare rt-toggle','data-key':'toggle-all','aria-label':'All rules','aria-expanded':String(allOpen),'data-tip':allOpen?'Collapse all':'Expand all'},icon(allOpen?'chevronDown':'chevronRight'));
     toggleAll.addEventListener('click',()=>setOpen(rows.map(x=>x.e.id),!allOpen));
-    const shownKeys=cols().map(c=>c.key);
-    const menu=(key:string,label:string,sort:string)=>{const button=columnHeader({label,wrap:{on:s.wrap.includes(key),set:on=>setWrapped(key,on)},wrapAll:{on:allWrapped(),set:setWrapAll},
-      sort:{dir:s.sort?.[0]===sort?s.sort[1]:null,set:dir=>{s.sort=dir?[sort,dir]:null;s.then_sort=[];changed();}},
-      ...(LINE_FACETS[key]?{filter:(panel:HTMLElement)=>panel.append(multiPick(LINE_FACETS[key][0],facetValues(key).map(x=>({value:x,label:x})),s.filters[key]||[],
-        v=>{if(v.length)s.filters[key]=v;else delete s.filters[key];changed();},'Any').wrap)}:{}),
-      ...(key!=='who'?{hide:()=>{s.hidden=[...s.hidden,key];changed();},
-        move:{left:shownKeys.indexOf(key)>0,right:shownKeys.indexOf(key)<shownKeys.length-1,go:(by:-1|1)=>{
-          const keys=ordered().map(c=>c.key),other=shownKeys[shownKeys.indexOf(key)+by],from=keys.indexOf(key),to=keys.indexOf(other);
-          [keys[from],keys[to]]=[keys[to],keys[from]];s.order=keys;changed();}}}:{}),
-      // Read when the menu opens: a resize since this heading was drawn offers it at once.
-      get resetWidth(){return s.widths[key]?()=>{setWidth(key,undefined);redraw();}:undefined;},
-      keep:`.rt-body thead [data-key="column:${CSS.escape(key)}"]`});button.dataset.key='column:'+key;return button;};
-    const th=(key:string,label:string,cls:string,sort:string)=>{const h=el('th',{scope:'col',class:cls,'aria-label':label,'data-col':key},menu(key,label,sort),grip(key,label));sized(h,s.widths[key]);
-      // Columns after Rule / who move by dragging a heading onto another (Move left / right from the menu or keyboard).
-      if(key!=='who'&&shownKeys.length>1){h.dataset.reorder='';headerReorder(h,to=>{const keys=ordered().map(c=>c.key),from=keys.indexOf(key),at=keys.indexOf(to.dataset.col!);
-        if(from<0||at<0)return;keys.splice(from,1);keys.splice(at,0,key);s.order=keys;changed();
-        body.querySelector<HTMLElement>(`thead th[data-col="${CSS.escape(key)}"] .dt-sort`)?.focus({preventScroll:true});});}
-      return h;};
-    const row=el('tr',{},el('th',{class:'dt-check'},canEdit?boxAll:''),el('th',{class:'rt-toggle-col'},toggleAll),
-      th('who','Rule / who','rt-who'+wrapped('who'),'name'),...cols().map(c=>th(c.key,c.label,`rt-${c.key}${c.key==='reach'?' num':''}${wrapped(c.key)}`,c.key)),
-      el('th',{class:'rt-flags'},el('span',{class:'sr-only'},'Checks')),el('th',{class:'rt-open'},el('span',{class:'sr-only'},'Open')));
-    trackWidths(row);
-    return el('thead',{},row);
+    return el('div',{class:'rt-lhead'},canEdit?box('Select all lines shown',keys,!keys.length):el('span',{}),toggleAll,el('span',{},'Rule'));
   }
-  /** A column's width (Rules and Needs attention alike), kept with the view; undefined: back to its content's. */
+  /** A column's width (Needs attention), kept with the view; undefined: back to its content's. */
   function setWidth(key:string,w:number|undefined){if(w)s.widths={...s.widths,[key]:w};else{const {[key]:_,...rest}=s.widths;s.widths=rest;}save();toolbar.sync();}
   function grip(key:string,label:string){return columnGrip({label:`${label} column`,width:()=>s.widths[key],keep:w=>setWidth(key,w),size:(w,g)=>sizeColumn(g.closest('table')!,key,w)});}
   /** A tri-state box over some leaves (lines, or a rule without lines). */
@@ -382,45 +359,31 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   }
   function setOpen(ids:string[],on:boolean){s.open=on?[...new Set([...s.open,...ids])]:s.open.filter(id=>!ids.includes(id));
     if(ids.length===1){save();patchRule(ids[0]);toolbar.sync();}else changed();}
-  /** One rule's rows drawn again in place (opened, closed, switched): the rest of the table is left as it is. */
+  /** One rule drawn again in place (opened, closed, switched): the rest of the list is left as it is. */
   function patchRule(id:string){
-    const tbody=body.querySelector('tbody'),first=tbody?.querySelector<HTMLElement>(`tr.rt-rule[data-rule="${CSS.escape(id)}"]`);
+    const old=body.querySelector<HTMLElement>(`li.rt-item[data-rule="${CSS.escape(id)}"]`);
     const rows=shown(),x=rows.find(r=>r.e.id===id);
-    if(!tbody||!first||!x||s.mode!=='rules'){draw();return;}
-    const old:Element[]=[first];for(let n=first.nextElementSibling;n&&!n.matches('tr.rt-rule,tr.dt-group');n=n.nextElementSibling)old.push(n);
-    const focused=document.activeElement as HTMLElement|null,key=focused&&old.some(n=>n.contains(focused))?focused.dataset.key||focused.getAttribute('aria-label'):null;
-    const next=ruleRow(x,rows);first.before(...next);for(const n of old)n.remove();
-    body.querySelector('thead')?.replaceWith(header(rows));
+    if(!old||!x||s.mode!=='rules'){draw();return;}
+    const focused=document.activeElement as HTMLElement|null,key=focused&&old.contains(focused)?focused.dataset.key||focused.getAttribute('aria-label'):null;
+    const next=ruleItem(x,rows);old.replaceWith(next);
+    body.querySelector('.rt-lhead')?.replaceWith(header(rows));
     syncSelection();
-    if(key)tbody.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"],[aria-label="${CSS.escape(key)}"]`)?.focus({preventScroll:true});
-  }
-  /** The people table (CONTRACT §5): every rank, then only the people who differ from it, and only the columns that have
-   *  a value; every cell is the server's words, and an empty cell reads as the row it belongs under. */
-  function peopleTable(t:ExplainedPeopleTable,label:string):HTMLElement{
-    const columns=t.columns??[],rows=t.rows??[];
-    // How to read it is contextual help on the table's caption (DESIGN: secondary explanations are help, not a line).
-    const how='People are listed only where they differ from their rank.';
-    const help=rows.some(r=>r.kind==='person')?el('button',{type:'button',class:'icon-button bare','aria-label':how,'data-help':'','data-tip':how},icon('help')):'';
-    // Each cell is the server's `cell`: its words with every qualifier (where, overtime, duty type, until; owner P1,
-    // 8 Nov), as sent. Never the bare `display`, which leaves the qualifiers out.
-    return el('div',{class:'rt-people'},el('div',{class:'table-scroll'},el('table',{class:'dt-table rt-people-table','aria-label':label},
-      el('caption',{class:'rt-people-cap'},help),
-      el('thead',{},el('tr',{},el('th',{scope:'col'},el('span',{class:'sr-only'},'Who')),...columns.map(c=>el('th',{scope:'col'},c.label)))),
-      el('tbody',{},...rows.map(r=>el('tr',{class:'rt-p-'+r.kind},el('th',{scope:'row'},r.display),
-        ...columns.map(c=>el('td',{class:'num'},r.cells?.[c.key]?.cell||''))))))));
+    if(key)next.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"],[aria-label="${CSS.escape(key)}"]`)?.focus({preventScroll:true});
   }
   /** Two rules that can't both hold: the server's sentence, its two line numbers, and Open both (their lines open). */
-  function conflictRow(c:NonNullable<DepartmentRules['conflicts']>[number],rows:Shown[]):HTMLElement{
+  function conflictItem(c:NonNullable<DepartmentRules['conflicts']>[number],rows:Shown[]):HTMLElement{
     const ids=rows.filter(r=>r.e.rule?.id&&c.rule_ids.includes(String(r.e.rule.id))).map(r=>r.e.id);
     const refs=c.line_refs;
-    return el('tr',{class:'rt-conflict','data-conflict':c.conflict_id},el('td',{}),el('td',{colspan:String(cols().length+3)},
+    return el('li',{class:'rt-conflict','data-conflict':c.conflict_id},
       el('span',{class:'rt-conflict-in'},issueGlyph('error'),el('span',{},c.sentence,refs.length===2?` Lines #${refs[0]} and #${refs[1]}.`:''),
-        ids.length?button('Open both',()=>setOpen(ids,true),'secondary small'):'')));
+        ids.length?button('Open both',()=>setOpen(ids,true),'secondary small'):''));
   }
-  function ruleRow(x:Shown,rows:Shown[]):HTMLElement[]{
-    const e=x.e,d=draftView(e),ls=d.lines,openNow=isOpen(x),width=cols().length+3,listed=x.lines.length;
+  /** One rule: its catalogue name with what changes what happens (safety, strength, Off, waiting, changes,
+   *  attention), over one count line; its lines only when it is opened. Never a sentence about one of its lines. */
+  function ruleItem(x:Shown,rows:Shown[]):HTMLElement{
+    const e=x.e,d=draftView(e),ls=d.lines,openNow=isOpen(x),region=`rt-lines-${e.id}`;
     const mine=leaves(e).filter(k=>selected.has(k)).length;
-    const toggle=el('button',{type:'button',class:'icon-button bare rt-toggle','data-key':'toggle:'+e.id,'aria-expanded':String(openNow),'aria-label':`${openNow?'Close':'Open'} ${e.name}`,'data-tip':'Alt+click: all rules'},icon(openNow?'chevronDown':'chevronRight'));
+    const toggle=el('button',{type:'button',class:'icon-button bare rt-toggle','data-key':'toggle:'+e.id,'aria-expanded':String(openNow),'aria-controls':region,'aria-label':`${e.name} lines`,'data-tip':'Alt+click: all rules'},icon(openNow?'chevronDown':'chevronRight'));
     toggle.addEventListener('click',ev=>setOpen(ev.altKey?rows.map(r=>r.e.id):[e.id],!openNow));
     const on=d.on&&(!!e.rule||ls.length>0);
     // A reader who cannot change rules reads the fact (On / Off), not a switch they cannot use.
@@ -430,51 +393,93 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     if(!on)ruleMark(sw,'off');
     if(sw instanceof HTMLInputElement)sw.addEventListener('change',()=>{if(!turn(e,sw.checked))sw.checked=!sw.checked;});
     const picked=el('span',{class:'rt-picked'},mine&&ls.length?`${mine} of ${ls.length} selected`:'');picks.push([picked,e]);
-    // The rule's name spans the columns before Reach (wherever it was moved); its reach sits in that column.
-    const changes=changesOf(e),att=attentionWords(issuesOf(e)),at=cols().findIndex(c=>c.key==='reach'),reach=at>=0,before=reach?at:cols().length,after=cols().length-before-(reach?1:0);
-    const row=el('tr',{class:'rt-rule'+(d.on?'':' is-off'),'data-rule':e.id},el('td',{class:'dt-check'},canEdit?box(`Select ${e.name}`,shownLeaves(x),!editable(e)):''),el('td',{class:'rt-toggle-col'},toggle),
-      el('td',{colspan:String(before+1),class:'rt-name'+wrapped('who')},el('span',{class:'rt-name-in'},sw,
-        // By question the server's one sentence leads (Why panel v2); the name stays as the link to the rule's page.
-        ...(questionOf(e)?[el('span',{class:'rt-sentence'},questionOf(e)!.unexplained?unexplainedLine():questionOf(e)!.summary_sentence)]:[]),
-        // The safety lock in every grouping (Design Lead): drawn here, once per rule row, never per grouping path.
-        safe(e)?ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter'},icon('lock')),'safety'):'',
-        button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'+(questionOf(e)?' rt-rule-link-quiet':'')}),
-        // Grouped otherwise there is no sentence to replace: the short words beside its name (DL-037).
-        !questionOf(e)&&summaries.get(e.id)?.unexplained?unexplainedLine(TERMS.ruleUnexplainedShort):'',
-        el('span',{class:'rt-count'},listed?plural(listed,'line'):'no lines'),
-        // The rule's own flags sit beside its name and line count, where the row is read (and seen on a phone), not
-        // in a far column; a line's flags stay in its Checks column.
-        e.proposed?badge(WAITING,'warn','rt-waiting-chip',{'data-rule-mark':'waiting'}):'',changes?badge(plural(changes,'change'),'info'):'',
-        e.overlaps?badge('⚠ Overlaps','warn'):'',att?badge(`⚠ ${att}`,statusTone('attention'),'rt-att',{as:'button',onclick:()=>{open('attention',{rule:[e.name]});},'data-rule-mark':'attention'}):'',picked)),
-      reach?el('td',{class:'num'},e.rule&&isOn(e)?String(e.people):'—'):'',after?el('td',{colspan:String(after)}):'',
-      el('td',{class:'rt-flags'}),el('td',{}));
-    if(!openNow)return marks.stamp([row]);
-    const live=new Map(linesOf(e).map(l=>[l.id,JSON.stringify(l)]));
+    const changes=changesOf(e),att=attentionWords(issuesOf(e)),shownLines=x.lines.map(i=>i.line);
+    const title=el('div',{class:'rt-title'},
+      // The safety lock in every grouping: drawn here, once per rule row, never per grouping path.
+      safe(e)?ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter','data-tip':'Safety rule: can only be made stricter'},icon('lock')),'safety'):'',
+      button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'}),
+      // Its strength once (one badge when every number agrees, else Mandatory and Advisory): the shared level badges.
+      marks.numbers(el('span',{class:'rt-levels'},...ruleLevels(e,shownLines).map(v=>levelBadge(v))),false),
+      // a rule the explainer can't word says so beside its name, in every grouping; by question in full (its check still applies).
+      summaries.get(e.id)?.unexplained?unexplainedLine(questionOf(e)?TERMS.ruleUnexplained:TERMS.ruleUnexplainedShort):'',
+      // Off in words too (the switch's colour is never the only signal); a reader's On / Off badge already says it.
+      canEdit&&!on?badge('Off','neutral','rt-off'):'',
+      // Waiting on someone else is information, not a call to act: info with a clock.
+      e.proposed?badge(WAITING,'info','rt-waiting-chip',{icon:'clock','data-rule-mark':'waiting'}):'',changes?badge(plural(changes,'change'),'info'):'',
+      att?badge(`⚠ ${att}`,statusTone('attention'),'rt-att',{as:'button',onclick:()=>{open('attention',{rule:[e.name]});},'data-rule-mark':'attention'}):'',picked);
+    const meta=el('div',{class:'rt-meta'},ruleCounts(shownLines,names,data.day,on));
+    const item=el('li',{class:'rt-item'+(d.on?'':' is-off'),'data-rule':e.id},
+      el('div',{class:'rt-row'},canEdit?box(`Select ${e.name}`,shownLeaves(x),!editable(e)):el('span',{}),toggle,sw,el('div',{class:'rt-main'},title,meta)));
+    if(openNow)item.append(linesRegion(x,region));
+    return marks.stamp(item);
+  }
+  /** An opened rule's lines: grouped by where (lines with a different where all apply), all clinics first; in each
+   *  group the most specific who first (`shown` orders them, or a chosen line sort). Each line: who › when › numbers. */
+  function linesRegion(x:Shown,id:string):HTMLElement{
+    const e=x.e,ls=draftView(e).lines,live=new Map(linesOf(e).map(l=>[l.id,JSON.stringify(l)]));
     // Inherited labels read this render's snapshot, not a fresh clone of the whole rule for every number.
     const from=sourceWords(()=>ls as RuleLine[],names);  // read only: the label reader never edits
-    const out=[row,...x.lines.map(({line,n})=>lineRow(e,line,n,live,from))];
-    if(editable(e)&&!s.q){const add:HTMLButtonElement=button(`+ New line in ${e.name}`,()=>{const d=draftOf(e);newLinePicker(ctx,e,add,d,()=>{keepDraft(e,d);if(!d.on&&!e.rule)d.on=true;s.open=[...new Set([...s.open,e.id])];redraw();},id=>o.navigate(`rules/${e.id}/${id}`));},'',{class:'link-button rt-add'});
-      out.push(el('tr',{class:'rt-new'},el('td',{}),el('td',{class:'rt-rail'}),el('td',{colspan:String(width)},add)));}
-    else if(canEdit&&e.proposed&&!s.q){const add=disabledWhy(button(`+ New line in ${e.name}`,()=>undefined,'',{class:'link-button rt-add'}),`${e.name} already has a change waiting for approval`,[' · ',button('Open it',()=>proposalPanel(ctx,e,names,()=>refresh()),'',{class:'link-button',...popup('dialog')})]);
-      out.push(el('tr',{class:'rt-new'},el('td',{}),el('td',{class:'rt-rail'}),el('td',{colspan:String(width)},add)));}
-    return marks.stamp(out);
+    const one=ruleLevels(e,x.lines.map(i=>i.line)).length<=1,sorted=[s.sort,...s.then_sort].some(k=>!!k&&k[0] in LINE_SORT);
+    const region=el('div',{class:'rt-lines',id,role:'region','aria-label':`${e.name} lines`});
+    const set=(l:RuleLine)=>!!l.where?.conditions?.length,groups=new Map<string,Shown['lines']>();
+    for(const it of x.lines){const k=set(it.line)?JSON.stringify(it.line.where):'';groups.set(k,[...(groups.get(k)||[]),it]);}
+    [...groups.values()].sort((a,b)=>Number(set(a[0].line))-Number(set(b[0].line))).forEach((g,i)=>{
+      const where=g[0].line.where;
+      region.append(el('div',{class:'rt-wh'},el('span',{class:'rt-wh-label'},'Where'),pills(ctx,where,names,'All clinics',o.openTag,'Where',3,marks),el('span',{class:'dt-group-count'},String(g.length)),
+        // How lines combine is a rule of reading: contextual help on the first where, never a line of text.
+        i===0?helpButton(`How ${e.name}'s lines combine`,whoWins(e),'rt-help'):''),
+        el('ol',{class:'rt-lns','aria-label':`${plural(g.length,'line')} at ${treeText(where,names,'all clinics')}`},...shaped(g)));
+      // an anchor line with its exceptions nested under it (exceptionTree, as on the rule's page); a chosen line sort
+      // keeps its own flat order.
+      function shaped(g:Shown['lines']):HTMLElement[]{
+        const shape=sorted?g.map(item=>({item,under:false,always:false})):exceptionTree(e,g,it=>it.line),subs=shape.filter(x=>x.under),always=shape.filter(x=>x.always);
+        const item=(x:typeof shape[number])=>lineItem(e,x.item.line,x.item.n,live,from,one,live.get(x.item.line.id)===JSON.stringify(x.item.line)?replacedWords(e,x.item.line,linesOf(e),e.line_replaces,settingsOf(e)):'');
+        // C1: a mixed rule's safety lines after the anchor and its exceptions, under their own word, so they never read as
+        // more exceptions (every matching one applies).
+        return [...shape.filter(x=>!x.under&&!x.always).map(item),...(subs.length?[el('li',{class:'rt-sub'},el('ol',{class:'rt-lns rt-exc','aria-label':plural(subs.length,'exception')},...subs.map(item)))]:[]),
+          ...(always.length?[el('li',{class:'rt-sub'},el('span',{class:'rt-always-word','aria-hidden':'true'},'Always applies'),el('ol',{class:'rt-lns rt-always','aria-label':`Always applies: ${plural(always.length,'line')}`},...always.map(item)))]:[])];
+      }
+    });
+    if(editable(e)&&!s.q){const add:HTMLButtonElement=button(`+ New line in ${e.name}`,()=>{const d=draftOf(e);newLinePicker(ctx,e,add,d,()=>{keepDraft(e,d);if(!d.on&&!e.rule)d.on=true;s.open=[...new Set([...s.open,e.id])];redraw();},lid=>o.navigate(`rules/${e.id}/${lid}`));},'',{class:'link-button rt-add'});
+      region.append(el('div',{class:'rt-new'},add));}
+    else if(canEdit&&e.proposed&&!s.q)region.append(el('div',{class:'rt-new'},disabledWhy(button(`+ New line in ${e.name}`,()=>undefined,'',{class:'link-button rt-add'}),`${e.name} already has a change waiting for approval`,
+      [' · ',button('Open it',()=>proposalPanel(ctx,e,names,()=>refresh()),'',{class:'link-button',...popup('dialog')})])));
+    return region;
   }
-  function lineRow(e:Entry,l:RuleLine,n:number,live:Map<string,string>,from:(id:string)=>string){
+  /** `one`: the rule says its one strength on its row, so the line does not repeat it. `instead`: what the server says this line replaces (replacedWords), in words; the anchor's numbers
+   *  this exception replaces, only when certain. */
+  function lineItem(e:Entry,l:RuleLine,n:number,live:Map<string,string>,from:(id:string)=>string,one:boolean,instead=''){
+    // Overlaps only where two lines both apply (equal tiers, no winner); a winning exception and its anchor are not a warning.
     const ov=e.line_overlaps?.[l.id]||[],days=endsIn(l),state=!live.has(l.id)?'New':live.get(l.id)!==JSON.stringify(l)?'Changed':'';
-    const cell:Record<string,()=>Child>={where:()=>pills(ctx,l.where,names,'All clinics',o.openTag,'Where',2,marks),numbers:()=>{
-      // An Applies number reads as its mode alone ("next day combination", "no duties"), never "applies · …".
-      const mode=l.numbers.apply&&e.modes&&!e.measures?unitText(e,l,settingsOf(e)):'';
-      const n=numbersNode(l,e.inherited?.[l.id],from,mode||appliesWord(e),marks),c=e.measures&&l.numbers.apply||mode?'':unitText(e,l,settingsOf(e));if(c)n.append(el('small',{class:'muted'},' '+c));return n;},  // shortcut: inherited as the rule in force reads it (a changed draft is checked on its page)
-      measure:()=>measureText(l)||'—',period:()=>periodText(l)||'—',
-      days:()=>daysText(l),valid:()=>validNode(l),reach:()=>reachNode(e.reach[l.id],l,data.day)};
-    return el('tr',{class:'rt-line'+(state?' rc-changed':''),'data-line':l.id},el('td',{class:'dt-check'},canEdit?box(`Select line ${n+1} of ${e.name}`,['l:'+l.id],!editable(e)):''),
-      el('td',{class:'rt-rail'},el('span',{class:'rt-n'},String(n+1))),sizedCell('who','rt-who'+wrapped('who'),pills(ctx,l.who,names,'Everyone',o.openTag,'Who',2,marks)),
-      ...cols().map(c=>sizedCell(c.key,`rt-${c.key}${c.key==='reach'?' num':''}${wrapped(c.key)}`,cell[c.key]())),
-      el('td',{class:'rt-flags'},el('span',{class:'rt-flag-list'},state?badge(state,'info'):'',ov.length?badge('⚠ Overlaps','warn'):'',days!==null&&days>=0&&days<=RULE_ENDING_DAYS?badge(`⚠ Ends in ${plural(days,'day')}`,'warn'):'')),
-      el('td',{class:'rt-open'},button('↗',()=>go(`rules/${e.id}/${l.id}`),'',{class:'icon-button bare','aria-label':`Open line ${n+1} of ${e.name}`,'data-tip':'Open in the rule'})));
+    // An Applies number reads as its mode alone ("next day combination", "no duties"), never "applies · …".
+    const mode=l.numbers.apply&&e.modes&&!e.measures?unitText(e,l,settingsOf(e)):'';
+    const noDuties='apply' in (l.numbers||{})&&appliesWord(e)==='no duties';
+    const num=numbersNode(l,e.inherited?.[l.id],from,mode||(noDuties?'No duties':appliesWord(e)));
+    // 11: the number and its measure are one unbroken phrase; a strength follows the measure words, and only when the
+    // rule's lines differ in strength (an inherited strength says nothing).
+    const levels=[...num.querySelectorAll<HTMLElement>('.rc-level')];for(const b of levels){if(b.previousSibling?.textContent===' ')b.previousSibling.remove();b.remove();}
+    // Measure and period read in the unit words ("duties per calendar week"), not columns of their own.
+    // shortcut: the unit shown is the in-force rule's, so a draft that changes the unit shows the old unit here (its page shows the new); upgrade when the catalogue sends each line's effective unit (a server field).
+    const unit=e.measures&&l.numbers.apply||mode?'':unitText(e,l,settingsOf(e))||unitWords(e,l);if(unit)num.append(el('small',{class:'muted'},' '+unit));
+    // 12 + C1: a safety line (no duties, …) carries its lock.
+    const lock=noDuties||e.mixed_safety&&setsSafety(e,l)?[safetyLock(),' ']:[];
+    marks.numbers(num);
+    const after=[...(one?[]:levels.filter(b=>b.dataset.level!=='inherit')),...(instead?[el('small',{class:'muted rt-instead'},`(instead of ${instead})`)]:[])];
+    const tail=after.length?marks.numbers(el('span',{class:'rt-ln-after'},...after.flatMap(x=>[' ',x])),false):'';
+    // When: its days (only when not every day) and valid dates (only when set); blank otherwise.
+    // every condition the resolver applies (a restriction's days, hours, window around leave) reads here.
+    const dayWords=whenWords(e,l,settingsOf(e)),when:Child[]=[dayWords!==everyDay?dayWords:'',l.starts_on||l.ends_on?validNode(l):''].filter(Boolean);
+    // Reach only when it is not a plain count: No one, Starts later, Ended.
+    const reached=e.reach[l.id];
+    return el('li',{class:'rt-ln'+(state?' rc-changed':''),'data-line':l.id},
+      canEdit?box(`Select line ${n+1} of ${e.name}`,['l:'+l.id],!editable(e)):el('span',{}),
+      el('span',{class:'rt-n','aria-label':`Line ${n+1}`},String(n+1)),
+      el('span',{class:'rt-ln-who'},pills(ctx,l.who,names,'Everyone',o.openTag,'Who',2,marks)),
+      el('span',{class:'rt-ln-what'},el('span',{class:'rt-ln-when'},...when.flatMap((w,i)=>i?[' · ',w]:[w])),el('span',{class:'rt-ln-num'},...lock,num,tail),
+        el('span',{class:'rt-ln-flags'},state?badge(state,'info'):'',ov.some(o=>o.winner==null)?badge('⚠ Overlaps','warn'):'',days!==null&&days>=0&&days<=RULE_ENDING_DAYS?badge(`⚠ Ends in ${plural(days,'day')}`,'warn'):'',
+          reached===0?reachNode(reached,l,data.day):'')),
+      el('span',{class:'rt-ln-open'},button('↗',()=>go(`rules/${e.id}/${l.id}`),'',{class:'icon-button bare','aria-label':`Open line ${n+1} of ${e.name}`,'data-tip':'Open in the rule'})));
   }
-  /** A line's cell in a column: it names its column (a width reaches the whole column) and takes its width. */
-  function sizedCell(key:string,cls:string,content:Child){const td=el('td',{class:cls,'data-col':key},content);sized(td,s.widths[key]);return td;}
   /** On or off from the switch or the selection bar: a draft change, proposed with the rest. A rule not in force gets
    *  its first line; one whose settings only the department can choose opens its page. */
   function turn(e:Entry,on:boolean):boolean{
@@ -494,7 +499,6 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   function drawRules(){
     boxes=[];picks=[];
     const rows=shown();
-    const tbody=el('tbody',{});
     // By question: the server's groups A–F in its order, with its letters and labels as sent; a rule it does not explain
     // (not in force) after them. By family: the catalogue's families.
     const asked=grouping()==='question'?[...byQuestion?.groups??[]].sort((a,b)=>a.order-b.order):[];
@@ -504,23 +508,22 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       :grouping()==='family'?data.families.map(f=>({id:f.id,name:f.name,rows:rows.filter(x=>x.e.family===f.id)})).filter(g=>g.rows.length):[{id:'',name:'',rows}];
     // A conflict shows once, under the first of its two rules drawn (CONTRACT §6): the server's sentence and line numbers.
     const told=new Set<string>();
-    // The people table sits once, under the question whose rules it reads (its columns' rule ids; no group key here).
-    const table=grouping()==='question'?byQuestion?.people_table:null,tableRules=new Set((table?.columns??[]).flatMap(c=>c.rule_ids));let tabled=false;
-    for(const g of groups){
-      // The family's tri-state box says how much of it is selected.
-      if(g.id){const keys=lineLeaves(g.rows);
-        tbody.append(el('tr',{class:'dt-group rt-family'},el('td',{class:'dt-check'},canEdit?box(`Select ${g.name}`,keys,!keys.length):''),
-          el('td',{colspan:String(cols().length+4)},el('span',{class:'rt-family-name'},el('strong',{},...(g.letter?[el('span',{class:'rt-letter'},g.letter),' ']:[]),g.name),el('span',{class:'dt-group-count'},String(g.rows.length))))));}
-      if(table&&!tabled&&g.rows.some(x=>tableRules.has(String(x.e.rule?.id||'')))){tabled=true;
-        tbody.append(el('tr',{class:'rt-people-row'},el('td',{}),el('td',{colspan:String(cols().length+3)},peopleTable(table,g.name))));}
-      for(const x of g.rows){tbody.append(...ruleRow(x,rows));
-        for(const c of byQuestion?.conflicts||[])if(!told.has(c.conflict_id)&&x.e.rule?.id&&c.rule_ids.includes(String(x.e.rule.id))){told.add(c.conflict_id);tbody.append(conflictRow(c,rows));}}
-    }
+    const sections=groups.map(g=>{
+      const list=el('ul',{class:'rt-list'});
+      for(const x of g.rows){list.append(ruleItem(x,rows));
+        for(const c of byQuestion?.conflicts||[])if(!told.has(c.conflict_id)&&x.e.rule?.id&&c.rule_ids.includes(String(x.e.rule.id))){told.add(c.conflict_id);list.append(conflictItem(c,rows));}}
+      if(!g.id)return el('section',{class:'rt-q'},list);
+      // The group's tri-state box says how much of it is selected.
+      const keys=lineLeaves(g.rows),head=`rt-q-${g.id}`;
+      return el('section',{class:'rt-q','aria-labelledby':head},el('div',{class:'rt-qhead'},canEdit?box(`Select ${g.name}`,keys,!keys.length):el('span',{}),
+        el('h3',{id:head},...(g.letter?[el('span',{class:'rt-letter'},g.letter),' ']:[]),g.name),el('span',{class:'dt-group-count'},String(g.rows.length))),list);
+    });
     const n=rows.reduce((a,x)=>a+x.lines.length,0);
     const listed=all.filter(current).length;
     count.textContent=(rows.length===listed?plural(listed,'rule'):`${rows.length} of ${listed} rules`)+(s.q?` · ${plural(n,'line')}`:'');toolbar.shown(rows.length,listed,['rule','rules']);
     const filtered=!!s.q.trim()||!!normalSearch(s.search_options)?.reference||Object.values(s.filters).some(v=>v.length)||!!s.conditions;
-    body.replaceChildren(rows.length?el('div',{class:'table-scroll rt-scroll',tabindex:0,'aria-label':'Rules and their lines'},el('table',{class:'dt-table rt-table'},header(rows),tbody))
+    // One list, no table and no columns: nothing is empty and nothing scrolls sideways.
+    body.replaceChildren(rows.length?el('div',{class:'table-scroll rt-scroll',tabindex:0,'aria-label':'Rules and their lines'},header(rows),...sections)
       :v2&&!filtered?empty('No rules in use',canEdit?'Add rule starts one, from its first line. Filter shows empty types and ended lines.':'No rule applies yet. Filter shows empty types and ended lines.',null,'rules')
       :empty(all.length?'No matching rules':'No rules',all.length?searchWords(s.search_options)||'Clear the search or a filter.':'',null,'search'));
     selectionShown();
@@ -552,12 +555,12 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       const hit=!q||(normalSearch(s.search_options)?[e?.name,KINDS[x.kind]?.label,what(x)].some(q.name):q.name([e?.name,KINDS[x.kind]?.label,what(x)].join(' ')))||!!e&&linesOf(e).some(l=>x.line_ids.includes(l.id)&&q.line(e,l));
       return hit&&(!t||holds(t,k=>f[k]||[],choice));});
     const tbody=el('tbody',{});
-    const kinds=s.group===''?[{kind:'',items:list}]:Object.keys(KINDS).map(kind=>({kind,items:list.filter(x=>x.kind===kind)})).filter(g=>g.items.length);
+    const kinds=s.group===''?[{kind:'',items:list}]:[...Object.keys(KINDS),...new Set(list.map(x=>x.kind).filter(k=>!KINDS[k]))].map(kind=>({kind,items:list.filter(x=>x.kind===kind)})).filter(g=>g.items.length);
     const pick=(label:string,ids:string[])=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':label}) as HTMLInputElement;
       setTriState(b,triStateOf(ids.filter(i=>picked.has(i)).length,ids.length));b.addEventListener('change',()=>{for(const i of ids)b.checked?picked.add(i):picked.delete(i);draw();});return b;};
     for(const g of kinds){
-      if(g.kind)tbody.append(el('tr',{class:'dt-group rt-kind'},el('td',{class:'dt-check'},canEdit?pick(`Select every ${KINDS[g.kind].label} issue`,g.items.map(x=>x.id)):''),
-        el('td',{colspan:'4'},badge(`${KINDS[g.kind].label} ${g.items.length}`,KINDS[g.kind].tone,'',{tip:cap(KINDS[g.kind].about)}))));  // each row says what happens
+      if(g.kind)tbody.append(el('tr',{class:'dt-group rt-kind'},el('td',{class:'dt-check'},canEdit?pick(`Select every ${kindOf(g.kind).label} issue`,g.items.map(x=>x.id)):''),
+        el('td',{colspan:'4'},badge(`${kindOf(g.kind).label} ${g.items.length}`,kindOf(g.kind).tone,'',{tip:cap(kindOf(g.kind).about)}))));  // each row says what happens
       for(const x of g.items)tbody.append(issueRow(x,pick));
     }
     count.textContent=plural(list.length,'issue');toolbar.shown(list.length,shown.length,['issue','issues']);
@@ -603,30 +606,31 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   /** "Line 1 gives way to line 3 for 12 people: they lose its min 2 → target 4" — an issue in words (one place). */
   function what(x:Issue):string{
     const L=(id:string)=>`line ${(byId.get(x.catalogue_id)?linesOf(byId.get(x.catalogue_id)!):[]).findIndex(l=>l.id===id)+1}`,f=x.facts,p=plural(x.people||0,'person','people');
-    if(x.kind==='overlap'){const replaced=f.replaced as Record<string,string[]>,keys=[...new Set(Object.values(replaced).flat())];
-      // Each winner with the numbers it takes: "to line 2 on its min, and to line 3 and line 4 on its max".
-      const by=new Map<string,string[]>();for(const [w,ks] of Object.entries(replaced))by.set(ks.join(' and '),[...(by.get(ks.join(' and '))||[]),w]);
-      const loser=(byId.get(x.catalogue_id)?linesOf(byId.get(x.catalogue_id)!):[]).find(l=>l.id===f.loser),others=Object.keys(loser?.numbers||{}).some(k=>!keys.includes(k));
-      return `${cap(L(f.loser))} gives way to ${[...by].map(([ks,ws])=>`${ws.map(L).join(' and ')} on its ${ks}`).join(', and to ')}, for ${p}`+(others?'; its other numbers still hold for them':'');}
     if(x.kind==='inherits')return `${cap(L(f.line))} inherits ${Object.entries(f.inherited as Record<string,{value:number;from:string}>).map(([k,v])=>`${k} ${numberText(v)} from ${L(v.from)}`).join(' and ')}, which contradicts its own numbers`;
     if(x.kind==='both')return `${cap(L(x.line_ids[0]))} and ${L(x.line_ids[1])} both apply to ${p}: the stricter number binds`;
     if(x.kind==='duplicate')return `${cap(L(x.line_ids[0]))} and ${L(x.line_ids[1])} are the same line (who, where, days and what they count)`;
     if(x.kind==='ending')return `Ends ${formatDate(f.last_day)} (${plural(f.days,'day')})`;
     if(x.kind==='counting_ends')return countingEndText(f as unknown as {counting_end:string;validity_end:string|null});
     if(x.kind==='nobody')return 'No active person matches this scope today';
-    const drafts=f.drafts as {workspace:string;count:number;message:string}[];
-    return `${plural(f.count,'issue')} in ${drafts.map(d=>d.workspace).join(', ')}: ${drafts[0].message}`;
+    // Every number it sets is replaced, for all its people today, by more specific lines: it holds for no one.
+    if(x.kind==='shadowed'){const w=(f.winners as string[]|undefined)||[],ks=(f.numbers as string[]|undefined)||[];
+      return `${cap(L(x.line_ids[0]))} applies to no one today: ${w.length?w.map(L).join(' and '):'more specific lines'} replace${w.length===1?'s':''} every number it sets${ks.length?` (${ks.join(' and ')})`:''}, for all ${p}`;}
+    const drafts=Array.isArray(f.drafts)?f.drafts as {workspace:string;count:number;message:string}[]:[];
+    if(x.kind==='blocks'&&drafts.length)return `${plural(f.count,'issue')} in ${drafts.map(d=>d.workspace).join(', ')}: ${drafts[0].message}`;
+    // A kind without its own words here says what its kind means, never nothing and never an error.
+    return cap(kindOf(x.kind).about||kindOf(x.kind).label);
   }
   /** A fix in words: "Give line 3 min 2 → 4 too", "Remove line 2", "Let it end". */
   function fixWords(x:Issue,f:Fix,action=false):string{
     const e=byId.get(x.catalogue_id),L=(id:string)=>`line ${(e?linesOf(e):[]).findIndex(l=>l.id===id)+1}`;
     if(f.kind==='inherit')return `Let ${L(f.line_id!)} inherit its ${(f.numbers||[]).join(' and ')}`;
     if(f.kind==='none')return `Give ${L(f.ops[0].line_id)} no ${(f.numbers||[]).join(' and ')} (None)`;
-    if(f.kind==='remove')return `Remove ${L(f.line_id!)}`+(f.recommended&&x.kind==='both'?` (${L(x.line_ids.find(i=>i!==f.line_id)!)} already covers it)`:'');
+    // The line a removal targets: its own id, else its one op's (a fix may carry only the op).
+    if(f.kind==='remove')return `Remove ${L(f.line_id??f.ops[0]?.line_id??x.line_ids[0])}`+(f.recommended&&x.kind==='both'?` (${L(x.line_ids.find(i=>i!==f.line_id)!)} already covers it)`:'');
     if(f.kind==='extend')return `Extend to ${formatDate(new Date(Date.parse(f.ops[0].ends_on+'T12:00:00Z')-86400000).toISOString().slice(0,10))}`;
     if(f.kind==='advisory')return `Make ${f.ops.map(op=>L(op.line_id)).join(', ')} advisory`;
     if(f.kind==='resolve')return `Open Fix list (${f.workspace})`;
-    const outcome={overlap:'Keep lines',both:'Keep both',ending:'Let it end',nobody:'Keep',duplicate:'Keep both'}[x.kind]||'Keep';
+    const outcome={both:'Keep both',ending:'Let it end',nobody:'Keep',duplicate:'Keep both'}[x.kind]||'Keep';
     return action?`${outcome} · acknowledge…`:outcome;
   }
   function issueRow(x:Issue,pick:(label:string,ids:string[])=>HTMLInputElement){
@@ -679,22 +683,16 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const said=(e:Entry)=>checkWords(e,()=>draftOf(e).lines,names);
     const stop=checks.flatMap((c,i)=>[...c.duplicates.map(d=>`${rules[i].name}: ${said(rules[i]).same(d)}.`),...c.issues.map(x=>`${rules[i].name}: ${x.message}`)]);
     if(stop.length){notify(stop.join(' '),'error');return;}
-    const overlaps=checks.flatMap((c,i)=>c.overlaps.map(x=>`${rules[i].name}: ${said(rules[i]).over(x)}`));
-    const understood=check('I have read which lines give way and that is intended',false);
     const total=totalChanges();
     const intro=el('div',{class:'span-2 rt-propose'},...rules.flatMap(e=>{const d=draftOf(e);return [el('h4',{},`${e.name} · ${plural(changesIn(e,d),'change')}`),
-      (e.rule?d.on!==isOn(e):d.on)?el('p',{},d.on?'Turns the rule on.':'Turns the rule off; its lines are kept.'):'',changeList(e,linesOf(e),d.lines,names,d.settings)];}),
-      ...(overlaps.length?[el('p',{class:'dt-pop-label'},'Lines that give way to more specific ones'),el('ul',{class:'rc-diff'},...overlaps.map(t=>el('li',{},'⚠ '+t))),understood.wrap]:[]));
+      (e.rule?d.on!==isOn(e):d.on)?el('p',{},d.on?'Turns the rule on.':'Turns the rule off; its lines are kept.'):'',changeList(e,linesOf(e),d.lines,names,d.settings)];}));
     confirmAction(`Propose ${plural(total,'change')}`,`One new version of ${rules.length===1?rules[0].name:plural(rules.length,'rule')}, each applied once another authorised person approves it. Retiring a version later brings back the one before.`,async reason=>{
-      // Checked at save time too: unticked while a failed send was in flight, the retry must not acknowledge the overlaps.
-      if(overlaps.length&&!understood.input.checked)throw new Error('Tick “I have read which lines give way” first.');
       let n=0;
       for(const [i,e] of rules.entries()){
-        try{const d=draftOf(e),record=await propose(e,d,reason,checks[i].overlaps.map(x=>x.line_id),false);rememberProposed(String(record.id),e,d);discardDraft(e.id);n++;}
+        try{const d=draftOf(e),record=await propose(e,d,reason);rememberProposed(String(record.id),e,d);discardDraft(e.id);n++;}
         catch(err){await refresh();throw new Error(`${n} of ${rules.length} proposed. Stopped at ${e.name}: ${(err as Error).message}`);}
       }
       applied.clear();o.setLeave?.(null);notify(`Proposed ${plural(n,'rule')}; each applies once another authorised person approves it.`);await refresh();},'Propose',intro);
-    tickGates(understood.input);
   }
 
   // ---- Drawing ----
