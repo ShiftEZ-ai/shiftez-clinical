@@ -1,6 +1,7 @@
 """Synthetic policy regressions, reusable as tests/test_working_policy.py in PR #1."""
 import contextlib
 import copy
+from fnmatch import fnmatchcase
 import io
 import json
 import os
@@ -166,31 +167,46 @@ def pytest_runtest_makereport(item, call):
              patch.object(policy, "read_file", return_value=None):
             with self.assertRaises(ValueError): policy.accepted_dev_commit(expected_tree, dev)
 
-    def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False, kind="pull_request", after_removed=None):
+    def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False,
+                  kind="pull_request", after_removed=None, after_python=None, entry=None, preview_probe=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
                  "head": {"ref": "feature", "sha": head, "repo": {"id": policy.REPOSITORY}}, "merge_commit_sha": candidate}}
         data["pull_request"]["merge_commit_sha"] = None
         data["merge_group"] = {"base_ref": "refs/heads/" + branch, "base_sha": base, "head_sha": head}
         report = {}
+        preview_ref = "refs/heads/preview"
+        fetch = policy.fetch
+        def fake_fetch(ref, expected=None, **options):
+            if ref == preview_ref and preview_probe is not None:
+                return fetch(ref, expected, **options)
+            return expected or source
         def fake_git(*args):
+            if args == ("fetch", "--no-tags", "origin", preview_ref):
+                raise subprocess.CalledProcessError(128, args)
+            if args == ("ls-remote", "--exit-code", "--refs", "origin", preview_ref):
+                if preview_probe:
+                    raise subprocess.CalledProcessError(preview_probe, args)
+                return (source + "\t" + preview_ref + "\n").encode()
             if args[0]=='ls-tree':return b''
             if args[0] == "rev-parse": return source.encode()
             if args[0] == "diff": return changed.encode() + b"\0"
             if args[0] == "rev-list": return b"preview-merge\n" if preview_history else b""
             raise AssertionError(args)
         def record(branch, base, head, candidate, rows, source, candidate_sha=None):
-            report.update({"tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]})
+            report.update({"branch": branch, "target_sha": base, "candidate_tree": candidate,
+                           "tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]})
             return report
         def read(rev, name):
             if name=='ci/removed-tests.json':
                 return json.dumps(after_removed if rev==candidate and after_removed is not None else {'schema':2,'removed':[],'removed_nodes':[]}).encode()
             if name == policy.KNOWN:
                 return json.dumps(after_known if rev == candidate and after_known is not None else self.before).encode()
-            if name.endswith(".py"): return b"x=1\n"
+            if name.endswith(".py"):
+                return after_python if rev == candidate and after_python is not None else b"x=1\n"
             return b"{}"
         with contextlib.ExitStack() as stack:
-            for name, value in {"event": lambda: data, "git": fake_git, "fetch": lambda ref, expected=None: expected or source,
+            for name, value in {"event": lambda: data, "git": fake_git, "fetch": fake_fetch,
                                 "merge_tree": lambda *a: candidate,
                                 "tree": lambda rev: ((merge_tree or candidate) if rev == head else candidate),
                                 "accepted_dev_commit": lambda candidate_tree, dev_tip: source,
@@ -199,8 +215,85 @@ def pytest_runtest_makereport(item, call):
                 stack.enter_context(patch.object(policy, name, value))
             stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_EVENT_NAME": kind, "TRUSTED_BOOTSTRAP": "false"}))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
-            policy.guard()
+            (entry or policy.guard)()
         return report
+
+    def checks_guard(self, summary):
+        import yaml
+        workflows = HELPERS if (HELPERS / "ci.yml").is_file() else HELPERS.parent / "workflows"
+        jobs = yaml.load((workflows / "ci.yml").read_bytes(), Loader=yaml.BaseLoader)["jobs"]
+        steps = jobs["checks"]["steps"]
+        guard = next(step for step in steps if step.get("name") == "Enforce working policy before test fan-out")
+        self.assertEqual(guard["working-directory"], ".trusted-controls")
+        self.assertEqual(guard["if"], "github.event_name == 'pull_request' || github.event_name == 'merge_group'")
+        self.assertEqual(guard["env"], {"POLICY_WORKFLOW_SHA": "${{ github.workflow_sha }}"})
+        for i, step in enumerate(steps):
+            if step.get("id") == "plan" or step.get("uses", "").startswith("actions/upload-artifact@"):
+                self.assertLess(steps.index(guard), i)
+        for job in ("unit", "browser", "static"):
+            self.assertEqual(jobs[job]["needs"], "checks")
+            self.assertIn("needs.checks.result == 'success'", jobs[job]["if"])
+        standalone = yaml.load((workflows / "working-policy.yml").read_bytes(), Loader=yaml.BaseLoader)
+        standalone_steps = standalone["jobs"]["policy"]["steps"]
+        self.assertIn("python -I .github/scripts/working_policy.py guard", [step.get("run") for step in standalone_steps])
+        source = guard["run"].split("\n", 1)[1].rsplit("\nPY", 1)[0]
+
+        def entry():
+            with patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                exec(compile(source, "Checks policy step", "exec"), {})
+
+        return entry
+
+    def test_checks_stops_on_other_policy_refusals_before_fan_out(self):
+        addition = copy.deepcopy(self.before)
+        addition["fails"].append({**addition["fails"][0], "node": "tests/test_new.py::test_case"})
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            entry = self.checks_guard(summary)
+            cases = [
+                (policy.KNOWN, {"after_known": addition}, "Known-failures changes"),
+                ("AGENTS.md", {}, "private agent instructions"),
+                ("apps/example.py", {"after_python": b"x = ("}, "syntax error"),
+                (".github/workflows/ci.yml", {"preview_history": True}, "Preview merge history"),
+            ]
+            for path, options, message in cases:
+                with self.subTest(path=path), self.assertRaisesRegex(SystemExit, message):
+                    self.run_guard(path, entry=entry, **options)
+            self.assertFalse(summary.exists())
+
+    def test_checks_continues_for_audited_route_and_standalone_still_refuses(self):
+        refusal = "Tier 1 control changes require the audited maintenance route"
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            entry = self.checks_guard(summary)
+            clean = self.run_guard("apps/example.py", entry=entry)
+            self.assertEqual(clean["tier1"], [])
+            self.assertFalse(summary.exists())
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(kind=kind):
+                    with self.assertRaisesRegex(ValueError, refusal):
+                        self.run_guard(".github/workflows/ci.yml", kind=kind)
+                    report = self.run_guard(".github/workflows/ci.yml", kind=kind, entry=entry)
+                    self.assertEqual([row["path"] for row in report["tier1"]], [".github/workflows/ci.yml"])
+            self.assertEqual(summary.read_text(encoding="utf-8").count(refusal), 2)
+
+    def test_review_required_patterns_cover_tracked_or_reserved_paths(self):
+        root = HELPERS.parents[1]
+        paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"]).decode("utf-8").split("\0")[:-1]
+        rules = (root / "ci/review_required_paths.txt").read_text(encoding="utf-8")
+        for line in rules.splitlines():
+            pattern, _, note = line.partition("#")
+            if pattern := pattern.strip():
+                with self.subTest(pattern=pattern):
+                    self.assertEqual(any(fnmatchcase(path, pattern) for path in paths),
+                                     note.strip() != "must never exist")
+        for path in ("apps/api/auth.py", "apps/api/commands.py", "apps/api/services/access.py", "apps/api/data_crypto.py",
+                     "packages/domain/rule_lines.py", "migrations/versions/new.py", ".github/workflows/ci.yml",
+                     "ci/review_required_paths.txt", "infra/Dockerfile", "DESIGN.md"):
+            with self.subTest(path=path):
+                self.assertTrue(policy.review_required(["tests/test_example.py", path]))
+        self.assertFalse(policy.review_required(["tests/test_example.py", "apps/web/src/branding.ts"]))
+        self.assertFalse(policy.review_required([]))
 
     def test_guard_refuses_previous_event(self):
         with self.assertRaisesRegex(ValueError,'Unsupported policy event'):
@@ -220,6 +313,14 @@ def pytest_runtest_makereport(item, call):
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40)
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", preview_history=True)
 
+    def test_guard_allows_an_absent_preview_ref_but_propagates_fetch_failures(self):
+        for kind in ("pull_request", "merge_group"):
+            with self.subTest(kind=kind):
+                self.assertEqual(self.run_guard("apps/example.py", kind=kind, preview_probe=2)["tier1"], [])
+                for code in (0, 128):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.run_guard("apps/example.py", kind=kind, preview_probe=code)
+
     def test_same_pr_node_ledger_structural_addition_is_flagged_tier2(self):
         after={'schema':2,'removed':[],'removed_nodes':[{'node':'tests/test_a.py::test_old','owner':'test-owner','reason':'Reviewed redundant assertion'}]}
         report=self.run_guard('ci/removed-tests.json',after_removed=after)
@@ -231,10 +332,11 @@ def pytest_runtest_makereport(item, call):
     def test_trusted_verifier_rejects_skipped_missing_producers(self):
         good = {name: {"result": "success"} for name in ("checks", "static", "unit", "browser")}
         verifier.required_producers(json.dumps(good))
-        for status in ("skipped", "cancelled", "failure", "unknown"):
-            bad = copy.deepcopy(good)
-            bad["checks"]["result"] = status
-            with self.assertRaises(ValueError): verifier.required_producers(json.dumps(bad))
+        for producer in good:
+            for status in ("skipped", "cancelled", "failure", "unknown"):
+                bad = copy.deepcopy(good)
+                bad[producer]["result"] = status
+                with self.assertRaises(ValueError): verifier.required_producers(json.dumps(bad))
         del good["checks"]
         with self.assertRaises(ValueError): verifier.required_producers(json.dumps(good))
 
@@ -247,6 +349,18 @@ def pytest_runtest_makereport(item, call):
         omitted["suites"]["unit"]["shards"][0]["files"] = []
         with self.assertRaises(ValueError): verifier.assert_inventory(omitted, rows, {"unit": 1, "browser": 1})
         with self.assertRaises(ValueError): verifier.assert_inventory(plan, rows.replace(b"100644", b"120000", 1), {"unit": 1, "browser": 1})
+        partial = {**plan, "replicas": [1], "selection": {"reason": "affected"}}
+        rows += b"100644 blob " + b"c" * 40 + b"\ttests/test_unobserved.py\0"
+        with patch.object(verifier, "PR_SMOKE", {"tests/test_browser_a.py"}):
+            self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_a.py"}),
+                             {"tests/test_a.py", "tests/test_browser_a.py"})
+            with self.assertRaisesRegex(ValueError, "ordinary dev pull request"):
+                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2})
+            with self.assertRaisesRegex(ValueError, "omits required test files"):
+                verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_unobserved.py"})
+            with self.assertRaisesRegex(ValueError, "Partial selection disagrees"):
+                verifier.assert_inventory({**partial, "selection": {"reason": "selector-error"}}, rows,
+                                          {"unit": 2, "browser": 2}, {"tests/test_a.py"})
 
     def test_computed_conftest_attack_refused(self):
         attack = b'''import sys
@@ -349,6 +463,13 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_trusted_verdict_materializes_only_target_json_and_candidate_subtraction(self):
         self.exercise_verdict_materialization("dev")
 
+    def test_trusted_verdict_rejects_a_plan_with_the_wrong_replica_count(self):
+        with self.assertRaisesRegex(ValueError, "Replica count differs from the trusted reader context"):
+            self.exercise_verdict_materialization("dev", replicas=(1, 2))
+
+    def test_old_base_pr_evaluates_merge_with_29_inherited_allowances_removed(self):
+        self.exercise_verdict_materialization("dev", old_base_pr=True)
+
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
 
@@ -368,10 +489,14 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         with self.assertRaisesRegex(ValueError,'New failures outside'):
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
-    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request"):
+    def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request",
+                                         old_base_pr=False, replicas=(1,)):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
-        plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": [1],
+        head = "7" * 40
+        target = base if branch == "dev" else "9" * 40
+        payload = {"before": base, "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
+        plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": list(replicas),
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
         inventory = (b"100644 blob " + b"e" * 40 + b"\ttests/test_a.py\0"
@@ -383,12 +508,20 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         if real_reader:
             before={**before,'classifications_sha256':'a'*64,'fails':[{'node':'tests/test_a.py::test_a','class':'baseline','owner':'test-owner','reason':'Measured failure'}],'unstable':[]}
             after={**before,'fails':[]}
+        if old_base_pr:
+            after = before
+            inherited = [{"node": f"tests/test_previous.py::test_previous_{i:02d}", "class": "baseline"} for i in range(29)]
+            stale = json.dumps({**before, "fails": before["fails"] + inherited}).encode()
+            self.assertFalse(policy.removal_only(json.dumps(before).encode(), stale))
         reads = []
         def object_read(revision, name):
             if revision == "9"*40:
                 raise AssertionError("Old main has no lists; it must never be read")
             reads.append((revision, name))
-            if name == policy.KNOWN: return json.dumps(after if revision == candidate else before).encode()
+            if name == policy.KNOWN:
+                if old_base_pr and revision == head:
+                    return stale
+                return json.dumps(after if revision == candidate else before).encode()
             if real_reader and name == "ci/frozen-baseline-failures.json": return b"[]\n"
             if name == "ci/root-run-evidence.json": return json.dumps({"sha":"e"*40,"tree":"f"*40,
                 "runs":[{"run_id":"1","run_attempt":"1","replica":i} for i in (1,2)],
@@ -399,6 +532,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         def fake_git(*args):
             if args[0] == "ls-tree": return inventory
             if args[0] == "show": return json.dumps(after if args[1] == candidate+":"+policy.KNOWN else before).encode()
+            if args[:4] == ("rev-list", "--parents", "-n", "1"):
+                return (f"{candidate} {target} {head}" if args[4] == candidate else f"{head} {'6' * 40}").encode()
             if args == ("rev-parse", "HEAD"): return trusted.encode()
             if args[0] == "rev-parse": return tree.encode()
             raise AssertionError(args)
@@ -407,13 +542,18 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             folder = Path(temporary).resolve()
             trusted_root = folder / "trusted"
             (trusted_root / "ci").mkdir(parents=True)
-            (trusted_root / "ci/bootstrap-settings.json").write_text(json.dumps({"unstable_limit":80,"unstable_issue":1,"unstable_expires_on":"2099-01-01","cleanup_issue":1}))
+            config = {"unit_shards": 1, "browser_shards": 1, "unstable_limit": 80, "unstable_issue": 1,
+                      "unstable_expires_on": "2099-01-01", "cleanup_issue": 1}
             self.assertTrue(folder.is_relative_to(scratch_root))
             plan_file, reports, output = folder / "plan.json", folder / "reports", folder / "output"
             reports.mkdir()
             plan_file.write_text(json.dumps(plan))
-            (reports / "conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
+            for suite in plan["suites"]:
+                (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
+            (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
+            from make_known_failures import retry_run
+            maker.retry_run = retry_run
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
             maker.collect_reports = lambda *a: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
@@ -426,7 +566,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                     self.assertEqual(actual_base,base)
                     self.assertEqual(actual_reader.load_frozen_baseline(Path('ci/frozen-baseline-failures.json'))[0],set())
                     current=actual_reader.decode_list(maker.git('show','HEAD:'+policy.KNOWN))
-                    actual_reader.evaluate(current,before,[{'tests/test_a.py::test_a':'failed' if still_fails else 'passed'}])
+                    actual_reader.evaluate(current,before,[{'tests/test_a.py::test_a':'failed' if still_fails else 'passed'}],
+                                           expected_replicas=1)
                     return {'replicas':[1]}
                 maker.context=reader_context
             else:
@@ -442,16 +583,38 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 (output / "verdict.json").write_text('{"passed":true}')
             maker.main = compare
             argv = ["trusted_verdict.py", "--plan", str(plan_file), "--reports", str(reports), "--output", str(output)]
+            event_file = folder / "event.json"
+            event_file.write_text(json.dumps(payload))
             env = {"NEEDS_JSON": json.dumps({k: {"result": "success"} for k in ("checks", "static", "unit", "browser")}),
-                   "CANDIDATE_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch, "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
+                   "CANDIDATE_SHA": candidate, "GITHUB_SHA": candidate, "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(event_file),
+                   "GITHUB_REF": "refs/pull/1/merge" if event == "pull_request" else "refs/heads/" + branch,
+                   "TRUSTED_BOOTSTRAP": "false", "RUNNER_TEMP": str(folder),
                    "UNIT_COUNT": "1", "BROWSER_COUNT": "1", "GITHUB_RUN_ID":"1", "GITHUB_RUN_ATTEMPT":"1"}
             with patch.object(node_census,"base_nodes",return_value={"tests/test_a.py::test_a","tests/test_browser_a.py::test_a"}), patch.object(node_census,"removed_nodes",return_value=set()), patch.object(node_census,"emit"), patch.object(verifier, "TRUSTED", trusted_root), patch.object(canaries, "verify_directory"), patch.object(sys, "argv", argv), patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, env), \
+                 patch.object(verifier, "settings", return_value=config), \
                  patch.dict(sys.modules, {"make_known_failures": maker}), patch.object(verifier, "git", side_effect=fake_git), \
                  patch.object(policy, "git", fake_git), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or trusted) as fetched, \
                  patch.object(policy, "accepted_dev_commit", return_value=base), \
-                 patch.object(policy, "event", return_value={"before": base, "pull_request": {"base": {"ref": branch, "sha": base if branch == "dev" else "9"*40}}}), \
+                 patch.object(policy, "event", return_value=payload), \
                  patch.object(policy, "read_file", side_effect=object_read), contextlib.redirect_stdout(io.StringIO()):
-                verifier.main()
+                if old_base_pr:
+                    import trusted_ci
+                    with patch.object(trusted_ci, "settings", return_value=config), \
+                         patch.object(trusted_ci.subprocess, "check_output", return_value=trusted), \
+                         patch.object(trusted_ci, "output") as selected:
+                        trusted_ci.select()
+                    with patch.dict(os.environ, {"CANDIDATE_SHA": selected.call_args.args[0]["candidate_sha"]}):
+                        verifier.main()
+                    with patch.dict(os.environ, {"CANDIDATE_SHA": head, "GITHUB_SHA": head}):
+                        with self.assertRaisesRegex(ValueError, "PR candidate must be the event merge"):
+                            verifier.main()
+                else:
+                    verifier.main()
+                if verifier.hardening.load()["canaries"]:
+                    canaries.verify_directory.assert_called_once_with(
+                        reports, allow_product_errors=True, partial=False, allow_retry=retry_run(plan))
+                else:  # stop-loss profiles reuse this helper with canaries switched off
+                    canaries.verify_directory.assert_not_called()
             self.assertEqual(summaries, [True])
             self.assertTrue(all(revision == base for revision, name in reads if name not in {policy.KNOWN,'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
@@ -471,6 +634,24 @@ class BootstrapControlTests(unittest.TestCase):
         for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml'):
             doc = yaml.load((workflows / name).read_text(), Loader=yaml.BaseLoader)
             self.assertNotIn('pull_request_target', (workflows / name).read_text())
+            if name == 'ci.yml':
+                checks = doc['jobs']['checks']['steps']
+                merge_ref = "${{ github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false' && github.sha || steps.select.outputs.candidate_sha }}"
+                for job in ('checks', 'static'):
+                    checkout = next(step for step in doc['jobs'][job]['steps'] if step.get('with', {}).get('path') == 'candidate')
+                    self.assertEqual(checkout['with']['ref'], merge_ref)
+                self.assertEqual(doc['jobs']['checks']['outputs']['candidate_sha'], '${{ steps.candidate.outputs.commit }}')
+                context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
+                plan, upload = checks[context_index + 1:context_index + 3]
+                self.assertEqual(plan['id'], 'plan')
+                cache_only_push = "(github.event_name != 'push' || github.ref != 'refs/heads/dev')"
+                self.assertEqual(plan['if'], cache_only_push)
+                self.assertEqual(upload['if'], cache_only_push)
+                self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
+                self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
+                for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
+                                        'Build web assets and compiled client modules'):
+                    self.assertIn(name_after_plan, [step.get('name') for step in checks[context_index + 3:]])
             for job in doc['jobs'].values():
                 steps = job.get('steps', [])
                 for index, step in enumerate(steps):

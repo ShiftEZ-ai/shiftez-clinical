@@ -855,6 +855,7 @@ button.health-pill:hover{filter:brightness(.97)}
 .picker:has([data-drafts]):not(.sheet){min-width:min(460px,calc(100vw - 24px))}
 /* A step or view change waiting for its data: the old view stays, dimmed once the wait passes 300 ms */
 .schedule-view[aria-busy="true"]{opacity:.55;transition:opacity .15s ease .3s}
+.schedule-view[data-reading] .iss-mark{filter:grayscale(1)}  /* D59: the last check's marks, kept (grey) until the whole rota is in */
 /* Every collection the same: rows of the last answer while a filter, view or search is read (table_view.ts) */
 .dt-body[aria-busy="true"]{opacity:.55;transition:opacity .15s ease .3s}
 .sched-tools .armed{max-width:100%}.sched-tools .armed .armed-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
