@@ -681,3 +681,25 @@ def test_live_person_zero_preserves_captured_caps_at_check_and_apply(request, ba
             assignment['person_id'] = zero_person
     assert {f['rule_id'] for f in evaluate(overlapping)['findings']
             if f['code'] == 'MAX_HOURS' and f['person_id'] == zero_person} == {captured['id'], live['id']}
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_only_the_live_zero_quota_clamps_counts_to_policy_validity(request, backend):
+    from datetime import date
+
+    h = request.getfixturevalue(backend)
+    pid = h.seed['people'][0]
+    rule = {'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+            'metric': 'duties', 'comparison': 'maximum', 'amount': 3}
+    source = h.policy(rule, {'person_id': pid})
+    tighten(h, source, rule, starts_on=date(2026, 10, 5), ends_on=date(2026, 10, 6))
+    draft = h.shift(h.workspace('Synthetic dated block quota'), people=[pid])['workspace']
+    for day in ('05', '06'):
+        draft = h.shift(draft, f'2026-10-{day}T08:00:00+03:00', f'2026-10-{day}T12:00:00+03:00',
+                        people=[pid])['workspace']
+    tighten(h, source, {**rule, 'amount': 0})
+    validation = evaluate(h.snapshot(draft))
+    assert {row['amount']: row['actual'] for row in validation['quota_report']['rows']
+            if row['person_id'] == pid} == {3: 3, 0: 1}
+    assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['rule_id'] == source['id']
+               and f['severity'] == 'error' for f in validation['findings'])

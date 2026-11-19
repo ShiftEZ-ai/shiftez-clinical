@@ -340,12 +340,15 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
             or scope.get('location_id') and scope['location_id'] not in ancestor_ids(data, shift['location_id'])):
         return None
     start, end = aware(p['start']), aware(p['end'])
-    zone = data['organisation']['timezone']
-    if policy.get('starts_on'):
-        a = max(a, local_midnight(date.fromisoformat(policy['starts_on']), zone))
-    if policy.get('ends_on'):
-        b = min(b, local_midnight(date.fromisoformat(policy['ends_on']), zone))
-    if a >= b or not overlaps(a, b, start, end):
+    if policy.get('_live_zero'):
+        zone = data['organisation']['timezone']
+        if policy.get('starts_on'):
+            a = max(a, local_midnight(date.fromisoformat(policy['starts_on']), zone))
+        if policy.get('ends_on'):
+            b = min(b, local_midnight(date.fromisoformat(policy['ends_on']), zone))
+        if a >= b:
+            return None
+    if not overlaps(a, b, start, end):
         return None
     # Credit requires the full scope throughout the assignment; its placement is owned at duty start.
     if not scope_matches_throughout(data, scope, pid, shift, start, end, rotation_at=start):
