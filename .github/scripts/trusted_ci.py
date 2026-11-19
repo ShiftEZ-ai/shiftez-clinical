@@ -13,11 +13,12 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import hosted_ci as hosted
 import working_policy as policy
 import canary_evidence as canaries
 import hardening
+import make_known_failures as maker
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
@@ -147,8 +148,6 @@ def plan(base, measurement):
         replicas = [1]
     else:
         # Existing reader decides replica count from Git objects; no candidate Python import.
-        sys.path.insert(0, str(TRUSTED / "ci"))
-        import make_known_failures as maker
         context = maker.context(base)
         replicas = context["replicas"]
     durations = TRUSTED / "ci/hosted-durations.json"
@@ -295,22 +294,20 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
 
 
-def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, partial=False, listed=frozenset()):
+def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
     def attempt(selected, path, options, parallelism, before, *, partial=False):
         code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
         files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
         return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
 
     first = attempt(targets, report, extra, workers, base_targets, partial=partial)
-    if first["exit_code"] == 1 and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
-        from make_known_failures import retry_nodes
-
+    if first["exit_code"] == 1 and maker.retry_run(candidate):
         original = canaries.report_cases(report, first)
-        failures = retry_nodes(original, listed)
+        failures = maker.retry_nodes(original, listed)
         if failures:
             path = report.with_name(report.stem + "-retry.xml")
             first["retry"] = attempt(failures, path, [], "0", None)
-            canaries.recovered_nodes(report, first, failures)
+            canaries.recovered_nodes(report, first, failures, allow_retry=True)
     return first
 
 
@@ -354,9 +351,7 @@ def main():
     if not policy.re.fullmatch(r"[1-8]", workers):
         workers = "4"
     listed = frozenset()
-    if os.getenv("GITHUB_EVENT_NAME") == "merge_group":
-        import make_known_failures as maker
-
+    if maker.retry_run(candidate):
         listed = maker.listed_nodes(maker.at_revision(candidate["sha"]))
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
@@ -379,7 +374,7 @@ def main():
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
         receipt["reports"].append(invocation_receipt(
             targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
-            base_targets, partial="selection" in candidate, listed=listed))
+            base_targets, candidate=candidate, partial="selection" in candidate, listed=listed))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
