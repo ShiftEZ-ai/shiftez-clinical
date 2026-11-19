@@ -94,7 +94,7 @@ def test_month_and_homes_review_link_draw_the_window_first(browser, live_server,
         page.evaluate('a => location.hash = a', address.format(id=w['id']))  # navigate() waits for the whole page
         view = page.locator('#schedule-view')
         # The window, drawn and still (no dimming, no busy state, e7d1d6ba5); whole-rota work waits, Auto-schedule says so.
-        expect(view).to_have_attribute('inert', '', timeout=20000)
+        expect(view).to_have_attribute('data-reading', '', timeout=20000)
         expect(page.locator('.planner-bar')).to_contain_text('Windowed month')
         auto = page.get_by_role('button', name='Auto-schedule · loading the whole rota…', exact=True)
         expect(auto).to_be_disabled()
