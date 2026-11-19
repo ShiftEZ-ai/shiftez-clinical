@@ -29,6 +29,12 @@ make_candidate = partial(ratchet.candidate_list, cleanup_cap=10, root_evidence_s
                          root_runs=ROOT_RUNS, cleanup_issue=123)
 
 
+@pytest.fixture(autouse=True)
+def no_ci_event(monkeypatch):
+    """Tests choose their event explicitly; the hosted job's own GITHUB_EVENT_NAME must not leak in."""
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
+
 def listing(fails=(), unstable=(), cleanup=(), cap=10):
     rows = ([{"node": node, "class": "baseline"} for node in fails]
             + [{"node": node, "class": "cleanup", "issue": 123} for node in cleanup])
@@ -223,9 +229,9 @@ def test_fails_to_unstable_requires_differing_results_on_two_runs():
     with pytest.raises(ValueError, match="different results"):
         check(current, base, [{RED: "failed"}] * 2)
     assert check(current, base, [{RED: "failed"}, {RED: "passed"}])
-    assert check(current, base, [{RED: "passed"}], group=True, recovered={RED: "failed"})
+    assert check(current, base, [{RED: "passed"}], group=True, merge_group=True, recovered={RED: "failed"})
     with pytest.raises(ValueError, match="verified recovery on retry"):
-        check(current, base, [{RED: "passed"}], group=True)
+        check(current, base, [{RED: "passed"}], group=True, merge_group=True)
 
 
 def test_parameter_redaction_keeps_siblings_distinct_without_display_labels():
@@ -345,7 +351,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
                 {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
             ]
             recovered = {}
-            ratchet.product_error_nodes(group, recovered=recovered)
+            ratchet.product_error_nodes(group, recovered=recovered, allow_retry=True)
             assert recovered == {RED: "failed"}
             assert check(listing(), listing(), updated, group=True, recovered=recovered)
             summary = output / "summary.md"
@@ -361,7 +367,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             assert observed["listed_unstable"][0]["observations"] == ["failed", "passed"]
             assert observed["listed_unstable"][0]["status"] == "PROPOSED_REMARK"
             with monkeypatch.context() as other:
-                for event in ("pull_request", "push", "schedule"):
+                for event in ("push", "schedule"):
                     other.setenv("GITHUB_EVENT_NAME", event)
                     with pytest.raises(ValueError, match="Unexpected retry evidence"):
                         group_collect()
@@ -385,6 +391,90 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
     clean = tmp_path / "clean"
     clean_plan = reports(clean, replicas=(1,), red_suites=())
     assert len(ratchet.collect_reports(clean_plan, clean, "fixture", "1")) == 1
+
+
+@pytest.mark.parametrize("outcome", ["passed", "failed", None])
+def test_pr_verdict_uses_verified_retry(tmp_path, monkeypatch, outcome):
+    plan = reports(tmp_path, replicas=(1,), red_suites=("unit",))
+    plan.update(smoke=False, base_sha="c" * 40)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    for receipt in tmp_path.rglob("shard-receipt.json"):
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["plan_sha256"] = ratchet.digest(plan)
+        if data["suite"] == "unit" and outcome is not None:
+            retry = receipt.with_name("junit-retry.xml")
+            xml = ET.Element("testsuite")
+            case = ET.SubElement(xml, "testcase", classname="tests.test_sample", name="test_red")
+            if outcome == "failed":
+                ET.SubElement(case, "failure")
+            ET.ElementTree(xml).write(retry)
+            selected = retry.with_suffix(".selection.json")
+            deselected = retry.with_suffix(".deselected.json")
+            selected.write_text(json.dumps([RED]), encoding="utf-8")
+            deselected.write_text("[]", encoding="utf-8")
+            data["reports"][0]["retry"] = {
+                "file": retry.name, "exit_code": int(outcome == "failed"),
+                "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (retry, selected, deselected)},
+            }
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+
+    current = listing()
+    ctx = {"base_sha": plan["base_sha"], "replicas": [1], "bootstrap": False, "base": current, "current": current}
+    output = tmp_path / "verdict"
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(sys, "argv", ["make_known_failures.py", "--plan", str(plan_path), "--reports", str(tmp_path),
+                                     "--output", str(output)])
+    monkeypatch.setattr(ratchet, "git", lambda *args: {("rev-parse", "HEAD"): plan["sha"],
+                                                       ("rev-parse", "HEAD^{tree}"): plan["tree"]}.get(args, ""))
+    monkeypatch.setattr(ratchet, "context", lambda _: ctx)
+    monkeypatch.setattr(ratchet, "at_revision", lambda _: current)
+    monkeypatch.setattr(ratchet, "preflight", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ratchet, "load_frozen_baseline", lambda _: (set(), "fixture"))
+    monkeypatch.setattr(ratchet, "load_env_exceptions", lambda _: (set(), "fixture"))
+    monkeypatch.setattr(ratchet, "load_root_evidence", lambda *_: ({"runs": ROOT_RUNS, "counts": {"cleanup": 10}}, ROOT_SEAL))
+    if outcome is None:
+        with pytest.raises(ValueError, match="Missing pull-request retry evidence"):
+            ratchet.main()
+        assert not (output / "verdict.json").exists()
+        return
+
+    ratchet.main()
+    verdict = json.loads((output / "verdict.json").read_text(encoding="utf-8"))
+    assert verdict["passed"] is (outcome == "passed")
+    outside = json.loads((output / "outside-observations.json").read_text(encoding="utf-8"))
+    if outcome == "failed":
+        assert "New failures outside the known-failure list" in verdict["reason"]
+        assert outside["proposed_list_entries"] == []
+    else:
+        proposal, = outside["proposed_list_entries"]
+        assert proposal == {"node": RED, "test_file": "tests/test_sample.py", "observations": ["failed", "passed"],
+                            "red_count": 1, "class": "unstable", "status": "PROPOSED"}
+        assert "recovered on retry" in summary.read_text(encoding="utf-8")
+
+
+def test_pr_retry_cannot_move_a_baseline_entry_to_unstable(monkeypatch):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    base, current = listing([RED], unstable=[GREEN]), listing(unstable=[RED])
+    with pytest.raises(ValueError, match="two full runs with different results"):
+        check(current, base, [{RED: "passed"}], group=ratchet.retry_run({"replicas": [1]}),
+              recovered={RED: "failed"})
+
+
+@pytest.mark.parametrize(("replicas", "smoke"), [([1, 2], False), ([1], True)])
+def test_ineligible_pr_plan_refuses_retry_receipts(tmp_path, monkeypatch, replicas, smoke):
+    from canary_evidence import verify_directory
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    plan = {"replicas": replicas, "smoke": smoke}
+    receipt = {"reports": [{"file": "junit.xml", "retry": {"file": "junit-retry.xml", "exit_code": 0, "sha256": {}}}]}
+    (tmp_path / "shard-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="Unexpected retry evidence"):
+        verify_directory(tmp_path, allow_retry=ratchet.retry_run(plan))
 
 
 @pytest.mark.parametrize("fault", ["wrong-tree", "wrong-run", "changed-junit", "duplicate-shard"])
