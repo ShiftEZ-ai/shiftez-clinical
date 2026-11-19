@@ -65,7 +65,10 @@ def test_the_all_rules_key_lists_the_marks_the_list_draws_on_one_line(browser, l
         navigate(page, 'rules')
         view(page, 'All rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-rule .rt-waiting-chip').first).to_be_visible()
+        waiting = main.locator('li.rt-item .rt-waiting-chip').first
+        expect(waiting).to_be_visible()
+        expect(waiting).to_have_class(re.compile(r'\binfo\b'))
+        expect(waiting.locator('.icon')).to_have_count(1)  # information plus the shared clock mark.
         key = main.locator('.rt > .view-legend')
         expect(key).to_be_visible()
         # The marks drawn are listed (words in the key, including any behind "+N").
@@ -90,13 +93,16 @@ def test_a_rank_wears_one_tint_and_the_rule_page_key_covers_its_marks(browser, l
         line({'max': {'value': 4, 'level': 'mandatory'}}, who=who, ends_on=str(today + timedelta(days=11))),  # ends soon: Needs attention
         line({'max': {'value': 3, 'level': 'mandatory'}}, starts_on=str(today + timedelta(days=40)))])        # Starts later
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
-    tint = "n => getComputedStyle(n).backgroundColor"
     try:
         navigate(page, 'rules/duties_per_week')
         main = page.locator('#main')
         page_pill = main.locator('.rp', has_text=name).first
         expect(page_pill).to_be_visible()
-        on_page = page_pill.evaluate(tint)
+        # The rule check rebuilds the rows, so find the pill and read its tint in the same browser call.
+        on_page = page.wait_for_function("""name => {
+            const pill = [...document.querySelectorAll('#main .rp')].find(n => n.title === name);
+            return pill?.checkVisibility() && getComputedStyle(pill).backgroundColor;
+        }""", arg=name).json_value()
         # The key names what the lines draw (an entry behind "+N" still counts: it is listed there).
         key = main.locator('.view-legend').filter(has_text='Rank, each in its own tint')
         expect(key).to_have_count(1)
@@ -106,6 +112,6 @@ def test_a_rank_wears_one_tint_and_the_rule_page_key_covers_its_marks(browser, l
         view(page, 'Needs attention')
         listed = main.locator('.rt-ilines .rp', has_text=name).first
         expect(listed).to_be_visible()
-        assert listed.evaluate(tint) == on_page  # one rank, one tint (C21), never Group purple
+        expect(listed).to_have_css('background-color', on_page)  # one rank, one tint (C21), never Group purple
     finally:
         context.close()

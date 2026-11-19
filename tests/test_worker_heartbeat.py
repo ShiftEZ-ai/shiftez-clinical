@@ -1,10 +1,11 @@
 """External app heartbeats follow successful database/worker passes, never a blind timer."""
 import logging
 import threading
+from types import SimpleNamespace
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -55,6 +56,34 @@ def test_unset_monitor_does_not_ping(h, monkeypatch, monitor):
     monkeypatch.delenv('FMUC_HEARTBEAT_APP_URL')
     assert not worker.process_one(h.app.state.engine)
     assert monitor == ([], [])
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+def test_heartbeat_upserts_at_the_same_cadence_without_a_global_lock_event(h, monkeypatch, monitor, caplog):
+    engine = h.app.state.engine
+    moment = [0.0]
+    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: moment[0]))
+    statements = []
+
+    def observe(conn, cursor, statement, parameters, context, many):
+        if 'worker_heartbeats' in statement:
+            statements.append(statement.split()[0])
+
+    event.listen(engine, 'before_cursor_execute', observe)
+    try:
+        with caplog.at_level(logging.INFO, logger='rota.db'):
+            for seconds in (0.0, 9.0, 10.0):
+                moment[0] = seconds
+                worker.heartbeat(engine)
+    finally:
+        event.remove(engine, 'before_cursor_execute', observe)
+
+    assert statements == ['INSERT', 'INSERT']
+    assert not any(record.message == 'write_lock_acquired' for record in caplog.records)
+    with transaction(engine) as db:
+        row = db.get(m.WorkerHeartbeat, worker.WORKER_ID)
+        assert row.passes == 2 and row.started_at <= row.last_seen_at
+        assert row.release == worker.build()['release']
 
 
 @pytest.mark.parametrize('stage', ['dispatch_pending', 'claim_pending'])

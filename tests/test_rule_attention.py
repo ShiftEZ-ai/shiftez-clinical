@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from packages.domain.rule_lines import attention
+from packages.domain.rule_lines import attention, line_relations
 
 A, B, C, RANK, TAG = 'a', 'b', 'c', '00000000-0000-4000-9000-000000000001', '00000000-0000-4000-9000-000000000002'
 TODAY = '2026-10-04'
@@ -16,8 +16,8 @@ def person(*people):
     return {'conditions': [{'field': 'person_ids', 'values': list(people)}]}
 
 
-def rank():
-    return {'conditions': [{'field': 'category_ids', 'values': [RANK]}]}
+def rank(ident=RANK):
+    return {'conditions': [{'field': 'category_ids', 'values': [ident]}]}
 
 
 def tag():
@@ -40,15 +40,15 @@ CASES = [
     ('nothing to say', 'duties_per_week', [{'numbers': most(5)}], [EVERYONE], []),
     ('a person outranks everyone: the specific line is intended', 'duties_per_week',
      [{'numbers': most(5)}, {'who': person(A), 'numbers': most(3)}], [EVERYONE, {A}],
-     [('overlap', [0, 1], 1, 'acknowledge', [])]),
+     []),
     ('blank inherits: a rank line setting only the max replaces only the max', 'duties_per_month',
      [{'numbers': {'min': {'value': 2}, 'max': {'value': 5}}, 'starts_on': '2026-10-01', 'ends_on': '2027-01-01'},
       {'who': rank(), 'numbers': {'max': {'value': 4}}, 'starts_on': '2026-10-01', 'ends_on': '2027-01-01'}], [EVERYONE, {A, B}],
-     [('overlap', [0, 1], 2, 'acknowledge', [])]),
+     []),
     ('a person line setting only the max: the min of everyone still holds for them', 'duties_per_month',
      [{'numbers': {'min': {'value': 2}, 'max': {'value': 5}}, 'starts_on': '2026-10-01', 'ends_on': '2027-01-01'},
       {'who': person(A), 'numbers': {'max': {'value': 0}}, 'starts_on': '2026-10-01', 'ends_on': '2027-01-01'}], [EVERYONE, {A}],
-     [('overlap', [0, 1], 1, 'acknowledge', []), ('inherits', [1, 0], 1, 'none', [{'line_id': 'rule-1', 'numbers': {'max': {'value': 0}, 'min': {'value': None, 'level': 'mandatory'}}}])]),
+     [('inherits', [1, 0], 1, 'none', [{'line_id': 'rule-1', 'numbers': {'max': {'value': 0}, 'min': {'value': None, 'level': 'mandatory'}}}])]),
     ('an overlap that meets nobody today is not reported', 'duties_per_week',
      [{'numbers': most(5)}, {'who': person(A), 'numbers': most(3)}], [{B}, {A}], []),
     ('equal tiers with the same numbers: keep both, future coverage can differ', 'duties_per_week',
@@ -91,6 +91,41 @@ def test_a_rule_that_is_off_says_nothing():
     row = made('duties_per_week', [{'numbers': most(5)}, {'numbers': most(4)}])
     row['definition']['rule']['on'] = False
     assert attention([row], {}, TODAY) == []
+
+
+@pytest.mark.parametrize('covered', [True, False])
+def test_only_a_fully_shadowed_everyone_line_needs_attention(covered):
+    lines = [{'numbers': most(5)}, {'who': rank(), 'numbers': most(4)}]
+    reach = [EVERYONE, {A, B}]
+    if covered:
+        lines.append({'who': rank(TAG), 'numbers': most(3)})
+        reach.append({C})
+    row = made('duties_per_week', lines)
+    found = attention([row], {f'rule-{n}': people for n, people in enumerate(reach)}, TODAY)
+    assert [(x['kind'], x['line_ids'], x['people']) for x in found] == (
+        [('shadowed', ['rule-0'], 3)] if covered else [])
+    if covered:
+        assert found[0]['facts'] == {'winners': ['rule-1', 'rule-2'], 'numbers': ['max']}
+        assert found[0]['fixes'][0]['kind'] == 'acknowledge'  # Membership can change tomorrow.
+        remove = next(fix for fix in found[0]['fixes'] if fix['kind'] == 'remove')
+        assert remove['line_id'] == 'rule-0'
+        assert remove['ops'] == [{'line_id': 'rule-0', 'remove': True}]
+
+
+@pytest.mark.parametrize('partial', ['only_max', 'different_people_per_number', 'future_winner', 'ended_winner'])
+def test_shadowing_requires_current_coverage_of_every_number_for_every_person(partial):
+    lines = [{'numbers': {'min': {'value': 1}, 'max': {'value': 5}}},
+             {'who': rank(), 'numbers': most(4)}]
+    reach = [EVERYONE, EVERYONE]
+    if partial == 'different_people_per_number':
+        lines.append({'who': rank(TAG), 'numbers': {'min': {'value': 2}}})
+        reach = [EVERYONE, {A, B}, {C}]
+    elif partial != 'only_max':
+        lines[1]['numbers']['min'] = {'value': 2}
+        lines[1]['starts_on' if partial == 'future_winner' else 'ends_on'] = '2026-11-01' if partial == 'future_winner' else TODAY
+    row = made('duties_per_month', lines)
+    assert not any(x['kind'] == 'shadowed' for x in attention(
+        [row], {f'rule-{n}': people for n, people in enumerate(reach)}, TODAY))
 
 
 @pytest.mark.parametrize('ends_on', ['2026-10-20', None], ids=['different-date-coverage', 'memberships-can-diverge'])
@@ -182,7 +217,7 @@ def department_attention():
 
 def test_needs_attention_stays_within_budget_at_department_scale(department_attention):
     found, _ = department_attention
-    assert {x['kind'] for x in found} == {'overlap', 'duplicate', 'ending', 'blocks'}
+    assert {x['kind'] for x in found} == {'duplicate', 'ending', 'blocks'}
 
 
 @pytest.mark.cpu_budget
@@ -206,11 +241,17 @@ def test_an_acknowledgement_fingerprint_holds_while_the_issue_stands_and_changes
         stored = {line['id']: line for line in row['definition']['rule']['lines']}
         return {x['kind']: fingerprint(x, stored) for x in attention([row], {f'rule-{n}': p for n, p in enumerate(reach)}, today)}
     first = prints(lines)
-    assert set(first) == {'overlap', 'ending'} and all(len(f) == 64 for f in first.values())
+    assert set(first) == {'ending'} and all(len(f) == 64 for f in first.values())
     assert prints(lines, rid='next-version') == first
     assert prints(lines, today='2026-10-05')['ending'] == first['ending']  # a day later: the days left are not the issue
-    assert prints(lines, reach=(EVERYONE, {A, B}, EVERYONE))['overlap'] == first['overlap']  # it reaches more people today
     tighter = prints([lines[0], {**lines[1], 'numbers': most(2)}, lines[2]])
-    assert tighter['overlap'] != first['overlap'] and tighter['ending'] == first['ending']  # only the issue whose line changed
+    assert tighter['ending'] == first['ending']  # ordered replacements are quiet relations, not attention
     later = prints([lines[0], lines[1], {**lines[2], 'ends_on': '2026-10-25'}])
-    assert later['ending'] != first['ending'] and later['overlap'] == first['overlap']
+    assert later['ending'] != first['ending']
+
+
+def test_ordered_exception_keeps_quiet_override_relation_outside_attention():
+    row = made('duties_per_week', [{'numbers': most(5)}, {'who': person(A), 'numbers': most(3)}])
+    relation = line_relations(row, {'rule-0': EVERYONE, 'rule-1': {A}})['rule-1']
+    assert relation['overrides'] and relation['line_id'] == 'rule-0'
+    assert attention([row], {'rule-0': EVERYONE, 'rule-1': {A}}, TODAY) == []
