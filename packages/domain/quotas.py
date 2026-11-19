@@ -369,7 +369,7 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
 
 
 def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None,
-                    contribution_cache=None, evaluation_ids=False):
+                    contribution_cache=None):
     """Report source policy IDs; internal consumers can match rows to exact evaluation copies."""
     policies = [policy for policy in (data['_quota_policies'] if '_quota_policies' in data else applicable_policies(data))
                 if (policy_ids is None or policy['id'] in policy_ids)
@@ -424,7 +424,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
     for policy in sorted(policies, key=lambda p: p["id"]):
         data.get('_check_budget', lambda: None)()
         policy_id = policy["id"]
-        if not evaluation_ids and (policy.get("_live_zero") or policy.get("_live_mandatory_recheck")):
+        if not data.get('_quota_evaluation_ids') and (policy.get("_live_zero") or policy.get("_live_mandatory_recheck")):
             policy_id = policy.get("_source_policy_id", policy_id)
         rule, scope = policy["definition"]["rule"], policy["definition"]["scope"]
         try:

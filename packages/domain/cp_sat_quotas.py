@@ -17,11 +17,11 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
     # Targets, rotation proration, overrides, subjects and context checks stay in
     # the reporting evaluator, including the canonical planning-population audience.
     # Empty work reveals targets without trial schedules.
-    empty = {**data, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
+    empty = {**data, '_quota_evaluation_ids': True, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
     findings = []
     def record(code, message, **detail):
         findings.append({'code': code, 'message': message, **detail})
-    report = evaluate_quotas(empty, record, ancestor_ids, exception_for, evaluation_ids=True)
+    report = evaluate_quotas(empty, record, ancestor_ids, exception_for)
     if report is None:
         return []
     if not report['complete']:
