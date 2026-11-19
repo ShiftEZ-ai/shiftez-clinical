@@ -420,12 +420,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be_wave4_draft_actions.py::test_move_cannot_leave_a_new_missing_team_lead",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_be_wave4_security.py::test_cross_origin_and_transport_security_headers[case-icilgnbbomimeeeobfhnipdfjpjgpmoinboaeknfpejjceamjiholbemjpmeccbg]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
