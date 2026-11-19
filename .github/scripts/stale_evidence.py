@@ -14,6 +14,7 @@ def github_get(repository, resource):
     return subprocess.check_output(
         ["gh", "api", "--hostname", "github.com", "--method", "GET", f"repos/{repository}/actions/{resource}"],
         stderr=subprocess.PIPE,
+        timeout=60,
     )
 
 
@@ -43,8 +44,6 @@ def dev_run(run, event, git, tip, base=None):
             or type(run["run_attempt"]) is not int or run["run_attempt"] < 1
             or not isinstance(branch, str)):
         raise ValueError("Invalid dev CI run identity")
-    if event not in {"merge_group", "schedule"}:
-        return False
     if event == "merge_group" and not branch.startswith("gh-readonly-queue/dev/"):
         return False
     if event == "schedule" and branch != "dev":
@@ -105,9 +104,12 @@ def confirmed_nodes(repository, git, tip, base, nodes):
         if not ancestor(git, base, tip):
             return {}
         # ponytail: one page per event bounds the PR lookup; older retained evidence can use pagination if needed.
-        runs = [run for event in ("merge_group", "schedule") for run in workflow_runs(repository, event)
-                if dev_run(run, event, git, tip, base)
-                and (run["conclusion"] == "success" or event == "schedule" and run["conclusion"] == "failure")]
+        for event in ("merge_group", "schedule"):
+            runs = [run for run in workflow_runs(repository, event)
+                    if dev_run(run, event, git, tip, base)
+                    and (run["conclusion"] == "success" or event == "schedule" and run["conclusion"] == "failure")]
+            if runs:
+                break
         if not runs:
             return {}
         if any(not isinstance(r["created_at"], str)
