@@ -988,14 +988,14 @@ function relationParts(e:RuleCatalogueEntry,names:Namer,r:Relation,w:RuleLine,ot
 const effectHelp=(l:RuleLine)=>{const text=`Only drafts whose dates overlap ${lineDates(l)||'this line'} are checked. Other drafts are not affected.`;
   return el('button',{type:'button',class:'icon-button bare','aria-label':text,'data-help':'','data-tip':text},icon('help'));};
 /** The markup a repaint compares: a reach link's open state and the list it opened (picker.ts mounts it beside the
- *  link) are not content. */
-const paintedAs=(nodes:Iterable<Node>)=>[...nodes].filter(n=>!(n instanceof Element&&n.matches('.picker'))).map(n=>{
+ *  link, with its arrow from dom.ts tether) are not content. */
+const paintedAs=(nodes:Iterable<Node>)=>[...nodes].filter(n=>!(n instanceof Element&&n.matches('.picker,.pop-arrow'))).map(n=>{
   if(!(n instanceof Element))return n.textContent;const c=n.cloneNode(true) as Element;
   for(const b of [c,...c.querySelectorAll('.rc-reach-link')])if(b.matches('.rc-reach-link')){b.setAttribute('aria-expanded','false');b.classList.remove('is-open');}
   return c.outerHTML;}).join('\u0000');
 /** Repaints `box` only when its content changes: a check that changes nothing keeps the reach list a reader just
  *  opened (it lives inside `box`), where replacing the nodes would close it under their click. */
-function keepSame(box:HTMLElement,kids:(Node|string)[]){
+export function keepSame(box:HTMLElement,kids:(Node|string)[]){
   const next=el('span',{},...kids);if(paintedAs(box.childNodes)!==paintedAs(next.childNodes))box.replaceChildren(...next.childNodes);
 }
 /** One row per overlapping draft: its name and the outcome as a toned badge, or "Waiting to check · 0:14" / "Checking · 0:14" (elapsed, no ETA). */
