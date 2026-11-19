@@ -65,16 +65,39 @@ def legacy_semantics(data):
     return data.get('fairness_semantics', SEMANTICS) < SEMANTICS
 
 
+class _MeasurementContextCache(dict):
+    """Keep the measured view outside serializable snapshot/cache entries."""
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.context = self.key = None
+
+    def __getstate__(self):
+        return {}
+
+    def __setstate__(self, _state):
+        self.context = self.key = None
+
+
 def measurement_context(data):
     """Effective dates select the goal for this rota, never truncate the quantity it measures."""
     if legacy_semantics(data) or data.get('_fair_share_measurement'):
         return data
     from .rule_lines import source_lines
     first, last = rota_dates(data)
-    cache = data.get('_line_index_cache')
-    key = ('fair_share_measurement', id(data['policies']), first, last)
-    if cache is not None and key in cache:
-        return {**data, **cache[key]}
+    attributed = hasattr(data, '__dict__')
+    key = (tuple((name, id(value)) for name, value in data.items() if not name.startswith('_')), first, last)
+    cache = (getattr(data, '_fair_share_measurement_cache', None) if attributed
+             else data.get('_line_index_cache'))
+    if attributed or cache is not None:
+        if not isinstance(cache, _MeasurementContextCache) or (
+                not attributed and cache.context is not None and cache.key != key):
+            cache = _MeasurementContextCache(cache or {})
+        if attributed:
+            data._fair_share_measurement_cache = cache
+        else:
+            data['_line_index_cache'] = cache
+    if cache is not None and cache.context is not None and cache.key == key:
+        return cache.context
     policies = []
     def measured(row):
         active = (not row.get('starts_on') or str(row['starts_on']) < str(last)) and (
@@ -89,9 +112,12 @@ def measurement_context(data):
         policies.append(policy)
     patch = {'policies': policies, '_fair_share_measurement': True, '_line_index_cache': {},
              '_scope_interval_cache': {}, '_policy_applies_cache': {}}
+    context = type(data)({**data, **patch}) if attributed else {**data, **patch}
+    if hasattr(data, 'read_quality'):
+        context.read_quality = data.read_quality
     if cache is not None:
-        cache[key] = patch
-    return {**data, **patch}
+        cache.context, cache.key = context, key
+    return context
 
 
 def _contributions(shift, participant):
@@ -204,7 +230,7 @@ def offered_intervals(data, first, last, people=None):
     Index person records once; facts never rescan the department for each person or day.
     """
     from .conditions import active_rules, with_tags
-    from .rule_groups import is_cap
+    from .generation import overtime_cap_ids
     from .rule_lines import expand, fact_policy
     from .validation import index_person_rows, named_people, person_in_scope, person_rows, scope_intervals
 
@@ -250,8 +276,7 @@ def offered_intervals(data, first, last, people=None):
                 if a < end and start < b]
 
     rules = context['policies']
-    caps = {key for policy in rules if is_cap(policy)
-            for key in [policy['id'], *(policy['definition'].get('merged_ids') or [])]}
+    caps = overtime_cap_ids(data)
     for policy in rules:
         if (policy['definition']['rule']['kind'] != 'allocation_overtime'
                 or policy['definition']['rule'].get('volunteer_required', False)
