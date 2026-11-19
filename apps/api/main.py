@@ -3524,6 +3524,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.job_reads import current_source_digest, generation_currency, metadata, result_stale
             from .services.jobs import superseded_flag
             from .serialization import effective_input_fingerprint, job_detail_result, job_result_projection
+            from .serialization import job_result_with_reconciliation
             if full:
                 options = []
             else:
@@ -3546,6 +3547,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                              else job_result_projection(job.kind, job.result))
             # Apply the current read projection to summaries retained by older workers too.
             result = job.result if full else job_detail_result(job.kind, (projection or {}).get('result'))
+            result = job_result_with_reconciliation(job, result)
             include_events = job.kind == 'generation' and job.status == 'running'
             if include_events:
                 snapshot = {**snapshot, 'focus_ids': db.scalar(select(m.Job.input_snapshot['focus_ids']).where(

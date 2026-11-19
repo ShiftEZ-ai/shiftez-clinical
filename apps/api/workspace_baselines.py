@@ -943,8 +943,9 @@ def generation_manifest(row, snapshot, *, job_id=None, requester_id=None, job=No
     info = projection(row)
     source_hashes = {source: group_hash(payload, source) for source in info["included_sources"]}
     from packages.domain.input_manifest import bind_generation_admission
+    from .serialization import job_result_with_reconciliation
     input_manifest = bind_generation_admission(snapshot.get("input_manifest") or {}, snapshot)
-    result = result or {}
+    result = job_result_with_reconciliation(job, result) or {}
     result_copy = {key: value for key, value in result.items() if key != "generation_manifest"}
     result_hash = snapshot_hash(result_copy) if result_copy else None
     candidate_hash = result.get("candidate_hash") or (snapshot_hash({key: result.get(key) for key in ("additions", "removals")})

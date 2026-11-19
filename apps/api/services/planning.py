@@ -21,6 +21,7 @@ from apps.api import models as m, snapshots
 from apps.api.auth import require_role, person_access, current_roles
 from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
+from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (domain_snapshot, fingerprint, publication_snapshot,
                                 shift_record, workspace_content, workspace_shifts)
 from .common import scoped, expected, bump_inputs, outbox
@@ -2114,14 +2115,17 @@ def undo(db, actor, command):
     unapplied = []
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
-        # Only the job that made this edit loads its (large) result; its input snapshot is never read here.
-        for job in db.scalars(select(m.Job).options(defer(m.Job.input_snapshot)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == "applied",
-                m.Job.result["applied_content_revision"].as_integer() == change.resulting_content_revision)):
-            if (job.result or {}).get("applied_content_revision") == change.resulting_content_revision:
-                job.status = "succeeded"
-                if (job.result or {}).get('reconciliation'):
-                    job.result = {**job.result, 'reconciliation': {**job.result['reconciliation'], 'status': 'undone'}}
+        receipt_column, raw_revision, current_revision = job_reconciliation_columns()
+        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
+                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+                current_revision == change.resulting_content_revision)):
+            result = job_result_with_reconciliation(job, {'reconciliation': receipt,
+                                                          'applied_content_revision': revision})
+            if result['applied_content_revision'] == change.resulting_content_revision:
+                job.status = 'succeeded'
+                if result['reconciliation']:
+                    retain_job_reconciliation(job, {**result['reconciliation'], 'status': 'undone'})
                 job.progress = job_progress_record(job.progress)
                 job.revision += 1
                 unapplied.append(job.id)
@@ -2197,12 +2201,15 @@ def redo(db, actor, command):
     require_redo_placements(db, actor, workspace, step.before_snapshot, current)
     content_changed = put_back(db, actor, workspace, step.before_snapshot, current)
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
-    for job in db.scalars(select(m.Job).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                              m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
-        receipt = (job.result or {}).get('reconciliation')
+    receipt_column, _, _ = job_reconciliation_columns()
+    revision = workspace.content_revision + int(content_changed)
+    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
+            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+        receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
-        job.result = {**job.result, 'applied_content_revision': workspace.content_revision + int(content_changed), **({'reconciliation': {
-            **receipt, 'status': 'applied', 'applied_content_revision': workspace.content_revision + int(content_changed)}} if receipt else {})}
+        retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
+                                  if receipt else None, applied_revision=revision)
         job.progress = job_progress_record(job.progress)
         job.revision += 1
     return changed(db, actor, workspace, current, value.reason, content_changed=content_changed,
