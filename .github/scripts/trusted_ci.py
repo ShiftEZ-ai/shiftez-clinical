@@ -84,13 +84,17 @@ def select():
             "unit_count": config["unit_shards"], "browser_count": config["browser_shards"]})
 
 
+def pr_changed_files(base, candidate, git):
+    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z")
+    return {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
+
+
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
     if pr["base"]["ref"] != "dev" or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
     base = policy.commit(pr["base"]["sha"])
-    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z")
-    changed = {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
+    changed = pr_changed_files(base, candidate, git)
     if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
            or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
            for path in changed):
