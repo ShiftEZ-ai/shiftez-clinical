@@ -416,3 +416,6 @@ class Settings:
         if (require_authentication and self.environment == "production" and password_login_enabled(self)
                 and self.password_login_progressive_delay and not self.fmuc_data_key):
             raise RuntimeError("FMUC_DATA_KEY is required for progressive password sign-in")
+        if require_authentication and self.environment == "production" and not self.fmuc_data_key:
+            # Sign-in event and rate-limit keys are keyed hashes; a keyless production cannot store them safely.
+            raise RuntimeError("FMUC_DATA_KEY is required for sign-in in production")
