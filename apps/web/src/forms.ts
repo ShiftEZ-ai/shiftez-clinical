@@ -913,7 +913,8 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
       const remove=()=>{rows.splice(rows.indexOf(row),1);leadSyncs.splice(leadSyncs.indexOf(syncLead),1);leadInputs.splice(leadInputs.indexOf(leadInput),1);node.remove();syncLeads();form.dispatchEvent(new Event('participants-changed'));};
       const row={node,person:()=>person.input.value,remove,read:async()=>({person_id:person.input.value,participation:participation.input.value,
         supervisor_person_id:supervisor.input.value||null,team_lead:lead.input.checked,overtime:overtime.input.checked,fixed:fixed.input.checked,
-        ...await attendance()}),
+        // The times and segments only: `cut` is the form's own warning, never sent (the server refuses extra fields).
+        ...(({cut:_cut,...times})=>times)(await attendance())}),
         // Null while this row keeps all its attendance; else the person whose partial attendance the new times cut.
         cut:async()=>own&&person.input.value===own.person&&(await attendance()).cut?person.input.selectedOptions[0]?.textContent||'':null};rows.push(row);
       async function attendance(){const s0=await instant(start.input.value),e0=await instant(end.input.value);
