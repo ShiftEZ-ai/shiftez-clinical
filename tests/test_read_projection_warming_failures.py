@@ -16,6 +16,24 @@ from tests.test_fix_list_performance import backend
 from tests.clock_support import freeze_clock
 
 
+def test_warming_checks_source_only_for_stale_work(backend, monkeypatch):
+    engine = backend.app.state.engine
+    calls = []
+    source_identity = warming.source_identity
+
+    def observed(db):
+        calls.append(True)
+        return source_identity(db)
+
+    monkeypatch.setattr(warming, 'source_identity', observed)
+    assert not warming.warm_one(engine)
+    assert calls == []
+    backend.workspace()
+    assert warming.warm_one(engine)
+    assert not warming.warm_one(engine)
+    assert calls == [True]
+
+
 @pytest.mark.parametrize('stage', ['stored_check', 'fingerprint', 'summary_check'])
 @pytest.mark.parametrize('in_generator', [False, True])
 def test_failed_projection_backs_off_logs_once_and_recovers_after_input_change(backend, monkeypatch, caplog, stage, in_generator):

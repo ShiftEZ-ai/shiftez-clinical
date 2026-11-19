@@ -2,13 +2,13 @@
 import hashlib
 import json
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import defer, object_session
 from . import models as m
 from .serialization import json_value, record, records_many, rows_many
 from packages.domain.conditions import with_tags
@@ -396,29 +396,14 @@ def _baseline_hint(db, workspace):
 
 def _verified_baseline(db, workspace):
     """Load and integrity-check one draft baseline once in this request/session."""
-    from .workspace_baselines import latest as latest_baseline, verify as verify_baseline
+    from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
 
-    rows = db.info.setdefault('_baseline_rows', {})
+    rows = baseline_rows(db)
     row_key = (workspace.id, workspace.revision)
-    if row_key not in rows:
-        rows[row_key] = latest_baseline(db, workspace.id)
-    baseline = rows[row_key]
-    if baseline is None:
-        return None, None
-    key = (baseline.id, baseline.payload_hash)
-    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
-    verified_cache = db.info.setdefault('_verified_baselines', OrderedDict())
-    verified = verified_cache.get(key)
-    if verified is None:
-        verified_keys = db.info.setdefault('_verified_baseline_keys', set())
-        verified = (json_value(baseline.canonical_payload) if key in verified_keys
-                    else verify_baseline(baseline))
-        verified_keys.add(key)
-        verified_cache[key] = verified
-    verified_cache.move_to_end(key)
-    while len(verified_cache) > settings.verified_baseline_cache_entries:
-        verified_cache.popitem(last=False)
-    return baseline, verified
+    baseline = rows.get(row_key)
+    if row_key not in rows or (baseline is not None and object_session(baseline) is not db):
+        baseline = rows[row_key] = latest_baseline(db, workspace.id)
+    return baseline, verify_in_transaction(db, baseline)
 
 
 def _baseline_inputs_view(payload):
@@ -1365,15 +1350,16 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     db.flush()
     key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs})
     if state and not state['replay']:
-        # This cache lives only for the rolled-back preparation. Replay uses a fresh transaction/cache.
-        cache, epoch = state['snapshots'], None
+        # Reuse across rollback rounds at the same check position. Later checks may
+        # follow assignment writes that leave the workspace row unchanged.
+        cache, epoch = state['snapshots'], state['next_check']
     else:
         cache, epoch = db.info.setdefault('write_domain_snapshots', {}), writer.get('snapshot_epoch', 0)
         # A new write epoch can never reuse an earlier snapshot. Drop its pickle
         # buffers immediately instead of retaining every full copy until commit.
         if cache and next(iter(cache))[0] != epoch:
             cache.clear()
-        key = (epoch, key)
+    key = (epoch, key)
     if key not in cache:
         value = _domain_snapshot(db, workspace, *args, **kwargs)
         # Bytes are produced here only; preserve graph types/aliases without repeated Python deep copies.

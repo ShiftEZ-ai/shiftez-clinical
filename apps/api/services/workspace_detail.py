@@ -43,9 +43,7 @@ def compact(db, actor, workspace):
     return {'view': 'compact', 'workspace': metadata,
         'current_input_revision': org.input_revision, 'current_availability_revision': org.availability_revision,
         'current_fingerprint': current, 'health': health, 'summary': health.get('summary'),
-        # Only this read passes the canonical stored items; command authority still derives its own evidence.
-        'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current,
-                                                  current_review_items=check['review_items']),
+        'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current),
         'review_items': check['review_items'], 'reviewer_involved': reviews.contributed(db, workspace, actor.identity_id),
         'can_change_fixed': actor.permits('coordinator') and unrestricted(db, actor, access_record(db, workspace)),
         'can_redo': actor.permits('coordinator') and redo_available(db, actor, workspace),

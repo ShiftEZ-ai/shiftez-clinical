@@ -1758,12 +1758,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_data_safety.py::test_deploy_script_gates_backs_up_then_migrates_once",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3114,12 +3108,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_session_hardening.py::test_only_the_proxy_hop_is_trusted_for_client_addresses",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_session_hardening.py::test_policy_transitions_and_undo_never_revive_an_ended_session[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -3258,25 +3246,7 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_distribution_planning_has_department_scale_model_budget[case-ikbnejlcdmnpbaigohdjpcemkjpojfdnkahgldlfnhojhcgkilheengdnldncpcn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_distribution_solver_compiles_the_evaluators_exact_deviations",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_source_parity_fairness.py::test_generic_share_uses_nested_conditions_and_frozen_published_history",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_source_parity_fairness.py::test_week_spread_and_pair_limit_use_department_calendar_and_shared_marginal_cost",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },

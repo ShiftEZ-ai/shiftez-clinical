@@ -1,7 +1,7 @@
 """Single source of truth for the application version (SemVer). Release tags are v<this>."""
 import os
 
-__version__ = "0.8.0-rc.16"
+__version__ = "0.1.0-rc.1"
 
 
 def build():
