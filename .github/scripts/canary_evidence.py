@@ -72,9 +72,9 @@ def report_cases(report, evidence, *, selected_scope=()):
     return cases
 
 
-def retry_path(report, retry):
+def retry_path(report, retry, *, allow_retry):
     path = report.with_name(report.stem + "-retry.xml")
-    if (os.getenv("GITHUB_EVENT_NAME") != "merge_group"
+    if (not allow_retry
             or set(retry) != {"file", "exit_code", "sha256"} or retry["file"] != path.name):
         raise ValueError("Unexpected retry evidence")
     return path
@@ -84,19 +84,20 @@ def failed_nodes(cases):
     return sorted(node(case) for case in cases if outcome(case) in {"failed", "error"})
 
 
-def recovered_nodes(report, evidence, failures):
+def recovered_nodes(report, evidence, failures, *, allow_retry=False):
     if "retry" not in evidence:
         if failures:
-            raise ValueError("Missing merge-group retry evidence: " + report.name)
+            event = os.getenv("GITHUB_EVENT_NAME", "merge_group").replace("_", "-")
+            raise ValueError("Missing " + event + " retry evidence: " + report.name)
         return set()
     retry = evidence["retry"]
-    cases = report_cases(retry_path(report, retry), retry)
+    cases = report_cases(retry_path(report, retry, allow_retry=allow_retry), retry)
     if not failures or sorted(node(case) for case in cases) != failures:
         raise ValueError("Retry must execute exactly the unlisted first-attempt failed nodes")
     return {node(case) for case in cases if outcome(case) == "passed"}
 
 
-def verify_directory(directory, *, allow_product_errors=False, partial=False):
+def verify_directory(directory, *, allow_product_errors=False, partial=False, allow_retry=False):
     receipts = list(directory.rglob("shard-receipt.json"))
     if not receipts:
         raise ValueError("Missing shard receipts")
@@ -107,7 +108,7 @@ def verify_directory(directory, *, allow_product_errors=False, partial=False):
             original = receipt_path.parent / row["file"]
             reports.append(original)
             if "retry" in row:
-                reports.append(retry_path(original, row["retry"]))
+                reports.append(retry_path(original, row["retry"], allow_retry=allow_retry))
         for normalized in reports:
             ledger_path = normalized.with_suffix(".canaries.json")
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
