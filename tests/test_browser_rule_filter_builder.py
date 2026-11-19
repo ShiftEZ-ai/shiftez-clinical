@@ -84,9 +84,7 @@ def propose(page, reason):
         close.click()  # a phone's sheet covers the page
     page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
     dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-    understood = dialog.get_by_label('I have read which lines give way and that is intended')
-    if understood.count():
-        understood.check()
+    expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
     dialog.get_by_label('Reason', exact=True).fill(reason)
     dialog.get_by_role('button', name='Propose', exact=True).click()
     expect(dialog).to_have_count(0)
@@ -443,7 +441,7 @@ def test_a_new_line_opens_itself_advisory_and_empty_and_says_what_is_on_screen(b
         keep = panel.get_by_role('button', name='Keep change')
         expect(keep).to_have_attribute('aria-disabled', 'true')
         expect(keep).to_have_attribute('data-tip', 'Add a minimum, maximum or target')
-        expect(page.locator('#main .rc-checkbar')).to_contain_text('⚠ 1 overlap')
+        expect(page.locator('#main .rc-checkbar')).to_be_empty()
         expect(page.locator('#main .rc-checkbar')).not_to_contain_text('refused')
         expect(page.locator('#main tr[data-row], #main [data-row]').filter(has_text='Demo learners')).to_have_count(0)
         panel.get_by_label('Maximum', exact=True).fill('4')

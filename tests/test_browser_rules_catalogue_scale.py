@@ -61,7 +61,7 @@ def test_rules_search_waits_for_a_pause_in_typing(browser, live_server, h):
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-rule').first).to_be_visible()
+        expect(main.locator('li.rt-item').first).to_be_visible()
         page.evaluate("""() => {const body=document.querySelector('.rt-body');const replace=body.replaceChildren.bind(body);window.__draws=0;
             body.replaceChildren=(...children)=>{window.__draws++;return replace(...children);};}""")
         box = main.get_by_role('searchbox', name='Search rules')
@@ -83,19 +83,44 @@ def test_ticking_or_opening_one_rule_leaves_the_other_rows_as_they_are(browser, 
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        other = main.locator('tr.rt-rule').filter(has_text='Rest between duties')
+        other = main.locator('li.rt-item').filter(has_text='Rest between duties')
         expect(other).to_be_visible()
         other.evaluate('row => { row.dataset.kept = "yes"; }')
-        main.get_by_role('button', name='Open Duties per week').click()
-        expect(main.locator('tr.rt-line')).to_have_count(LINES)
+        main.get_by_role('button', name='Duties per week lines').click()
+        expect(main.locator('li.rt-ln')).to_have_count(LINES)
         assert other.evaluate('row => row.isConnected && row.dataset.kept === "yes"'), 'opening one rule redrew the others'
-        first = main.locator('tr.rt-line').first
+        first = main.locator('li.rt-ln').first
         first.evaluate('row => { row.dataset.kept = "yes"; }')
-        main.locator('tr.rt-line').nth(1).locator('input.bulk-check').check()
+        main.locator('li.rt-ln').nth(1).locator('input.bulk-check').check()
         expect(page.locator('.selection-bar:not([hidden])')).to_contain_text('1 item')
         assert first.evaluate('row => row.isConnected && row.dataset.kept === "yes"'), 'a tick redrew the table'
         assert other.evaluate('row => row.isConnected')
         # The rule's tri-state box follows the tick in place.
-        expect(main.locator('tr.rt-rule').filter(has_text='Duties per week').locator('input.bulk-check')).to_have_js_property('indeterminate', True)
+        expect(main.locator('li.rt-item').filter(has_text='Duties per week').locator('input.bulk-check')).to_have_js_property('indeterminate', True)
+    finally:
+        context.close()
+
+
+def test_a_thousand_person_exceptions_open_with_linear_who_work(browser, live_server, h):
+    flag(h)
+    anchor = line({'max': {'value': 5, 'level': 'mandatory'}})
+    start = date(2027, 1, 1)
+    personal = [line({'max': {'value': 3, 'level': 'mandatory'}},
+                     who={'conditions': [{'field': 'person_ids', 'values': h.seed['people'][:1]}]},
+                     starts_on=str(start + timedelta(days=n)), ends_on=str(start + timedelta(days=n + 1)))
+                for n in range(LINES)]
+    catalogue_rule(h, 'duties_per_week', [anchor, *personal])
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules')
+        item = page.locator('li.rt-item').filter(has=page.get_by_role('button', name='Duties per week lines', exact=True))
+        expect(item).to_be_visible()
+        work = item.evaluate('''item => {const open=item.querySelector('button[aria-label="Duties per week lines"]');
+            const real=JSON.stringify;let calls=0;JSON.stringify=function(...args){calls++;return real.apply(this,args);};
+            try{open.click();}finally{JSON.stringify=real;}return calls;}''')
+        expect(item.locator('li.rt-ln')).to_have_count(LINES + 1)
+        expect(item.locator('ol.rt-exc > li.rt-ln')).to_have_count(LINES)
+        expect(item.locator('ol.rt-lns').first.locator(':scope > li.rt-ln')).to_have_attribute('data-line', anchor['id'])
+        assert work < 30 * (LINES + 1), work
     finally:
         context.close()

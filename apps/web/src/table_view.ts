@@ -728,7 +728,7 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     if(savedBtn&&spec.saved){const name=spec.saved.name(),dirty=spec.saved.dirty();savedBtn.querySelector('.dt-tool-label')!.textContent=name||spec.saved.defaultName?.()||'Default view';savedBtn.querySelector('.dt-dirty')!.textContent=dirty?'•':'';
       // The view's row count is the footer's; the views menu lists each view's count.
       const warn=spec.saved.warn?.()||'';
-      const w=savedBtn.querySelector('.dt-view-warn')!;w.replaceChildren(...(warn?[icon('alert'),warn]:[]));
+      const w=savedBtn.querySelector('.dt-view-warn')!;w.replaceChildren(...(warn?[icon('alert'),el('span',{class:'dt-view-warn-words'},warn)]:[]));
       savedBtn.classList.toggle('on',!!name);savedBtn.setAttribute('aria-label',`Saved views${name||spec.saved.defaultName?.()?': '+(name||spec.saved.defaultName!()):''}${dirty?' (changed)':''}${warn?', '+warn:''}`);syncSaved?.();}
     paintStrip();
   };
