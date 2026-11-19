@@ -2,13 +2,13 @@
 import hashlib
 import json
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import defer, object_session
 from . import models as m
 from .serialization import json_value, record, records_many, rows_many
 from packages.domain.conditions import with_tags
@@ -396,29 +396,14 @@ def _baseline_hint(db, workspace):
 
 def _verified_baseline(db, workspace):
     """Load and integrity-check one draft baseline once in this request/session."""
-    from .workspace_baselines import latest as latest_baseline, verify as verify_baseline
+    from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
 
-    rows = db.info.setdefault('_baseline_rows', {})
+    rows = baseline_rows(db)
     row_key = (workspace.id, workspace.revision)
-    if row_key not in rows:
-        rows[row_key] = latest_baseline(db, workspace.id)
-    baseline = rows[row_key]
-    if baseline is None:
-        return None, None
-    key = (baseline.id, baseline.payload_hash)
-    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
-    verified_cache = db.info.setdefault('_verified_baselines', OrderedDict())
-    verified = verified_cache.get(key)
-    if verified is None:
-        verified_keys = db.info.setdefault('_verified_baseline_keys', set())
-        verified = (json_value(baseline.canonical_payload) if key in verified_keys
-                    else verify_baseline(baseline))
-        verified_keys.add(key)
-        verified_cache[key] = verified
-    verified_cache.move_to_end(key)
-    while len(verified_cache) > settings.verified_baseline_cache_entries:
-        verified_cache.popitem(last=False)
-    return baseline, verified
+    baseline = rows.get(row_key)
+    if row_key not in rows or (baseline is not None and object_session(baseline) is not db):
+        baseline = rows[row_key] = latest_baseline(db, workspace.id)
+    return baseline, verify_in_transaction(db, baseline)
 
 
 def _baseline_inputs_view(payload):
