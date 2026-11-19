@@ -1400,7 +1400,7 @@ def create_workspace(db, actor, command, settings):
                      'repair_unavailable': True, 'repair_conflicts': True}), settings)
     # Published rotas and other drafts on these days: the client warns and offers the ways out (schedule.overlaps).
     from apps.api.workspace_baselines import attach as attach_baseline, projection as baseline_projection
-    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)))
+    workspace_value = attach_baseline(db, workspace, record(workspace, exclude=("validation",)), baseline=baseline)
     return {"workspace": workspace_value, "baseline": baseline_projection(baseline),
             "snapshot_hash": baseline.payload_hash, "validation": result, 'setup': setup, 'template_skipped': skipped_people,
             'overlaps': schedule.overlaps(db, workspace.department_id, workspace)}
@@ -2648,12 +2648,12 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
         if any(not item.accept for item in value.decisions):
             return acknowledged_gaps.reject_items(db, actor, workspace, value)
-        acknowledged_gaps.decide(db, actor, workspace, result, value)
+        acknowledged_gaps.require_gap_decisions(workspace, result, value)
         swaps.validate_publication(db, workspace)
-        reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
+        decision = reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
-        acknowledged_gaps.record_decision(db, actor, workspace, value)
+        acknowledged_gaps.record_decision(actor, workspace, value, decision)
     elif action == "publish":
         require(workspace.status == "approved", "WORKFLOW_STATE", "Only an approved candidate can be published", 409)
         from .notification_audience import is_test_identity, non_test_assignee_count
