@@ -248,6 +248,7 @@ def override(db, actor, command):
         row.revision += 1
     wish.revision += 1
     bump_inputs(db, actor)
+    db.flush()  # a new override gets its id and defaults before the reply is built
     return {'wish': record(wish), 'override': record(row), 'previous': previous}
 
 

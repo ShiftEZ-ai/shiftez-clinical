@@ -426,6 +426,9 @@ WEB_ENTRY_SOURCES = frozenset(f"apps/web/src/{name}" for name in ("app.ts", "mai
 SHARED_WEB_SOURCES = frozenset(f"apps/web/src/{name}" for name in (
     "dom.ts", "conditions.ts", "picker.ts", "side_panel.ts", "table_view.ts", "table_menu.ts",
     "selection_bar.ts", "view_settings.ts"))
+# Every browser test drives these services over HTTP through the live server, so an import or name match cannot
+# find which browser tests a change reaches; their browser owners are the whole browser suite too.
+BROWSER_DRIVEN_API = ("apps/api/services/", "apps/api/commands.py", "apps/api/snapshots.py")
 
 
 def direct_test_owners(changed, candidate_tests):
@@ -437,7 +440,7 @@ def direct_test_owners(changed, candidate_tests):
         owners = reverse.get(path, set()) & files.keys()
         owners |= doc_tests([path], files)
         owners |= {test for test, text in files.items() if mentions(path, test, text, names=False)}
-        if path in SHARED_WEB_SOURCES | WEB_ENTRY_SOURCES:
+        if path in SHARED_WEB_SOURCES | WEB_ENTRY_SOURCES or path.startswith(BROWSER_DRIVEN_API):
             # Every page uses these modules, so a name match cannot find their browser consumers.
             owners |= {test for test in files if suite(test) == "browser"}
         if path in candidate_tests:

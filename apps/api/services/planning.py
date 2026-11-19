@@ -283,11 +283,25 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
     defaults = department.generation_defaults
+    preparation = db.info.get('_planning_preparation')
+    previous_check = copy.deepcopy(preparation['validation_baselines'].get(
+        workspace.id, workspace.validation)) if preparation else None
+    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparation else []
+    evaluated_at = command_time(db).isoformat()
     def compute():
         checked['_supervision_commitments'] = supervision_commitments(data)
         result = evaluate(checked, session_parts=True)
         if not amendment_scope:
             result['score'] = schedule_score(checked, result, defaults)
+            if preparation is not None:
+                from packages.domain.finding_causes import DIAGNOSTIC_VERSION
+                from packages.domain.score import score_dependencies
+                from packages.domain.rota_summary import fix_list_context, remember_fix_list
+                result.update(diagnostic_version=DIAGNOSTIC_VERSION, score_dependencies=score_dependencies(defaults),
+                    input_manifest={k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')},
+                    evaluated_at=evaluated_at, fix_list_context=fix_list_context(data))
+                remember_fix_list(previous_check, result, accepted_issues=accepted_issues,
+                                  summary_cache=preparation['summary_cache'])
         if _overlap_before is None:
             return result
         from packages.domain.overlap import per_session_overlaps
@@ -308,7 +322,8 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     overlap_before = ([shift_input(row) for row in _overlap_before['shifts']]
                       if _overlap_before is not None else None)
     computed = command_compute(db, 'rota_check', checked, compute,
-                               options={'defaults': defaults, 'overlap_before': overlap_before}, final=final_compute)
+                               options={'defaults': defaults, 'overlap_before': overlap_before}, final=final_compute,
+                               input_token=data['fingerprint'] if preparation else None)
     if _overlap_before is not None:
         result, overlap_flags = computed
         if _overlap_output is not None:
@@ -338,7 +353,8 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
     result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
-    remember_fix_list(workspace.validation, result, accepted_issues=workspace.accepted_issues or [])
+    remember_fix_list(workspace.validation, result, accepted_issues=workspace.accepted_issues or [],
+                      summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     if reviewed_candidate and (workspace.validation or {}).get('review_item_decisions'):
         result['review_item_decisions'] = workspace.validation['review_item_decisions']
     if store:
@@ -511,7 +527,8 @@ def defer_complete_check(db, actor, workspace, previous, result, data):
     result['valid'] = not result['error_count']
     if not db.info.get('_assignment_reply'):
         result['evaluated_at'] = m.now().isoformat()
-        remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [])
+        remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
+                              summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     else:
         accepted_issues = workspace.accepted_issues or []
         before_fix = (rota_summary(previous, accepted_issues=accepted_issues)['fix_list']
@@ -635,23 +652,35 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                             _overlap_before=None if db.info.get('_planner_preview') else before,
                             _overlap_output=overlap_result,
                             final_compute=(db.info.get('_planning_preparation') or {}).get('kind')
-                                in {'shift.action', 'shift.copy', 'series.expand'})
+                                in {'shift.action', 'shift.copy', 'series.expand', 'shift.update', 'workspace.undo', 'workspace.redo'})
         if overlap_result:
             db.info['_command_overlap_flags'] = overlap_result['flags']
     else:
         result, data = prepared
+        proposed = data
         if not assignment_prepared:
             data = with_series_state({**data, 'shifts': workspace_shifts(db, workspace.id) +
                     [s for s in data['shifts'] if s['id'] not in set(data['focus_ids'])]})
-        from packages.domain.input_manifest import manifest
+        from packages.domain.input_manifest import FIELDS, manifest, project, shift_input
         if not pending_reply:
-            current_manifest = manifest(data)
+            if db.info.get('_generation_plan'):
+                # Every other input is the stamped detached graph; compare the saved semantic content once.
+                fields = (*FIELDS['workspace'], 'content_revision')
+                matched = (project(record(workspace, exclude=('validation',)), fields) == project(proposed['workspace'], fields)
+                    and {row['id']: shift_input(row) for row in data['shifts']} ==
+                        {row['id']: shift_input(row) for row in proposed['shifts']})
+                require(matched, 'RECONCILIATION_MISMATCH',
+                        'The saved batch differs from the reviewed plan; the proposal is retained', 409)
+                current_manifest = proposed['input_manifest']
+            else:
+                current_manifest = manifest(data)
             require(current_manifest['token'] == data['fingerprint'], 'RECONCILIATION_MISMATCH',
                     'The saved batch differs from the reviewed plan; the proposal is retained', 409)
             result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': {k: current_manifest[k] for k in ('format', 'token', 'components', 'dirty_hint')}}
             from packages.domain.rota_summary import fix_list_context, remember_fix_list
             result['fix_list_context'] = fix_list_context(data)
-            remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [])
+            remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
+                              summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
         now.extend(s for s in data['shifts'] if s['id'] in set(data['focus_ids']))
         captured.append(data)
         if result.get('scope') == 'command_changes':
@@ -719,31 +748,35 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     workspace_record = record(workspace, exclude=("validation",))
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
-    return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result),
+    from packages.domain.rota_summary import rota_summary
+    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [],
+                           cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
+    return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result, summary=summary),
             "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
             'fix_list_delta': result['fix_list_delta'],
-            'fix_list': rota_fix_list(workspace, validation=result),
+            'fix_list': rota_fix_list(workspace, validation=result, summary=summary),
             "issues": issue_changes(issues_before, {issue_key(f): f for f in result['findings']}),
             "delta": delta}
 
 
-def rota_fix_list(workspace, *, validation=None):
+def rota_fix_list(workspace, *, validation=None, summary=None):
     from .acknowledged_gaps import projection
-    return projection(workspace, validation)
+    return projection(workspace, validation, summary=summary)
 
 
-def health(workspace, *, validation=None):
+def health(workspace, *, validation=None, summary=None):
     """A short summary of the stored rota check, so lists can say what needs doing without loading the rota."""
     v = (workspace.validation if validation is None else validation) or None
     if not v:
         return {"checked": False}
     from packages.domain.rota_summary import rota_summary
-    summary = rota_summary(v, accepted_issues=getattr(workspace, 'accepted_issues', None) or [], compact=True)
+    if summary is None:
+        summary = rota_summary(v, accepted_issues=getattr(workspace, 'accepted_issues', None) or [], compact=True)
     return {"checked": True, "valid": summary['valid'], "errors": summary['issues']['blocking'],
             "warnings": summary['issues']['advisory'], "open_places": summary['places_open'],
             "staffed": len({r['shift_id'] for r in v.get('coverage', []) if r['status'] in ('covered', 'gap')}),
             "score": (summary['score'] or {}).get('score'),
-            "summary": {**{k: v for k, v in summary.items() if k not in ('sessions', 'findings', 'score', 'fix_list')},
+            "summary": {**{k: v for k, v in summary.items() if k not in ('sessions', 'findings', 'score', 'fix_list', 'observations', 'repair_tasks', 'cause_groups')},
                         'fix_list': {'summary': {**summary['fix_list']['summary'],
                                                  'check_status': None, 'check_queued_at': None}}},
             "uncapped_score": (summary['score'] or {}).get('uncapped_score'),
@@ -1605,7 +1638,7 @@ def target_override(db, actor, command):
     return changed(db, actor, workspace, before, value.reason)
 
 
-def name_attached_supervisors(db, workspace, row, *, shared_inputs=None):
+def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explicit_clears=()):
     """Fill missing manual pairings through the same qualification and rule checks as the rota."""
     from packages.domain.conditions import active_rules
     from packages.domain.supervision_levelling import levelled_order, session_spread_policies
@@ -1616,12 +1649,14 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None):
         # Dated trainee classification reads canonical memberships/categories, not other duties.
         # Only actual missing pairs need the full rota context and mandatory comparison below.
         current = shift_record(db, row)
-        if not any(not person.get('supervisor_person_id') and trainee_intervals(shared_inputs, current, person)
+        if not any(person['person_id'] not in explicit_clears and not person.get('supervisor_person_id')
+                   and trainee_intervals(shared_inputs, current, person)
                    for person in current['participants']):
             return
     data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
     shift = next(s for s in data['shifts'] if s['id'] == row.id)
-    missing = [(p, intervals) for p in shift['participants'] if not p.get('supervisor_person_id')
+    missing = [(p, intervals) for p in shift['participants']
+               if p['person_id'] not in explicit_clears and not p.get('supervisor_person_id')
                and (intervals := trainee_intervals(data, shift, p))]
     if not missing:
         return
@@ -1730,9 +1765,18 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
         before_check = evaluate_assignments(baseline, scope, explain_findings=False)
         after_check = evaluate_assignments(data, scope, explain_findings=False)
         return compare_checks(before_check, after_check), after_check
-    comparison, checked = command_compute(db, 'edit_admission', data, compare,
+    preparation = db.info.get('_planning_preparation') if db is not None else None
+    computed = command_compute(db, 'edit_admission', data, compare,
         options={'before': [shift_input(row) for row in prior],
-                 'scope': {k: sorted(v) if isinstance(v, set) else v for k, v in scope.items()}})
+                 'scope': {k: sorted(v) if isinstance(v, set) else v for k, v in scope.items()}},
+        input_token=data['fingerprint'] if preparation else None,
+        defer=bool(preparation and preparation['kind'] == 'shift.update'))
+    if computed is None:
+        # Only rollback preparation speculates; the writer enforces the captured admission before saving.
+        if contexts is not None:
+            contexts[workspace.id] = (before, actor.identity_id, workspace.content_revision, snapshots.snapshot_hash(before), authority)
+        return None
+    comparison, checked = computed
     findings = comparison['new_or_worse_findings']
     if code == 'SWAP_INVALID':
         touched_ids = {row['id'] for row in touched}
@@ -1795,7 +1839,12 @@ def save_shift(db, actor, command, update=False):
     row = write_shift(db, actor, workspace, value, existing, inputs=inputs,
                       override_refusal=override_check)
     if value.participants:
-        name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'))
+        # Keep an explicit clear visible to admission even when an attachment could fill it again.
+        explicit_clears = {p.person_id for p in value.participants
+                           if 'supervisor_person_id' in p.model_fields_set and p.supervisor_person_id is None
+                           and previous.get(p.person_id, {}).get('supervisor_person_id')}
+        name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
+                                  explicit_clears=explicit_clears)
     admission = (admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID', shared_inputs=inputs.get('shared_inputs'),
                                          override_reason=value.override_reason, message=refusal)
                  # A new session may be saved with its findings (they block submission); the per-person,
