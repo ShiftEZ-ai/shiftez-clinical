@@ -9,7 +9,7 @@ from packages.domain.generation import generate as greedy_generate
 from packages.domain.time import aware
 from packages.domain.validation import policy_applies
 from .test_generation_superseded_apply import apply, group, run
-from .test_live_zero_limits import empty_for_person, overtime_draft
+from .test_live_zero_limits import empty_for_person, overtime_draft, tighten
 from .test_rule_catalogue_api import line, person as person_scope
 from .test_rule_catalogue_conflicts import tag_people
 from .test_rule_catalogue_in_force import add_policy
@@ -196,3 +196,44 @@ def test_inherited_advisory_person_maximum_keeps_the_mandatory_zero(h):
     assert effective_amounts(data, source, data['shifts'][0], person) == [0]
     assert [row['code'] for row in check['findings'] if row['rule_id'] == source['id']
             and row['person_id'] == person and row['severity'] == 'error'] == ['MAX_DUTIES']
+
+
+def test_broader_strength_change_preserves_a_captured_person_zero(h):
+    person = h.seed['people'][0]
+    convert(h)
+    occupied = h.shift(h.workspace('Synthetic captured person cap'), people=[person])['workspace']
+    slot = h.shift(occupied, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[])
+    draft = slot['workspace']
+    job = run(h, draft, sessions=[slot['shift_id']], population=group(person))
+
+    settings = {'max_duties': {'window': 'week'}}
+    everyone = line(settings=settings, numbers={'max': {'value': 3, 'level': 'mandatory'}})
+    personal = line(who=person_scope(person), settings=settings, numbers={'max': {'value': 0, 'level': None}})
+    original = activate(h, propose_cap(h, [everyone, personal]))
+    everyone, personal = deepcopy(original['definition']['rule']['lines'])
+    # keep the inherited strength of a stored approved line predating authoring defaults.
+    personal['numbers']['max']['level'] = None
+    tighten(h, original, {**original['definition']['rule'], 'lines': [everyone, personal]})
+    original['revision'] += 1
+    draft = h.refresh_draft_baseline(draft)
+
+    advisory = {**everyone, 'numbers': {'max': {'value': 3, 'level': 'high'}}}
+    live = activate(h, propose_cap(h, [advisory, personal], current=original))
+    assert live['definition']['rule']['lines'][1]['numbers']['max']['level'] is None
+
+    def assert_mandatory_zero(findings):
+        finding, = [row for row in findings if row['code'] == 'MAX_DUTIES' and row['person_id'] == person
+                    and row['severity'] == 'error']
+        assert finding['rule_id'] == original['id'] and finding['detail']['maximum'] == 0
+
+    check = h.lifecycle(draft, 'validate')['validation']
+    assert_mandatory_zero(check['findings'])
+    before = h.snapshot(draft)
+    data = empty_for_person(before, person)
+    for generate in (greedy_generate, cp_sat_generate):
+        assert generate(deepcopy(data), 2)['additions'] == []
+
+    receipt = apply(h, draft, job)['reconciliation']
+    assert receipt['status'] == 'unresolved' and receipt['addition_indexes'] == []
+    assert_mandatory_zero([row for placement in receipt['conflicting_placements'] for row in placement['findings']])
+    assert h.snapshot(draft) == before

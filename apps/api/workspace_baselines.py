@@ -275,9 +275,16 @@ def _overlay_zero_limits(frozen, current, safety_ids=()):
                       if key not in {"merged_ids", "replaces_id"}}
         rule = definition["rule"]
         if rule.get("kind") == "catalogue":
-            definition = {**definition, "rule": {**rule, "lines": [
-                {key: value for key, value in line.items() if key != "_source_index"}
-                for line in rule.get("lines", ()) if not line.get("_source_default_only")]}}
+            lines = []
+            for line in rule.get("lines", ()):
+                line = {key: value for key, value in line.items() if key != "_source_index"}
+                if line.get("_source_default_only"):
+                    line["numbers"] = {
+                        name: {key: value for key, value in number.items() if key != "value"}
+                        for name, number in line["numbers"].items()
+                    }
+                lines.append(line)
+            definition = {**definition, "rule": {**rule, "lines": lines}}
         return (row.get("department_id"), row.get("starts_on"), row.get("ends_on"), definition)
 
     current_by_id = newest(current)
@@ -418,7 +425,7 @@ def _strictest_policy(frozen, live, kind, *, include_mandatory=False):
                     definition, template = copy["definition"], copy["template_line"]
                     if (definition["severity"] == "mandatory" and definition["rule"]["kind"] not in LIVE_SAFETY_KINDS
                             and any((template["id"], key) in changed for key in template["slot"].split("+"))):
-                        return [frozen, _distinct_live_policy(live)]
+                        return [frozen, _distinct_live_policy({**live, "_live_mandatory_recheck": True})]
 
         def line_key(line):
             return (line.get("where"), line.get("who"), tuple(line.get("weekdays") or ()),

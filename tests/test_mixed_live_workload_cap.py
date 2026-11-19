@@ -11,6 +11,7 @@ from packages.contracts.schemas import safety_rule
 from packages.domain.cp_sat import generate as cp_sat_generate
 from packages.domain.generation import generate as greedy_generate
 from packages.domain.solver_provenance import policy_id
+from packages.domain.validation import evaluate
 from .test_assignment_override_reason import payload
 from .test_generation_superseded_apply import apply, group, run
 from .test_rule_catalogue_api import line, person as person_scope
@@ -100,6 +101,14 @@ def test_late_positive_cap_in_mixed_safety_rule_binds_each_path(request, backend
 
     if path == 'check':
         assert_cap_finding(h.lifecycle(draft, 'validate')['validation']['findings'], person)
+        data = h.snapshot(draft)
+        session = next(shift for shift in data['shifts'] if shift['id'] == target['id'])
+        restricted = h.seed['people'][1]
+        session['participants'].append({**session['participants'][0], 'person_id': restricted})
+        findings = evaluate(data)['findings']
+        assert_cap_finding(findings, person)
+        restriction, = [row for row in findings if row['code'] == 'RESTRICTION' and row['person_id'] == restricted]
+        assert restriction['rule_id'] == policy['id'] and restriction['severity'] == 'error'
     elif path == 'apply':
         before = h.snapshot(draft)
         assert_apply_refusal(apply(h, draft, job)['reconciliation'], person)

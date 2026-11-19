@@ -269,8 +269,7 @@ def test_late_mandatory_quotas_bind_a_new_run_and_draft_edit(h):
     assert h.lifecycle(approved, 'publish')['publication_id']
 
 
-def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
-    from apps.worker.main import process_one
+def _approved_extra_cover_person_quota(h, monkeypatch, default_maximum):
     from packages.contracts.schemas import safety_rule
     from packages.domain.time import aware
     from tests.clock_support import freeze_clock
@@ -292,7 +291,7 @@ def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
                                  'starts_on': draft['starts_on'], 'ends_on': draft['ends_on']}}
     # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
     lines = [
-        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 0, 'level': 'mandatory'}}},
+        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': default_maximum, 'level': 'mandatory'}}},
         {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 2, 'level': 'mandatory'}},
          'who': {'match': 'all', 'conditions': [{'field': 'person_ids', 'op': 'any', 'values': [allowed]}]}},
     ]
@@ -301,6 +300,13 @@ def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
     rule = h.command('approver', 'policy.activate', {'reason': 'Independent review'},
                      proposed['id'], proposed['revision'])['record']
     assert not safety_rule(rule['definition'])
+    return draft, duty_type, allowed, capped, rule
+
+
+def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
+    from apps.worker.main import process_one
+
+    draft, duty_type, allowed, capped, rule = _approved_extra_cover_person_quota(h, monkeypatch, 0)
     job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
                     revision=draft['revision'])['job']
     assert process_one(h.app.state.engine)
@@ -315,6 +321,21 @@ def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
                for f in denied['error']['details']['findings'])
     edited = place_extra_cover(h, draft, duty_type, allowed, '2026-10-07')
     assert edited['validation']['valid']
+
+
+def test_late_catalogue_quota_allows_an_approved_person_line_above_a_positive_default(h, monkeypatch):
+    from .test_generation_superseded_apply import apply, group, run
+
+    draft, _, allowed, capped, rule = _approved_extra_cover_person_quota(h, monkeypatch, 1)
+    rows = h.lifecycle(draft, 'validate')['validation']['quota_report']['rows']
+    for person, maximum in ((allowed, 2), (capped, 1)):
+        assert [row['amount'] for row in rows if row['policy_id'] == rule['id']
+                and row['person_id'] == person] == [maximum]
+
+    job = run(h, draft, population=group(allowed))
+    assert [row['participant']['person_id'] for row in job['result']['additions']] == [allowed, allowed]
+    receipt = apply(h, draft, job)['reconciliation']
+    assert receipt['status'] == 'applied' and receipt['addition_indexes'] == [0, 1]
 
 
 def type_floor_definition(h, floor):

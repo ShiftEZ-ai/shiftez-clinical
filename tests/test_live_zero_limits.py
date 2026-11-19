@@ -116,6 +116,7 @@ def test_catalogue_zero_reader_keeps_only_mandatory_zero_numbers(version, entry)
         current['settings'] = {kind: {}}
     before = deepcopy(row)
     zero = _zero_limit_policy(row)
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
     # Only emitted maxima count here. Selector-only lines retain catalogue precedence.
     selected, = [line for line in zero['definition']['rule']['lines'] if not line.get('_source_default_only')]
     assert selected['id'] == 'all' and selected['numbers'] == {'max': {'value': 0}}
