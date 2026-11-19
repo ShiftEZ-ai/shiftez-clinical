@@ -1,4 +1,5 @@
 """One-person moves and clearing selected sessions are atomic, validated, audited and undoable."""
+from tests.historical_staffing import retained_staffing
 from tests.legacy_lead import historical_type
 
 import uuid
@@ -247,7 +248,7 @@ def test_move_refuses_full_lead_gap_target_as_no_open_place(h):
                                 'capability_ids': [h.seed['supervisor_capability']], 'category_ids': []}}})
     w = h.workspace('Full lead target')
     source = h.shift(w, *DAY, people=[h.seed['people'][2]])
-    target = h.shift(source['workspace'], *NEXT, typ=typ['id'], people=h.seed['people'][:2])
+    target = retained_staffing(h, source['workspace'], *NEXT, typ=typ['id'], people=h.seed['people'][:2])
     w = target['workspace']
     rows = {row['id']: row for row in h.detail(w)['shifts']}
     before = state(h, w)
@@ -301,7 +302,7 @@ def test_move_cannot_create_a_new_supervision_gap(h, action):
 
 def test_existing_supervision_gap_does_not_block_unrelated_move(h):
     typ, trainee, _ = supervised_type(h)
-    gap = h.shift(h.workspace(), *DAY, typ=typ, people=[{'person_id': trainee,
+    gap = retained_staffing(h, h.workspace(), *DAY, typ=typ, people=[{'person_id': trainee,
         'start': DAY[0], 'end': DAY[1], 'participation': 'trainee'}])
     source = h.shift(gap['workspace'], '2026-10-06T08:00:00+03:00', '2026-10-06T12:00:00+03:00',
         people=[h.seed['people'][2]])

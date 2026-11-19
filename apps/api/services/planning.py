@@ -1736,7 +1736,8 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
             db.get(m.Assignment, participant['id']).supervisor_person_id = pid
 
 
-def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None, override_reason=None, message=None):
+def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None,
+                            override_reason=None, message=None, staffing_gaps_only=False):
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
@@ -1758,7 +1759,11 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
     prior = [old[row['id']] for row in touched if row['id'] in old]
     scope = assignment_scope(data, prior, touched)
-    baseline = with_series_state({**data, 'shifts': before['shifts'] +
+    # Open places are valid draft building blocks. A staffed new session has no prior coverage.
+    open_places = [row for row in touched if row['id'] not in old and not row['participants']] if staffing_gaps_only else []
+    if staffing_gaps_only and len(open_places) == len(touched):
+        return None
+    baseline = with_series_state({**data, 'shifts': before['shifts'] + open_places +
         [row for row in data['shifts'] if row['id'] not in focus]})
     def compare():
         before_check = evaluate_assignments(baseline, scope, explain_findings=False)
@@ -1784,9 +1789,11 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
         known_findings = {(f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) for f in findings}
         findings.extend(f for f in current_calendar
                         if (f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) not in known_findings)
-    from packages.domain.finding_causes import EDIT_NON_REFUSING_CODES
+    from packages.domain.finding_causes import DRAFT_STAFFING_GAP_CODES, EDIT_NON_REFUSING_CODES
     # An open place (a session short of people) stays must-fix work in the Fix list; it never refuses the edit.
     findings = [f for f in findings if f.get('code') not in EDIT_NON_REFUSING_CODES]
+    if staffing_gaps_only:
+        findings = [f for f in findings if f.get('code') in DRAFT_STAFFING_GAP_CODES]
     if override_reason is not None and len(override_reason.strip()) >= 3:
         findings = [f for f in findings if not assignment_reason_allowed(data, f)]
     require(comparison['comparison_complete'], 'CHECK_INCOMPLETE', 'The edit could not be checked completely', 422)
@@ -1844,11 +1851,11 @@ def save_shift(db, actor, command, update=False):
                            and previous.get(p.person_id, {}).get('supervisor_person_id')}
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
-    admission = (admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID', shared_inputs=inputs.get('shared_inputs'),
-                                         override_reason=value.override_reason, message=refusal)
-                 # A new session may be saved with its findings (they block submission); the per-person,
-                 # per-finding reason gate in write_shift covers creates and updates alike.
-                 if update and 'bulk' not in db.info else None)
+    admission = None
+    if 'bulk' not in db.info and (update or value.participants):
+        admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID' if update else 'CREATE_INVALID',
+            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal if update else None,
+            staffing_gaps_only=not update)
     reason = value.override_reason.strip() if value.override_reason is not None else None
     result = changed(db, actor, workspace, before, reason or ("Edit session" if update else "Create session"),
                      shared_inputs=inputs.get('shared_inputs'), defer_assignments=update,
@@ -1917,6 +1924,9 @@ def shift_action(db, actor, command):
         if row.series_id and value.action not in {"lock", "unlock", "refresh_types"}:
             row.series_modified = True
         row.revision += 1
+    if value.action in {'unassign', 'release_unavailable'}:
+        code = 'UNASSIGN_INVALID' if value.action == 'unassign' else 'RELEASE_UNAVAILABLE_INVALID'
+        admit_assignment_change(db, actor, workspace, before, code, staffing_gaps_only=True)
     return changed(db, actor, workspace, before, value.reason)
 
 

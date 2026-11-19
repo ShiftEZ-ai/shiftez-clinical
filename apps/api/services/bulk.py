@@ -1914,15 +1914,19 @@ def _check_rows(db, actor, value, items, settings, only=None, undo_source=None):
 
 def _impact_sources(db, actor, value, items):
     from . import catalogue_preview
-    from apps.api.snapshots import domain_snapshot, snapshot_inputs
-    impactful, creation_targets, checked = [], {}, {}
+    from apps.api.snapshots import domain_snapshot, snapshot_inputs, workspace_content
+    impactful, creation_targets, checked, draft_edits = [], {}, {}, {}
     creation_only = _session_creation(value, items)
     for item in items:
         try:
             if _impactful(value, [item]):
                 source = _source_row(db, actor, item, value, checked)
-                if creation_only and isinstance(source, m.Workspace):
-                    creation_targets[source.id] = source
+                if isinstance(source, m.Workspace):
+                    if creation_only:
+                        creation_targets[source.id] = source
+                    if source.id not in draft_edits and source.status == 'draft' and any(
+                            kind in {'shift.create', 'shift.update'} for kind, _ in _intended_commands(item, value)):
+                        draft_edits[source.id] = workspace_content(db, source)
                 impactful.append(item)
         except (Problem, ValidationError) as error:
             _problem(error)
@@ -1942,13 +1946,44 @@ def _impact_sources(db, actor, value, items):
     org = db.get(m.Organisation, actor.organisation_id) if targets else None
     shared = snapshot_inputs(db, org) if targets else None
     before = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in targets}
-    return targets, before
+    return targets, before, draft_edits
+
+
+def _admit_session_edits(db, rows, draft_edits):
+    from . import planning
+
+    edited = defaultdict(list)
+    for row in rows:
+        if row['result'] != 'ready':
+            continue
+        for reply in row.get('results', []):
+            kind = reply.get('authorization_command', {}).get('kind')
+            workspace_id = (reply.get('workspace') or {}).get('id')
+            if kind in {'shift.create', 'shift.update'} and workspace_id in draft_edits:
+                edited[workspace_id].append((row, kind, reply['shift_id']))
+    for workspace_id, changes in edited.items():
+        workspace = db.get(m.Workspace, workspace_id)
+        before = draft_edits[workspace_id]
+        try:
+            # The dispatched writes already checked authority. Compare the whole batch so fixes can land together.
+            planning.admit_assignment_change(db, None, workspace, before, 'BULK_EDIT_INVALID', staffing_gaps_only=True)
+        except Problem as error:
+            details = _details(error)
+            finding_ids = {finding.get('shift_id') for finding in details.get('findings', [])}
+            affected = [change for change in changes if change[2] in finding_ids] or changes
+            for row, kind, _ in affected:
+                if row['result'] == 'problem':
+                    continue
+                code = 'CREATE_INVALID' if error.code == 'BULK_EDIT_INVALID' and kind == 'shift.create' else error.code
+                row['issues'].insert(0, _group_issue(_issue(Problem(409, code, error.message))))
+                row.update(result='problem', _refusal_details=details)
 
 
 def _attribute_impacts(db, actor, value, items, rows, sources, undo_source=None):
     from . import catalogue_preview
     from apps.api.snapshots import domain_snapshot, snapshot_inputs
-    targets, before = sources
+    targets, before, draft_edits = sources
+    _admit_session_edits(db, rows, draft_edits)
     if _session_writes(value, items, {kind for kind in s.BULK_ITEM_KINDS
                                     if kind.startswith('shift.') or kind == 'issues.resolve'}):
         admitted = {(reply.get('workspace') or {}).get('id') for row in rows for reply in row.get('results', [])}
@@ -2168,6 +2203,8 @@ def _preview_diagnostics(db, actor, value, items, settings, only=None, undo_sour
                 row = {"target_id": original.get("target_id"), "result": "problem",
                        "before": _details(error).get("before", {}),
                        "after": _details(error).get("after", {}), "issues": [issue]}
+                if error.code in {"UNASSIGN_INVALID", "RELEASE_UNAVAILABLE_INVALID"}:
+                    row["_refusal_details"] = _details(error)
                 chosen = _chosen(value, index, [issue])
                 if chosen:
                     item = original
@@ -2227,6 +2264,7 @@ def preview(db, actor, command, settings):
     try:
         rows, warnings, impacts = _check_rows(db, actor, value, items, settings, only, undo_source)
         for row in rows:
+            row.pop("_refusal_details", None)
             if row["result"] == "skipped":
                 row["result"] = "unchanged"
         counts, groups = _summary(rows)
@@ -2283,7 +2321,8 @@ def apply(db, actor, command, settings):
                     if row["result"] in {"problem", "skipped"}:
                         issue = row["issues"][0]
                         raise Problem(409, issue["code"], issue["message"],
-                                      {"failed_index": row["index"], "completed": 0, "repreview": True})
+                                      {**row.get("_refusal_details", {}), "failed_index": row["index"],
+                                       "completed": 0, "repreview": True})
             finally:
                 check.rollback()
     if suggestions:
@@ -2317,7 +2356,9 @@ def apply(db, actor, command, settings):
                 continue
             if row_preview.get("result") == "problem":
                 issue = row_preview["issues"][0]
-                raise Problem(409, issue["code"], issue["message"], {"failed_index": index, "completed": 0, "total": len(items)})
+                raise Problem(409, issue["code"], issue["message"],
+                              {**row_preview.get("_refusal_details", {}), "failed_index": index,
+                               "completed": 0, "total": len(items)})
             try:
                 for additional in extra:
                     _, reverse = _run_item(db, actor, additional, value, settings, batch_id)
@@ -2341,7 +2382,8 @@ def apply(db, actor, command, settings):
             if original["result"] == "changed" and row["result"] in {"problem", "skipped"}:
                 issue = row["issues"][0]
                 raise Problem(409, issue["code"], issue["message"],
-                              {"failed_index": row["index"], "completed": 0, "total": len(items)})
+                              {**row.get("_refusal_details", {}), "failed_index": row["index"],
+                               "completed": 0, "total": len(items)})
     staged = None
     reviews = []
     if waiting:

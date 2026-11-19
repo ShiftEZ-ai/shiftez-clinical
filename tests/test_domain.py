@@ -1,4 +1,5 @@
 """Small independent arithmetic/interval oracles; no legacy output as a golden truth."""
+from tests.historical_staffing import retained_staffing
 import copy
 from datetime import date, datetime, timedelta, timezone
 import uuid
@@ -66,11 +67,12 @@ def test_matching_distinct_capability_seats():
     assert matching_size(["lead","supervisor"],{"one":{"lead","supervisor"},"two":{"lead"}})==2
 
 
-def prepared(h,definition=None,people=None):
+def prepared(h,definition=None,people=None, *, retained=False):
     if definition is not None:
         typ=h.configure("assignment_types",{"name":"Fresh type "+str(uuid.uuid4()),"starts_on":"2020-01-01","definition":definition})["record"]["id"]
     else:typ=None
-    result=h.shift(h.workspace(),typ=typ,people=people)
+    result = (retained_staffing(h, h.workspace(), typ=typ, people=people or h.seed["people"][:1]) if retained
+              else h.shift(h.workspace(), typ=typ, people=people))
     return h.snapshot(result["workspace"]),result
 
 
@@ -94,7 +96,7 @@ def test_capability_co_counting_vs_distinct_people(h):
 def test_supervision_cannot_be_bypassed_by_labelling_trainee_as_staff(h):
     learner=h.seed["people"][0]
     h.command("coordinator","membership.create",{"person_id":learner,"category_id":h.seed["trainee_category"],"starts_on":"2020-01-01"})
-    data,result=prepared(h,{"supervision":{"trainee_category_ids":[h.seed["trainee_category"]],"capability_id":h.seed["supervisor_capability"],"trainees_per_supervisor":2}})
+    data,result=prepared(h,{"supervision":{"trainee_category_ids":[h.seed["trainee_category"]],"capability_id":h.seed["supervisor_capability"],"trainees_per_supervisor":2}}, retained=True)
     assert "SUPERVISION_GAP" in {f["code"] for f in result["validation"]["findings"]}
 
 

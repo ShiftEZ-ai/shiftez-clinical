@@ -1,4 +1,5 @@
 """Cycle 5: scoped cover, candidate pools and final proposal status agree across projections."""
+from tests.historical_staffing import retained_staffing
 import copy
 import time
 
@@ -74,7 +75,7 @@ def test_lead_gap_is_role_only_but_still_blocks_readiness_and_seat_shortage_coun
                                 'capability_ids': [h.seed['supervisor_capability']], 'category_ids': []}}})['id']
     a, b = h.seed['people'][:2]
 
-    full = h.shift(h.workspace('Full seats, missing lead'), typ=typ, people=[a, b])['workspace']
+    full = retained_staffing(h, h.workspace('Full seats, missing lead'), typ=typ, people=[a, b])['workspace']
     full = h.lifecycle(full, 'validate')['workspace']
     check = full['validation']
     assert any(f['code'] == 'LEAD_GAP' and f['severity'] == 'error' for f in check['findings'])
@@ -90,7 +91,7 @@ def test_lead_gap_is_role_only_but_still_blocks_readiness_and_seat_shortage_coun
     home = h.get('coordinator', '/api/home')
     assert not any(row['key'] == 'ready_to_submit' and row['count'] > 0 for row in home['attention'])
 
-    short = h.shift(h.workspace('Seat shortage and missing lead'), typ=typ, people=[a])['workspace']
+    short = retained_staffing(h, h.workspace('Seat shortage and missing lead'), typ=typ, people=[a])['workspace']
     short_check = evaluate(h.snapshot(short))
     assert {'COVERAGE_GAP', 'LEAD_GAP'} <= {f['code'] for f in short_check['findings'] if f['severity'] == 'error'}
     assert [(r['places_needed'], r['places_filled'], r['places_open']) for r in short_check['coverage']] == [(2, 1, 1)]
