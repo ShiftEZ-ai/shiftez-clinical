@@ -450,12 +450,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_attachments.py::test_attachment_defaults_the_trainee_supervisor_on_its_active_dates[case-nohhkdfcomfafcbgeahbbdjadiiglohnkjokkndplndpclegnjhpepbkmhaieklb]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_audit_column_wrapping.py::test_catalogue_titles_obey_wrap_and_scroll_without_covering_adjacent_columns[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
