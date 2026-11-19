@@ -706,7 +706,15 @@ def apply_generation(db, actor, command):
     require_application_toolchain(job)
     require_latest_run(db, job)
     before = workspace_content(db, workspace)
-    current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+    from .generation_reconciliation import GenerationInputsChanged
+    from apps.api.snapshots import preparation_stamp
+    if plan.get('writer_current_inputs'):
+        # Repeated changes retain the existing current-input reply instead of introducing a new error.
+        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+    else:
+        if not currency_match(plan['current_stamp'], preparation_stamp(db, workspace)):
+            raise GenerationInputsChanged()
+        current_data = plan['current_data']
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
                  and currency_match(plan['currency_hint'], currency_hint(db, workspace))
@@ -786,6 +794,7 @@ def apply_generation(db, actor, command):
     receipt = {**receipt, 'status': 'applied', 'population_recorded': True,
                'population_people': plan['population_contribution'], 'applied_at': m.now().isoformat()}
     retain_job_reconciliation(job, receipt, result=job.result, interim=True)
+    db.info['_command_overlap_flags'] = plan['overlap_flags']
     result = changed(db, actor, workspace, before, value.reason, prepared=(plan['validation'], plan['data']))
     receipt = {**receipt, 'applied_content_revision': workspace.content_revision}
     result['reconciliation'] = receipt

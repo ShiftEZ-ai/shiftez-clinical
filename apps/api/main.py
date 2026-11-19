@@ -441,30 +441,48 @@ def create_app(settings: Settings | None = None, engine=None):
             return Response(row.content, media_type='image/png', headers={
                 'ETag': '"' + row.sha256 + '"', 'X-Content-Type-Options': 'nosniff'})
 
+    def current_pwa_response(respond):
+        from .services import pwa
+        with transaction(engine) as db:
+            current = pwa.current_icons(db)
+            if current is not None:
+                return respond(*current)
+        return retry_write(engine, lambda db: respond(*pwa.current_icons(db, render_missing=True)))
+
     @app.get('/assets/manifest.webmanifest')
     @app.get('/api/pwa/manifest.webmanifest')
     def pwa_manifest(request: Request):
         from .services import pwa
-        values = retry_write(engine, lambda db: pwa.manifest(db, settings.public_origin))
-        body = json.dumps(values, separators=(',', ':'), ensure_ascii=False).encode()
-        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
-        if request.headers.get('if-none-match') == etag:
-            return Response(status_code=304, headers={'ETag': etag, 'Cache-Control': 'no-cache'})
-        return Response(body, media_type='application/manifest+json', headers={'ETag': etag, 'Cache-Control': 'no-cache'})
+        def respond(value, artifacts):
+            body = json.dumps(pwa.manifest(value, artifacts), separators=(',', ':'), ensure_ascii=False).encode()
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            headers = {'ETag': etag, 'Cache-Control': 'no-cache'}
+            if request.headers.get('if-none-match') == etag:
+                return Response(status_code=304, headers=headers)
+            return Response(body, media_type='application/manifest+json', headers=headers)
+        return current_pwa_response(respond)
+
+    def pwa_icon_response(request, row, cache_control):
+        from .services.conditional_reads import conditional_response
+        headers = conditional_response(request, '"' + row.sha256 + '"', cache_control=cache_control)
+        if isinstance(headers, Response):
+            return headers
+        return Response(row.content, media_type='image/png', headers=headers)
 
     @app.get('/api/pwa/icons/{artifact_id}.png')
-    def pwa_icon(artifact_id: s.ID):
+    def pwa_icon(request: Request, artifact_id: s.ID):
         from .services import pwa
         with transaction(engine) as db:
-            row = pwa.icon(db, artifact_id)
-        return Response(row.content, media_type='image/png', headers={
-            'Cache-Control': f'public, max-age={settings.static_cache_seconds}, immutable', 'ETag': '"' + row.sha256 + '"'})
+            row = pwa.icon(db, artifact_id, include_content='if-none-match' not in request.headers)
+            return pwa_icon_response(request, row,
+                                     f'public, max-age={settings.static_cache_seconds}, immutable')
 
     @app.get('/api/pwa/apple-touch-icon.png')
-    def pwa_apple_icon():
-        from .services import pwa
-        row = retry_write(engine, lambda db: pwa.active_icon(db, 'apple'))
-        return Response(row.content, media_type='image/png', headers={'Cache-Control': 'no-cache', 'ETag': '"' + row.sha256 + '"'})
+    def pwa_apple_icon(request: Request):
+        def respond(value, artifacts):
+            row = next(a for a in artifacts if a.purpose == 'apple')
+            return pwa_icon_response(request, row, 'no-cache')
+        return current_pwa_response(respond)
 
     @app.get('/api/me/push', response_model=s.PwaStatus)
     def me_push(request: Request, limit: int = Query(100, ge=1, le=100), offset: int = Query(0, ge=0, le=1_000_000)):
