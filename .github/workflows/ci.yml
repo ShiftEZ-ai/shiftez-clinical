@@ -274,7 +274,8 @@ jobs:
         apt_retry() {
           local attempt
           for attempt in 1 2 3; do
-            if timeout --kill-after=30 600 sudo apt-get -c "$APT_CONFIG" "$@"; then return 0; fi
+            # Checks has a 10-min job limit; a fetch that cannot finish leaves the shards their logged fallback.
+            if timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG" "$@"; then return 0; fi
             if [ "$attempt" = 3 ]; then
               echo "::error::Browser APT $1 failed in 3 attempts"
               return 1
@@ -301,14 +302,20 @@ jobs:
           done
         }
 
-        apt_retry update
+        if ! apt_retry update; then
+          echo '::warning::Browser APT index refresh failed; browser shards will use fallback'
+          exit 0
+        fi
         packages=()
         if ! read_plan; then
           echo '::warning::Playwright system package plan was invalid; browser shards will use fallback'
           exit 0
         fi
         if [ "${#packages[@]}" -eq 0 ]; then exit 0; fi
-        apt_retry install --download-only -y --no-install-recommends -o "Dir::Cache::archives=$apt_work/archives" "${packages[@]}"
+        if ! apt_retry install --download-only -y --no-install-recommends -o "Dir::Cache::archives=$apt_work/archives" "${packages[@]}"; then
+          echo '::warning::Browser APT package download failed; browser shards will use fallback'
+          exit 0
+        fi
         # Keep APT's lock and sandbox-only partial directory out of the artifact.
         shopt -s nullglob
         debs=("$apt_work/archives/"*.deb)

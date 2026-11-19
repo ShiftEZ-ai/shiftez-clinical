@@ -32,7 +32,8 @@ def test_checks_prepares_one_image_bound_apt_bundle():
     assert "mirror+file:" in script and script.count("https://") >= 3
     assert "arch=amd64" in script and 'Acquire::Languages "none"' in script
     assert 'Dir::Etc::sourcelist "$apt_work/ubuntu.list"' in script and 'Dir::Etc::sourceparts "-"' in script
-    assert 'timeout --kill-after=30 600 sudo apt-get -c "$APT_CONFIG"' in script
+    # 3 x 120 s fits the Checks job's 10-min limit; a failed fetch leaves the shards their logged fallback.
+    assert 'timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG"' in script
     assert "for attempt in 1 2 3; do" in script
     assert '"${ImageVersion:' in script and '> "$apt_bundle/image-version"' in script
     assert 'ci-browser.tar" public-ci-playwright public-ci-apt' in archive["run"]
@@ -47,7 +48,7 @@ def run_script(tmp_path, stand_ins, script):
     return run.stdout.splitlines()
 
 
-def run_checks_download(tmp_path, plan, status):
+def run_checks_download(tmp_path, plan, status, failing=""):
     (tmp_path / "playwright-plan").write_text(plan, encoding="utf-8", newline="\n")
     stand_ins = f"""
     RUNNER_TEMP=$PWD
@@ -59,8 +60,9 @@ def run_checks_download(tmp_path, plan, status):
       return {status}
     }}
     timeout() {{
-      test "$1 $2 $3 $4 $5" = '--kill-after=30 600 sudo apt-get -c' && test "$6" = "$APT_CONFIG" || return 2
+      test "$1 $2 $3 $4 $5" = '--kill-after=15 120 sudo apt-get -c' && test "$6" = "$APT_CONFIG" || return 2
       shift 6
+      test "$1" = '{failing}' && return 1
       case "$1" in
         update) touch "$RUNNER_TEMP/indexes"; echo 'apt update';;
         install) test "$2 $3 $4 $5" = '--download-only -y --no-install-recommends -o' || return 2
@@ -105,6 +107,15 @@ def test_checks_refuses_a_playwright_plan_with_a_count_mismatch(tmp_path):
     output, debs = run_checks_download(tmp_path, "Missing system dependencies (2):\n  browser-fonts\n", 1)
     assert output == ["apt update", "::warning::Playwright system package plan was invalid; browser shards will use fallback"]
     assert debs == []
+
+
+@pytest.mark.parametrize("failing, message", [
+    ("update", "::warning::Browser APT index refresh failed; browser shards will use fallback"),
+    ("install", "::warning::Browser APT package download failed; browser shards will use fallback"),
+])
+def test_a_failed_fetch_falls_back_without_failing_checks(tmp_path, failing, message):
+    output, debs = run_checks_download(tmp_path, "Missing system dependencies (1):\n  browser-fonts\n", 1, failing)
+    assert output[-1] == message and debs == []
 
 
 def test_browser_system_dependencies_are_bounded_and_retried():
