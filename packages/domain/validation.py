@@ -75,7 +75,9 @@ def policy_group_tiers(policies):
         if tier is None:
             scope = policy['definition']['scope']
             tier = 3 if named_people(scope) else 1 if person_free(scope) else 2
-        tiers[policy['id'], line.get('line'), line.get('slot')] = tier
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
+        tiers[source_id, line.get('line'), line.get('slot')] = tier
     return tiers
 
 
@@ -1461,6 +1463,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     if policies is None:
         policies = active_rules(data['policies'], context=data, read_quality=read_quality)
     qualification_cache = {}
+    policies_by_id = {policy['id']: policy for policy in policies}
     data = {**data, "policies": policies,
             "_person_rows": data["_person_rows"] if "_series_state_cache" in data or "_active_policies" in data else index_person_rows(data),
             "_policy_applies_cache": data.get("_policy_applies_cache", {}),
@@ -1592,7 +1595,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
 
     def add(code, message, shift=None, person=None, a=None, b=None, severity="error", rule=None, extra=None,
             explanation=None):
-        policy = rule if isinstance(rule, dict) else None
+        policy = rule if isinstance(rule, dict) else policies_by_id.get(rule)
         if isinstance(rule, dict):
             line = rule.get('template_line') or {}
             extra = {**(extra or {}), 'rule_severity': rule['definition']['severity'],
@@ -1600,6 +1603,11 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                      **{k: line[k] for k in ('line', 'slot') if k in line},
                      **({'count_bucket': rule['count_bucket']} if 'count_bucket' in rule else {})}
             rule = rule['id']
+        if policy and (policy.get('_live_zero') or policy.get('_live_mandatory_recheck')):
+            rule = policy.get('_source_policy_id', policy['id'])
+        if policy and policy.get('_live_zero'):
+            message += f' (current department rule {rule})'
+            extra = {**(extra or {}), 'live_zero': True}
         leave_classification = (causes.leave_classification(person, shift)
                                 if code == 'UNAVAILABLE' and causes and person else {})
         if leave_classification:
