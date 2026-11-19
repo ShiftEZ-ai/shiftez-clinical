@@ -1985,6 +1985,17 @@ const heldCheck=(id:string)=>{const row=checkRows.get(id);return row?{...row,res
 /** Terminal validation jobs whose compact delta was just applied; their paired
  * workspace pulse must not start a second refresh. */
 const checkSettled=new Map<string,number>();
+/** The rota checks this page saw end (their last status row, by job id; the latest 16, in memory). A job list read before
+ *  the end still lists such a check as queued: it is never joined again (autoCheck) nor offered Cancel, and every list the
+ *  Auto-schedule panel draws, the kept one included, shows it as it ended (withEnded). */
+const checksEnded=new Map<string,Row>();
+const withEnded=(list:Row):Row=>!(list.jobs as Row[]|undefined)?.some(j=>checksEnded.has(String(j.id)))?list
+  :{...list,jobs:(list.jobs as Row[]).map(j=>{const ended=checksEnded.get(String(j.id));return ended?{...j,...ended}:j;})};
+const checkEndedSeen=({delta:_,...job}:Row)=>{checksEnded.set(String(job.id),job);  // its row without the check's delta (kept by checkRows)
+  while(checksEnded.size>16)checksEnded.delete(checksEnded.keys().next().value!);
+  if(lastJobs)lastJobs={...lastJobs,jobs:withEnded(lastJobs.jobs)};};
+/** Cancel only for a check still going that has not been seen ending. */
+const checkCancelShown=()=>checkCancellable(checkJob)&&!checksEnded.has(String(checkJob?.id));
 // B7: when the running check started (the footer's clock), the check its Cancel set aside, and why a check stopped (the
 // line above the grid). Either leaves the previous results shown, marked "Not checked".
 // shortcut: Cancel stops waiting here; the server's check still finishes (a synchronous command). Make it a cancellable job with maintenance.
@@ -2036,6 +2047,7 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
 const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+  if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
   if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
@@ -2047,9 +2059,9 @@ const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
  *  until the check's job is known (job.create answered, or a check found running joined), never for the synchronous
  *  check run without workers, which the server cannot stop (UX-FIX-A). */
 const checkLine=()=>{const said=checkSaid(),line=elapsed(said,checkStarted,cancelCheck),b=line.querySelector('button');line.dataset.checkLine=said;
-  if(b){b.dataset.checkCancel='';b.hidden=!checkCancellable(checkJob);}return line;};
+  if(b){b.dataset.checkCancel='';b.hidden=!checkCancelShown();}return line;};
 /** Every check line drawn shows its Cancel only while the check can be stopped (checkCancellable). */
-const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancellable(checkJob);};
+const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancelShown();};
 /** The check is now a job the server can stop: every check line drawn before it shows its Cancel. */
 const checkStoppable=(job:Row,key:string,w:Row)=>{const id=String(job.id),since=Date.parse(job.created_at)||Date.now();checkJob={id,key,status:String(job.status),since,w};
   sayCancel();sayCheck();
@@ -2102,6 +2114,7 @@ const checkAgain=()=>{checkStop=null;checkCancelled='';checkUnstarted='';autoChe
  *  footer item, with its elapsed time and Cancel, instead of the Auto-schedule panel's. */
 function autoCheck(data:WorkspaceData,existing?:Row){
   const w=data.workspace,key=w.id+':'+data.current_fingerprint;
+  if(existing&&checksEnded.has(String(existing.id)))return;  // a list read before it ended: it is over, not joined again
   // A job the server already has is new proof about the workers; without one the remembered probe stands.
   if(existing)void reprobeWorkers(String(existing.id));else probeWorkers();
   if(existing?(autoChecking||checkJob?.id===existing.id):autoCheckKey===key)return;
@@ -7712,7 +7725,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // A run shown live is read on its own (its progress) while it goes, not the rota's whole job list every second;
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
-    const response:Row=firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)));
+    const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
     if(gone()||mine!==loads)return;
     // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
     // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
