@@ -27,7 +27,7 @@ from .supervision_levelling import levelled_finding, session_spread_policies, sp
 # 48: invalidate stored checks for actionable, grouped session overlap findings.
 # 49: bind finding causes and working-day quota amounts to validation results.
 # 50: bind conflict-aware supervision and its trial-cache dependencies to validation results.
-ENGINE_VERSION = "manual-core-51"
+ENGINE_VERSION = "manual-core-52"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
 

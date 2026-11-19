@@ -110,6 +110,7 @@ def test_metadata_undo_selects_latest_edit_even_when_timestamps_tie_and_never_re
     second = resolve(h, first, 'accept', second_keys)['workspace']
     assert second['content_revision'] == workspace['content_revision']
     assert len(second['accepted_issues']) == (1 if repeat_same_key else 2)
+    undone = second
     for attempt in range(2):
         current = second if attempt == 0 else resolve(h, undone, 'accept', second_keys)['workspace']
         undone = h.command('coordinator', 'workspace.undo', {'reason': 'Undo only the latest acceptance'},

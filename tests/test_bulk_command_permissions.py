@@ -435,6 +435,83 @@ def test_legacy_dynamic_receipt_retains_its_original_authorization_without_paylo
         assert caught.value.status == 403
 
 
+def test_job_feasibility_receipt_replay_uses_recorded_kind():
+    actor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"approver"}), None, "session")
+    assert commands.authorization_command(s.Command(kind="job.create", payload={"kind": "feasibility"})) == {
+        "kind": "job.create", "payload": {"kind": "feasibility"}}
+    receipt = SimpleNamespace(command_kind="job.create", required_roles=["coordinator", "approver"], result={
+        "authorization_commands": [{"kind": "job.create", "payload": {"kind": "feasibility"}}],
+        "job": {"kind": "generation"},
+    })
+    authorize_receipt(None, actor, receipt)
+
+
+def test_job_generation_receipt_replay_rejects_approver():
+    actor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"approver"}), None, "session")
+    receipt = SimpleNamespace(command_kind="job.create", required_roles=["coordinator"], result={
+        "authorization_commands": [{"kind": "job.create", "payload": {"kind": "generation"}}],
+        "job": {"kind": "generation"},
+    })
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, actor, receipt)
+    assert caught.value.status == 403
+
+
+def test_job_feasibility_receipt_replay_rechecks_current_role():
+    actor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"staff"}), None, "session")
+    receipt = SimpleNamespace(command_kind="job.create", required_roles=["coordinator", "approver"], result={
+        "authorization_commands": [{"kind": "job.create", "payload": {"kind": "feasibility"}}],
+        "job": {"kind": "feasibility"},
+    })
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, actor, receipt)
+    assert caught.value.status == 403
+
+
+def test_legacy_job_receipt_falls_back_to_result_kind_or_coordinator_only():
+    approver = Actor("identity", "department", "organisation", "Synthetic", frozenset({"approver"}), None, "session")
+    legacy = SimpleNamespace(command_kind="job.create", required_roles=["coordinator", "approver"],
+                             result={"job": {"kind": "feasibility"}})
+    authorize_receipt(None, approver, legacy)
+    without_context = SimpleNamespace(command_kind="job.create", required_roles=["coordinator", "approver"], result={})
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, approver, without_context)
+    assert caught.value.status == 403
+    coordinator = Actor("identity", "department", "organisation", "Synthetic", frozenset({"coordinator"}), None, "session")
+    authorize_receipt(None, coordinator, without_context)
+    legacy.result["job"]["kind"] = "generation"
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, approver, legacy)
+    assert caught.value.status == 403
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_job_receipt_replay_uses_the_current_permission_map(monkeypatch, legacy):
+    context = {"kind": "job.create", "payload": {"kind": "generation"}}
+    result = {"job": {"kind": "generation"}}
+    if not legacy:
+        result["authorization_commands"] = [context]
+    receipt = SimpleNamespace(command_kind="job.create", required_roles=["coordinator"], result=result)
+    actor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"coordinator"}), None, "session")
+    monkeypatch.setitem(s.PERMISSIONS, COMMAND_PERMISSIONS["job.create"], ("auditor",))
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, actor, receipt)
+    assert caught.value.status == 403
+    auditor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"auditor"}), None, "session")
+    authorize_receipt(None, auditor, receipt)
+
+
+def test_job_receipt_without_kind_uses_the_current_permission_map(monkeypatch):
+    receipt = SimpleNamespace(command_kind="job.create", required_roles=["coordinator"], result={})
+    actor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"coordinator"}), None, "session")
+    monkeypatch.setitem(s.PERMISSIONS, COMMAND_PERMISSIONS["job.create"], ("auditor",))
+    with pytest.raises(Problem) as caught:
+        authorize_receipt(None, actor, receipt)
+    assert caught.value.status == 403
+    auditor = Actor("identity", "department", "organisation", "Synthetic", frozenset({"auditor"}), None, "session")
+    authorize_receipt(None, auditor, receipt)
+
+
 def test_every_registered_command_keeps_its_head_roles_except_the_decided_exception():
     """Whole-registry before/after (maintenance): one decided difference only (Master, 10 Nov: membership.withdraw)."""
     registered = _dispatcher_registry()
