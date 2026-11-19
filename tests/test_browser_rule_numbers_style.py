@@ -27,23 +27,23 @@ def plain(locator):
 def test_rule_numbers_read_in_one_style_everywhere(browser, live_server, h, scheme):
     flag(h)
     a = h.seed['people'][0]
-    catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
+    catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line', ends_on='2026-10-20'),
                                            line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line')])
     context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
     try:
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per month').click()
-        alex = main.locator('tr.rt-line').filter(has=page.locator('.rp.person')).locator('.rule-num')
-        expect(alex).to_have_text('1↰ – 10 Mandatory')
+        main.get_by_role('button', name='Duties per month lines').click()
+        alex = main.locator('li.rt-ln').filter(has=page.locator('.rp.person')).locator('.rt-ln-num .rule-num')
+        expect(alex).to_have_text('1↰ – 10 duties')  # the number and its measure read as one phrase
         plain(alex)
         expect(alex.locator('.rc-inh')).to_have_text('1↰')
         expect(alex.locator('.rc-inh')).to_have_css('font-style', 'normal')  # muted, not italic
         expect(page.locator('.rl-val, .rt-num')).to_have_count(0)  # the pill and the mono variant are gone
-        # Issues (here the overlap acknowledged when proposed, under Acknowledged): each line it names carries its numbers.
+        # An ending issue names its line and carries the same number style.
         main.locator('button.dt-saved').click()
-        page.get_by_role('menuitemradio', name=re.compile('^Acknowledged')).click()
+        page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
         issue = main.locator('tr.rt-issue').first
         expect(issue.locator('.rule-num').first).to_have_text('1 – 20 Mandatory')
         plain(issue.locator('.rule-num').first)
@@ -75,8 +75,9 @@ def test_advisory_level_tooltip_names_its_weight(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
-        page.locator('#main').get_by_role('button', name='Open Duties per week').click()
-        badge = page.locator('#main tr.rt-line .rc-level[data-level="advisory"]').first
+        page.locator('#main').get_by_role('button', name='Duties per week lines').click()
+        expect(page.locator('#main li.rt-ln .rc-level')).to_have_count(0)  # one entry level is carried on the row
+        badge = page.locator('#main li.rt-item .rt-levels .rc-level[data-level="advisory"]').first
         expect(badge).to_have_text('Advisory · medium')
         expect(badge).to_have_attribute('data-tip', re.compile(r'^Counts \d+× a low advisory rule in the schedule score$'))
     finally:

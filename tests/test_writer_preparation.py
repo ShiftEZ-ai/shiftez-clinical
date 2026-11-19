@@ -1,6 +1,7 @@
 """PERF-7: expensive checks run before the global writer; the writer re-verifies, then writes."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import re
 from threading import Event, local
 from types import SimpleNamespace
 
@@ -51,16 +52,20 @@ def public(check):
 
 
 def test_publication_reuses_approved_check_without_evaluating_under_the_writer(harness, writer_evaluations):
+    """Submit and approve leave the writer free of checks. Publish runs its complete check there."""
     h = harness
     workspace = h.shift(h.workspace())['workspace']
+    writer_evaluations.clear()
     workspace = h.lifecycle(workspace, 'submit')['workspace']
     workspace = h.lifecycle(workspace, 'approve', 'approver')['workspace']
+    assert not any(writer_evaluations), 'Submit and approve run no complete check under the writer'
     writer_evaluations.clear()
 
     published = h.lifecycle(workspace, 'publish')
 
     assert published['publication_id']
-    assert writer_evaluations == [], 'Admission reuses current evidence; the final writer only verifies its fingerprint'
+    assert published['workspace']['status'] == 'published'
+    assert writer_evaluations == [True], 'Publish evaluates once under the writer and never during admission'
 
 
 def test_batch_check_prepares_validation_and_overlap_flags_together(harness, writer_evaluations, monkeypatch):
@@ -231,32 +236,54 @@ def save_unrelated(h, kind, name):
 
 @pytest.mark.parametrize('unrelated', ['saved_view', 'other_department_inputs'])
 def test_publish_preparation_does_not_block_an_unrelated_write(harness, monkeypatch, unrelated):
+    """An unrelated write waits for the final publication check, then both writes succeed."""
     h = harness
     w = h.shift(h.workspace())['workspace']
     w = h.lifecycle(w, 'submit')['workspace']
     w = h.lifecycle(w, 'approve', 'approver')['workspace']
     h.client('staff')
-    entered, release = Event(), Event()
-    domain_snapshot = planning.domain_snapshot
+    entered, waiting, release, checked = Event(), Event(), Event(), Event()
+    revalidate = planning.revalidate
+    engine = h.app.state.engine
+    lock_statement = 'BEGIN IMMEDIATE' if engine.dialect.name == 'sqlite' else 'SELECT pg_advisory_xact_lock('
 
-    def paused(db, *args, **kwargs):
-        if not entered.is_set():
-            assert not db.connection().info.get('rota_write'), 'Pause admission, before the final safety writer'
-            entered.set()
-            assert release.wait(30), 'Test did not release the publish preparation'
-        return domain_snapshot(db, *args, **kwargs)
+    def paused(db, workspace, *args, **kwargs):
+        writer = db.connection().info.get('rota_write')
+        assert writer is not None and not writer['serializing'], 'Pause after taking the publication writer'
+        entered.set()
+        assert release.wait(30), 'Test did not release the final publication check'
+        result = revalidate(db, workspace, *args, **kwargs)
+        checked.set()
+        return result
 
-    monkeypatch.setattr(planning, 'domain_snapshot', paused)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        published = pool.submit(h.lifecycle, w, 'publish')
-        try:
-            assert entered.wait(10)
-            saved = pool.submit(save_unrelated, h, unrelated, 'During publication')
-            assert saved.result(timeout=10)
-            assert not published.done()
-        finally:
-            release.set()
-        assert published.result(timeout=30)['publication_id']
+    def attempting_lock(_connection, _cursor, statement, *_):
+        if entered.is_set() and statement.startswith(lock_statement):
+            waiting.set()
+
+    def acquired_lock(_connection, _cursor, statement, *_):
+        if entered.is_set() and statement.startswith(lock_statement):
+            assert checked.is_set(), 'The unrelated write acquired the writer during the publication check'
+
+    monkeypatch.setattr(planning, 'revalidate', paused)
+    event.listen(engine, 'before_cursor_execute', attempting_lock)
+    event.listen(engine, 'after_cursor_execute', acquired_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            published = pool.submit(h.lifecycle, w, 'publish')
+            try:
+                assert entered.wait(10), 'Publish did not enter its final check'
+                saved = pool.submit(save_unrelated, h, unrelated, 'During publication')
+                assert waiting.wait(10), 'The unrelated write did not reach the writer lock'
+                assert not saved.done() and not published.done()
+            finally:
+                release.set()
+            publication = published.result(timeout=30)
+            assert publication['publication_id']
+            assert publication['workspace']['status'] == 'published'
+            assert saved.result(timeout=30)
+    finally:
+        event.remove(engine, 'before_cursor_execute', attempting_lock)
+        event.remove(engine, 'after_cursor_execute', acquired_lock)
 
 
 @pytest.mark.parametrize('unrelated', ['saved_view', 'other_department_inputs'])
@@ -288,12 +315,16 @@ def test_change_submit_preparation_does_not_block_an_unrelated_write(harness, mo
         assert sent.result(timeout=30)['workspace']['status'] == 'submitted'
 
 
-def job_columns_read(engine, statements):
-    """Collect SELECTs on jobs that return a whole input snapshot or result column (not an extracted field)."""
+def job_columns_read(engine, statements, *, result_reads=None):
+    """Collect whole-column reads and optionally track queries that use the result in JSON paths."""
     def listen(_connection, cursor, statement, *_):
+        if 'FROM jobs' not in statement:
+            return
         names = {column[0] for column in cursor.description or ()}
-        if 'FROM jobs' in statement and names & {'input_snapshot', 'result'}:
+        if names & {'input_snapshot', 'result'}:
             statements.append(statement)
+        if result_reads is not None and re.search(r'\bjobs\.result\b', statement):
+            result_reads.append(statement)
     event.listen(engine, 'after_cursor_execute', listen)
     return lambda: event.remove(engine, 'after_cursor_execute', listen)
 
@@ -342,16 +373,21 @@ def test_undoing_an_applied_proposal_loads_only_its_own_job_result(harness):
         'person_id': h.seed['people'][2], 'start': shift['start'], 'end': shift['end']}}])
     applied = h.command('coordinator', 'generation.apply', {'workspace_id': workspace['id'], 'job_id': job['id'],
                         'reason': 'Apply reviewed synthetic proposal'}, revision=workspace['revision'])
-    statements = []
-    stop = job_columns_read(h.app.state.engine, statements)
+    statements, result_reads = [], []
+    stop = job_columns_read(h.app.state.engine, statements, result_reads=result_reads)
     try:
         h.command('coordinator', 'workspace.undo', {'reason': 'Undo the applied proposal'},
                   workspace['id'], applied['workspace']['revision'])
     finally:
         stop()
     assert not any('input_snapshot' in statement.split('FROM jobs')[0] for statement in statements)
-    # Each preparation pass and the writer load results only for the job that made the undone edit.
-    assert statements and all('jobs.result' in statement.split('FROM jobs')[1] for statement in statements)
+    assert not statements, 'Undo must read the receipt and revision without loading a full job result'
+    # Any result access must use the applied revision filter for the edit being undone.
+    assert result_reads and all(
+        re.search(r'\bcoalesce\([^=]*\bjobs\.result\b[^=]*\)\s*=',
+                  statement.partition('FROM jobs')[2].partition('WHERE')[2])
+        for statement in result_reads
+    )
     assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['status'] == 'succeeded'
     with transaction(h.app.state.engine) as db:
         assert db.scalar(select(m.Job.status).where(m.Job.id == other['id'])) == 'applied'

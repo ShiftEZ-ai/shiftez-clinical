@@ -79,6 +79,98 @@ def test_apply_refuses_missing_frozen_inputs_without_writes(request, backend, mi
     assert retained() == before
 
 
+@pytest.mark.parametrize('legacy_projection', [False, True])
+def test_completed_proposal_result_write_budget(h, legacy_projection):
+    workspace = h.workspace()
+    for day in range(4, 7):
+        for hour in range(8, 16, 2):
+            workspace = h.shift(workspace, people=[],
+                start=f'2026-10-{day:02}T{hour:02}:00:00+03:00',
+                end=f'2026-10-{day:02}T{hour + 1:02}:00:00+03:00')['workspace']
+    before = h.snapshot(workspace)['shifts']
+    people = h.seed['people']
+    additions = [{'shift_id': row['id'], 'participant': {
+        'person_id': people[i % len(people)], 'start': row['start'], 'end': row['end']}}
+        for i, row in enumerate(before)]
+    job = completed_proposal(h, workspace, additions)
+    engine = h.app.state.engine
+    with transaction(engine, write=True) as db:
+        row = db.get(m.Job, job['id'])
+        row.result = {**row.result, 'candidate_evidence': [
+            {'shift_id': shift['id'], 'person_id': person,
+             'exclusions': [{'code': 'UNAVAILABLE', 'detail': 'Synthetic evidence. ' * 64}]}
+            for shift in before for person in people for _ in range(8)]}
+
+    result_writes = []
+    def count_result_write(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().lower().startswith('update jobs set '):
+            result_writes.extend('result' in values and job['id'] in values.values()
+                                 for values in (context.compiled_parameters or ()))
+
+    event.listen(engine, 'before_cursor_execute', count_result_write)
+    try:
+        applied = h.command('coordinator', 'generation.apply', {'workspace_id': workspace['id'],
+            'job_id': job['id'], 'reason': 'Apply synthetic proposal'}, revision=workspace['revision'])
+        assert applied['reconciliation']['status'] == 'applied'
+        apply_writes = sum(result_writes)
+        result_writes.clear()
+        with transaction(engine, write=legacy_projection) as db:
+            saved_result = db.get(m.Job, job['id']).result
+            if legacy_projection:
+                from sqlalchemy import null, update
+                db.execute(update(m.Job).where(m.Job.id == job['id']).values(
+                    read_metadata=null(), result_summary=null()))
+        undone = h.lifecycle(applied['workspace'], 'undo')['workspace']
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_result_write)
+
+    assert (apply_writes, sum(result_writes)) == (1, 0)
+    assert h.snapshot(undone)['shifts'] == before
+    with transaction(engine) as db:
+        assert db.get(m.Job, job['id']).result == saved_result
+    for suffix in ('', '?full=true'):
+        detail = h.get('coordinator', '/api/jobs/' + job['id'] + suffix)['job']
+        assert detail['status'] == 'succeeded'
+        assert detail['reconciliation']['status'] == detail['result']['reconciliation']['status'] == 'undone'
+        assert detail['result']['additions'] == additions
+    listed = next(row for row in h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'])['jobs']
+                  if row['id'] == job['id'])
+    assert listed['result']['reconciliation']['status'] == 'undone'
+
+    result_writes.clear()
+    event.listen(engine, 'before_cursor_execute', count_result_write)
+    try:
+        redone = h.command('coordinator', 'workspace.redo', {'reason': 'Restore synthetic proposal'},
+                           undone['id'], undone['revision'])['workspace']
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_result_write)
+
+    for suffix in ('', '?full=true'):
+        detail = h.get('coordinator', '/api/jobs/' + job['id'] + suffix)['job']
+        assert detail['status'] == 'applied'
+        assert detail['reconciliation']['status'] == detail['result']['reconciliation']['status'] == 'applied'
+        assert detail['result']['applied_content_revision'] == redone['content_revision']
+        assert detail['reconciliation']['applied_content_revision'] == redone['content_revision']
+        assert detail['result']['additions'] == additions
+    listed = next(row for row in h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'])['jobs']
+                  if row['id'] == job['id'])
+    assert listed['status'] == listed['result']['reconciliation']['status'] == 'applied'
+    assert listed['result']['applied_content_revision'] == redone['content_revision']
+    assert sum(result_writes) == 0
+    with transaction(engine) as db:
+        assert db.get(m.Job, job['id']).result == saved_result
+
+    undone_again = h.lifecycle(redone, 'undo')['workspace']
+    assert h.snapshot(undone_again)['shifts'] == before
+    assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['reconciliation']['status'] == 'undone'
+    reapplied = h.command('coordinator', 'generation.apply', {'workspace_id': undone_again['id'],
+        'job_id': job['id'], 'reason': 'Reapply synthetic proposal'}, revision=undone_again['revision'])
+    assert reapplied['reconciliation']['status'] == 'applied'
+    detail = h.get('coordinator', '/api/jobs/' + job['id'])['job']
+    assert detail['status'] == detail['reconciliation']['status'] == 'applied'
+    assert detail['result']['applied_content_revision'] == reapplied['workspace']['content_revision']
+
+
 def test_apply_refuses_addition_absent_from_frozen_shifts_without_writes(h, monkeypatch):
     from apps.api.auth import authenticate
     from apps.api.services import generation_reconciliation

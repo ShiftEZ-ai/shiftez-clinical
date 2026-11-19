@@ -15,6 +15,7 @@ from apps.api.db import transaction
 from .governance_support import identity
 from .test_browser import browser, condition, live_server, navigate, open_config, sign_in, route_fetch, wait_held, expect_loaded, COUNT_WORK  # noqa: F401
 from .rules_support import rules_by_family
+from .test_rule_catalogue_conflicts import tag_people
 
 pytestmark = pytest.mark.browser
 
@@ -102,12 +103,21 @@ def set_numbers(page, level=None, **values):
     expect(pop).to_have_count(0)
 
 
-def weekly(h):
+def weekly(h, *, extra_lines=()):
     a = h.seed['people'][0]
     return catalogue_rule(h, 'duties_per_week', [
         line({'max': {'value': 5, 'level': 'mandatory'}}, note='Department default'),
         line({'max': {'value': 3, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, starts_on='2026-10-01',
-             ends_on='2026-11-15', note='Return from leave')])
+             ends_on='2026-11-15', note='Return from leave'), *extra_lines])
+
+
+def weekly_group_conflict(h):
+    """Two equal-tier lines share a person at one clinic, separate from the ordered overrides."""
+    group = tag_people(h, 'Review group', h.seed['people'][:1])
+    where = {'conditions': [{'field': 'service_ids', 'values': h.seed['services'][:1]}]}
+    return [line({'max': {'value': value, 'level': 'mandatory'}}, where=where,
+                 who={'conditions': [{'field': field, 'values': [ident]}]})
+            for value, field, ident in ((5, 'category_ids', h.seed['category']), (6, 'person_ids', group))]
 
 
 def test_the_admin_setting_switches_the_rules_page(browser, live_server, h):
@@ -124,8 +134,8 @@ def test_the_admin_setting_switches_the_rules_page(browser, live_server, h):
         navigate(page, 'rules')
         expect(page.locator('.topbar h1')).to_have_text('Rules')
         # The seeded Fair share rule is visible; unused rule types wait under Filter and + Add rule.
-        expect(page.locator('#main tr.rt-rule')).to_have_count(1)
-        expect(page.locator('#main tr.rt-rule')).to_contain_text('Fair share')
+        expect(page.locator('#main li.rt-item')).to_have_count(1)
+        expect(page.locator('#main li.rt-item')).to_contain_text('Fair share')
         expect(page.get_by_role('button', name='Add rule', exact=True).first).to_be_visible()
     finally:
         context.close()
@@ -143,11 +153,11 @@ def test_a_catalogue_proposal_is_withdrawn_from_its_toast(browser, live_server, 
         dialog = page.get_by_role('dialog')
         dialog.get_by_label('Reason', exact=True).fill('Rest after every duty')
         dialog.get_by_role('button', name='Propose', exact=True).click()
-        row = page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')
+        row = page.locator('#main li.rt-item').filter(has_text='Rest between duties')
         expect(row).to_contain_text('Waiting for approval')
         page.locator('#toast-tray .toast', has_text='Proposed 1 rule').get_by_role('button', name='Undo', exact=True).click()
         expect(page.locator('#toast-tray .toast', has_text='Proposal withdrawn.')).to_be_visible()
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Waiting for approval')).to_have_count(0)
+        expect(page.locator('#main li.rt-item').filter(has_text='Waiting for approval')).to_have_count(0)
         # the change that was proposed comes back as a draft, ready to adjust and propose again.
         expect(row).to_contain_text('2 changes')
         expect(page.locator('.topbar').get_by_role('button', name='Propose 2 changes')).to_be_visible()
@@ -168,7 +178,7 @@ def test_on_a_rule_page_undo_brings_the_draft_back_and_withdraw_records_reason(b
             # Switched on in the list (which adds its first line), then proposed from the rule's own page.
             navigate(page, 'rules')
             page.get_by_role('switch', name='Rest between duties on or off').click()
-            page.locator('#main tr.rt-rule').filter(has_text='Rest between duties').get_by_role('button', name='Rest between duties', exact=True).click()
+            page.locator('#main li.rt-item').filter(has_text='Rest between duties').get_by_role('button', name='Rest between duties', exact=True).click()
             expect(page).to_have_url(re.compile('#rules/rest_between_duties$'))
             expect(status).to_contain_text('2 changes not yet proposed')
             page.locator('.topbar').get_by_role('button', name='Propose 2 changes', exact=True).click()
@@ -217,7 +227,7 @@ def test_switching_on_an_empty_rule_lets_its_family_select_the_new_line(browser,
         navigate(page, 'rules')
         family = page.get_by_role('checkbox', name='Select Gaps between duties')
         page.get_by_role('switch', name='Rest between duties on or off').click()
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')).to_contain_text('2 changes')
+        expect(page.locator('#main li.rt-item').filter(has_text='Rest between duties')).to_contain_text('2 changes')
         expect(family).to_be_enabled()
         family.check()
         expect(page.locator('#main').get_by_text(re.compile(r'^1 line selected|1 selected'))).not_to_have_count(0)
@@ -231,16 +241,16 @@ def test_a_rule_is_turned_on_by_proposal_and_approval(browser, live_server, h):
     try:
         navigate(page, 'rules')
         page.get_by_role('switch', name='Rest between duties on or off').click()  # a draft change: nothing sent yet
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')).to_contain_text('2 changes')
+        expect(page.locator('#main li.rt-item').filter(has_text='Rest between duties')).to_contain_text('2 changes')
         page.locator('.topbar').get_by_role('button', name='Propose 2 changes').click()
         dialog = page.get_by_role('dialog')
         dialog.get_by_label('Reason', exact=True).fill('Rest after every duty')
         dialog.get_by_role('button', name='Propose', exact=True).click()
-        row = page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')
+        row = page.locator('#main li.rt-item').filter(has_text='Rest between duties')
         expect(row).to_contain_text('Waiting for approval')
         # A rule whose settings only the department can choose (duty types here) opens its page to add a line instead.
         expect(page.get_by_role('switch', name='Not after on or off')).to_be_disabled()
-        page.locator('#main tr.rt-rule').filter(has_text='Not after').get_by_role('button', name='Not after', exact=True).click()
+        page.locator('#main li.rt-item').filter(has_text='Not after').get_by_role('button', name='Not after', exact=True).click()
         expect(page).to_have_url(re.compile('#rules/not_after$'))
     finally:
         context.close()
@@ -262,12 +272,12 @@ def test_fair_share_open_form_keeps_its_baseline_when_new_lead_defaults_are_adde
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         page.get_by_role('switch', name='Fair share on or off', exact=True).click()
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Fair share')).to_contain_text('1 change')
+        expect(page.locator('#main li.rt-item').filter(has_text='Fair share')).to_contain_text('1 change')
         from .legacy_lead import historical_type
         historical_type(h, {'name': 'New led duty while Fair share is open', 'starts_on': '2020-01-01',
             'definition': {'lead': {'minimum': 1, 'maximum': 1}}})
         if detail:
-            page.locator('#main tr.rt-rule').filter(has_text='Fair share').get_by_role('button', name='Fair share', exact=True).click()
+            page.locator('#main li.rt-item').filter(has_text='Fair share').get_by_role('button', name='Fair share', exact=True).click()
             expect(page).to_have_url(re.compile('#rules/fair_share$'))
             expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'rules')
         page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
@@ -315,14 +325,14 @@ def test_read_only_roles_read_the_catalogue_and_staff_do_not(browser, live_serve
             expect(page.get_by_text('Restricted page')).to_be_visible()
             return
         # Approvers decide proposals; only coordinators and admins propose: the rule says On, as a fact, not a dead switch (U-19).
-        expect(page.locator('tr.rt-rule').filter(has_text='Duties per week').locator('.rt-state')).to_have_text('On')
+        expect(page.locator('li.rt-item').filter(has_text='Duties per week').locator('.rt-state')).to_have_text('On')
         expect(page.get_by_role('switch', name='Duties per week on or off')).to_have_count(0)
         expect(page.get_by_role('button', name=re.compile(r'^Propose'))).to_have_count(0)
-        expand = page.get_by_role('button', name='Open Duties per week', exact=True)
+        expand = page.get_by_role('button', name='Duties per week lines', exact=True)
         expand.focus()
         expect(expand).to_be_focused()
         expand.press('Enter')
-        expect(page.locator('tr.rt-line')).to_have_count(2)
+        expect(page.locator('li.rt-ln')).to_have_count(2)
         expect(page.get_by_role('button', name='+ New line in Duties per week', exact=True)).to_have_count(0)
         opener = page.get_by_role('button', name='Open line 2 of Duties per week', exact=True)
         opener.focus()
@@ -508,27 +518,36 @@ def test_the_rules_database_opens_rules_to_their_lines_and_the_rule_page(browser
         navigate(page, 'rules')
         main = page.locator('#main')
         # Families as group rows, rules in catalogue order (not A–Z), each with its switch and line count.
-        expect(main.locator('tr.rt-family').first).to_contain_text('Staffing on a session')
-        rule = main.locator('tr.rt-rule').filter(has_text='Duties per week')
+        expect(main.locator('section.rt-q').first.locator('.rt-qhead h3')).to_contain_text('Staffing on a session')
+        rule = main.locator('li.rt-item').filter(has_text='Duties per week')
         expect(rule).to_contain_text('2 lines')
-        expect(main.locator('tr.rt-rule').filter(has_text='Duties per month')).to_contain_text('no lines')
+        expect(rule.locator('.rt-title .rt-rule-link')).to_have_text('Duties per week')
+        expect(rule.locator('.rt-meta')).to_contain_text('2 lines')
+        expect(rule.locator('.rt-sentence')).to_have_count(0)
+        toggle = rule.locator('.rt-toggle')
+        expect(toggle).to_have_accessible_name('Duties per week lines')
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(toggle).to_have_attribute('aria-controls', re.compile(r'^rt-lines-'))
+        expect(main.locator('li.rt-item').filter(has_text='Duties per month')).to_contain_text('no lines')
         expect(page.get_by_role('switch', name='Duties per week on or off')).to_be_checked()
         expect(page.locator('.app-footer .dt-count')).to_have_text(f'{catalogue_count} rules')
         expect(page.locator('.app-footer .footer-total')).to_contain_text(re.compile(r'^2 on · 3 lines\b'))
         # A rule opens to its numbered lines: who and where as pills, the numbers as the key reads them.
-        rule.get_by_role('button', name='Open Duties per week').click()
-        lines = main.locator('tr.rt-line')
+        rule.get_by_role('button', name='Duties per week lines').click()
+        lines = main.locator('li.rt-ln')
         expect(lines).to_have_count(2)
-        expect(lines.first).to_contain_text('≤ 5 Mandatory')
+        expect(lines.first.locator('.rt-ln-num')).to_contain_text('≤ 5')
         expect(lines.nth(1).locator('.rp.person')).to_have_text('Alex Morgan')
         expect(main.get_by_role('button', name='+ New line in Duties per week')).to_be_visible()
         shot(page, f'rules-{width}-{scheme}')
-        # Expand all from the header; Alt+click on a rule's toggle closes them all; the open state is kept.
-        main.get_by_role('button', name='Expand all rules').click()
-        expect(main.get_by_role('button', name='Collapse all rules')).to_be_visible()
-        main.get_by_role('button', name='Close People per session').click(modifiers=['Alt'])
+        # The static toggle name exposes state through aria-expanded; Alt+click closes all rules.
+        toggle_all = main.locator('[data-key="toggle-all"]')
+        toggle_all.click()
+        expect(toggle_all).to_have_attribute('aria-expanded', 'true')
+        rule.get_by_role('button', name='Duties per week lines', exact=True).click(modifiers=['Alt'])
+        expect(toggle_all).to_have_attribute('aria-expanded', 'false')
         expect(lines).to_have_count(0)
-        rule.get_by_role('button', name='Open Duties per week').click()
+        rule.get_by_role('button', name='Duties per week lines').click()
         # Search finds lines (and opens their rule); a search that leaves nothing keeps the way back.
         search = main.get_by_role('searchbox', name='Search rules')
         search.fill('Return from leave')
@@ -542,7 +561,7 @@ def test_the_rules_database_opens_rules_to_their_lines_and_the_rule_page(browser
         expect(page.locator('.rc-line-panel')).to_contain_text('Line 2 of 2')
         page.locator('.rc-line-panel').get_by_role('button', name='Close panel').click()  # a sheet over the page on phones
         main.get_by_role('button', name='← Rules').click()
-        expect(main.locator('tr.rt-line')).to_have_count(2)
+        expect(main.locator('li.rt-ln')).to_have_count(2)
     finally:
         context.close()
     assert not errors
@@ -562,8 +581,8 @@ def test_a_thousand_lines_open_and_filter_within_budget(browser, live_server, h)
         navigate(page, 'rules')
         main = page.locator('#main')
         expect(page.locator('.app-footer')).to_contain_text('1001 lines')
-        main.get_by_role('button', name='Open Duties per week').click()
-        expect(main.locator('tr.rt-line')).to_have_count(1000)
+        main.get_by_role('button', name='Duties per week lines').click()
+        expect(main.locator('li.rt-ln')).to_have_count(1000)
         # The work a search does: two synchronous redraws of the 1,000 lines (test_browser.COUNT_WORK).
         work = page.evaluate(f"""() => {{const box=document.querySelector('#main input[type=search]');
             const work=({COUNT_WORK})(() => {{box.value='Everyone';box.dispatchEvent(new Event('input'));box.value='';box.dispatchEvent(new Event('input'));}});
@@ -576,46 +595,67 @@ def test_a_thousand_lines_open_and_filter_within_budget(browser, live_server, h)
         context.close()
 
 
-def test_lines_that_overlap_are_marked_and_the_rules_filtered(browser, live_server, h):
+def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_server, h):
     flag(h)
     weekly(h)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
+        page.get_by_role('button', name='View settings', exact=True).click()
+        expect(page.get_by_role('radio', name='Open all rules', exact=True)).to_be_visible()
+        expect(page.get_by_role('radio', name='Collapsed', exact=True)).to_be_visible()
+        expect(page.get_by_role('radio', name='Table', exact=True)).to_have_count(0)
+        page.get_by_role('radio', name='Open all rules', exact=True).click()
+        expect(page.locator('#main [data-key="toggle-all"]')).to_have_attribute('aria-expanded', 'true')
+    finally:
+        context.close()
+
+
+def test_lines_that_overlap_are_marked_and_the_rules_filtered(browser, live_server, h):
+    flag(h)
+    equal_tier = weekly_group_conflict(h)
+    saved = weekly(h, extra_lines=equal_tier)['definition']['rule']['lines']
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules')
         main = page.locator('#main')
-        rule = main.locator('tr.rt-rule').filter(has_text='Duties per week')
-        expect(rule).to_contain_text('⚠ Overlaps')
-        rule.get_by_role('button', name='Open Duties per week').click()
-        expect(main.locator('tr.rt-line').filter(has_text='Alex Morgan')).to_contain_text('⚠ Overlaps')
+        rule = main.locator('li.rt-item').filter(has_text='Duties per week')
+        expect(rule.locator(':scope > .rt-row')).not_to_contain_text('⚠ Overlaps')
+        rule.get_by_role('button', name='Duties per week lines').click()
+        for part in saved[:2]:
+            flags = rule.locator(f'li.rt-ln[data-line="{part["id"]}"] .rt-ln-flags')
+            expect(flags).not_to_contain_text('⚠ Overlaps')
+        for part in equal_tier:
+            flags = rule.locator(f'li.rt-ln[data-line="{part["id"]}"] .rt-ln-flags')
+            expect(flags).to_contain_text('⚠ Overlaps')
         main.get_by_role('button', name=re.compile('^Filter')).click()
         condition(page.locator('.dt-pop'), 'Checks', ['Overlaps'])
         page.keyboard.press('Escape')
         expect(main.get_by_role('button', name=re.compile('^Filter: Overlaps'))).to_be_visible()
-        expect(main.locator('tr.rt-rule')).to_have_count(1)
+        expect(main.locator('li.rt-item')).to_have_count(1)
         expect(page.locator('.app-footer .dt-count')).to_have_text(re.compile(r'^1 of \d+ rules$'))  # E13: in the footer only
     finally:
         context.close()
 
 
-def test_the_rules_table_fits_and_wraps_a_column_from_its_menu(browser, live_server, h):
+@pytest.mark.parametrize('width', [1440, 390])
+def test_the_rules_list_has_no_horizontal_overflow_and_groups_scope(browser, live_server, h, width):
     flag(h)
     weekly(h)
     clinics = h.seed['services'] + [h.configure('services', {'name': f'Clinic {n}', 'starts_on': '2026-01-01'})['record']['id'] for n in range(3)]
     catalogue_rule(h, 'people_per_session', [line({'max': {'value': 2, 'level': 'mandatory'}}, where={'conditions': [{'field': 'service_ids', 'values': clinics}]})])
-    context, page = sign_in(browser, live_server, 'coordinator', {'width': 1456, 'height': 900})
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        assert main.locator('.table-scroll').first.evaluate('n => n.scrollWidth <= n.clientWidth'), 'the Rules table fits its page'
-        main.get_by_role('button', name='Open People per session').click()
-        where = main.locator('tr.rt-line td.rt-where').first
-        expect(where.locator('.pill-more')).to_have_text(f'+{len(clinics) - 2}')  # first two, then +N
-        # R9b: the column's menu wraps it (every pill shows) and the choice is kept with the view.
-        main.get_by_role('button', name=re.compile('^Where')).click()
-        page.get_by_role('menuitemcheckbox', name='Wrap this column').click()
-        expect(main.locator('tr.rt-line td.rt-where').first).to_have_class(re.compile('dt-wrap'))
-        page.reload()
-        expect(main.locator('tr.rt-line td.rt-where').first).to_have_class(re.compile('dt-wrap'))
+        scroll = main.locator('.rt-scroll')
+        assert scroll.evaluate('n => n.scrollWidth <= n.clientWidth'), 'the Rules list must fit its pane'
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'the Rules list must not overflow the viewport'
+        main.get_by_role('button', name='People per session lines').click()
+        groups = main.locator('.rt-wh')
+        expect(groups).to_have_count(1)
+        expect(groups.first.locator('.pill-more')).to_have_text(f'+{len(clinics) - 3}')  # first three, then +N
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'opened lines must not overflow the viewport'
     finally:
         context.close()
 

@@ -1854,7 +1854,8 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
 
         @event.listens_for(cls, 'before_update')
         def update_read_projections(_mapper, _connection, job):
-            from .serialization import job_result_projection, job_read_metadata, job_result_metadata
+            from .serialization import (job_read_metadata, job_result_metadata, job_result_projection,
+                                        job_result_with_reconciliation)
             if job.kind == 'generation' and job.supersedes is None:
                 clear_supersession_done_marker(_connection)
             state = inspect(job)
@@ -1866,7 +1867,7 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
                 job.result_summary = job_result_projection(job.kind, job.result)
             if state.attrs.input_snapshot.history.has_changes():
                 frozen = job.input_snapshot
-                refreshed = job_read_metadata(frozen, job.result)
+                refreshed = job_read_metadata(frozen, job_result_with_reconciliation(job, job.result))
                 metadata = {**metadata, 'input_snapshot': refreshed['input_snapshot'],
                             **({'result': refreshed['result']} if frozen.get('generation_manifest') else {})}
             if state.attrs.input_fingerprint.history.has_changes():

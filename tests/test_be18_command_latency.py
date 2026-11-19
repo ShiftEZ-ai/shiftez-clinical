@@ -15,6 +15,7 @@ from packages.domain.validation_scope import assignment_scope, evaluate_assignme
 from packages.contracts.schemas import ParticipantInput
 from .clock_support import freeze_clock
 from .test_scoped_job_inputs import proposal, apply, h_assignments
+from .test_writer_preparation import writer_evaluations  # noqa: F401
 
 
 def worker_up(h):
@@ -188,24 +189,27 @@ def test_apply_refuses_unsafe_bundles_synchronously_with_worker(h, rule):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
-def test_fresh_review_gates_reuse_evidence_and_publish_reuses_it(h, monkeypatch):
+def test_fresh_review_gates_reuse_evidence_and_publish_reuses_it(h, monkeypatch, writer_evaluations):
+    """Fresh submit and approve reuse evidence. Publish evaluates the complete rota under the writer."""
     w = h.shift(h.workspace())['workspace']
     def forbidden(*args, **kwargs):
-        pytest.fail('A fresh complete gate recalculated the rota')
+        pytest.fail('A fresh submit or approve recalculated the rota')
     from packages.domain import score
     with monkeypatch.context() as patch:
         patch.setattr(planning, 'evaluate', forbidden)
         patch.setattr(score, 'schedule_score', forbidden)
         for action, role in [('submit', 'coordinator'), ('approve', 'approver')]:
             w = h.lifecycle(w, action, role)['workspace']
-    calls, evaluate = [], planning.evaluate
-    def fresh(*args, **kwargs):
-        calls.append(True)
-        return evaluate(*args, **kwargs)
+    writer_evaluations.clear()
+    evaluate = planning.evaluate
+    def fresh(data, **options):
+        assert '_partial' not in data and not options.get('quota_only'), 'Publish must check the complete rota'
+        return evaluate(data, **options)
     monkeypatch.setattr(planning, 'evaluate', fresh)
-    w = h.lifecycle(w, 'publish')['workspace']
-    assert calls == [], 'Publication reuses the approved current check after the writer re-verifies its fingerprint'
-    assert w['status'] == 'published'
+    published = h.lifecycle(w, 'publish')
+    assert writer_evaluations == [True], 'Publish evaluates once under the writer and never during admission'
+    assert published['workspace']['status'] == 'published'
+    assert published['publication_id']
 
 
 def test_publish_rechecks_when_approved_evidence_is_incomplete(h, monkeypatch):
