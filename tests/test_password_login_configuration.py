@@ -88,11 +88,11 @@ def test_production_progressive_password_startup_requires_the_key(production, h,
     from apps.api.main import create_app
     settings = replace(production, fmuc_data_key="", password_login_enabled=enabled,
                        password_login_progressive_delay=progressive)
-    if progressive:
-        with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required for progressive password sign-in"):
-            create_app(settings, h.app.state.engine)
-    else:
-        assert create_app(settings, h.app.state.engine).state.settings is settings
+    # Fixed mode also needs the key in production: sign-in event and rate-limit keys are keyed hashes (#930).
+    refusal = "for progressive password sign-in" if progressive else "for sign-in in production"
+    with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required " + refusal):
+        create_app(settings, h.app.state.engine)
+    assert create_app(replace(settings, fmuc_data_key="01" * 32), h.app.state.engine).state.settings.fmuc_data_key
     replace(settings, identity_users_file="").check(require_authentication=False)
 
 

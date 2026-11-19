@@ -31,3 +31,13 @@ def test_the_served_undo_restores_a_default_valued_setting_where_resending_previ
 def test_the_client_undo_of_a_display_save_is_the_served_restore():
     line = next(line for line in API.read_text(encoding='utf-8').splitlines() if line.strip().startswith("'department.display':"))
     assert re.search(r"undo:served\(x\)\.length\?served\(x\)", line), line
+
+
+def test_a_department_that_stored_no_rules_page_choice_keeps_the_current_page_through_other_saves(h):
+    # Owner decision (19 Nov 2026): the catalogue is the default for new departments; existing ones keep their own.
+    department = h.get('admin', '/api/me')['department']
+    assert 'rule_catalogue' not in (department.get('display_settings') or {})  # shows the current Rules page
+    saved = h.command('admin', 'department.display', {'names_default': 'code', 'reason': 'Names only'},
+                      department['id'], department['revision'])
+    assert saved['department']['display_settings']['rule_catalogue'] is False
+    assert 'rule_catalogue' not in saved['previous']

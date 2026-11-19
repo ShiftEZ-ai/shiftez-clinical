@@ -1451,6 +1451,7 @@ def _narrowed(policy, lines, **dates):
 def resolved_rule_context(data):
     """The complete runtime rule context, including catalogue lines, facts and mandatory caps."""
     context = with_tags(dict(data))
+    context.setdefault('_overtime_originals', {p['id']: p for p in context.get('policies') or []})
     context['policies'] = active_rules(context.get('policies', []), context=context)
     return context
 
@@ -1522,13 +1523,17 @@ def _copies(p, replaced_by, line_field, line_rule):
     out = []
     d = p['definition']
     rows = d.get('per_person') or []
-    if not rows and not d.get('overrides') and p['id'] not in replaced_by:
+    template_people = p.get('_quota_template_people')
+    quota_indices = p.get('_quota_line_indices') if p.get('_v2_source_lines') is None else None
+    if not rows and not template_people and not d.get('overrides') and p['id'] not in replaced_by:
         return [p]
+    if template_people is not None or quota_indices is not None:
+        p = {key: value for key, value in p.items() if key not in ('_quota_template_people', '_quota_line_indices')}
     replaced = [{'field': OVERRIDDEN, 'op': 'none', 'values': replaced_by[p['id']]}] if p['id'] in replaced_by else []
     # A quota line is that person's block, so listed people follow only their lines; a nonsafety limit's line replaces
     # the rule's number on the line's dates, and the rule's own number still holds for them on other dates.
     # A rule for its listed people only has no copy for anyone else.
-    listed = sorted({r['person_id'] for r in rows if r.get('person_id')})
+    listed = template_people if template_people is not None else sorted({r['person_id'] for r in rows if r.get('person_id')})
     others = ([] if not listed or safety_rule(d) else [{'field': 'person_ids', 'op': 'none', 'values': listed}] if d['rule']['kind'] == 'block_quota'
               else [{'field': OWN_LINE, 'op': 'none', 'values': [p['id']]}])
     if not d.get('listed_only'):
@@ -1556,7 +1561,7 @@ def _copies(p, replaced_by, line_field, line_rule):
             scope.update(start_time=r['start_time'], end_time=r['end_time'])
         # Its number, its own settings (a trigger, supervisors, trainee ranks) and a quota line's block.
         item['definition']['rule'] = line_rule(d['rule'], r, field)
-        item['template_line'] = {**(p.get('_v2_row_templates') or rows)[n], 'line': n}
+        item['template_line'] = {**(p.get('_v2_row_templates') or rows)[n], 'line': quota_indices[n] if quota_indices else n}
         out.append(item)
     return out
 
