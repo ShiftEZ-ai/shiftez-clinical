@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -94,26 +95,78 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     run = trusted_ci.invocation_receipt
     listed_node = "tests/test_x.py::test_listed_red[0]"
     listed = {maker.canonical_node(listed_node)}
-    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None, listed=listed)
+    candidate = {"replicas": [1], "smoke": False}
+    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None, candidate=candidate, listed=listed)
     original = trusted_ci.canaries.report_cases(report, evidence)
     assert evidence["exit_code"] == evidence["retry"]["exit_code"] == 1
     assert trusted_ci.canaries.failed_nodes(original) == [node, "tests/test_x.py::test_always_red", listed_node]
     failures = maker.retry_nodes(original, listed)
     assert failures == [node, "tests/test_x.py::test_always_red"]
-    assert trusted_ci.canaries.recovered_nodes(report, evidence, failures) == {node}
+    assert trusted_ci.canaries.recovered_nodes(report, evidence, failures, allow_retry=True) == {node}
     assert sorted(path.name for path in tmp_path.glob("*.raw.xml")) == ["junit-retry.raw.xml", "junit.raw.xml"]
-    listed_only = run([listed_node], "unit", tmp_path / "listed.xml", [], "0", None, listed=listed)
+    listed_only = run([listed_node], "unit", tmp_path / "listed.xml", [], "0", None, candidate=candidate, listed=listed)
     assert listed_only["exit_code"] == 1 and "retry" not in listed_only
     assert not (tmp_path / "listed-retry.xml").exists()
     (tmp_path / "shard-receipt.json").write_text(json.dumps({
         "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
     }))
-    trusted_ci.canaries.verify_directory(tmp_path)
-    for event in ("pull_request", "push"):
-        monkeypatch.setenv("GITHUB_EVENT_NAME", event)
-        single = run(["tests/test_x.py"], "unit", tmp_path / (event + ".xml"), [], "0", None)
-        assert single["exit_code"] == 1 and "retry" not in single
-        assert not (tmp_path / (event + "-retry.xml")).exists()
+    trusted_ci.canaries.verify_directory(tmp_path, allow_retry=True)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    single = run(["tests/test_x.py"], "unit", tmp_path / "push.xml", [], "0", None, candidate=candidate)
+    assert single["exit_code"] == 1 and "retry" not in single
+    assert not (tmp_path / "push-retry.xml").exists()
+
+
+@pytest.mark.parametrize(("replicas", "smoke", "retry_expected"), [
+    ([1], False, True),
+    ([1], True, False),
+    ([1, 2], False, False),
+])
+def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, monkeypatch, replicas, smoke, retry_expected):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    path = "tests/test_x.py"
+    red = path + "::test_red[0]"
+    listed = path + "::test_listed"
+    candidate = {"sha": "a" * 40, "tree": "b" * 40, "replicas": replicas, "smoke": smoke,
+                 "suites": {"unit": {"shards": [{"files": [path]}]}}}
+    calls = []
+
+    def invocation(targets, suite, report, extra, workers, base_targets, *, partial):
+        calls.append((targets, workers))
+        nodes = [red, listed] if targets == [path] else targets
+        cases = ET.Element("testsuite")
+        for node in nodes:
+            case = ET.SubElement(cases, "testcase", classname="tests.test_x", name=node.split("::")[1])
+            if targets == [path]:
+                ET.SubElement(case, "failure")
+        ET.ElementTree(cases).write(report)
+        report.with_suffix(".selection.json").write_text(json.dumps(nodes), encoding="utf-8")
+        report.with_suffix(".deselected.json").write_text("[]", encoding="utf-8")
+        return int(targets == [path])
+
+    def at_revision(sha):
+        assert sha == candidate["sha"]
+        return {"fails": [{"node": listed, "class": "baseline"}], "unstable": []}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("CI_UNIT_WORKERS", "4")
+    monkeypatch.setattr(sys, "argv", ["trusted_ci.py", "run", "--base-sha", "c" * 40,
+                                     "--suite", "unit", "--shard", "1", "--plan-sha256", hosted_ci.digest(candidate)])
+    monkeypatch.setattr(trusted_ci, "plan", lambda *_: candidate)
+    monkeypatch.setattr(trusted_ci, "invocation", invocation)
+    monkeypatch.setattr(trusted_ci.hardening, "load", lambda: {"node_census": False})
+    monkeypatch.setattr(trusted_ci.maker, "at_revision", at_revision)
+    trusted_ci.main()
+    receipt = json.loads((tmp_path / ".run/reports/shard-receipt.json").read_text(encoding="utf-8"))
+    assert receipt["reports"][0]["exit_code"] == 1
+    assert ("retry" in receipt["reports"][0]) == retry_expected
+    assert calls == [([path], "4")] + ([([red], "0")] if retry_expected else [])
+    assert (tmp_path / ".run/reports/junit-retry.xml").exists() == retry_expected
 
 
 def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
@@ -132,7 +185,8 @@ def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
     report = tmp_path / "junit.xml"
-    evidence = trusted_ci.invocation_receipt([path], "unit", report, [], "0", None, partial=True)
+    evidence = trusted_ci.invocation_receipt(
+        [path], "unit", report, [], "0", None, candidate={"replicas": [1]}, partial=True)
     assert trusted_ci.canaries.report_cases(report, evidence, selected_scope={path}) == []
     for scope in ((), {"tests/test_other.py"}):
         with pytest.raises(ValueError, match="Incomplete execution"):

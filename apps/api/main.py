@@ -41,7 +41,7 @@ from packages.domain.validation import evaluate
 from packages.domain.conditions import active_rules, scope_matches_throughout
 from . import models as m
 from . import oidc
-from .auth import (authenticate, password_login, password_login_enabled, login_event, digest, keep_alive, require_permission, require_role, current_roles, effective_roles, revoke_session, revoke_session_installations, require_catalogue_read,
+from .auth import (authenticate, password_login, password_login_enabled, login_event, login_digest, digest, keep_alive, require_permission, require_role, current_roles, effective_roles, revoke_session, revoke_session_installations, require_catalogue_read,
                    session_event, session_cookie_max_age, identifier_method, rotate_session)
 from .commands import execute, authorize_receipt, logged_command_kind, command_roles, receipt_result
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
@@ -291,7 +291,8 @@ def create_app(settings: Settings | None = None, engine=None):
             # Rejected origins and malformed bodies have no trusted username; never parse their credentials for audit.
             try:
                 await run_in_threadpool(liveness_write, engine, lambda db: login_event(
-                    db, [digest("account:"), digest("peer:" + (request.client.host if request.client else "unknown"))],
+                    db, [login_digest("account:", settings),
+                         login_digest("peer:" + (request.client.host if request.client else "unknown"), settings)],
                     getattr(request.state, "error_code", "LOGIN_REJECTED"), correlation,
                     window=settings.password_login_window_seconds),
                     context={"route": "auth.login", "phase": "fallback_audit"})
@@ -441,30 +442,48 @@ def create_app(settings: Settings | None = None, engine=None):
             return Response(row.content, media_type='image/png', headers={
                 'ETag': '"' + row.sha256 + '"', 'X-Content-Type-Options': 'nosniff'})
 
+    def current_pwa_response(respond):
+        from .services import pwa
+        with transaction(engine) as db:
+            current = pwa.current_icons(db)
+            if current is not None:
+                return respond(*current)
+        return retry_write(engine, lambda db: respond(*pwa.current_icons(db, render_missing=True)))
+
     @app.get('/assets/manifest.webmanifest')
     @app.get('/api/pwa/manifest.webmanifest')
     def pwa_manifest(request: Request):
         from .services import pwa
-        values = retry_write(engine, lambda db: pwa.manifest(db, settings.public_origin))
-        body = json.dumps(values, separators=(',', ':'), ensure_ascii=False).encode()
-        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
-        if request.headers.get('if-none-match') == etag:
-            return Response(status_code=304, headers={'ETag': etag, 'Cache-Control': 'no-cache'})
-        return Response(body, media_type='application/manifest+json', headers={'ETag': etag, 'Cache-Control': 'no-cache'})
+        def respond(value, artifacts):
+            body = json.dumps(pwa.manifest(value, artifacts), separators=(',', ':'), ensure_ascii=False).encode()
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            headers = {'ETag': etag, 'Cache-Control': 'no-cache'}
+            if request.headers.get('if-none-match') == etag:
+                return Response(status_code=304, headers=headers)
+            return Response(body, media_type='application/manifest+json', headers=headers)
+        return current_pwa_response(respond)
+
+    def pwa_icon_response(request, row, cache_control):
+        from .services.conditional_reads import conditional_response
+        headers = conditional_response(request, '"' + row.sha256 + '"', cache_control=cache_control)
+        if isinstance(headers, Response):
+            return headers
+        return Response(row.content, media_type='image/png', headers=headers)
 
     @app.get('/api/pwa/icons/{artifact_id}.png')
-    def pwa_icon(artifact_id: s.ID):
+    def pwa_icon(request: Request, artifact_id: s.ID):
         from .services import pwa
         with transaction(engine) as db:
-            row = pwa.icon(db, artifact_id)
-        return Response(row.content, media_type='image/png', headers={
-            'Cache-Control': f'public, max-age={settings.static_cache_seconds}, immutable', 'ETag': '"' + row.sha256 + '"'})
+            row = pwa.icon(db, artifact_id, include_content='if-none-match' not in request.headers)
+            return pwa_icon_response(request, row,
+                                     f'public, max-age={settings.static_cache_seconds}, immutable')
 
     @app.get('/api/pwa/apple-touch-icon.png')
-    def pwa_apple_icon():
-        from .services import pwa
-        row = retry_write(engine, lambda db: pwa.active_icon(db, 'apple'))
-        return Response(row.content, media_type='image/png', headers={'Cache-Control': 'no-cache', 'ETag': '"' + row.sha256 + '"'})
+    def pwa_apple_icon(request: Request):
+        def respond(value, artifacts):
+            row = next(a for a in artifacts if a.purpose == 'apple')
+            return pwa_icon_response(request, row, 'no-cache')
+        return current_pwa_response(respond)
 
     @app.get('/api/me/push', response_model=s.PwaStatus)
     def me_push(request: Request, limit: int = Query(100, ge=1, le=100), offset: int = Query(0, ge=0, le=1_000_000)):
@@ -638,12 +657,16 @@ def create_app(settings: Settings | None = None, engine=None):
     def peer(request):
         return request.client.host if request.client else "unknown"
 
+    def peer_key(request):
+        # Client addresses are low in entropy: rate-limit rows store only their keyed hash (#930).
+        return login_digest("peer:" + peer(request), settings)
+
     # One-time invitation and password-reset links: per-link limits and a shared-address abuse backstop,
     # same-origin POST only (the guard above), audited. Tokens are never logged: the request log
     # records the route template, not the path.
     @app.get("/api/account-links/{token}")
     def account_link(token: str, request: Request):
-        enforce(engine, "account-link-address", [peer(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
+        enforce(engine, "account-link-address", [peer_key(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
         enforce(engine, "account-link", [digest(token)], 60, 900, "Too many attempts; wait a few minutes and try again")
         from .services import accounts
         with transaction(engine) as db:
@@ -651,7 +674,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account-links/{token}")
     def use_account_link(token: str, data: s.PasswordSet, request: Request):
-        enforce(engine, "account-link-address", [peer(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
+        enforce(engine, "account-link-address", [peer_key(request)], 1000, 900, "Too many attempts; wait a few minutes and try again")
         enforce(engine, "account-link-use", [digest(token)], 10, 900, "Too many attempts; wait a few minutes and try again")
         from .services import accounts
         return liveness_write(engine, lambda db: accounts.accept_link(db, token, data.password, settings, request.state.correlation_id),
@@ -659,7 +682,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer(request)], 5, 900,
+        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
@@ -753,7 +776,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         "cause_traceback": traceback.format_tb(cause.__traceback__) if cause else []})
             try:
                 liveness_write(engine, lambda db: login_event(
-                    db, [digest("oidc-callback"), digest("peer:" + peer(request))], outcome,
+                    db, [digest("oidc-callback"), login_digest("peer:" + peer(request), settings)], outcome,
                     request.state.correlation_id, window=settings.password_login_window_seconds),
                     context={"route": "auth.oidc_callback", "phase": "fallback_audit"})
             except (SQLAlchemyError, DatabaseWriteTimeout):
@@ -2858,7 +2881,7 @@ def create_app(settings: Settings | None = None, engine=None):
         from .services.calendar_feeds import feed_calendar
         message = "This calendar link is being refreshed too often; your calendar app will retry later"
         # Address first: guessed tokens from one address stop before each adds its own counter row.
-        enforce(engine, "feed-address", [request.client.host if request.client else "unknown"], settings.rate_feed_address_per_hour, 3600, message)
+        enforce(engine, "feed-address", [peer_key(request)], settings.rate_feed_address_per_hour, 3600, message)
         enforce(engine, "feed", [digest(token)], settings.rate_feed_per_hour, 3600, message)
         with transaction(engine, write=True) as db:
             body = feed_calendar(db, token).encode("utf-8")
@@ -3852,7 +3875,7 @@ def create_app(settings: Settings | None = None, engine=None):
         raw = await request.body()
 
         def receive():
-            enforce(engine, "monitor-address", [peer(request)], 600, 60, "Too many monitor requests; wait a minute and try again")
+            enforce(engine, "monitor-address", [peer_key(request)], 600, 60, "Too many monitor requests; wait a minute and try again")
             with transaction(engine) as db:
                 department_id = monitors.authenticate(db, request.headers.get("authorization"))
             enforce(engine, "monitor-events", [department_id], settings.monitor_events_per_minute, 60,

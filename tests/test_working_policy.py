@@ -495,7 +495,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
         target = base if branch == "dev" else "9" * 40
-        payload = {"before": base, "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
+        payload = {"before": base, "repository": {"full_name": "ShiftEZ-ai/shiftez-clinical"},
+                   "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
         plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": list(replicas),
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
                            "browser": {"shards": [{"files": ["tests/test_browser_a.py"]}]}}}
@@ -552,6 +553,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
             (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
+            from make_known_failures import retry_run
+            maker.retry_run = retry_run
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
             maker.collect_reports = lambda *a: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
@@ -572,7 +575,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
-            def compare():
+            def compare(**stale_options):
+                self.assertEqual(set(stale_options), {"stale_lookup"} if event == "pull_request" and branch == "dev" else set())
                 self.assertEqual(json.loads(Path(policy.KNOWN).read_text()), after)
                 self.assertEqual(json.loads(Path("ci/frozen-baseline-failures.json").read_text()), [] if real_reader else {"origin": base})
                 self.assertNotIn(str(reports), sys.path)
@@ -608,6 +612,11 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                             verifier.main()
                 else:
                     verifier.main()
+                if verifier.hardening.load()["canaries"]:
+                    canaries.verify_directory.assert_called_once_with(
+                        reports, allow_product_errors=True, partial=False, allow_retry=retry_run(plan))
+                else:  # stop-loss profiles reuse this helper with canaries switched off
+                    canaries.verify_directory.assert_not_called()
             self.assertEqual(summaries, [True])
             self.assertTrue(all(revision == base for revision, name in reads if name not in {policy.KNOWN,'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
