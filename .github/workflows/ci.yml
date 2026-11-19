@@ -410,6 +410,9 @@ jobs:
       bootstrap: ${{ needs.checks.outputs.bootstrap }}
   result:
     name: CI result
+    permissions:
+      actions: read
+      contents: read
     env:
       TRUSTED_BOOTSTRAP: ${{ needs.checks.outputs.bootstrap }}
     needs:
@@ -473,6 +476,7 @@ jobs:
         path: .candidate-evidence/test-results
     - name: Trusted source/node/canary/allowance verdict
       env:
+        GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
         NEEDS_JSON: ${{ toJSON(needs) }}
         CANDIDATE_SHA: ${{ needs.checks.outputs.candidate_sha }}
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}

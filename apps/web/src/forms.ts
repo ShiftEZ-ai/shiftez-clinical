@@ -41,6 +41,22 @@ export interface Context {me:Me;catalogues:Catalogues;ready:()=>Promise<void>;re
   setup?:SetupOpeners;
   /** Opens a draft session's fill panel on the Schedule, its search set to `person` (a name). */
   fill?:(workspace:string,shift:Row,person?:string)=>void}
+/** A participant's own times and presence segments as the server holds them. */
+export type Attendance={start:string;end:string;segments?:{start:string;end:string}[]};
+/** What a session save keeps of one participant's attendance. The server books every person for the whole session
+ *  (FULL_ASSIGNMENT_REQUIRED), so partial attendance is its presence segments, whose outer edges are the session's times.
+ *  Unchanged session times: the row's own segments are sent verbatim. Changed times: the segments still inside the new
+ *  times are kept and the outer edges move to the new start and end; `cut` says a segment no longer fits (it is
+ *  removed, and the form names the person before saving). Never a silent replacement with a whole-duty booking. */
+export function keptAttendance(own:Attendance,was:{start:string;end:string},start:string,end:string):{start:string;end:string;segments:{start:string;end:string}[];cut:boolean}{
+  const t=Date.parse,s=t(start),e=t(end),parts=own.segments||[];
+  if(!parts.length)return {start,end,segments:[],cut:false};
+  if(t(was.start)===s&&t(was.end)===e)return {start:own.start,end:own.end,segments:parts,cut:false};
+  const kept=parts.filter(x=>t(x.start)>=s&&t(x.end)<=e).map(x=>({...x})),cut=kept.length<parts.length;
+  if(kept.length<2)return {start,end,segments:[],cut:cut||kept.length===1&&(t(kept[0].start)!==s||t(kept[0].end)!==e)};
+  kept[0].start=start;kept[kept.length-1].end=end;
+  return {start,end,segments:kept,cut};
+}
 const options=(rows:Row[])=>rows.map(r=>({value:r.id,label:labelOf(r)+(r.active===false?' · inactive':'')}));
 function all(ctx:Context,kind:'people'):PersonRow[];
 function all(ctx:Context,kind:string):Row[];
@@ -840,7 +856,7 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
     if(shift&&sessionsHeld(data)){const why=el('p',{class:'hint sessions-held span-2',id:'session-define-held'},onlyRotaCoordinator('define'));typ.wrap.before(why);
       for(const wrap of [typ.wrap,services.wrap,location.wrap,start.wrap,end.wrap,timing,customBox])
         for(const c of wrap.querySelectorAll<HTMLInputElement>('input,select,textarea,button')){c.disabled=true;c.setAttribute('aria-describedby','session-define-held');}}
-    const participantBody=el('div',{class:'span-2'}),rows:{node:HTMLElement;person:()=>string;remove:()=>void;read:()=>Promise<Record<string,unknown>>}[]=[];
+    const participantBody=el('div',{class:'span-2'}),rows:{node:HTMLElement;person:()=>string;remove:()=>void;read:()=>Promise<Record<string,unknown>>;cut:()=>Promise<string|null>}[]=[];
     const leadGroup='team-lead-'+Math.random().toString(36).slice(2);
     const noLead=el('input',{type:'radio',name:leadGroup,value:'',checked:!(shift?.participants||[]).some((p:Row)=>p.team_lead)}) as HTMLInputElement;
     const leadSyncs:(()=>void)[]=[],leadInputs:HTMLInputElement[]=[];
@@ -873,6 +889,8 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
       if(many&&leadInputs.filter(i=>i.checked).length>=most)leadInputs.forEach(i=>{if(!i.checked)i.disabled=true;});
     };
     function addParticipant(prior?:Row){
+      // The row's own attendance as the server holds it; kept while this row is the same person (keptAttendance).
+      const own=prior&&shift?{person:String(prior.person_id),times:{start:String(prior.start),end:String(prior.end),segments:((prior.segments||[]) as Row[]).map(x=>({start:String(x.start),end:String(x.end)}))},was:{start:String(shift.start),end:String(shift.end)}}:null;
       const person=select('Participant',peopleChoices(ctx),prior?.person_id||'');
       const participation=select('Participation role',[{value:'staff',label:'Staff member'},{value:'trainee',label:'Trainee'},{value:'supervisor',label:'Supervisor · verified capability required'}],prior?.participation||'staff');
       const overtime=check('Overtime',prior?prior.overtime||false:Boolean(lookup(ctx,'assignment_types',typ.input.value)?.definition?.extra_cover)),fixed=check('Keep assigned',prior?.fixed||false);
@@ -894,12 +912,27 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
       const node=el('div',{class:'nested-card'},el('div',{class:'form-grid'},person.wrap,participation.wrap,lead.wrap,supervisor.wrap,flags));
       const remove=()=>{rows.splice(rows.indexOf(row),1);leadSyncs.splice(leadSyncs.indexOf(syncLead),1);leadInputs.splice(leadInputs.indexOf(leadInput),1);node.remove();syncLeads();form.dispatchEvent(new Event('participants-changed'));};
       const row={node,person:()=>person.input.value,remove,read:async()=>({person_id:person.input.value,participation:participation.input.value,
-        supervisor_person_id:supervisor.input.value||null,team_lead:lead.input.checked,start:await instant(start.input.value),end:await instant(end.input.value),overtime:overtime.input.checked,fixed:fixed.input.checked,segments:[]})};rows.push(row);
+        supervisor_person_id:supervisor.input.value||null,team_lead:lead.input.checked,overtime:overtime.input.checked,fixed:fixed.input.checked,
+        // The times and segments only: `cut` is the form's own warning, never sent (the server refuses extra fields).
+        ...(({cut:_cut,...times})=>times)(await attendance())}),
+        // Null while this row keeps all its attendance; else the person whose partial attendance the new times cut.
+        cut:async()=>own&&person.input.value===own.person&&(await attendance()).cut?person.input.selectedOptions[0]?.textContent||'':null};rows.push(row);
+      async function attendance(){const s0=await instant(start.input.value),e0=await instant(end.input.value);
+        if(!own||person.input.value!==own.person)return {start:s0,end:e0,segments:[] as Attendance['segments'],cut:false};
+        return keptAttendance(own.times,own.was,s0,e0);}
       flags.append(button('Remove participant',remove,'ghost'));participantBody.append(node);
       form.dispatchEvent(new Event('participants-changed'));
     }
     (shift?.participants||[]).forEach(addParticipant);
-    if(shift?.participants?.some((p:Row)=>p.start!==shift.start||p.end!==shift.end||p.segments?.length))form.append(el('p',{class:'hint'},'Saving this session replaces earlier partial attendance or presence segments with complete-duty bookings. Review the changes before saving.'));
+    // Said only when the session's new times cut someone's partial attendance or presence segments, naming them,
+    // before saving; an edit that leaves the times alone keeps everyone's attendance as it is (keptAttendance).
+    const cutNote=el('p',{class:'hint','aria-live':'polite'});cutNote.hidden=true;form.append(cutNote);
+    let cutAsk=0;
+    const syncCut=async()=>{const n=++cutAsk;if(!shift||!start.input.value||!end.input.value){cutNote.hidden=true;return;}
+      const names=(await Promise.all(rows.map(r=>r.cut()))).filter((x):x is string=>x!==null);if(n!==cutAsk)return;
+      cutNote.hidden=!names.length;
+      cutNote.textContent=names.length?`The new times cut the partial attendance of ${names.join(', ')}: the parts outside the new times are removed when you save.`:'';};
+    for(const f of [start,end])f.input.addEventListener('change',()=>void syncCut());form.addEventListener('participants-changed',()=>void syncCut());
     typ.input.addEventListener('change',syncLeads);start.input.addEventListener('change',syncLeads);syncLeads();
     // Asked again when anything it depends on changes (the answer is cached per draft revision and form state).
     form.addEventListener('change',e=>{if(!(e.target as Element).matches?.(`input[name="${leadGroup}"]`))void askLead();});form.addEventListener('participants-changed',()=>void askLead());void askLead();
