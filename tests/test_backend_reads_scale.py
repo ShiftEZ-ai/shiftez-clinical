@@ -69,6 +69,52 @@ def read_department(h, goals=False):
     return w
 
 
+def test_full_workspace_does_not_walk_the_projection_in_fastapi(scale_harness, monkeypatch):
+    from fastapi import routing
+
+    h = scale_harness()
+    workspace, *_ = scale_department(h)
+    client = h.client('coordinator')
+    full_walks = []
+    original = routing.jsonable_encoder
+
+    def count(value):
+        if isinstance(value, dict) and 'shifts' in value:
+            full_walks.append(len(value['shifts']))
+        return original(value)
+
+    monkeypatch.setattr(routing, 'jsonable_encoder', count)
+    response = client.get('/api/workspaces/' + workspace['id'], headers={'accept-encoding': 'identity'})
+    assert response.status_code == 200
+    assert len(response.json()['shifts']) >= 500
+    assert full_walks == []
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_full_workspace_shift_rows_avoid_deep_json_conversion(scale_harness, monkeypatch, backend):
+    from apps.api import snapshots
+    from apps.api.services.workspace_detail import full_shifts
+
+    h = scale_harness(backend)
+    workspace, *_ = scale_department(h)
+    converted = []
+    original = snapshots.json_value
+
+    def count(value):
+        if isinstance(value, dict) and 'type_snapshot' in value:
+            converted.append(value['id'])
+        return original(value)
+
+    with transaction(h.app.state.engine) as db:
+        expected = snapshots.workspace_shifts(db, workspace['id'])
+        monkeypatch.setattr(snapshots, 'json_value', count)
+        actual = full_shifts(db, workspace['id'])
+
+    assert len(actual) >= 500
+    assert actual == expected
+    assert len(converted) <= 8, f'{len(converted)} session rows re-walked after SQL projection'
+
+
 @pytest.fixture(scope='module', params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def person_fairness_measurement(request, scale_harness):
     h = scale_harness(request.param)
@@ -170,3 +216,25 @@ def test_department_boot_catalogues(database, request):
     assert {**compact, **hydrated} == full.json()
     assert len(boot.content) < 150_000 and len(boot.content) < len(full.content) * .15
     assert metrics['sql'].get('SELECT', 0) < 60
+
+
+def test_department_scale_reuses_the_mentorship_sql_expression(scale_harness, monkeypatch):
+    from apps.api import db
+
+    h = scale_harness()
+    workspace, *_ = scale_department(h)
+    client = h.client('coordinator')
+    predicates = []
+    original = db.live_mentorship_clause
+
+    def track():
+        predicate = original()
+        predicates.append(predicate)
+        return predicate
+
+    monkeypatch.setattr(db, 'live_mentorship_clause', track)
+    response = client.get('/api/workspaces/' + workspace['id'], headers={'accept-encoding': 'identity'})
+    assert response.status_code == 200
+    assert len(response.json()['shifts']) >= 500
+    assert len(predicates) > 1
+    assert len({id(predicate) for predicate in predicates}) == 1

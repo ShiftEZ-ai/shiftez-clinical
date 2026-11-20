@@ -143,7 +143,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
         tolerance = Fraction(1, 1_000_000_000)
         lower, upper = math.ceil((target - tolerance) * scale), math.floor((target + tolerance) * scale)
         if target_group and row['comparison'] in {'minimum', 'target'}:
-            target_group([(int(weight * scale), x, sources) for weight, x, sources in priority_terms], lower)
+            target_group([(int(weight * scale), x, sources) for weight, x, sources in priority_terms], lower,
+                         stage='mandatory_quota' if row['severity'] == 'mandatory' and row['comparison'] == 'minimum' else 'desired')
         diagnostic_minimum = row['severity'] == 'mandatory' and row['comparison'] == 'minimum' and diagnostic_domains is not None
         hard = row['severity'] == 'mandatory' and row['comparison'] != 'target' and not (
             (diagnostic_proposal or diagnostic_minimum) and row['comparison'] == 'minimum')
