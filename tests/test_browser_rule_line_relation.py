@@ -214,6 +214,70 @@ def test_relax_for_a_person_applies_to_this_rota_with_a_justification(browser, l
         context.close()
 
 
+@pytest.mark.parametrize('on', [False, True], ids=['rule-off', 'rule-on'])
+def test_changing_the_department_rule_from_relax_keeps_the_rule_on_or_off(browser, live_server, h, on):
+    """A line proposed from the line panel (Change the department rule…) adds that line and keeps the rule as it is: an off
+    rule stays off once approved, an on rule stays on. Release blocker: the panel used to send on=true."""
+    rule, broad, mine, person, name, who, where = world(h)
+    if not on:  # the department switched this rule off: an approved version that is off
+        record = propose_rule(h, 'workload_limit', rule['definition']['rule']['lines'], catalogue_version=2, on=False,
+                              policy_id=rule['id'], revision=rule['revision'], reason='Off for now')['record']
+        rule = h.command('approver', 'policy.activate', {'reason': 'Independent review'}, record['id'], record['revision'])['record']
+    assert rule['definition']['rule'].get('on', True) is on
+    w = h.shift(h.workspace('Relax rota'))['workspace']
+    w = h.command('coordinator', 'workspace.validate', {'reason': 'Check'}, w['id'], w['revision'])['workspace']
+    # The next week: the fixture's own person line already covers 4–10 Oct, and the same line twice is refused.
+    seed_line = {**copy.deepcopy(broad), 'id': 'seed-line', 'who': who, 'starts_on': '2026-10-11', 'ends_on': '2026-10-18'}
+    seed = {'catalogue_id': 'workload_limit', 'catalogue_version': 2, 'expected_policy_id': rule['id'], 'expected_revision': rule['revision'],
+            'binding_line_id': broad['id'], 'binding_line_no': 1, 'line': seed_line,
+            'lines': [*rule['definition']['rule']['lines'], seed_line], 'needs_approval': False, 'scope': 'rota',
+            'adjustment': {'policy_id': rule['id'], 'mode': 'set', 'line_id': broad['id'], 'number': 'max', 'person_id': person,
+                           'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}}
+    proposals = []
+
+    def commands(route):
+        payload = route.request.post_data_json or {}
+        if payload.get('kind') == 'rule.propose':
+            proposals.append(payload['payload'])
+        return route.fallback()
+    context, page = themed(browser, live_server, 'coordinator', 1440, 'light')
+    try:
+        page.route(f"**/api/policies/{rule['id']}/relax", lambda route: route.fulfill(json=seed))
+        page.route(f"**/api/workspaces/{w['id']}/adjustment-effect", lambda route: route.fulfill(json={
+            'workspace_id': w['id'], 'revision': w['revision'], 'preview': True, 'committed': False,
+            'effect': {'status': 'ready', 'clears': 1, 'adds': 0, 'effect': 'clears', 'summary': 'Clears 1 check'}}))
+        page.route('**/api/commands', commands)
+        cause = {'id': 'c-relax', 'level': 'must', 'checks': 1, 'sentence': f'{name} is over the weekly maximum', 'meta': 'Workload limit',
+                 'who': [], 'person_ids': [person], 'shift_ids': [], 'safety': False, 'new': False, 'evidence': [],
+                 'action': {'kind': 'adjust_rota', 'scope': {'person_ids': [person], 'shift_ids': [], 'starts_on': '2026-10-04',
+                            'ends_on': '2026-10-11', 'keep_existing': True}},
+                 'rule_lines': [{'rule_id': rule['id'], 'line_id': broad['id'], 'line': 0, 'slot': 'max'}],
+                 'score_gain': None, 'finding_keys': [], 'evidence_hash': 'x', 'acknowledgeable': True, 'acknowledgement': None}
+        fix = {'workspace_id': w['id'], 'revision': w['revision'], 'fingerprint': 'x', 'causes': [cause], 'review_items': [],
+               'summary': {'must': 1, 'could': 0, 'places_filled': 1, 'places_total': 1, 'places_open': 0, 'checks_must': 1,
+                           'checks_could': 0, 'fairness_checks': 0, 'acknowledged': 0, 'submit_blocked': True}}
+        page.route(f"**/api/workspaces/{w['id']}/fix-list*", lambda route: fix_list_reply(route, fix))
+        navigate(page, f"schedule/issues?draft={w['id']}")
+        row = page.locator('#main .fix-list > li[data-cause=c-relax]')
+        row.get_by_role('button', name=FIX_ACTION_LABELS['adjust_rota'], exact=True).click()
+        panel = page.locator('.rc-line-panel')
+        panel.locator('.rc-lp-foot').get_by_role('button', name='Change the department rule…', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change Workload limit')
+        dialog.get_by_label('Reason', exact=True).fill('A standing exception for this person')
+        dialog.get_by_role('button', name='Propose', exact=True).click()
+        expect(panel).to_have_count(0)
+    finally:
+        context.close()
+    assert len(proposals) == 1 and proposals[0]['on'] is on, proposals
+    assert proposals[0]['settings'] == rule['definition']['rule'].get('settings', {})
+    assert {l['id'] for l in proposals[0]['lines']} >= {broad['id'], mine['id']}
+    entry = next(e for e in h.get('approver', '/api/rules/catalogue?version=2')['entries'] if e['id'] == 'workload_limit')
+    proposed = entry['proposed']
+    assert proposed['definition']['rule'].get('on', True) is on
+    active = h.command('approver', 'policy.activate', {'reason': 'Independent review'}, proposed['id'], proposed['revision'])['record']
+    assert active['definition']['rule'].get('on', True) is on
+
+
 def test_relax_is_never_offered_for_a_safety_rule():
     """D7: the menu builder leaves Relax out for a safety line (a mixed rule is judged by the line's own number slots,
     the contracts' NEVER_OVERRIDDEN, as schemas.safety_rule does)."""
