@@ -9,6 +9,12 @@ def selected_session_ids(data):
     return data.get('focus_ids', []) if selected is None else selected
 
 
+def pooled_anchor(session_ids, selected_ids, focus_ids):
+    """Anchor shared coverage on the lowest selected peer, falling back to focus context."""
+    peers = set(session_ids)
+    return min(peers & set(selected_ids) or peers & set(focus_ids), default=None)
+
+
 def population_allows(data, shift, person_id, participant=None):
     population = data.get('planning_population')
     if population is not None and person_id not in population.get(shift['id'], ()):
