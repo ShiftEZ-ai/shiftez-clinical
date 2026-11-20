@@ -1,8 +1,8 @@
 """Warm one stale workspace per pass; unchanged successes and cooling failures do no work."""
 import logging
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import Session, defer
 
 from apps.api import models as m
 from apps.api.db import DatabaseWriteDeferred, DatabaseWriteTimeout, transaction
@@ -11,6 +11,27 @@ from packages.domain.input_manifest import digest, toolchain
 from .read_projections import input_stamp, source_identity, CANONICAL_AUDIENCE
 
 log = logging.getLogger('rota.worker')
+
+
+def warm_process(engine):
+    """Prime one API process using shared definitions and read-only SQL."""
+    from apps.api.auth import prepare_session_reads
+    from apps.api.serialization import record
+    from packages.contracts.schemas import TypeDefinition, table_condition_registry
+    from packages.domain.rule_lines import prepare_catalogue_rule
+
+    m.Base.registry.configure()
+    TypeDefinition.model_rebuild()
+    table_condition_registry()
+    with Session(engine, autoflush=False) as db:
+        if engine.dialect.name == 'postgresql':
+            db.execute(text('SET TRANSACTION READ ONLY'))
+        prepare_session_reads(db)
+        # Scan active department definitions once. Exclude draft-owned rules and retired history.
+        policies = db.scalars(select(m.Policy).where(m.Policy.status == 'active', m.Policy.kind == 'catalogue',
+            m.Policy.definition['workspace_id'].as_string().is_(None)).execution_options(yield_per=100))
+        for policy in policies:
+            prepare_catalogue_rule(record(policy))
 
 
 def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):

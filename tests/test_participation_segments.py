@@ -1,4 +1,5 @@
 """Independent expected intervals, persisted workflows and versioned report evidence."""
+from tests.historical_staffing import retained_staffing
 from packages.domain.time import now as clock_now
 import copy
 import csv
@@ -254,7 +255,7 @@ def test_supervisor_off_cover_gap_never_supervises_a_present_trainee(h):
     value={key:typ[key] for key in ('name','description','starts_on','ends_on','active','definition')}
     value['definition']['supervision']={'capability_id':h.seed['supervisor_capability'],'trainee_category_ids':[h.seed['trainee_category']], 'trainees_per_supervisor':1}
     h.configure('assignment_types',value,target=typ['id'],revision=typ['revision'])
-    w=h.shift(h.workspace(),people=[person(h.seed['people'][0],participation='supervisor'),
+    w = retained_staffing(h, h.workspace(), people=[person(h.seed['people'][0], participation='supervisor'),
         {'person_id':h.seed['people'][1],'start':at('08:00'),'end':at('12:00'),'participation':'trainee'}])['workspace']
     assert 'SUPERVISION_GAP' in codes(w['validation'])
     finding=next(f for f in w['validation']['findings'] if f['code']=='SUPERVISION_GAP')

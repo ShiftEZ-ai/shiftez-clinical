@@ -417,6 +417,14 @@ def _baseline_inputs_view(payload):
             for key, value in payload.items()}
 
 
+DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
+
+
+def draft_policy_hint(workspace):
+    """Identify the draft rule basis for receipts made before the live overlay."""
+    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
+
+
 def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
     """One shared acquisition per organisation for a visible batch; never authority across transactions.
 
@@ -448,7 +456,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         cached = checks[workspace.id].get('input_manifest') or {}
         if (currency_match(cached.get('dirty_hint'), {'input_revision': org.input_revision,
                 'availability_revision': org.availability_revision, 'content_revision': workspace.content_revision,
-                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace)}
+                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)}
                 ) and cached.get('components', {}).get('toolchain') == current_toolchain):
             result[workspace.id] = cached['token']
             continue
@@ -469,7 +477,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         if org.id not in shared:
             shared[org.id] = _fingerprint_shared_inputs(db, workspace)
         data = domain_snapshot(db, workspace, shared_inputs=shared[org.id])
-        # Only a single-rota summary can reuse this payload; lists must release each full snapshot.
+        # Only a single-rota check can reuse this payload; lists must release each full snapshot.
         if len(workspaces) == 1:
             db.info.setdefault('read_snapshots', {})[wid] = data
         return data['fingerprint']
@@ -516,7 +524,7 @@ def cheap_fingerprints(db, workspaces, *, checks):
                 'input_revision': rows[0].input_revision, 'availability_revision': rows[0].availability_revision,
                 'department_revisions': [list(row[:3]) for row in rows]}
         if (currency_match(hint, {**revision_stamps[organisation_id], 'content_revision': workspace.content_revision,
-                      'baseline': _baseline_hint(db, workspace)})
+                      'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
             result[workspace.id] = manifest['token']
@@ -832,7 +840,7 @@ def hint_with_event_local_date(db, workspace, hint, organisation):
     return {**hint, **({'event_local_date': value} if value is not None else {})}
 
 
-def currency_hint(db, workspace):
+def currency_hint(db, workspace, *, mandatory_rules=True):
     """Return the compact source currency stored with a feasibility receipt.
 
     Activation admission only needs to prove that the receipt was built from
@@ -849,6 +857,7 @@ def currency_hint(db, workspace):
         'availability_revision': organisation.availability_revision,
         'content_revision': workspace.content_revision,
         'baseline': _baseline_hint(db, workspace),
+        **(draft_policy_hint(workspace) if mandatory_rules else {}),
     }, organisation)
     return current
 
@@ -937,12 +946,15 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
+    draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
+    mandatory_overlay_changed = False
     baseline = None
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
@@ -957,8 +969,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             validity_baseline = {key: saved_inputs.get(key) or {} for key in LIVE_VALIDITY_SOURCES}
             # Drafts keep the captured department inputs even when callers prepared a live shared-input batch.
             # A draft may add a local duty after capture. Keep only the referenced
-            # catalogue rows needed to interpret that local content; department
-            # policy/configuration remains frozen in the baseline.
+            # catalogue rows needed to interpret that local content. The captured
+            # policy/configuration is the basis for the overlay below.
             own_ids = list(db.scalars(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)))
             if own_ids:
                 refs = db.execute(select(m.Shift.assignment_type_id, m.Shift.location_id)
@@ -987,11 +999,17 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=mandatory_rules, validity_baseline=validity_baseline)
+                                              include_mandatory=bool(draft_rules) or current_mandatory,
+                                              validity_baseline=validity_baseline)
+            mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
     result = DomainSnapshot(result, read_quality=read_quality)
+    if draft_rules:
+        result['_draft_policy_basis'] = draft_rules['draft_policy_basis']
+    if current_mandatory and mandatory_overlay_changed:
+        result['_mandatory_overlay_changed'] = True
     if result['organisation']['id'] != org.id:
         raise ValueError('Snapshot inputs belong to another organisation')
     department_ids = result.pop('department_ids')
@@ -1324,8 +1342,8 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
-    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'include_fairness', 'include_objectives',
-                                         'include_fairness_history'} or value is None
+    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'current_mandatory',
+                                         'include_fairness', 'include_objectives', 'include_fairness_history'} or value is None
                                  for key, value in kwargs.items())
     if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
         db.flush()
