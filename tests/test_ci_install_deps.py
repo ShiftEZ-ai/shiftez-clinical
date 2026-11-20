@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = "timeout --kill-after=30 600 python -m playwright install-deps chromium"
+STOP = "sudo pkill -KILL -x apt-get || true; sudo pkill -KILL -x dpkg || true"
 REPAIR = "sudo dpkg --configure -a || true"
 
 
@@ -122,7 +123,8 @@ def test_browser_system_dependencies_are_bounded_and_retried():
     script = install_script()
     assert INSTALL + " && break" in script
     assert "for attempt in 1 2 3; do" in script
-    assert 'if [ "$attempt" != 1 ]; then ' + REPAIR + "; fi" in script
+    # A stalled attempt's apt-get child survives the timeout and holds the apt lock; it is stopped before the repair.
+    assert 'if [ "$attempt" != 1 ]; then ' + STOP + "; " + REPAIR + "; fi" in script
     assert 'if [ "$attempt" = 3 ]; then' in script and "exit 1" in script
     assert "Acquire::Retries" in script and "Acquire::http::Timeout" in script
 
@@ -187,10 +189,11 @@ def test_the_install_loop_retries_and_repairs(tmp_path, behaviour, repairs, code
     loop = install_script()
     loop = loop[loop.index("for attempt in 1 2 3; do"):]
     stand_in = (loop.replace(INSTALL, f"timeout --kill-after=1 1 bash -c '{behaviour}'")
-                .replace(REPAIR, "echo dpkg-repair"))
+                .replace(STOP, "echo stop-leftovers").replace(REPAIR, "echo dpkg-repair"))
     run = subprocess.run([bash, "-c", stand_in], cwd=tmp_path, capture_output=True, text=True, timeout=60)
     assert run.returncode == code, run.stdout + run.stderr
     assert run.stdout.count("dpkg-repair") == repairs, run.stdout
+    assert run.stdout.count("stop-leftovers\ndpkg-repair") == repairs, run.stdout
     if code:
         assert "did not install in 3 attempts" in run.stdout
 
