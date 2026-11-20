@@ -45,3 +45,4 @@ GRANT SELECT ON alembic_version TO rota_app, rota_worker;
 -- Authority/consent rows are retired, revoked or closed, never deleted by the runtime.
 REVOKE DELETE ON review_routes, review_delegations, swap_requests FROM rota_app, rota_worker;
 COMMIT;
+-- Code-owner review check (closed unmerged)
