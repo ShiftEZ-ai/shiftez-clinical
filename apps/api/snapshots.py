@@ -2,13 +2,13 @@
 import hashlib
 import json
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import defer, object_session
 from . import models as m
 from .serialization import json_value, record, records_many, rows_many
 from packages.domain.conditions import with_tags
@@ -396,29 +396,14 @@ def _baseline_hint(db, workspace):
 
 def _verified_baseline(db, workspace):
     """Load and integrity-check one draft baseline once in this request/session."""
-    from .workspace_baselines import latest as latest_baseline, verify as verify_baseline
+    from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
 
-    rows = db.info.setdefault('_baseline_rows', {})
+    rows = baseline_rows(db)
     row_key = (workspace.id, workspace.revision)
-    if row_key not in rows:
-        rows[row_key] = latest_baseline(db, workspace.id)
-    baseline = rows[row_key]
-    if baseline is None:
-        return None, None
-    key = (baseline.id, baseline.payload_hash)
-    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
-    verified_cache = db.info.setdefault('_verified_baselines', OrderedDict())
-    verified = verified_cache.get(key)
-    if verified is None:
-        verified_keys = db.info.setdefault('_verified_baseline_keys', set())
-        verified = (json_value(baseline.canonical_payload) if key in verified_keys
-                    else verify_baseline(baseline))
-        verified_keys.add(key)
-        verified_cache[key] = verified
-    verified_cache.move_to_end(key)
-    while len(verified_cache) > settings.verified_baseline_cache_entries:
-        verified_cache.popitem(last=False)
-    return baseline, verified
+    baseline = rows.get(row_key)
+    if row_key not in rows or (baseline is not None and object_session(baseline) is not db):
+        baseline = rows[row_key] = latest_baseline(db, workspace.id)
+    return baseline, verify_in_transaction(db, baseline)
 
 
 def _baseline_inputs_view(payload):
@@ -430,6 +415,14 @@ def _baseline_inputs_view(payload):
     # shortcut: nested records are shared read-only until json_value; upgrade to a frozen structure if a pre-json_value writer appears.
     return {key: (dict(value) if isinstance(value, dict) else list(value) if isinstance(value, list) else value)
             for key, value in payload.items()}
+
+
+DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
+
+
+def draft_policy_hint(workspace):
+    """Identify the draft rule basis for receipts made before the live overlay."""
+    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
 
 
 def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
@@ -463,7 +456,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         cached = checks[workspace.id].get('input_manifest') or {}
         if (currency_match(cached.get('dirty_hint'), {'input_revision': org.input_revision,
                 'availability_revision': org.availability_revision, 'content_revision': workspace.content_revision,
-                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace)}
+                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)}
                 ) and cached.get('components', {}).get('toolchain') == current_toolchain):
             result[workspace.id] = cached['token']
             continue
@@ -484,7 +477,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         if org.id not in shared:
             shared[org.id] = _fingerprint_shared_inputs(db, workspace)
         data = domain_snapshot(db, workspace, shared_inputs=shared[org.id])
-        # Only a single-rota summary can reuse this payload; lists must release each full snapshot.
+        # Only a single-rota check can reuse this payload; lists must release each full snapshot.
         if len(workspaces) == 1:
             db.info.setdefault('read_snapshots', {})[wid] = data
         return data['fingerprint']
@@ -511,8 +504,7 @@ def cheap_fingerprints(db, workspaces, *, checks):
 
     current_toolchain = digest(toolchain(quota_policy_limit()))
     departments = {}
-    organisations = {}
-    department_revisions = {}
+    revision_stamps = {}
     result = {}
     for workspace in workspaces:
         check = (checks or {}).get(workspace.id) or {}
@@ -521,18 +513,18 @@ def cheap_fingerprints(db, workspaces, *, checks):
         department = departments.get(workspace.department_id)
         if department is None:
             department = departments[workspace.department_id] = db.get(m.Department, workspace.department_id)
-        organisation = organisations.get(department.organisation_id)
-        if organisation is None:
-            organisation = organisations[department.organisation_id] = db.get(m.Organisation, department.organisation_id)
-        revisions = department_revisions.get(organisation.id)
-        if revisions is None:
-            revisions = department_revisions[organisation.id] = sorted(
-                [row.id, row.revision, row.catalogue_revision]
-                for row in db.scalars(select(m.Department).where(m.Department.organisation_id == organisation.id)))
-        if (currency_match(hint, {'input_revision': organisation.input_revision,
-                      'availability_revision': organisation.availability_revision,
-                      'content_revision': workspace.content_revision,
-                      'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace)})
+        organisation_id = department.organisation_id
+        if organisation_id not in revision_stamps:
+            # Read current revisions even when the request retains the settings rows.
+            rows = db.execute(select(m.Department.id, m.Department.revision, m.Department.catalogue_revision,
+                m.Organisation.input_revision, m.Organisation.availability_revision)
+                .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
+                .where(m.Department.organisation_id == organisation_id).order_by(m.Department.id)).all()
+            revision_stamps[organisation_id] = {
+                'input_revision': rows[0].input_revision, 'availability_revision': rows[0].availability_revision,
+                'department_revisions': [list(row[:3]) for row in rows]}
+        if (currency_match(hint, {**revision_stamps[organisation_id], 'content_revision': workspace.content_revision,
+                      'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
             result[workspace.id] = manifest['token']
@@ -848,7 +840,7 @@ def hint_with_event_local_date(db, workspace, hint, organisation):
     return {**hint, **({'event_local_date': value} if value is not None else {})}
 
 
-def currency_hint(db, workspace):
+def currency_hint(db, workspace, *, mandatory_rules=True):
     """Return the compact source currency stored with a feasibility receipt.
 
     Activation admission only needs to prove that the receipt was built from
@@ -865,6 +857,7 @@ def currency_hint(db, workspace):
         'availability_revision': organisation.availability_revision,
         'content_revision': workspace.content_revision,
         'baseline': _baseline_hint(db, workspace),
+        **(draft_policy_hint(workspace) if mandatory_rules else {}),
     }, organisation)
     return current
 
@@ -953,12 +946,13 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = False, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = True, own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
+    draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
     baseline = None
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
@@ -973,8 +967,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             validity_baseline = {key: saved_inputs.get(key) or {} for key in LIVE_VALIDITY_SOURCES}
             # Drafts keep the captured department inputs even when callers prepared a live shared-input batch.
             # A draft may add a local duty after capture. Keep only the referenced
-            # catalogue rows needed to interpret that local content; department
-            # policy/configuration remains frozen in the baseline.
+            # catalogue rows needed to interpret that local content. The captured
+            # policy/configuration is the basis for the overlay below.
             own_ids = list(db.scalars(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)))
             if own_ids:
                 refs = db.execute(select(m.Shift.assignment_type_id, m.Shift.location_id)
@@ -1003,11 +997,13 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=mandatory_rules, validity_baseline=validity_baseline)
+                                              include_mandatory=bool(draft_rules), validity_baseline=validity_baseline)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
     result = DomainSnapshot(result, read_quality=read_quality)
+    if draft_rules:
+        result['_draft_policy_basis'] = draft_rules['draft_policy_basis']
     if result['organisation']['id'] != org.id:
         raise ValueError('Snapshot inputs belong to another organisation')
     department_ids = result.pop('department_ids')
@@ -1320,28 +1316,61 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     return result
 
 
+def preparation_stamp(db, workspace):
+    """Complete bounded source currency, checked again under the serialized writer."""
+    from .services.planning import validation_stamp
+    from packages.domain.input_manifest import digest, toolchain
+    department = db.get(m.Department, workspace.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    # Retain weak-identity-map parents for the entire pass.
+    db.info.setdefault('_preparation_parents', {}).update({department.id: department, organisation.id: organisation})
+    revisions = list(db.execute(select(m.Department.id, m.Department.revision, m.Department.catalogue_revision)
+                    .where(m.Department.organisation_id == organisation.id).order_by(m.Department.id)))
+    return {**currency_hint(db, workspace), 'validation_stamp': validation_stamp(db, workspace),
+            'department_revisions': [list(row) for row in revisions],
+            'toolchain': digest(toolchain(quota_policy_limit()))}
+
+
 def domain_snapshot(db, workspace, *args, **kwargs):
-    """Preparation may speculate on frozen inputs; final writes always acquire current relational inputs."""
+    """Reuse detached preparation inputs only after checking current relational currency."""
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
     supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'include_fairness', 'include_objectives',
                                          'include_fairness_history'} or value is None
                                  for key, value in kwargs.items())
+    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
+        db.flush()
+        index = state['next_snapshot']
+        state['next_snapshot'] += 1
+        stamp = preparation_stamp(db, workspace)
+        key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
+                             'stamp': stamp})
+        cached = state['prepared_snapshots'].get(index)
+        if cached and cached[0] == key and currency_match(stamp, stamp):
+            return pickle.loads(cached[1])
+        from .errors import require
+        require(not state['replay'], 'STALE_INPUTS',
+                'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
+                409, {'recoverable': True})
+        value = _domain_snapshot(db, workspace, *args, **kwargs)
+        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+        return value
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)
     db.flush()
     key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs})
     if state and not state['replay']:
-        # This cache lives only for the rolled-back preparation. Replay uses a fresh transaction/cache.
-        cache, epoch = state['snapshots'], None
+        # Reuse across rollback rounds at the same check position. Later checks may
+        # follow assignment writes that leave the workspace row unchanged.
+        cache, epoch = state['snapshots'], state['next_check']
     else:
         cache, epoch = db.info.setdefault('write_domain_snapshots', {}), writer.get('snapshot_epoch', 0)
         # A new write epoch can never reuse an earlier snapshot. Drop its pickle
         # buffers immediately instead of retaining every full copy until commit.
         if cache and next(iter(cache))[0] != epoch:
             cache.clear()
-        key = (epoch, key)
+    key = (epoch, key)
     if key not in cache:
         value = _domain_snapshot(db, workspace, *args, **kwargs)
         # Bytes are produced here only; preserve graph types/aliases without repeated Python deep copies.

@@ -290,7 +290,7 @@ def test_every_side_panel_has_the_resize_handle_on_desktop_only(browser, live_se
         check('tag')
         close_panels(page)
         navigate(page, 'rules')
-        page.get_by_role('button', name='Open Duties per week', exact=True).click()
+        page.get_by_role('button', name='Duties per week lines', exact=True).click()
         page.get_by_role('button', name='Open line 1 of Duties per week', exact=True).click()
         expect(page.locator('.rc-line-panel')).to_be_visible()
         check('rule-line')
