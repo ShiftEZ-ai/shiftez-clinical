@@ -1,5 +1,7 @@
 """One visible gate for malformed reviewed quarantines."""
+from collections import Counter
 from datetime import date, datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -17,6 +19,32 @@ def test_reviewed_quarantine_is_valid_and_current():
     registry = entries(Path(__file__).with_name("quarantine.json"), today)
     for row in expired_entries(registry, today):
         print(f"Expired quarantine remains active: {row['nodeid']}, issue {row['issue']}")
+
+
+def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
+    root = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(str(root / ".github/scripts"))
+    import working_policy as policy
+
+    # Exact known-failures bytes at the migration base, available even in a squash or shallow checkout.
+    raw = (Path(__file__).parent / "fixtures/known_failures_before_quarantine.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == (
+        "0e4b5d48e8ba5e68f37141d049e67ddf998932dd5b6b7dc3a6b97f4041d2a569")
+    source = json.loads(raw)
+    expected = {row["node"]: row["class"] for row in source["fails"] + source["unstable"]}
+    new_q = (root / policy.QUARANTINE).read_bytes()
+    new_kf = (root / policy.KNOWN).read_bytes()
+    policy.quarantine_change(b"[]\n", new_q, raw, new_kf)
+    assert policy.removal_only(raw, new_kf)
+    assert {row["nodeid"]: row["reason"].partition(":")[0] for row in json.loads(new_q)} == expected
+    assert json.loads(new_kf) == {**source, "fails": [], "unstable": []}
+
+
+def test_the_quarantine_migration_counts_each_class():
+    rows = json.loads(Path(__file__).with_name("quarantine.json").read_bytes())
+    counts = Counter(row["reason"].partition(":")[0] for row in rows)
+    assert counts == {"baseline": 388, "baseline-error": 26, "unstable": 33}
+    assert sum(row["blocker"] for row in rows) == 0
 
 
 def registry_row(name, issue, *, expires="2000-01-02", kind="baseline", blocker=False):
