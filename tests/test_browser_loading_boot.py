@@ -2,9 +2,10 @@
 name on both axes on every viewport and theme, breathes calmly (still under reduced motion), and a module that never
 answers shows only its moving line, then one quiet "Still loading · 0:15" under it after 15 s (no Retry while it may still
 answer), then "Didn’t load in 1:00. Retry" (F-L1, DL-045). A live update that changes roles
-never closes an open form (F-L2)."""
+never closes an open form or any other dialog, and the restart after it says why (F-L2)."""
 import json
 import re
+from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import expect
 from .test_browser import browser, live_server, sign_in, navigate, bundle_file, route_fetch  # noqa: F401
@@ -102,5 +103,45 @@ def test_a_role_change_waits_for_an_open_form(browser, live_server):
         page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
         expect(dialog).to_be_visible()
         expect(dialog.get_by_role('radio', name='Other request')).to_be_checked()
+    finally:
+        context.close()
+
+
+def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
+    """F-L2: a real role change never removes a dialog, even one without changes (the browser can close one for a task
+    before it opens again); the restart waits until no dialog is left, then says why the page started again."""
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        page.route('**/api/events', lambda route: route.abort())  # no live stream: the 10 s check reads the pulse
+
+        def other_roles(route):
+            response = route_fetch(route)
+            pulse = response.json()
+            pulse['roles'] = sorted({*pulse['roles'], 'auditor'})
+            route.fulfill(response=response, body=json.dumps(pulse))
+        page.clock.install()
+        page.reload()
+        navigate(page, 'requests')
+        page.evaluate('() => document.activeElement?.blur()')
+        page.keyboard.press('?')
+        dialog = page.get_by_role('dialog', name='Keyboard shortcuts')
+        expect(dialog).to_be_visible()
+        reads = []
+        page.on('request', lambda r: reads.append(r.url) if r.method == 'GET' and urlsplit(r.url).path == '/api/me' else None)
+        page.route('**/api/pulse*', other_roles)
+        with page.expect_response('**/api/pulse*'):
+            page.clock.run_for(11000)
+            page.clock.run_for(11000)
+        page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+        expect(dialog).to_be_visible()
+        assert reads == []  # held: no restart under the dialog
+        # The kept pulse is replayed from memory; the restart's own pulse reads the account's real roles again.
+        page.unroute('**/api/pulse*')
+        with page.expect_response(lambda r: r.request.method == 'GET' and urlsplit(r.url).path == '/api/me'):
+            dialog.get_by_role('button', name='Close dialog').click()
+            page.clock.run_for(11000)
+        expect(page.get_by_role('status').filter(has_text='Your access changed.')).to_be_visible()
+        expect(dialog).to_have_count(0)
+        assert len(reads) == 1, reads
     finally:
         context.close()
