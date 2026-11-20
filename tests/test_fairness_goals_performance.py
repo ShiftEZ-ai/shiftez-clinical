@@ -10,6 +10,7 @@ from apps.api.db import transaction
 from apps.api.services import fairness
 from apps.api import snapshots
 from tests.test_backend_scale import measure
+from tests.test_fix_list_performance import backend
 from tests.test_lead_history_activation_performance import lead_history_case
 from tests.test_performance_budget import python_budget
 
@@ -69,8 +70,8 @@ def command(h, workspace, kind, role='coordinator'):
     return response.json()
 
 
-@pytest.mark.postgres
-def test_supervision_fairness_goals_at_department_scale(pg, monkeypatch, request):
+def test_supervision_fairness_goals_at_department_scale(backend, monkeypatch, request):
+    pg = backend
     workspace = lifecycle_case(pg, supervision=True)
     original, acquired = snapshots._domain_snapshot, []
     def once(*args, **kwargs):

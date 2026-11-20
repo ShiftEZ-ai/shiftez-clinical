@@ -2994,7 +2994,7 @@ def create_app(settings: Settings | None = None, engine=None):
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
-            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on)
+            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on, stamp=tag)
 
     @app.get("/api/fairness/exposure", response_model=s.FairnessExposure)
     def fairness_exposure(request: Request, response: Response, rows: str | None = Query(None, max_length=20000), cols: str | None = Query(None, max_length=20000),

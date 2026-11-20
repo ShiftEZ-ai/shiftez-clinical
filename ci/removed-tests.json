@@ -63,6 +63,11 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_fairness_goals_performance.py::test_supervision_fairness_goals_at_department_scale",
+      "owner": "maintainer",
+      "reason": "Renamed by parametrisation over SQLite and PostgreSQL (it ran on PostgreSQL only); every assertion remains in both parameters."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
@@ -71,6 +76,11 @@
       "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
+    },
+    {
+      "node": "tests/test_perf_sweep_payloads.py::test_department_fix_list_evidence_is_lazy_and_version_bound",
+      "owner": "maintainer",
+      "reason": "Renamed by parametrisation over SQLite and PostgreSQL (it ran on PostgreSQL only); every assertion remains in both parameters."
     },
     {
       "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-dabioglbkkkcninpiihdhnmocljhclgabjgogbbndhojhkceomgddckibmhkceep]",
@@ -101,6 +111,11 @@
       "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
       "owner": "maintainer",
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_residency.py::test_plan_and_notes_batch_reads_at_department_scale",
+      "owner": "maintainer",
+      "reason": "Renamed by parametrisation over SQLite and PostgreSQL; every assertion remains in both parameters."
     },
     {
       "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
