@@ -1,4 +1,5 @@
-from datetime import date
+import json
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy import event, select
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.snapshots import shift_record, workspace_shifts
+from tests.test_backend_scale import scale_department
 
 
 def test_projection_json_preserves_fastapi_wire_values():
@@ -26,6 +28,12 @@ def test_workspace_shifts_batch_reads_without_constructing_assignments(request, 
     workspace = h.shift(h.workspace(), people=[h.seed['people'][0]])['workspace']
     workspace = h.shift(workspace, start='2026-10-05T12:00:00Z', end='2026-10-05T13:00:00Z',
                         people=[h.seed['people'][1]])['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        assignment = db.scalar(select(m.Assignment).join(m.Shift).where(m.Shift.workspace_id == workspace['id'])
+                               .order_by(m.Assignment.start))
+        assignment.source_at = datetime.fromisoformat('2026-10-05T09:01:02.123456+00:00')
+        assignment.fixed = True
+        assignment.segments = [{'start': assignment.source_at.isoformat(), 'end': '2026-10-05T10:00:00+00:00'}]
     assignment_inits = []
     selects = []
 
@@ -80,3 +88,27 @@ def test_department_scale_shift_links_use_the_workspace_in_both_arms(scale_harne
     assert len(shifts) >= 500
     assert all(shift['service_ids'] and shift['participants'] for shift in shifts)
     assert counts == [(2, 2)]
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_department_shift_links_do_not_decode_whole_rows(scale_harness, backend, monkeypatch):
+    h = scale_harness(backend)
+    workspace, _, _, _ = scale_department(h)
+    whole_row_decodes = 0
+    loads = json.loads
+
+    def count_link_records(encoded, *args, **kwargs):
+        nonlocal whole_row_decodes
+        value = loads(encoded, *args, **kwargs)
+        if isinstance(value, dict) and 'shift_id' in value and ('person_id' in value or 'service_id' in value):
+            whole_row_decodes += 1
+        return value
+
+    monkeypatch.setattr(json, 'loads', count_link_records)
+    with transaction(h.app.state.engine) as db:
+        shifts = workspace_shifts(db, workspace['id'])
+
+    assert len(shifts) == 768
+    assert sum(len(row['service_ids']) for row in shifts) == 768
+    assert sum(len(row['participants']) for row in shifts) == 2304
+    assert whole_row_decodes == 0, f'{whole_row_decodes} whole link rows decoded from JSON'
