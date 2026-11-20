@@ -18,7 +18,7 @@ from packages.contracts.schemas import TypeDefinition
 from .recurrence import inactive
 from .participation import presence_intervals
 from .conditions import (active_rules, bind_level_window, conditions_match, scope_tree, counting_key, counting_views,
-                         scope_matches_throughout, scope_has_duty_witness, ScopeContextLimit, SCOPE_CONTEXT_BUDGET)
+                         quota_target_scope, scope_matches_throughout, scope_has_duty_witness, ScopeContextLimit, SCOPE_CONTEXT_BUDGET)
 from .input_manifest import digest
 from .time import aware, local_midnight, local_stamp, overlaps, union_hours, duration_hours
 
@@ -103,7 +103,8 @@ def applicable_policies(data):
             if rule['comparison'] == 'target':
                 # The rota window clips the evaluation without changing the accepted rule.
                 window['_target_rule_fingerprint'] = digest([
-                    policy.get('_source_policy_id', policy['id']), rule, policy['definition']['scope'], full])
+                    policy.get('_source_policy_id', policy['id']), rule, full, policy.get('starts_on'), policy.get('ends_on'),
+                    quota_target_scope(policy['definition']['scope'])])
             result.append(window)
             continue
         alignment = rule.get('window_alignment', 'rolling')
@@ -395,10 +396,26 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
               "empty_policy_ids": []}
     from .generation_scope import planning_population_people
     planning_people = planning_population_people(data)
+    overrides = {(row['policy_id'], row['person_id']): row
+                 for row in reversed(data['workspace'].get('target_overrides') or ())}
 
-    def unresolved(code, message, policy=None, person=None, **detail):
+    def unresolved(code, message, policy=None, person=None):
         report["complete"] = False
-        add(code, message, person=person, rule=policy["id"] if policy else None, **detail)
+        add(code, message, person=person, rule=policy["id"] if policy else None)
+
+    def stale_target(override, rule_name, *, reconfirm):
+        person = override['person_id']
+        person_name = data['people'][person]['display_name']
+        detail = {'adjustment_id': override.get('id'), 'person_name': person_name,
+                  'rule_name': rule_name, 'amount': override['amount']}
+        if reconfirm:
+            reason = 'The rule content changed.' if override.get('rule_fingerprints') else 'Its accepted rule content needs verification.'
+            message = f'Reconfirm the target adjustment for {person_name} under “{rule_name}”. {reason}'
+            detail['reconfirm_command'] = 'workspace.target_override'
+        else:
+            message = f'Remove the target adjustment for {person_name} under “{rule_name}”. This rule has no adjustable target for this rota.'
+        report['complete'] = False
+        add('TARGET_OVERRIDE_STALE', message, person=person, rule=override['policy_id'], extra=detail)
 
     context = data.get("quota_context", {})
     if len({p['id'] for p in policies}) > data.get("quota_policy_limit", MAX_POLICIES) or len(policies) > MAX_ROWS or context.get("limit_exceeded"):
@@ -521,17 +538,12 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                 calculation = {'default_amount': rule['amount'], 'reference_days': rule['reference_days'],
                                'department_days': full_days, 'unrounded_amount': round(raw, 4), 'rounding': rule['rounding'],
                                'calculated_amount': amount, 'rule_fingerprint': rule_fingerprint}
-            override = next((r for r in data['workspace'].get('target_overrides', [])
-                             if r['policy_id'] == policy['id'] and r['person_id'] == pid), None) if calculation and comparison == 'target' else None
+            override = overrides.get((policy['id'], pid)) if calculation and comparison == 'target' else None
             fingerprints = (override or {}).get('rule_fingerprints') or ()
             stale_override = bool(override and rule_fingerprint not in fingerprints)
             person_name = data['people'][pid]['display_name']
             if stale_override:
-                reason = 'The rule content changed.' if fingerprints else 'Its accepted rule content needs verification.'
-                unresolved('TARGET_OVERRIDE_STALE',
-                           f"Reconfirm the target adjustment for {person_name} under “{policy['name']}”. {reason}", policy, pid,
-                           extra={'adjustment_id': override.get('id'), 'person_name': person_name, 'rule_name': policy['name'],
-                                  'amount': override['amount'], 'reconfirm_command': 'workspace.target_override'})
+                stale_target(override, policy['name'], reconfirm=True)
                 calculation['override_stale'] = True
             proration = None
             try:
@@ -597,6 +609,23 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                         **({"line": row["line"]} if row["line"] is not None else {})},
                     **({'explanation': explain(policy, pid, a, b, amount, state=state, actual=row['actual'], proration=proration)}
                        if explain is not None and not exc else {}))
+    if overrides and policy_ids is None and line_id is None and data.get('quota_subjects') is None and not data.get('quota_dates'):
+        # Scoped checks cannot establish that every applicable copy was examined.
+        source_ids = {p['id']: p['_source_policy_id'] for p in policies
+                      if p.get('_source_policy_id') and (p.get('_live_zero') or p.get('_live_mandatory_recheck'))}
+        used, unused = set(), {}
+        for row in report['rows']:
+            person = row['person_id']
+            key = source_ids.get(row['policy_id'], row['policy_id']), person
+            if key not in overrides or (planning_people is not None and person not in planning_people):
+                continue
+            if 'override_amount' in row.get('target_calculation', {}):
+                used.add(key)
+            else:
+                unused.setdefault(key, row['policy_name'])
+        for key, rule_name in unused.items():
+            if key not in used:
+                stale_target(overrides[key], rule_name, reconfirm=False)
     # A template's default copy may match nobody while its per-person lines do.
     counted = {r["policy_id"] for r in report["rows"]}
     report["empty_policy_ids"] = [i for i in report["empty_policy_ids"] if i not in counted]

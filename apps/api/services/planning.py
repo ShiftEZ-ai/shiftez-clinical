@@ -1632,11 +1632,11 @@ def target_override(db, actor, command):
         workspace.target_overrides = remaining
         return changed(db, actor, workspace, before, value.reason)
     report = command_evaluate(db, domain_snapshot(db, workspace)).get('quota_report') or {}
-    source_targets = [row for row in report.get('rows', []) if row['policy_id'] == policy.id
-                      and row['comparison'] == 'target' and row.get('target_calculation') is not None]
-    require(source_targets,
+    source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy.id]
+    source_targets = [row for row in source_rows if row['comparison'] == 'target']
+    require(source_targets or not source_rows,
             'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
-    targets = [row for row in source_targets if row['person_id'] == value.person_id]
+    targets = [row for row in source_targets if row['person_id'] == value.person_id and row.get('target_calculation') is not None]
     require(targets,
             'TARGET_NOT_APPLICABLE', 'This target does not apply to this employee and rota')
     for row in targets:
