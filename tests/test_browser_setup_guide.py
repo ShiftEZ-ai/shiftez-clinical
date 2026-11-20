@@ -8,6 +8,7 @@ import pytest
 from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, sign_in, navigate  # noqa: F401
+from .test_browser_configuration_shell import expect_coordinator_sections
 from .test_browser_w3_setup_today import finish_required_steps, empty_department, waiting_rule
 from .test_resources_calendars import update
 
@@ -52,8 +53,7 @@ def test_coordinator_keeps_data_health_beside_tags_on_a_phone(browser, live_serv
     try:
         navigate(page, 'configuration/tags')
         nav = page.locator('.config-nav')
-        # Data health, Scheduling groups (D19: planners read them), Tags, Auto-schedule (their score review)
-        expect(nav.locator('[data-section]')).to_have_count(4)
+        expect_coordinator_sections(page, h)
         expect(nav.locator('[data-section=auto_schedule]')).to_have_count(1)
         expect(nav.locator('[data-section=setup]')).to_have_text('Data health')
         expect(nav.locator('[data-section=scheduling_groups]')).to_have_count(1)
