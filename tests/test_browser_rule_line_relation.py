@@ -262,6 +262,7 @@ def test_changing_the_department_rule_from_relax_keeps_the_rule_on_or_off(browse
         row = page.locator('#main .fix-list > li[data-cause=c-relax]')
         row.get_by_role('button', name=FIX_ACTION_LABELS['adjust_rota'], exact=True).click()
         panel = page.locator('.rc-line-panel')
+        panel.get_by_label('Justification', exact=True).fill('A standing exception for this person')  # required in the panel
         panel.locator('.rc-lp-foot').get_by_role('button', name='Change the department rule…', exact=True).click()
         dialog = page.get_by_role('dialog', name='Change Workload limit')
         dialog.get_by_label('Reason', exact=True).fill('A standing exception for this person')
@@ -270,10 +271,11 @@ def test_changing_the_department_rule_from_relax_keeps_the_rule_on_or_off(browse
     finally:
         context.close()
     assert len(proposals) == 1 and proposals[0]['on'] is on, proposals
-    assert proposals[0]['settings'] == rule['definition']['rule'].get('settings', {})
+    before = h.get('approver', '/api/rules/catalogue/workload_limit/detail?version=2')['entry']  # the client reads the detail
+    settings = before['rule']['definition']['rule'].get('settings')  # the client's settingsOf: the rule's, else the defaults
+    assert proposals[0]['settings'] == (settings if settings is not None else before.get('default_settings') or {})
     assert {l['id'] for l in proposals[0]['lines']} >= {broad['id'], mine['id']}
-    entry = next(e for e in h.get('approver', '/api/rules/catalogue?version=2')['entries'] if e['id'] == 'workload_limit')
-    proposed = entry['proposed']
+    proposed = before['proposed']
     assert proposed['definition']['rule'].get('on', True) is on
     active = h.command('approver', 'policy.activate', {'reason': 'Independent review'}, proposed['id'], proposed['revision'])['record']
     assert active['definition']['rule'].get('on', True) is on
