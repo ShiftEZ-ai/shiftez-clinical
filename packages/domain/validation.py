@@ -526,6 +526,13 @@ def person_free(scope):
     return not any(scope.get(k) for k in PERSON_SCOPE_KEYS) and not has_person_lines(scope_tree(scope))
 
 
+def policy_scope_key(policy):
+    """Policy inputs to applicability; the caller supplies the person, date and rule context."""
+    return ('policy_scope', policy['status'], policy.get('active', True), policy['department_id'],
+            policy.get('starts_on'), policy.get('ends_on'),
+            json.dumps(policy['definition']['scope'], sort_keys=True, default=str))
+
+
 def policy_applies(data, policy, person_id, shift, a, b):
     cache = data.get('_policy_applies_cache')
     if cache is None:
@@ -537,9 +544,7 @@ def policy_applies(data, policy, person_id, shift, a, b):
         scope = policy['definition']['scope']
         # Matching ignores names, strength and rule numbers. Equal immutable matching inputs share one answer
         # while every policy retains its own identity entry and the canonical predicate below remains authoritative.
-        signature = ('policy_scope', policy['status'], policy.get('active', True), policy['department_id'],
-                     policy.get('starts_on'), policy.get('ends_on'),
-                     json.dumps(scope, sort_keys=True, default=str))
+        signature = policy_scope_key(policy)
         entry = cache[id(policy)] = (policy, person_free(scope), cache.setdefault(signature, {}))
     # A scheduling run (generation.py) also keeps answers per person: it asks about the same people on the same sessions
     # at every trial. The solver asks about everyone everywhere once, where keeping them would only cost memory.
