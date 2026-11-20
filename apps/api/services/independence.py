@@ -8,6 +8,7 @@ from sqlalchemy import and_, case, false, or_, select, true
 from packages.contracts import schemas as s
 from apps.api import models as m
 from apps.api.auth import current_roles, department_roles, effective_roles, held_roles, role_bindings
+from apps.api.db import current_request_parent
 from apps.api.errors import require
 from apps.api.serialization import record
 from .common import scoped, expected, history, history_version, outbox
@@ -61,7 +62,7 @@ def ensure_subject(db, actor, action, subjects, entered_by, message, reason=None
 
 def today(db, department_id):
     department = db.get(m.Department, department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    organisation = current_request_parent(db, m.Organisation, department.organisation_id)
     return m.now().astimezone(ZoneInfo(organisation.timezone)).date()
 
 
@@ -81,9 +82,17 @@ def permission_state(permission, day):
 
 def active_permissions(db, department_id, day=None):
     day = day or today(db, department_id)
-    rows = db.scalars(select(m.SelfApprovalPermission).where(
+    query = select(m.SelfApprovalPermission).where(
         m.SelfApprovalPermission.department_id == department_id, m.SelfApprovalPermission.revoked.is_(False),
-        m.SelfApprovalPermission.starts_on <= day))
+        m.SelfApprovalPermission.starts_on <= day)
+    memo = db.info.get('_request_authority')
+    key = (m.SelfApprovalPermission, department_id, day)
+    if memo is None or not db.autoflush or db.new or db.dirty or db.deleted:
+        rows = db.scalars(query)
+    else:
+        if key not in memo:
+            memo[key] = tuple(db.scalars(query))
+        rows = memo[key]
     return [p for p in rows if permission_state(p, day) == "active"]
 
 

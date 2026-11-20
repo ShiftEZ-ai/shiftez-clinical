@@ -27,7 +27,7 @@ def test_approval_leaves_the_rules_page_on_its_skeleton_then_the_new_rules(brows
         dialog = page.get_by_role('dialog')
         dialog.get_by_label('Reason', exact=True).fill('Rest after every duty')
         dialog.get_by_role('button', name='Propose', exact=True).click()
-        expect(page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')).to_contain_text('Waiting for approval')
+        expect(page.locator('#main li.rt-item').filter(has_text='Rest between duties')).to_contain_text('Waiting for approval')
     finally:
         proposer.close()
     context, page = sign_in(browser, live_server, 'approver')
@@ -43,7 +43,7 @@ def test_approval_leaves_the_rules_page_on_its_skeleton_then_the_new_rules(brows
 
         page.route(re.compile(r'/api/rules/catalogue(\?|$)'), catalogue)
         navigate(page, 'rules')
-        row = page.locator('#main tr.rt-rule').filter(has_text='Rest between duties')
+        row = page.locator('#main li.rt-item').filter(has_text='Rest between duties')
         expect(row).to_contain_text('Waiting for approval')
         held['on'] = True
         waiting = next(e for e in h.get('approver', '/api/rules/catalogue')['entries']
@@ -52,7 +52,7 @@ def test_approval_leaves_the_rules_page_on_its_skeleton_then_the_new_rules(brows
         # The live redraw meets the rebuild: the page's skeleton, never the rules from before, and no overlay.
         main = page.locator('#main')
         expect(main.locator('.loading.page-sk')).to_be_visible(timeout=30_000)
-        expect(main.locator('tr.rt-rule')).to_have_count(0)
+        expect(main.locator('li.rt-item')).to_have_count(0)
         expect(main.locator('[inert]')).to_have_count(0)
         expect(page.get_by_role('dialog')).to_have_count(0)
         assert held['answered'] >= 1

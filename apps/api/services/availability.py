@@ -8,6 +8,7 @@ from packages.domain.time import aware
 from packages.domain.validation import rotation_leave_findings
 from apps.api import models as m
 from apps.api.auth import require_role, person_access
+from apps.api.db import current_request_parent
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import inactive_series_shift_ids
@@ -801,7 +802,8 @@ def requests_etag(db, actor, representation):
 
 
 def _recorded_details(db, actor):
-    return actor.permits("coordinator", "approver") and db.get(m.Department, actor.department_id).leave_reason_display == "details"
+    return actor.permits("coordinator", "approver") and current_request_parent(
+        db, m.Department, actor.department_id).leave_reason_display == "details"
 
 
 def _stage_order(source):
@@ -1028,7 +1030,7 @@ def absence_report_record(row, actor=None, db=None):
     if row.kind == 'absence_report':
         details = {key: value for key, value in (row.details or {}).items()
                    if key not in {'reporter_category', 'note', 'document_reference'}}
-        department = db.get(m.Department, actor.department_id) if actor and db else None
+        department = current_request_parent(db, m.Department, actor.department_id) if actor and db else None
         wording = leave_wording(department, actor, row)
         item['details'] = {**details, **{key: wording[key] for key in ('absence_reason', 'note', 'document_reference')
                                          if key in wording}}

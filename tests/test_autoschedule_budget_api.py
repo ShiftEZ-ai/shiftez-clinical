@@ -417,6 +417,60 @@ def test_continue_from_department_defaults_reuses_the_actual_prepared_solver_mod
     assert result['preparation_reused'] and result['validation']['valid']
 
 
+def test_continue_rebuilds_preparation_when_a_mandatory_overtime_cap_is_activated(budget_h, monkeypatch):
+    from ortools.sat.python import cp_model
+    from packages.domain.solver_control import SolverControl
+    from packages.domain.solver_resume import resume_key
+    from tests.test_overtime_extra_cover import extra_type
+
+    h = budget_h
+    duty_type = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    draft = h.shift(h.workspace(), typ=duty_type['id'], people=[])['workspace']
+    job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
+                    revision=draft['revision'])['job']
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(SolverControl, 'solve', lambda *args: cp_model.UNKNOWN)
+        assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine) as db:
+        original = db.get(m.Job, job['id'])
+        assert original.result['status'] == 'needs_more_time'
+        saved_key = original.resume_state['key']
+        saved_fingerprint = original.input_fingerprint
+    h.policy({'kind': 'block_quota', 'starts_on': draft['starts_on'], 'ends_on': draft['ends_on'],
+              'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'}, {'person_id': person},
+             checked=[draft])
+    continued = h.command('coordinator', 'job.continue', {'minutes': 1, 'reason': 'Continue prepared search'},
+                          job['id'])['job']
+    with transaction(h.app.state.engine, write=True) as db:
+        resumed = db.get(m.Job, continued['id'])
+        # A recovered attempt can have persisted an incumbent under its original fingerprint.
+        resumed.result = {'status': 'candidate_feasible', 'input_fingerprint': saved_fingerprint,
+                          'checkpointed': True}
+    solve = SolverControl.solve
+
+    def verify_reprepared(control, solver, model, tier):
+        with transaction(h.app.state.engine) as db:
+            running = db.get(m.Job, continued['id'])
+            assert running.input_fingerprint != saved_fingerprint
+            assert running.result is None
+        return solve(control, solver, model, tier)
+
+    monkeypatch.setattr(SolverControl, 'solve', verify_reprepared)
+    assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine) as db:
+        resumed = db.get(m.Job, continued['id'])
+        assert resumed.input_fingerprint != saved_fingerprint
+        assert resumed.input_fingerprint == resumed.input_snapshot['input_manifest']['token']
+        options = GenerationOptions.model_validate(resumed.input_snapshot['generation_options'])
+        assert resume_key(resumed.input_snapshot, options, False, False) != saved_key
+        assert resumed.result['status'] == 'candidate_feasible'
+        assert resumed.result['additions'] == [] and resumed.result['validation']['valid']
+        assert not resumed.result['preparation_reused']
+        assert db.get(m.Job, job['id']).input_fingerprint == saved_fingerprint
+
+
 def test_new_run_and_continue_have_one_cache_owner_even_with_a_fixed_clock(budget_h, monkeypatch):
     h = budget_h
     fixed = m.now()

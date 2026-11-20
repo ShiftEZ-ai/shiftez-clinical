@@ -333,6 +333,9 @@ jobs:
       bootstrap: ${{ needs.checks.outputs.bootstrap }}
   result:
     name: CI result
+    permissions:
+      actions: read
+      contents: read
     env:
       TRUSTED_BOOTSTRAP: ${{ needs.checks.outputs.bootstrap }}
     needs:
@@ -396,6 +399,7 @@ jobs:
         path: .candidate-evidence/test-results
     - name: Trusted source/node/canary/allowance verdict
       env:
+        GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
         NEEDS_JSON: ${{ toJSON(needs) }}
         CANDIDATE_SHA: ${{ needs.checks.outputs.candidate_sha }}
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}
@@ -515,6 +519,13 @@ jobs:
             raise SystemExit('Exactly one migration head is required')
         print(heads[0])
         PY
+    - name: Pipeline tests under the merge-group event
+      if: github.event_name == 'pull_request'
+      run: |
+        # The trusted readers branch on GITHUB_EVENT_NAME, so a pipeline test that passes only under pull_request
+        # reaches the queue and refuses every merge group; run those tests once more as a merge group would.
+        files=$(grep -lE 'make_known_failures|trusted_ci|trusted_verdict|canary_evidence|latest_reports|node_census|hosted_ci|working_policy' tests/test_*.py | grep -v '^tests/test_browser')
+        GITHUB_EVENT_NAME=merge_group python -m pytest -q -p no:cacheprovider $files
 'on':
   pull_request:
     types:
