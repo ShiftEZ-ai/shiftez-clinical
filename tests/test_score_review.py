@@ -4,6 +4,9 @@ import pytest
 
 
 def test_score_settings_are_versioned_projected_and_undoable(h):
+    initial = h.get('admin', '/api/score-settings')
+    h.command('admin', 'score.settings', {'definition': initial['definition'],
+        'reason': 'Persist the initial score calibration'}, h.seed['department_id'])
     current = h.get('admin', '/api/score-settings')
     assert current['definition']['strengths'] == {'low': 1, 'medium': 3, 'high': 10, 'critical': 30}
     changed = h.command('admin', 'score.settings', {

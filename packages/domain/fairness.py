@@ -23,7 +23,7 @@ from .score_normalization import goal_cost, share_satisfaction
 from .recurrence import inactive
 
 # v9: bind Fair share adjustments, scoped targets and offered-overtime distributions.
-VERSION = 'fairness-v10'
+VERSION = 'fairness-v11'
 # Stored with new publications; absent on issued evidence means the pre-D53 interpretation.
 SEMANTICS = 2
 # Ledger metric keys; a key may carry one filter: 'duties|type:<id>', 'duties|service:<id>' or 'duties|location:<id>'

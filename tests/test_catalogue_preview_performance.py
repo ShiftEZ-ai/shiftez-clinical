@@ -1,6 +1,7 @@
 """Small exact-impact oracles and deterministic work guards; no host timing or scale fixture."""
 from copy import deepcopy
 import json
+import re
 
 import pytest
 from sqlalchemy import event
@@ -98,6 +99,9 @@ def test_comparisons_preserve_explained_contract_and_bound_explanation_work(caus
                       'comparison_checks': 2, 'explained_checks': full_checks}))
 
 
+DEPARTMENT_ROW = re.compile(r'FROM departments\s+WHERE departments\.id = ')
+
+
 @pytest.mark.parametrize('published', [False, True])
 @pytest.mark.parametrize('operation', ['create', 'archive'])
 def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation):
@@ -175,6 +179,8 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
     # Each catalogue table is scanned once per phase, independently of the workspace count.
     scans = {mode: sum('FROM people' in sql for sql in statements) for mode, statements in reads.items()}
     assert scans == {'shared': 2, 'fresh': len(captures)}
-    assert len(reads['shared']) < len(reads['fresh'])
+    # Department rows retained by the request serve both paths alike, so compare the catalogue reads only.
+    catalogue = {mode: [sql for sql in statements if not DEPARTMENT_ROW.search(sql)] for mode, statements in reads.items()}
+    assert len(catalogue['shared']) < len(catalogue['fresh'])
     print(json.dumps({'operation': operation, 'published': published, 'people_scans': scans,
                       'selects': {mode: len(statements) for mode, statements in reads.items()}}))

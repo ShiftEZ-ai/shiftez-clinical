@@ -409,6 +409,11 @@ def test_generation_rejects_broader_populations_and_accepts_owned_conditions(h):
         'generation_scope': {'conditions': tree(owned)}}, revision=workspace['revision'])['job']
     assert accepted['status'] == 'queued'
     h.command('coordinator', 'job.cancel', {'reason': REASON}, accepted['id'])
+    settings(h, coordinator_identity_ids=[h.seed['identities']['coordinator']])
+    selected = h.command('admin', 'job.create', {**payload, 'planning_group_version_id': group_row['id'],
+        'lookahead': 'none'}, revision=workspace['revision'])['job']
+    assert selected['status'] == 'queued'
+    h.command('admin', 'job.cancel', {'reason': REASON}, selected['id'])
     unrestricted = h.command('admin', 'job.create', payload, revision=workspace['revision'])['job']
     assert unrestricted['status'] == 'queued'
 
@@ -468,6 +473,7 @@ def test_sole_admin_queues_and_applies_whole_department_generation(h, with_group
     if with_groups:
         group(h, owner='admin')
         assert h.get('admin', '/api/planning-settings')['definition']['coordinator_identity_ids'] == [admin]
+        settings(h, coordinator_identity_ids=[h.seed['identities']['coordinator']])
     detail = h.get('admin', '/api/workspaces/' + workspace['id'])
     assert detail['workspace']['purpose'] == ('integrated' if with_groups else 'alternative')
 

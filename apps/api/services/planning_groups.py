@@ -354,8 +354,11 @@ def require_change_authority(db, actor, workspace, before, *, after=None, sessio
     return authority
 
 
-def guard_changes(db, actor, workspace, before, *, review_rejection=False):
+def guard_changes(db, actor, workspace, before, *, review_rejection=False, generation_apply=False):
     """All manual, import, bulk, Undo and generation writes converge on planning.changed."""
+    if generation_apply and actor.permits('admin'):
+        require_edit(db, actor, workspace)
+        return _AUTHORITY_COMPLETE
     context = require_change_authority(db, actor, workspace, before, review_rejection=review_rejection)
     db.info['_planning_group_authority_contexts'].pop(workspace.id, None)
     if context is _AUTHORITY_COMPLETE:
@@ -383,7 +386,8 @@ def guard_changes(db, actor, workspace, before, *, review_rejection=False):
 def _generation_group_context(db, actor, workspace, value):
     """Acquire the cheap group decision shared by enqueue and worker preparation."""
     access = require_edit(db, actor, workspace)
-    if access['purpose'] != 'integrated' or (coordinator(db, actor) and value.planning_group_version_id is None):
+    if access['purpose'] != 'integrated' or (value.planning_group_version_id is None
+            and (actor.permits('admin') or coordinator(db, actor))):
         require(value.planning_group_version_id is None, 'GROUP_VERSION_SCOPE', 'Group runs require the department rota', 422)
         return None, None, {}, False
     versions = load_groups(db, actor.department_id, starts_on=workspace.starts_on, ends_on=workspace.ends_on)
@@ -394,7 +398,7 @@ def _generation_group_context(db, actor, workspace, value):
         return None, versions, {}, False
     definition = selected_group['definition']
     editors = set(definition['owner_identity_ids']) | set(definition.get('co_editor_identity_ids', []))
-    require(definition.get('active', True) and actor.identity_id in editors,
+    require(definition.get('active', True) and (actor.permits('admin') or actor.identity_id in editors),
             'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
     default_scope = value.generation_scope is None
     scope = value.generation_scope or s.GenerationScope(conditions=definition['membership'])
@@ -429,6 +433,8 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
         population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope)
     if check_nonempty:
         requested['generation_session_ids'] = selected
+        if selected_group:
+            requested['planning_population'] = population
         require(has_population(requested), 'INVALID_SCOPE',
                 'No people match this group during the selected duties; change the population or duty selection', 422)
     if selected_group:
@@ -446,6 +452,7 @@ def _generation_population(snapshot, requested, selected, versions, actor, selec
     from packages.domain.generation_scope import population_allows
 
     resolver = GroupResolver(snapshot, versions)
+    admin = actor.permits('admin')
     population = {}
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
@@ -455,9 +462,10 @@ def _generation_population(snapshot, requested, selected, versions, actor, selec
             if not population_allows(requested, shift, pid):
                 continue
             primary = resolver.primary(pid, shift)
-            if default_scope and (primary is None or primary['group_id'] != selected_group['group_id']):
+            if selected_group is not None and (default_scope or admin) and (
+                    primary is None or primary['group_id'] != selected_group['group_id']):
                 continue
-            require(primary is not None and actor.identity_id in primary['editor_identity_ids']
+            require(primary is not None and (admin or actor.identity_id in primary['editor_identity_ids'])
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
@@ -475,7 +483,8 @@ def guard_frozen_generation(db, actor, workspace, snapshot):
 def guard_job_control(db, actor, job):
     workspace = scoped(db, m.Workspace, job.workspace_id, actor)
     access = require_edit(db, actor, workspace)
-    require(access['purpose'] != 'integrated' or coordinator(db, actor) or job.requested_by == actor.identity_id,
+    require(job.requested_by == actor.identity_id or (job.kind == 'generation' and actor.permits('admin'))
+            or unrestricted(db, actor, access),
             'GROUP_JOB_AUTHORITY', 'Control your own group run or ask the Rota Coordinator', 403)
 
 

@@ -135,8 +135,9 @@ def test_a_clash_relaxes_the_cap_for_this_rota_inline_with_its_effect(browser, l
         page.route(re.compile(r'/api/policies/[^/]+/relax$'), seed)
         page.route(re.compile(r'/api/workspaces/[^/]+/adjustment-effect$'), effect)
         # A proven clash leaves places open: its candidate has gaps (isClash reads a valid candidate as no clash).
-        _inject(page, lambda job: job['result'].update(conflict=conflict,
-            generation_outcome={**(job['result'].get('generation_outcome') or {}), 'candidate': 'with_gaps'},
+        _inject(page, lambda job: job['result'].update(conflict=conflict, status='candidate_with_gaps',
+            validation={**job['result']['validation'], 'valid': False, 'error_count': CLASH_CAUSE['checks']},
+            generation_outcome={'status': 'INFEASIBLE', 'candidate': 'with_gaps', 'strict_status': 'INFEASIBLE', 'optimality_proven': False},
             fix_list_before={'summary': {**SUMMARY, 'must': 3, 'places_open': 7}},
             fix_list_after={'summary': {**SUMMARY, 'must': 1, 'places_open': 7}, 'causes': [CLASH_CAUSE]},
             open_places_before=7, open_places_after=7))
@@ -160,7 +161,7 @@ def test_a_clash_relaxes_the_cap_for_this_rota_inline_with_its_effect(browser, l
         expect(go).to_be_disabled()  # a reason is required
         relax.get_by_label('Reason').fill('One extra weekend covers December’s 24 senior places.')
         expect(go).to_be_enabled()
-        expect(clash.get_by_role('button', name='Who can work it', exact=True)).to_be_visible()  # the server's review_eligibility people
+        expect(clash.get_by_role('button', name='Open People', exact=True)).to_be_visible()  # the server's review_eligibility people
         expect(clash).to_contain_text('A permanent change goes through approval')
         expect(clash).not_to_contain_text('Keep the')  # minimum cover is a safety kind (D3)
         expect(clash.locator('.clash-safety')).to_have_text('People of a kind per session is a safety rule, so these places can’t be submitted open.')

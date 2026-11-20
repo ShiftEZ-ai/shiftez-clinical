@@ -94,13 +94,13 @@ def test_every_mark_the_rules_renderers_draw_has_a_key_entry():
     # A line's check badge is marked by its issue kind: each kind the cell names is an entry.
     used |= set(re.findall(r"x\.kind==='(\w+)'\?'⚠", CATALOGUE))
     # The DEV Rules tree does not draw a Must fix badge; dead mustFixMark was removed with that behaviour.
-    assert {'safety', 'attention', 'waiting', 'off', 'tag', 'not', 'proposed', 'starts_later', 'no_one',
-            'gives_way'} <= used, sorted(used)
+    assert {'safety', 'attention', 'waiting', 'off', 'tag', 'not', 'proposed', 'starts_later', 'no_one'} <= used, sorted(used)
+    assert not {'gives_way', 'overlap_seen'} & used, sorted(used)
     missing = used - keys
     assert not missing, f'Marks drawn without a Rules key entry (RULE_MARKS): {sorted(missing)}'
     # The key enters exactly what is tagged: both Rules views stamp what they draw.
     assert 'stamp<T extends Child|Child[]>(nodes:T):T' in CATALOGUE
-    assert 'return marks.stamp(out);' in TREE and 'return marks.stamp([row]);' in TREE
+    assert 'return marks.stamp(item);' in TREE  # the one-row Rules list stamps each list item once; lines use marks.numbers/flags.
     for cell in ('marks.stamp(reachNode(', 'marks.stamp(checkCell(', 'return key?key.stamp(list):list;'):
         assert cell in CATALOGUE, cell
 
@@ -123,4 +123,5 @@ def test_a_rank_is_never_offered_a_problem_colour_and_its_key_swatch_is_rank_tin
     assert re.findall(r'var\(--(\w+)\)', swatch) and all(re.fullmatch(r'rank\d+', t) for t in re.findall(r'var\(--(\w+)\)', swatch))
     assert "rank:[()=>el('span',{class:'lg-swatch lg-ranks'" in CATALOGUE
     # A pill holding several ranks never reads as a Group (purple): its rank tint, or neutral words.
-    assert "return v.length&&v.every(x=>/category_ids?$/.test(x.field))?tones.size===1?[...tones][0]:'all':'group';" in CATALOGUE
+    assert "if(new Set(t.map(x=>x[0]+'|'+x[1])).size===1&&t.length)return t[0];" in CATALOGUE
+    assert "return v.length&&v.every(x=>/category_ids?$/.test(x.field))?['dotted','lg-ranks']:['group',''];" in CATALOGUE
