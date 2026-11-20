@@ -2250,18 +2250,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-cneflnfndhjgkipajclafdpoelocnealdjgepjbfcahmoipmfmijaonmbdpghlfh]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_rule_catalogue_payload_performance.py::test_department_preview_and_proposal_are_summaries_with_full_evidence_on_demand",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
