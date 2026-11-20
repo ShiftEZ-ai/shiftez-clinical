@@ -293,6 +293,26 @@ def url(w):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_submitted_map_shows_a_cap_tightened_after_submit(h):
+    person = h.seed['people'][0]
+    scope = {'person_id': person}
+    cap = {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}
+    captured = h.policy(cap, scope)
+    w = h.workspace()
+    for day in ('04', '05', '06'):
+        w = h.shift(w, f'2026-10-{day}T08:00:00+03:00', f'2026-10-{day}T12:00:00+03:00', people=[person])['workspace']
+    submitted = h.lifecycle(w, 'submit')['workspace']
+    assert submitted['status'] == 'submitted'
+    before = entry(h.get('approver', url(submitted)), captured['id'])
+    assert before['binding_value'] is None
+
+    activate(h, propose(h, {**cap, 'maximum': 2}, scope, replaces_id=captured['id']))
+
+    displayed = entry(h.get('approver', url(submitted)), captured['id'])
+    assert (displayed['number']['value'], displayed['binding_value']) == (5, 2)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_draft_map_keeps_captured_values_and_shows_live_mandatory_caps(h):
     from apps.api import models as m
     from apps.api.db import transaction
