@@ -310,10 +310,11 @@ def days(db, actor, start, end, if_none_match=None, collection_filter=None):
                  "days": dict(sorted(result.items())), "events": events, "date_set_markers": markers}
 
 
-def published_shifts(db, pubs, zone, start, end, before=None, person_id=None, *, shift_ids=None):
+def published_shifts(db, pubs, zone, start, end, before=None, person_id=None, *, shift_ids=None, hydrated=None):
     """The sessions of these publications in force and overlapping [start, end), from Shift rows (never snapshots), each
     with its `publication_id`. `before`: {publication id: day} ends a publication earlier (a replacement being shown);
-    `person_id`: only that person's sessions, closures left out (staff). One reader for every windowed view."""
+    `person_id`: only that person's sessions, closures left out (staff). `hydrated`: raw records from this read.
+    One reader for every windowed view."""
     if not pubs:
         return []
     S, A = m.Shift, m.Assignment
@@ -326,7 +327,14 @@ def published_shifts(db, pubs, zone, start, end, before=None, person_id=None, *,
     if shift_ids is not None:
         query = query.where(S.id.in_(shift_ids))
     owner = {p.workspace_id: p.id for p in pubs}
-    rows = shift_records(db, db.scalars(query))
+    source = db.scalars(query)
+    if hydrated is None:
+        rows = shift_records(db, source)
+    else:
+        selected = list(source)
+        missing = (row for row in selected if row.id not in hydrated)
+        hydrated.update((row['id'], row) for row in shift_records(db, missing))
+        rows = [hydrated[row.id] for row in selected]
     by_workspace = {}
     for r in rows:
         by_workspace.setdefault(r['workspace_id'], []).append(r)
@@ -461,15 +469,18 @@ def sessions(db, actor, start, end, exclude=(), if_none_match=None, collection_f
     organisation = db.get(m.Organisation, actor.organisation_id)
     department = db.get(m.Department, actor.department_id)
     filtering = _collection_context(db, actor, collection_filter, zone)
-    shifts = published_shifts(db, [row for _, row, _ in rows], zone, start, end, person_id=None if planner else actor.person_id)
+    hydrated = {}
+    shifts = published_shifts(db, [row for _, row, _ in rows], zone, start, end,
+                             person_id=None if planner else actor.person_id, hydrated=hydrated)
     coverage, findings = [], []
     visible_ids = {shift['id'] for shift in shifts}
     if shifts:
         lo, hi = min(aware(shift['start']) for shift in shifts), max(aware(shift['end']) for shift in shifts)
         first, last = overlap_dates(lo, hi, zone)
         _, peers = sources(db, actor, first, last, drafts=False, exclude=exclude)
-        shifts += [shift for shift in published_shifts(db, [row for _, row, _ in peers], zone, lo, hi,
-            person_id=None if planner else actor.person_id) if shift['id'] not in visible_ids]
+        peer_shifts = published_shifts(db, [row for _, row, _ in peers], zone, lo, hi,
+                                      person_id=None if planner else actor.person_id, hydrated=hydrated)
+        shifts.extend(shift for shift in peer_shifts if shift['id'] not in visible_ids)
     shifts = [shift for shift in session_overlap_flags(db, actor, shifts, zone, team=planner)
               if shift['id'] in visible_ids]
     # Source warnings and the rendered duties share one current overlap evaluation, before display filtering.
