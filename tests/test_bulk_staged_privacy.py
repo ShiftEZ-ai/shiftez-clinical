@@ -4,10 +4,12 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.errors import Problem
 from apps.api.services import bulk_staged
 from .governance_support import identity
 from .test_bulk_selection import actor
@@ -81,6 +83,42 @@ def test_staged_list_and_reopen_follow_owner_policy_and_planning_role(staged_h, 
     assert (PRIVATE_REASON in str(reopened.json())) == expected
     with transaction(h.app.state.engine) as db:
         assert db.get(m.BulkStaged, staged["id"]).payload["items"][0]["payload"]["private_reason"] == PRIVATE_REASON
+
+
+@pytest.mark.parametrize("failure", ["value_error", "validation_error", "problem"])
+@pytest.mark.parametrize("role", ["requesting_coordinator", "coordinator"])
+def test_reopen_selection_errors_keep_only_public_messages(staged_h, monkeypatch, failure, role):
+    from apps.api.services import bulk_selection
+
+    h = staged_h
+    identity(h, "requesting_coordinator", ["coordinator"], person=h.seed["people"][0])
+    payload = {**absence(h), "source_selection": {"collection": "people"}}
+    staged = keep(h, payload, owner="requesting_coordinator")
+    sentinel = "synthetic-selection-input-sentinel"
+    domain_message = "This column cannot be read"
+    error = ValueError(sentinel)
+    if failure == "validation_error":
+        error = ValidationError.from_exception_data("selection", [
+            {"type": "int_parsing", "loc": ("filter",), "input": sentinel}])
+    elif failure == "problem":
+        error = Problem(403, "FORBIDDEN", domain_message)
+
+    def refuse(*args):
+        raise error
+
+    monkeypatch.setattr(bulk_selection, "resolve", refuse)
+    response = h.client(role).post(f"/api/bulk/staged/{staged['id']}/reopen")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    message = (domain_message if failure == "problem" else
+               "This selection can no longer be resolved; refresh or select again.")
+    assert body["selection_resolution"] == {"unavailable": True, "message": message}
+    assert sentinel not in response.text
+    assert "Traceback" not in response.text
+    assert body["staged"]["id"] == staged["id"] and body["preview"]["preview"] is True
+    assert (PRIVATE_REASON in response.text) == (role == "requesting_coordinator")
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.BulkStaged, staged["id"]).payload == staged["payload"]
 
 
 def test_projection_covers_nested_private_keys_and_field_change_encodings(staged_h, monkeypatch):
