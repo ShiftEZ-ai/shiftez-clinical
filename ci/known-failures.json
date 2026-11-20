@@ -2142,18 +2142,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_published_operational.py::test_changed_or_missing_amendment_demand_has_no_invented_target_and_refreshes_tags[case-ejgbnmemlcakaebghfhfppibdkiafcddhibkfkpmmcfndjbjgmkjioljangpjdlp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_published_operational.py::test_changed_or_missing_amendment_demand_has_no_invented_target_and_refreshes_tags[case-meldjcpeimdhhcagmfbjelfdjoppbhpdalnoclkhgoloabadbhjbhphmeocdidom]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
