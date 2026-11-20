@@ -103,6 +103,26 @@
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
     },
     {
+      "node": "tests/test_policy_v33.py::V33Tests::test_expiry_only_renewal_is_ci_eligible_but_remains_tier1",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_only_edit_is_refused_and_remains_tier1, which keeps the Tier 1 assertion and asserts that only a removal is accepted."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_real_verdict_accepts_reviewed_renewal_without_lifting_ci",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_edit_is_refused_while_the_reader_honors_a_valid_existing_entry, which asserts the refusal and that the verdict still honours a valid existing entry."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_renewal_cannot_add_or_change_metadata",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_allowance_edit_cannot_add_or_change_metadata, which keeps every metadata case."
+    },
+    {
+      "node": "tests/test_policy_v34.py::ImporterV34Tests::test_expiry_extension_changes_nothing_except_existing_date",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
+    },
+    {
       "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
       "owner": "maintainer",
       "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
@@ -116,6 +136,21 @@
       "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
       "owner": "maintainer",
       "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_continues_for_audited_route_and_standalone_still_refuses",
+      "owner": "maintainer",
+      "reason": "Tier 1 changes no longer need the audited maintenance route: CODEOWNERS and code-owner review replace that refusal. The clean product change and the Tier 1 findings on both events are asserted in test_guard_allows_changes_in_owned_tier1_paths."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_stops_on_other_policy_refusals_before_fan_out",
+      "owner": "maintainer",
+      "reason": "The Checks-step wrapper that ran the guard for the audited Tier 1 route is removed with that route; the same four refusals (known-failures addition, agent file, syntax error, preview history) are asserted directly against the guard in test_guard_keeps_other_policy_refusals."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
+      "owner": "maintainer",
+      "reason": "A change to an owned Tier 1 path is no longer refused; it passes the guard and is flagged for code-owner review. The Tier 1 and Tier 2 findings are asserted in test_guard_keeps_owned_tier1_and_tier2_findings."
     },
     {
       "node": "tests/test_worker_write_timeouts.py::test_heartbeat_timeouts_cancel_only_near_lease_expiry",
