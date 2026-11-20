@@ -1460,8 +1460,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
                                 duty_cache=_duty_cache(db, [row[0]]) if source == "swap" else None,
                                 assignment_types=assignment_types)
                 item["decided_at"] = _decision_times(db, [(source, row[0])])[(source, row[0].id)]
-                item["self_approved"] = source in ("request", "pattern") and row[0].id in _self_approved(
-                    db, actor.department_id, [row[0].id] if getattr(row[0], "decided_by", None) else [])
+                if source in ("request", "pattern") and row[0].id in _self_approved(
+                        db, actor.department_id, [row[0].id] if getattr(row[0], "decided_by", None) else []):
+                    item["self_approved"] = True
                 if source in ('request', 'availability'):
                     leave_types.names(db, actor.department_id, [item])
                 _impact(db, actor, [item])
@@ -1524,7 +1525,8 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
                                                    and getattr(row, "decided_by", None)])
     for item in items:
         item["decided_at"] = decisions[(item["source"], item["id"])]
-        item["self_approved"] = item["id"] in own
+        if item["id"] in own:  # only when true: every other projection of a request item stays as it was
+            item["self_approved"] = True
     leave_types.names(db, actor.department_id, [i for i in items if i['source'] in ('request', 'availability')])
     if stages:  # a swap whose offer lapsed since it was listed as waiting
         items = [i for i in items if i["stage"] in stages]

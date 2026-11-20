@@ -32,6 +32,6 @@ def test_an_independent_decision_is_not_marked(h):
     h.command('coordinator', 'availability_pattern.decide', {'decision': 'approve', 'reason': 'Independent review'},
               row['id'], row['revision'])
     detail = h.get('coordinator', '/api/requests/all?id=' + row['id'])
-    assert detail['item']['self_approved'] is False
+    assert 'self_approved' not in detail['item']  # an independent decision leaves the item as it always was
     assert not any(e.get('self_approved') for e in detail['history'])
-    assert listed(h, 'coordinator', row['id'])['self_approved'] is False
+    assert 'self_approved' not in listed(h, 'coordinator', row['id'])
