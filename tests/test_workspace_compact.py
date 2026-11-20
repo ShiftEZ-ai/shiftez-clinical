@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 
 from sqlalchemy import delete, event
+from sqlalchemy.orm import Session
 
 from apps.api import models as m
 from apps.api.db import retry_write, transaction
@@ -251,3 +252,27 @@ def test_department_scale_compact_byte_budget(backend):
     # Measured 178,450 bytes with 192 coverage rows; retain headroom for review/diagnostic metadata.
     assert len(window.content) < 256 * 1024
     assert client.get(path + '/parts', params=query, headers={'if-none-match': window.headers['etag']}).status_code == 304
+
+
+def test_department_scale_full_read_projects_sessions_without_orm_loads(backend):
+    h = backend
+    workspace, _, *_ = scale_department(h)
+    client = h.client('coordinator')
+    path = f"/api/workspaces/{workspace['id']}"
+    first = client.get(path)
+    assert first.status_code == 200
+    loaded = []
+
+    def count_shifts(_session, row):
+        if isinstance(row, m.Shift):
+            loaded.append(row.id)
+
+    event.listen(Session, 'loaded_as_persistent', count_shifts)
+    try:
+        repeated = client.get(path)
+    finally:
+        event.remove(Session, 'loaded_as_persistent', count_shifts)
+    assert repeated.status_code == 200
+    assert len(repeated.json()['shifts']) == 768
+    assert repeated.content == first.content
+    assert len(loaded) <= 4, f'Loaded {len(loaded)} ORM sessions to serve the full rota'
