@@ -15,7 +15,7 @@ def selected_calendar(h):
     return chosen
 
 
-def partial_rota(h, selected=True):
+def partial_quota(h, selected):
     if selected:
         calendar_id = selected_calendar(h)['id']
     else:
@@ -25,9 +25,14 @@ def partial_rota(h, selected=True):
     policy = h.policy({'kind': 'block_quota', 'starts_on': '2026-09-27', 'ends_on': '2026-10-04',
         'window_alignment': 'calendar_week', 'metric': 'duties', 'comparison': 'range',
         'amount': 6, 'maximum_amount': 6}, {'person_id': person})
-    workspace = h.workspace('Partial week quota API', '2026-10-01', '2026-10-04')
     proration = {'configured_amount': 6, 'amount': 2, 'working_days': 1, 'full_working_days': 5,
         'starts_on': '2026-09-27', 'ends_on': '2026-10-04', 'calendar_id': calendar_id, 'rounding': 'up'}
+    return policy, person, proration
+
+
+def partial_rota(h, selected=True):
+    policy, person, proration = partial_quota(h, selected)
+    workspace = h.workspace('Partial week quota API', '2026-10-01', proration['ends_on'])
     return workspace, policy, person, proration
 
 

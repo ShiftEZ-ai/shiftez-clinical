@@ -1944,30 +1944,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_person_workload_proration.py::test_person_workload_and_fairness_keep_shared_partial_week_amounts[case-anfnieognijlecdpdponfnobjkbiknkacggnkckhncmmbjgnpnlepnnchdahinij]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_person_workload_proration.py::test_person_workload_and_fairness_keep_shared_partial_week_amounts[case-hlmahekeddflngmbimfphkkakecilkhpfaamnbgckeplifdlnaghfefmkglbncap]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_person_workload_proration.py::test_person_workload_and_fairness_keep_shared_partial_week_amounts[case-lbnpjafjkmgnfaphapkapmogbdbeelhhdalfmdkmhodhkbgmlbeojoahaipiammn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_person_workload_proration.py::test_person_workload_and_fairness_keep_shared_partial_week_amounts[case-nicefpebmamaplmbclaeednabbeanlmoafgnbpgpkokikkepabehbfnbnhnbjljg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2665,12 +2641,6 @@
     {
       "class": "baseline",
       "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-noadkecedmfmgmjbdbfkckjgngajloimldbbglaldfjmlankdcogdlhgkhabbipj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_converted_listed_prorated_target_keeps_operative_header_and_override_admission[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },

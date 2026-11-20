@@ -11,7 +11,7 @@ from sqlalchemy.orm import defer
 from apps.api import models as m
 from apps.api.errors import require
 from apps.api.serialization import record
-from apps.api.snapshots import project_series_shifts, workspace_shifts
+from apps.api.snapshots import domain_snapshot, project_series_shifts, workspace_shifts
 from packages.contracts.schemas import ConsecutiveWeekends
 from packages.domain.conditions import active_rules, change_points, scope_tree, selector_sources, with_tags, scope_matches_throughout
 from packages.domain.fairness import local_day, offered_amounts, weekend_of
@@ -19,7 +19,7 @@ from packages.domain.overlap import overlap_dates
 from packages.domain.quotas import applicable_policies, evaluate_quotas, period_bounds, project_report, quota_contribution
 from packages.domain.reports import workload
 from packages.domain.time import aware, local_midnight, now, overlaps, union_hours
-from packages.domain.validation import ancestor_ids, exception_for, index_person_rows, policy_applies, within_dates, workload_windows
+from packages.domain.validation import ancestor_ids, evaluate, exception_for, index_person_rows, policy_applies, within_dates, workload_windows
 from .common import scoped
 from .fairness import READERS, department_data, period_records, viewer
 from .person_record import require_person
@@ -175,8 +175,10 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
                                        for p in data['policies']) if q is not None]
     bounds = [(local_midnight(first - timedelta(days=32), organisation.timezone),
                local_midnight(last + timedelta(days=32), organisation.timezone))]
-    for _, start, end in periods:
-        for policy in applicable_policies(_period_data(data, start, end)):
+    for key, start, end in periods:
+        if chosen and key == 'this_rota':
+            continue
+        for policy in applicable_policies(_period_data({**data, 'policies': current_policies}, start, end)):
             try:
                 bounds.append(period_bounds(policy, organisation.timezone))
             except ValueError:
@@ -216,7 +218,11 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
             period_data['policies'] = current_policies
             period_data['workspace']['target_overrides'] = []
         period_data['policies'] = active_rules(period_data['policies'], context=period_data)
-        quota = evaluate_quotas(period_data, lambda *args, **kwargs: None, ancestor_ids, exception_for)
+        if chosen and key == 'this_rota':
+            draft = domain_snapshot(db, chosen, include_fairness=False, include_objectives=False)
+            quota = evaluate({**draft, 'quota_subjects': {person_id}}, quota_only=True, explain_findings=False)['quota_report']
+        else:
+            quota = evaluate_quotas(period_data, lambda *args, **kwargs: None, ancestor_ids, exception_for)
         result.append({'key': key, 'starts_on': first.isoformat(), 'ends_on': last.isoformat(),
                        'totals': _totals(period_data, person_id, first, last),
                        'weekends': _weekends(period_data, person_id, first, last),
@@ -227,7 +233,7 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
                      'Current publications only; a selected draft replaces its acknowledged publication. '
                      'Rota adjustments and target overrides apply only to the rota comparison. '
                      'Limit windows use reserved duty envelopes. External work, attendance and payroll are excluded.',
-            'rule_basis': 'current_rules', 'unsupported_metrics': ['nights'],
+            'rule_basis': 'captured_rota_quotas' if chosen else 'current_rules', 'unsupported_metrics': ['nights'],
             'workspace': ({'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                            'starts_on': workspace.starts_on.isoformat(), 'ends_on': (hi if chosen else until(rota)).isoformat()}
                           if workspace else None), 'periods': result}
