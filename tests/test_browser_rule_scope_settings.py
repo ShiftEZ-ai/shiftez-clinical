@@ -37,9 +37,7 @@ def own_choice(pop, label, choice):
 
 def propose_and_approve(page, h, entry, text):
     page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ change')).click()
-    tick = page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended', exact=True)
-    if tick.count():
-        tick.check()
+    expect(page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended', exact=True)).to_have_count(0)
     reason(page, text, 'Propose')
     expect(page.locator('#main .rc-waiting')).to_contain_text('waiting for approval')
     proposed = next(e for e in h.get('approver', '/api/rules/catalogue?include_hidden=true')['entries'] if e['id'] == entry)['proposed']

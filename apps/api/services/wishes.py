@@ -248,6 +248,7 @@ def override(db, actor, command):
         row.revision += 1
     wish.revision += 1
     bump_inputs(db, actor)
+    db.flush()  # a new override gets its id and defaults before the reply is built
     return {'wish': record(wish), 'override': record(row), 'previous': previous}
 
 
@@ -567,12 +568,14 @@ def snapshot_wishes(db, department_ids, workspace, until=None, *, wish_debt_cap=
 def _applied_reasons(db, workspace, data, wishes):
     """Reuse the immutable receipt only for its full, unchanged application, including its effective wish weights."""
     from packages.domain.time import aware
+    from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation
+    _, _, applied_revision = job_reconciliation_columns()
     job = db.scalar(select(m.Job).where(m.Job.workspace_id == workspace.id, m.Job.kind == "generation",
-        m.Job.status == "applied", m.Job.result["applied_content_revision"].as_integer() == workspace.content_revision)
+        m.Job.status == "applied", applied_revision == workspace.content_revision)
         .order_by(m.Job.completed_at.desc(), m.Job.id).limit(1))
     if job is None or "declined_wishes" not in job.result:
         return None
-    reconciliation = job.result.get('reconciliation')
+    reconciliation = job_result_with_reconciliation(job, job.result).get('reconciliation')
     if reconciliation is not None:
         # Reconciled work gets freshly computed reasons; original full-proposal reasons stay historical.
         return None

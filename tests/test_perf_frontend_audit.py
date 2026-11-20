@@ -27,11 +27,11 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve
 const account=deferred(),lists=deferred(),calls=[];
 const flush=()=>new Promise(r=>setImmediate(r));  // every pending continuation runs (no time passes)
 let generation=0,me={roles:['coordinator']},accessRead={},inPlace=scenario==='local',
-    view=scenario==='local'?'schedule':'people',routeParts=[],plannerMemo={},refreshForeground=scenario!=='quiet',
+    view=scenario==='local'?'schedule':'people',routeParts=[],plannerMemo={},refreshForeground=scenario!=='quiet'?'people/':null,
     refreshFailed=false,refreshSkipped=false,redrawOwed=false,readCount=0,
     refreshScopes=scenario==='scoped-lists'?new Set(['rules']):undefined;
 const savedKinds=new Set(scenario==='local'?['shift.update']:[]);
-const sessionKey=()=>generation,readAfresh=()=>{},redraw=()=>calls.push('redraw'),
+const sessionKey=()=>generation,pageStep=()=>'people/',readAfresh=()=>{},redraw=()=>calls.push('redraw'),
     background=path=>{calls.push(path);return account.promise;},
     applyDisplay=()=>calls.push('display'),loadNavBadges=()=>calls.push('badges'),
     readerBusy=()=>scenario==='quiet',renderPage=()=>calls.push('render'),refreshRelated=async()=>undefined,showStale=()=>{},
