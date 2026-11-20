@@ -936,24 +936,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_rule_balance.py::test_read_only_roles_read_balance_as_a_fact[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-filfjglkkpihkpdkmogkjpaoaojnhjlkgoeohnfafppokhbpkpmmhkjckihhjmdm]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_rules_layout.py::test_draft_section_follows_the_schedule_then_a_draft_with_sessions_and_switches",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1789,12 +1771,6 @@
     {
       "class": "baseline",
       "node": "tests/test_person_workload_proration.py::test_person_workload_and_fairness_keep_shared_partial_week_amounts[case-nicefpebmamaplmbclaeednabbeanlmoafgnbpgpkokikkepabehbfnbnhnbjljg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
