@@ -649,6 +649,8 @@ select{--caret-left:linear-gradient(to top right,transparent calc(50% - 1px),var
 :is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 :is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):disabled{background:var(--line-2);cursor:not-allowed}
 :is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):disabled:checked{background:var(--muted)}
+/* Forced colours drop the track and knob backgrounds; draw both in system colours so On/Off stays visible (WCAG 1.4.11). */
+@media (forced-colors:active){:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch){forced-color-adjust:none;border:1px solid CanvasText;background:Canvas}:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch)::after{background:CanvasText;box-shadow:none}:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):checked{background:Highlight}:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):checked::after{background:HighlightText}:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):disabled{border-color:GrayText;background:Canvas}:is(:is(.form-grid,.switch-group)>.checkbox input,input.switch):disabled::after{background:GrayText}}
 @media (prefers-reduced-motion:reduce){:is(.form-grid,.switch-group)>.checkbox input,:is(.form-grid,.switch-group)>.checkbox input::after{transition:none}}
 .multi-field{border:1px solid var(--line);border-radius:var(--r);padding:10px 14px 12px;min-width:0}
 .multi-field legend{padding:0 4px}
@@ -2140,7 +2142,7 @@ th .bulk-check,td>.bulk-check{margin:0}
   .topbar .planner-bar>.grow{display:none}
   .topbar.has-planner>.mobile-menu{order:0}
   .topbar .planner-bar>.rota-switcher{order:1;flex:1 1 0;min-width:0}
-  .topbar .planner-bar>.rota-status{order:2}
+  .topbar .planner-bar>:is(.rota-status,.baseline-drift){order:2;flex:none}  /* row 1: the draft's stage and what changed under it */
   .topbar.has-planner>.actions{order:3}
   /* Row 2 (after a line break): icon + count pills, then icon-only actions (fitRow's 'tightest' step) */
   .topbar.has-planner{row-gap:2px}
@@ -2224,6 +2226,9 @@ th .bulk-check,td>.bulk-check{margin:0}
 .dt-tool.dt-saved{max-width:min(440px,100%)}
 .dt-view-warn{flex:none;display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:var(--r-full);background:var(--warn-soft);color:var(--warn-text);font-size:11.5px;font-weight:600}
 .dt-view-warn .icon{width:12px;height:12px}
+/* Only a view with a warning keeps its name whole and shrinks the warning; a plain name still shrinks with an ellipsis. */
+@media(max-width:720px){.dt-toolbar>.dt-saved:has(>.dt-view-warn:not(:empty))>.dt-tool-label{flex:0 0 auto;max-width:60%}.dt-toolbar>.dt-saved>.dt-view-warn{flex:0 1 auto;min-width:0;overflow:hidden}
+  .dt-view-warn-words{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .menu-item.warn>.icon:first-child{color:var(--warn-text)}
 .dt-pop-foot{display:flex;justify-content:flex-end;border-top:1px solid var(--line);margin:8px -8px -8px;padding:6px 8px}
 .dt-direction,.dt-layouts{margin:0 8px 6px}
@@ -3207,16 +3212,9 @@ meter:-moz-meter-sub-sub-optimum::-moz-meter-bar{background:var(--err)}
 .rk-rules,.rk-marks{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
 .rk-row{border-top:1px solid var(--line-soft)}
 .rk-conflicts{margin-bottom:8px}
-.rt-sentence{font-weight:500}
-.rt-rule-link-quiet{font-weight:400;font-size:12px;color:var(--muted)}
 .rt-letter{display:inline-block;min-width:1.4em;color:var(--accent-text)}
 .rt-conflict-in{display:flex;align-items:center;gap:8px;font-size:12.5px}
-.rt-people{margin:4px 0 8px}
-.rt-people-table th[scope=row]{font-weight:500;text-align:left}
-.rt-people-table .rt-p-person th[scope=row]{padding-left:20px;font-weight:400}
-.rt-people-cap{caption-side:top;text-align:right}
-.rt-people-cap:empty{display:none}
-@media print{.rt .dt-toolbar,.rt .dt-check,.rt-toggle-col,.rt .switch,.rt-conflict .button{display:none!important}.rt-rule-link-quiet{color:inherit}}
+@media print{.rt .dt-toolbar,.rt .dt-check,.rt .bulk-check,.rt-toggle,.rt .switch,.rt-ln-open,.rt-add,.rt-conflict .button{display:none!important}}
 .rk-row:first-child{border-top:0}
 .rk-row-head{width:100%;display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .rk-row-head:hover{background:var(--hover)}
@@ -4408,8 +4406,9 @@ tr.is-explained>td{background:var(--accent-soft)}
 .pill-pop li::marker{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
 .dt-wrap .pill-list,.dt-card-props .pill-list{flex-wrap:wrap}
 .dt-wrap .pill-list{align-items:flex-start}
-/* Expanded scopes need reading width; the native table viewport handles narrow screens. */
-.dt-table td.dt-wrap:has(.pill-list){width:340px;min-width:340px;max-width:340px}
+/* A wrapped scope wraps inside at most 340px; it never forces that width (two forced 340px cells once pushed a rule's
+   lines past 1440). */
+.dt-table td.dt-wrap:has(.pill-list){max-width:340px}
 .dt-table tr:has(>td.dt-wrap .pill-list)>td{vertical-align:top}
 .dt-wrap .pill-over{display:inline-flex}
 .dt-wrap .pill-more:not(.others){display:none}
@@ -4451,37 +4450,104 @@ tr.is-explained>td{background:var(--accent-soft)}
 .rp.all{background:var(--sub);color:var(--ink-2);border-color:var(--line-2)}
 .rp.group{background:var(--violet-bg);color:var(--violet-ink);border-color:color-mix(in srgb,var(--violet) 35%,transparent)}
 .rp.person{background:var(--sky-bg);color:var(--sky-ink);border-color:color-mix(in srgb,var(--sky) 35%,transparent)}
+.rp.dotted{background:var(--surface);color:var(--ink-2);border-color:var(--line-2)}
+.rp>.lg-swatch{margin-right:5px;vertical-align:-1px}
 .rp.place{background:var(--teal-bg);color:var(--teal-ink);border-color:color-mix(in srgb,var(--teal-c) 35%,transparent)}
 /* "not …": muted, never struck through (strikethrough means an old value in the approval diff, K2). */
 .rp.except{color:var(--muted);background:var(--sub);border-color:var(--line-2)}
 .rt-table{table-layout:auto}
 .rt-table td,.rt-table th{vertical-align:middle}
-.rt-toggle-col,.rt-rail{width:28px;padding-left:0;padding-right:0;text-align:center}
 .rt-toggle{width:24px;height:24px}  /* WCAG 2.5.8: a 24 px target */
 .rt-toggle .icon{width:14px;height:14px}
-.rt-rule>td{background:var(--subtle)}
-.rt-rule.is-off .rt-rule-link{color:var(--muted)}
-.rt-name-in{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rt-item.is-off .rt-rule-link{color:var(--muted)}
 .rt-rule-link{font-weight:650;color:var(--ink)}
-.rt-count{font-size:11.5px;font-weight:600;padding:1px 7px;border-radius:var(--r-full);background:var(--sub);color:var(--ink-2)}
 .rt-picked{font-size:12px;color:var(--accent-text);font-weight:550}
-.rt-family-name{display:inline-flex;align-items:center;gap:8px}
 .rt-n{display:inline-block;min-width:16px;font:500 11.5px/1 var(--mono);color:var(--muted);text-align:right;white-space:nowrap}
-.rt-rail{box-shadow:inset 13px 0 0 -12px var(--line-2)}
-.rt-line .rt-who.dt-wrap,.rt-line .rt-where.dt-wrap{max-width:340px}
-.rt-line>td:not(.dt-wrap){white-space:nowrap}
 .date-units{display:inline-flex;gap:4px;flex-wrap:wrap}
 .date-units>span{white-space:nowrap}
 .rule-valid{flex-wrap:nowrap}
 .dt-wrap .rule-valid,.rule-history-body .rule-valid,.rule-facts .rule-valid{flex-wrap:wrap}
-.rt-flags{text-align:right;white-space:nowrap}
-.rt-flag-list{display:inline-flex;gap:4px;align-items:center}
-.rt-open{width:32px}
 .rt-att{border:0;cursor:pointer;font:inherit;font-size:12px}
-.rt-new>td{padding-top:4px;padding-bottom:6px}
 .rt-add{font-size:12.5px;color:var(--muted)}
 .rt-add:hover{color:var(--accent-text)}
-tr.rc-changed>td{background:var(--info-soft)}
+/* The Rules list: one row per rule (name + one count line), its lines only when it is opened. No table and no
+   columns, so no column can be empty and nothing scrolls sideways at any width (Nothing overflows). */
+.rt-lhead{display:flex;align-items:center;gap:10px;min-height:34px;padding:2px 12px 2px 8px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted)}
+.rt-qhead{display:flex;align-items:center;gap:10px;min-height:30px;padding:2px 12px 2px 8px;background:var(--sub);border-bottom:1px solid var(--line)}
+.rt-qhead h3{margin:0;font-size:12.5px;font-weight:650;color:var(--ink)}
+.rt-lhead>:first-child,.rt-qhead>:first-child{width:24px;display:inline-flex;justify-content:center}
+.rt-list{list-style:none;margin:0;padding:0}
+.rt-item,.rt-conflict{border-bottom:1px solid var(--line)}
+.rt-conflict{padding:6px 12px 6px 50px}
+.rt-q:last-of-type .rt-list>:last-child{border-bottom:0}
+.rt-row{display:grid;grid-template-columns:24px 24px 34px minmax(0,1fr);align-items:center;column-gap:10px;padding:6px 12px 6px 8px}
+.rt-row>.bulk-check{justify-self:center;margin:0}
+.rt-main{min-width:0;display:grid;gap:1px}
+.rt-title{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+.rt-title .rt-rule-link{font-size:13.5px}
+.rt-levels{display:inline-flex;gap:4px}
+.rt-meta{font-size:12px;line-height:1.4;color:var(--muted);font-variant-numeric:tabular-nums}
+/* An opened rule: its lines, grouped by where. One grid for the whole rule (subgrid), so the numbers line up across groups;
+   a track with nothing in it collapses to nothing. */
+.rt-lines{display:grid;grid-template-columns:24px 3ch fit-content(320px) auto auto minmax(7rem,1fr) max-content;column-gap:10px;
+  padding:2px 12px 8px 50px;background:var(--subtle);border-top:1px solid var(--line-soft)}
+.rt-wh{grid-column:1/-1;display:flex;align-items:center;gap:8px;min-height:30px;padding-top:6px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.rt-wh-label{color:var(--muted);font-weight:500}
+.rt-help{width:24px;height:24px}.rt-help .icon{width:14px;height:14px}
+.rt-lns{grid-column:1/-1;display:grid;grid-template-columns:subgrid;list-style:none;margin:0;padding:0}
+.rt-ln{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:32px;border-top:1px solid var(--line-soft)}
+.rt-ln>.bulk-check{justify-self:center;margin:0}
+.rt-ln-who{min-width:0;display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
+/* a long pill (a rank list) stays inside the Who cell: it ellipsizes, with its full text in its title. It shrinks with
+   its pill item, so the shared list's 220px pill cap (.pill-list>.pill-item>.rp) never lets it spill over "+N". */
+.rt-ln-who .rp,.rt-ln-who .pill-list>.pill-item>.rp{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-ln-what{display:contents}
+/* an anchor line's exceptions, nested and indented under it (no side bar). */
+.rt-sub,.rt-exc{grid-column:1/-1;display:grid;grid-template-columns:subgrid}
+.rt-exc{list-style:none;margin:0;padding:0}
+.rt-exc .rt-ln-who,.rt-exc-who{padding-left:20px}
+.rt-exc-who{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
+/* A rule's lines fit at 1440 with nothing scrolling sideways: the words-and-pills cells wrap (the numbers stay one
+   phrase each); its own selector beats the shared table's nowrap cells, and only on this table. */
+[data-table=rule-line-db] .dt-table td:is([data-col=who],[data-col=where],[data-col=mode],[data-col=measure],[data-col=days],[data-col=valid],[data-col=note],[data-col=check]){white-space:normal}
+[data-table=rule-line-db] .dt-table td:is([data-col=who],[data-col=where]) .pill-list{flex-wrap:wrap}
+[data-table=rule-line-db] .dt-table td:is([data-col=who],[data-col=where],[data-col=check]) :is(.rp,.badge,button.rc-overlap){white-space:normal;height:auto}
+[data-table=rule-line-db] .dt-table td[data-col=valid] .rule-valid{flex-wrap:wrap}
+/* Their plain text too (Measure, Days, Note): the shared one-line clip would hold each at 32ch and widen the table. */
+[data-table=rule-line-db] .dt-table td:is([data-col=who],[data-col=where],[data-col=mode],[data-col=measure],[data-col=days],[data-col=valid],[data-col=note],[data-col=check]) .dt-clip{white-space:normal;overflow:visible;overflow-wrap:break-word}
+/* Its 13 columns fit beside the pinned navigation (1134px at 1440): denser cell sides, headings and Reach words wrap at
+   their spaces (the numbers stay one phrase each). */
+[data-table=rule-line-db] .dt-table td:not(.dt-check){padding-inline:8px}
+[data-table=rule-line-db] .dt-table th .dt-sort,[data-table=rule-line-db] .dt-table th[scope=col]:not(.dt-check):not(:has(>.dt-sort)){padding-inline:8px}
+[data-table=rule-line-db] .dt-table .dt-column-label{white-space:normal}
+[data-table=rule-line-db] .dt-table td[data-col=reach]{white-space:normal}
+.rt-always-word{grid-column:1/-1;padding:6px 0 2px 50px;font-size:12px;font-weight:600;color:var(--muted)}
+.rt-always{grid-column:1/-1;display:grid;grid-template-columns:subgrid;list-style:none;margin:0;padding:0}
+td .rt-always-word{padding:0;font-weight:500}
+.rt-ln-when{font-size:12px;color:var(--muted);white-space:nowrap}
+.rt-ln-num{font-size:13px;min-width:0}
+.rt-ln-num>.rule-num{white-space:nowrap}
+.rt-ln-flags{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+.rt-ln-flags>.muted{font-size:12px;color:var(--muted)}
+.rt-ln-open{display:inline-flex;align-items:center;gap:2px}
+.rt-ln-open .icon-button{width:24px;height:24px;font-size:13px}
+.rt-new{grid-column:1/-1;padding-top:6px}
+/* Phone (and a docked panel narrowing the page column): a line wraps to two rows, who over when · numbers · flags. */
+@container work (max-width:720px){
+  .rt-row{padding-inline:8px}
+  .rt-lines{display:block;padding:2px 8px 8px}
+  .rt-lns,.rt-sub,.rt-exc{display:block}
+  /* Its box stays (a line is picked on a phone too, as on the rule's page), then No. › who over what › open. */
+  .rt-ln{display:grid;grid-template-columns:24px 3ch minmax(0,1fr) max-content;column-gap:8px;row-gap:2px;padding:4px 0}
+  .rt-ln-who{grid-column:3;flex-wrap:wrap}
+  .rt-ln-open{grid-column:4;grid-row:1}
+  .rt-ln-what{grid-column:3;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
+  .rt-ln-when:empty{display:none}
+  .rt-ln-num{white-space:normal}
+  .rt-wh{flex-wrap:wrap}
+  .rt-conflict{padding-left:8px}
+}
+tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
 .rt-table.rt-issues{table-layout:auto;min-width:100%;width:max-content}
 .rt-issues [data-col=issue-rule]{min-width:160px}
 .rt-issues [data-col=issue-what]{min-width:240px}
@@ -4598,10 +4664,7 @@ tr.rc-changed>td{background:var(--info-soft)}
 .rc-lp-body>.rc-lp-foot{position:sticky;bottom:0;z-index:2;margin:12px -20px 0;padding:12px 20px 16px;background:var(--surface)}
 /* The title is one line (its full words in the tooltip and "This line says"); "This line says" keeps room for three lines. */
 .rc-line-panel .side-head h2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-height:calc(2 * 1.3em)}
-@media(max-width:720px){.rt-flags .badge{font-size:11px}.rt-table{min-width:720px}
-  /* A rule's name, count and flags wrap inside the screen's width, so its attention is seen without scrolling sideways. */
-  .rt-name-in{max-width:calc(100vw - 7.5rem)}
-  .pill-list>.pill-item>.rp{max-width:150px}}
+@media(max-width:720px){.pill-list>.pill-item>.rp{max-width:150px}}
 /* Blank inherits: a number taken from a broader line reads muted and italic with "↰" (its source in the tooltip). */
 .rc-inh{color:var(--muted);font-weight:500}
 .rc-inh-note{display:block;color:var(--muted);font-style:italic;font-size:11.5px;margin-top:2px}
@@ -5602,8 +5665,6 @@ table:not(.dt-table) th.dt-drop-target{background:var(--accent-soft);color:var(-
 /* A Schedule grid's row heading and first day take the same grip (their heads are sticky, so they position it). */
 :is(.wk-head,.pg-head)>*:hover>.dt-resize::after{background:var(--control-line)}
 /* Rules: the database fits a laptop with its actions in view; a wrapped or resized column shows the rest. */
-.rt-table .rp{max-width:150px}
-.rt-line>td.rt-days:not(.dt-wrap):not(.dt-sized),.rt-line>td.rt-valid:not(.dt-wrap):not(.dt-sized){max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .dt-reset-widths{margin-top:6px}
 /* Group, edited as Sort is: level rows, + Add subgroup, Collapse all / Expand all. */
 .dt-group-folds{display:flex;gap:6px;padding:8px 0 0 0}

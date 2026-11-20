@@ -12,7 +12,7 @@ import pytest
 from playwright.sync_api import expect
 from .governance_support import identity, swap_automation
 from .test_browser import department_tab, browser, live_server, sign_in, navigate, save_dialog, decide, TEST_PASSWORD
-from .test_browser import whole_list
+from .test_browser import whole_list, route_fetch
 
 pytestmark = pytest.mark.browser
 
@@ -586,6 +586,44 @@ def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme
         assert h.detail(own)['workspace']['status'] == 'approved'
         expect(page.locator('.review-strip').get_by_text('Self-approved', exact=True)).to_be_visible()
     finally:
+        context.close()
+
+
+@pytest.mark.parametrize('broken', [False, True], ids=['opens', 'fails-visibly'])
+def test_approve_rota_is_never_silent_for_a_sole_approver(browser, live_server, h, broken):
+    """A sole approver under a self-approval permission pressed Approve rota on their own submitted rota and nothing
+    happened: a failure while the dialog was built was an unhandled rejection. Every press now ends in the dialog or a
+    visible message, never a page error and never an orphaned closed dialog."""
+    identity(h, 'sole', ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': h.seed['identities']['sole'], 'actions': ['rota.approve'],
+              'starts_on': '2026-10-01', 'reason': 'Only one approver this quarter'})
+    own = h.command('sole', 'workspace.create', {'name': 'Sole built rota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'})['workspace']
+    own = h.shift(own)['workspace']
+    own = h.command('sole', 'workspace.submit', {'reason': 'Ready'}, own['id'], own['revision'])['workspace']
+    context, page = sign_in(browser, live_server, 'sole')
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        navigate(page, 'planner/' + own['id'])
+        approve = page.get_by_role('button', name='Approve rota', exact=True)
+        expect(approve).to_be_enabled()
+        expect(approve).not_to_have_attribute('aria-disabled', 'true')
+        if broken:  # the press's Fix list read answers without its summary: the dialog's build throws
+            def no_summary(route):
+                body = route_fetch(route).json()
+                body.pop('summary', None)
+                route.fulfill(json=body)
+            page.route(f"**/api/workspaces/{own['id']}/fix-list?*", no_summary, times=1)
+        approve.click()
+        if broken:
+            expect(page.locator('#toast-tray .toast.error')).to_be_visible()
+            expect(page.locator('dialog.dialog')).to_have_count(0)  # no closed, orphaned dialog left behind
+        else:
+            expect(page.locator('dialog[open]').or_(page.locator('#toast-tray .toast')).first).to_be_visible()
+            expect(page.get_by_role('dialog', name='Approve rota', exact=True)).to_be_visible()
+        assert errors == []
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
         context.close()
 
 

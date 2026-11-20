@@ -1,5 +1,6 @@
 """Compare candidate evidence with target policy using only the protected dev verifier."""
 import argparse
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,9 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import PR_SMOKE, census_files, pr_scope, require_pr_merge, settings
+from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, require_pr_merge, settings
 from latest_reports import validate_selected_reports
+import stale_evidence
 
 
 def git(*args):
@@ -71,6 +73,31 @@ def required_producers(raw):
     needs = policy.decode(raw)
     if set(needs) != {"checks", "static", "unit", "browser"} or any(row.get("result") != "success" for row in needs.values()):
         raise ValueError("Every producer must run and succeed")
+
+
+def pr_stale_evidence(nodes, *, repository, base, candidate, scope):
+    if not os.getenv("GH_TOKEN"):
+        return {}
+    try:
+        changed = scope if scope is not None else pr_changed_files(base, candidate, git)
+        if changed is None or policy.KNOWN in changed:
+            return {}
+        untouched = {node for node in nodes if node.split("::", 1)[0] not in changed}
+        if not untouched:
+            return {}
+        tip = policy.fetch("refs/heads/dev")
+        return stale_evidence.confirmed_nodes(repository, git, tip, base, untouched)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+
+def stale_options(kind, branch, data, base, candidate, scope):
+    if kind == "pull_request" and branch == "dev":
+        return {"stale_lookup": partial(pr_stale_evidence, repository=data["repository"]["full_name"],
+                                        base=base, candidate=candidate, scope=scope)}
+    if kind == "schedule" and branch == "dev" and candidate == os.getenv("GITHUB_SHA"):
+        return {"nightly": True}
+    return {}
 
 
 def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags):
@@ -228,7 +255,7 @@ def main():
                         "--unstable-issue", str(config["unstable_issue"] or 0),
                         "--unstable-expires-on", str(config["unstable_expires_on"] or ""),
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
-            maker.main()
+            maker.main(**stale_options(kind, branch, data, base, candidate, scope))
             verdict = policy.decode((output / "verdict.json").read_bytes())
             if partial:
                 missing_skips = sorted(node for node in allowed_skips if node.split("::", 1)[0] not in selected_files)
