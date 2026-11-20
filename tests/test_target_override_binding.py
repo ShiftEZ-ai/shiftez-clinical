@@ -124,10 +124,12 @@ def test_legacy_target_reconfirmation_uses_rota_review(h, sole_owner):
 
     current = h.get(operator, path)['workspace']
     reconfirm_reason = 'Reconfirm the agreed workload against the current rule'
-    refreshed = h.command(operator, detail['reconfirm_command'], {
-        'policy_id': stale['rule_id'], 'person_id': stale['person_id'],
-        'amount': detail['amount'], 'reason': reconfirm_reason,
-    }, current['id'], current['revision'])['workspace']
+    reconfirmation = {'policy_id': stale['rule_id'], 'person_id': stale['person_id'],
+                      'amount': detail['amount'], 'reason': reconfirm_reason}
+    if not sole_owner:
+        h.command('staff', detail['reconfirm_command'], reconfirmation, current['id'], current['revision'], status=403)
+    refreshed = h.command(operator, detail['reconfirm_command'], reconfirmation,
+                          current['id'], current['revision'])['workspace']
     [adjustment] = refreshed['target_overrides']
     assert adjustment['id'] == adjustment_id and adjustment['rule_fingerprints']
     submission = h.lifecycle(refreshed, 'submit', role=operator)
@@ -351,6 +353,19 @@ def test_legacy_target_override_detects_policy_validity_changes(working_data):
     checked = evaluate(data)
     assert [(f['person_id'], f['rule_id']) for f in checked['findings'] if f['code'] == 'TARGET_OVERRIDE_STALE'] == [
         (person, policy['id'])]
+
+
+def test_unused_issued_legacy_target_override_does_not_block_the_quota_report(working_data):
+    data, person = working_data
+    policy = add_quota(data, person, comparison='target', prorate_department_days=True)
+    bind_target(data, policy, person)
+    data['workspace']['target_overrides'][0].pop('rule_fingerprints')
+    data['workspace']['status'] = 'superseded'
+    policy['definition']['rule']['prorate_department_days'] = False
+
+    checked, row = checked_row(data)
+    assert 'target_calculation' not in row
+    assert all(f['code'] != 'TARGET_OVERRIDE_STALE' for f in checked['findings'])
 
 
 @pytest.mark.parametrize('comparison', ['target', 'maximum'])

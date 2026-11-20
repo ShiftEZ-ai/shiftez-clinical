@@ -399,6 +399,8 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
     overrides = {(row['policy_id'], row['person_id']): row
                  for row in reversed(data['workspace'].get('target_overrides') or ())}
 
+    legacy_as_issued = report['source_state'] in {'submitted', 'approved', 'published', 'superseded'}
+
     def unresolved(code, message, policy=None, person=None):
         report["complete"] = False
         add(code, message, person=person, rule=policy["id"] if policy else None)
@@ -540,7 +542,8 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                                'calculated_amount': amount, 'rule_fingerprint': rule_fingerprint}
             override = overrides.get((policy['id'], pid)) if calculation and comparison == 'target' else None
             fingerprints = (override or {}).get('rule_fingerprints') or ()
-            stale_override = bool(override and rule_fingerprint not in fingerprints)
+            stale_override = bool(override and (fingerprints or not legacy_as_issued)
+                                  and rule_fingerprint not in fingerprints)
             person_name = data['people'][pid]['display_name']
             if stale_override:
                 stale_target(override, policy['name'], reconfirm=True)
@@ -629,6 +632,8 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             if key in used or policy_id not in policy_names or person not in data['people']:
                 continue
             if planning_people is not None and person not in planning_people:
+                continue
+            if legacy_as_issued and not override.get('rule_fingerprints'):
                 continue
             stale_target(override, unused.get(key, policy_names[policy_id]), reconfirm=False)
     # A template's default copy may match nobody while its per-person lines do.

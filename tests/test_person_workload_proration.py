@@ -7,6 +7,7 @@ from apps.api import models as m
 from apps.api.db import transaction
 
 from packages.contracts.schemas import PersonFairness, PersonWorkload
+from packages.domain.validation import evaluate
 from .test_quota_proration_api import partial_quota, rows_for
 
 
@@ -88,3 +89,58 @@ def test_draft_workload_uses_the_checked_target_after_the_department_rule_change
     assert draft['policy_revision'] == checked['policy_revision'] == source['revision']
     assert 'override_reason' not in draft['target_calculation']
     assert current['policy_revision'] == source['revision'] + 1 and current['amount'] != 4.57
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize(('state', 'stale'), [('submitted', False), ('approved', False), ('published', False),
+                                              pytest.param('submitted', True, id='submitted-mismatch')])
+def test_issued_target_override_in_person_workload(h, state, stale):
+    person = h.seed['people'][0]
+    policy = h.policy({'kind': 'block_quota', 'metric': 'duties', 'comparison': 'target', 'amount': 16,
+        'starts_on': '2026-10-04', 'ends_on': '2026-10-11', 'prorate_department_days': True},
+        {'person_id': person}, severity='advisory')
+    workspace = h.shift(h.workspace())['workspace']
+    payload = {'policy_id': policy['id'], 'person_id': person, 'amount': 4.57, 'reason': 'Agreed workload'}
+    workspace = h.command('coordinator', 'workspace.target_override', payload,
+                          workspace['id'], workspace['revision'])['workspace']
+    submission = h.lifecycle(workspace, 'submit')
+    workspace = submission['workspace']
+    if state != 'submitted':
+        [item] = submission['review_items']
+        workspace = h.command('approver', 'workspace.approve', {'reason': 'Verified the workload target',
+            'decisions': [{'item_id': item['id'], 'kind': 'adjustment', 'accept': True}]},
+            workspace['id'], workspace['revision'])['workspace']
+    if state == 'published':
+        h.lifecycle(workspace, 'publish')
+
+    # Model an adjustment issued with an older record format or a different rule fingerprint.
+    with transaction(h.app.state.engine, write=True) as db:
+        stored = db.get(m.Workspace, workspace['id'])
+        assert stored.status == state
+        [adjustment] = stored.target_overrides
+        adjustment = dict(adjustment)
+        if stale:
+            adjustment['rule_fingerprints'] = ['0' * 64]
+        else:
+            adjustment.pop('rule_fingerprints')
+        stored.target_overrides = [adjustment]
+
+    checked = evaluate(h.snapshot(workspace))
+    findings = [f for f in checked['findings'] if f['code'] == 'TARGET_OVERRIDE_STALE']
+    if stale:
+        [finding] = findings
+        assert finding['detail']['reconfirm_command'] == 'workspace.target_override'
+    else:
+        assert not findings
+    assert checked['quota_report']['complete'] is (not stale)
+
+    query = '' if state == 'published' else f"&workspace_id={workspace['id']}"
+    workload = h.get('coordinator', f"/api/people/{person}/workload?on=2026-10-06{query}")
+    assert workload['workspace']['status'] == state
+    [rota] = [period for period in workload['periods'] if period['key'] == 'this_rota']
+    [row] = [row for row in rota['quotas'] if row['policy_id'] == policy['id']]
+    assert row['amount'] == row['target_calculation']['override_amount'] == 4.57
+    assert rota['complete'] is (not stale)
+    assert (row['status'] == 'unresolved') is stale
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Workspace, workspace['id']).target_overrides == [adjustment]
