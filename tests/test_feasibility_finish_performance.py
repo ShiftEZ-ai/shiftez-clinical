@@ -53,6 +53,39 @@ def test_department_feasibility_finish_has_bounded_reads(pg, request):
     return locals()
 
 
+@pytest.mark.parametrize('retained_result', [False, True])
+def test_feasibility_finish_without_manifest_never_selects_frozen_payloads(pg, retained_result):
+    workspace = pg.workspace()
+    snapshot = {'frozen': ['retained input'] * 2000}
+    previous = {'status': 'unknown_time_limit', 'frozen': ['retained result'] * 2000} if retained_result else None
+    result = {'status': 'feasible', 'checks': {}}
+    with transaction(pg.app.state.engine, write=True) as db:
+        job = m.Job(department_id=pg.seed['department_id'], workspace_id=workspace['id'],
+            requested_by=pg.seed['identities']['coordinator'], kind='feasibility', status='running',
+            attempts=1, input_fingerprint='frozen', input_snapshot=snapshot, result=previous)
+        db.add(job)
+        db.flush()
+        claim = {'id': job.id, 'attempt': 1}
+        assert job.read_metadata['input_snapshot']['run_context'] is None
+        assert 'generation_manifest' not in (job.read_metadata['result'] or {})
+    statements = []
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+    event.listen(pg.app.state.engine, 'before_cursor_execute', capture)
+    try:
+        accepted = retry_write(pg.app.state.engine, lambda db: finish_job(db, claim, result, None))
+    finally:
+        event.remove(pg.app.state.engine, 'before_cursor_execute', capture)
+    assert accepted
+    job_reads = [sql for sql in statements if sql.lstrip().startswith('SELECT') and 'FROM jobs' in sql]
+    assert job_reads and not any(re.search(r'jobs\.(?:input_snapshot|result)\b', sql) for sql in job_reads)
+    with transaction(pg.app.state.engine) as db:
+        stored = db.get(m.Job, claim['id'])
+        assert stored.status == 'succeeded' and stored.result == result
+        assert stored.input_snapshot == snapshot
+        assert stored.read_metadata['result'] == {'status': 'feasible'}
+
+
 @pytest.mark.wall_benchmark
 def test_department_feasibility_finish_wall_budget(pg, request):
     state = test_department_feasibility_finish_has_bounded_reads(pg, request)
