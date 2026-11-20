@@ -243,6 +243,8 @@ def test_why_equal_loads_use_per_session_shuffle(h, monkeypatch):
 
 
 def test_runner_up_ties_are_stable_and_absence_is_explicit(h, monkeypatch):
+    from apps.api import models as m
+    from apps.api.db import transaction
     from apps.api.services import staffing
     a, b, c = h.seed['people'][:3]
     w = h.shift(h.workspace(), people=[a])['workspace']
@@ -251,7 +253,12 @@ def test_runner_up_ties_are_stable_and_absence_is_explicit(h, monkeypatch):
     sid = source['shifts'][0]['id']
     session = why(h, w, [sid], person_id=a, runner_up=True)['sessions'][0]
     assert session['runner_up']['person_id'] == min(b, c)
-    source['people'][b]['active'] = source['people'][c]['active'] = False
+    with transaction(h.app.state.engine, write=True) as db:
+        for pid in (b, c):
+            db.get(m.Person, pid).active = False
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    w = h.refresh_draft_baseline(w)
+    source = h.snapshot(w)
     session = why(h, w, [sid], person_id=a, runner_up=True)['sessions'][0]
     assert session['runner_up'] is None and session['score_status'] == 'complete'
 
