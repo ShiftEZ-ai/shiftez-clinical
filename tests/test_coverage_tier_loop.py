@@ -196,6 +196,59 @@ def test_desired_coverage_stage_requires_an_explicit_target(h, target, expected)
     assert [name for name, _, _ in tiers] == expected
 
 
+def test_fillable_desired_cover_reaches_zero_before_quality_search():
+    from tests.test_schedule_score_scale import department as score_department
+
+    data = score_department()
+    data['people'] = dict(list(data['people'].items())[:45])
+    for index, person in enumerate(data['people'].values(), 1):
+        person['display_name'] = f'Person {index:04d}'
+    data['memberships'] = [row for row in data['memberships'] if row['person_id'] in data['people']]
+    data['eligibilities'] = [row for row in data['eligibilities'] if row['person_id'] in data['people']]
+    data['availability'] = []
+    data['policies'] = [row for row in data['policies'] if row['kind'] == 'balance_goal']
+    data['shifts'] = data['shifts'][:15]
+    for shift in data['shifts']:
+        shift.update(start='2026-10-04T08:00:00+03:00', end='2026-10-04T12:00:00+03:00', participants=[], locked=False)
+        shift['type_snapshot']['definition']['requirements'][0].update(minimum=2, target=3, maximum=3)
+    data['focus_ids'] = [shift['id'] for shift in data['shifts']]
+    data['fingerprint'] = 'fillable-desired-cover'
+    data['generation_options'] = {'shortlist_width': 0}
+
+    result = generate(data, 0.05, workers=1, deterministic=True)
+
+    assert result['status'] == 'candidate_feasible', result
+    assert result['validation']['error_count'] == 0
+    desired = next(row for row in result['objectives'] if row['name'] == 'desired_coverage')
+    assert desired['value'] == 0 and desired['proven_optimal'], result['objectives']
+    assert len(result['additions']) == 45
+
+
+@pytest.mark.parametrize('proven', [False, True])
+def test_desired_shortfall_receipt_distinguishes_search_from_proof(h, monkeypatch, proven):
+    data = tier_loop_data(h)
+    data['generation_options']['allocation_order'] = 'weighted'
+    data['shifts'][0]['type_snapshot']['definition']['requirements'][0].update(minimum=1, target=3, maximum=3)
+    original = SolverControl.solve
+
+    def solve(self, solver, model, tier):
+        status = original(self, solver, model, tier)
+        if not proven and tier is not None and self.context['objective_names'][tier] == 'desired_coverage':
+            return cp_model.FEASIBLE
+        return status
+
+    monkeypatch.setattr(SolverControl, 'solve', solve)
+    result = generate(data, 5, deterministic=True)
+    desired = next(row for row in result['objectives'] if row['name'] == 'desired_coverage')
+    assert result['status'] == 'candidate_feasible' and result['validation']['error_count'] == 0
+    assert len(result['additions']) == 2 and desired['value'] > 0
+    assert desired['proven_optimal'] is proven
+    warning = next(row for row in result['warnings'] if row.startswith('Desired cover remains short'))
+    assert f"{desired['value']} seat-minutes" in warning
+    assert ('This shortfall is proven unavoidable' in warning) is proven
+    assert ('without proving' in warning) is not proven
+
+
 @pytest.mark.parametrize('diagnostic', [False, True], ids=['strict', 'diagnostic'])
 @pytest.mark.parametrize('allocation_order', ['tiered', 'weighted'])
 def test_random_small_instances_preserve_the_required_only_optimum(h, monkeypatch, diagnostic, allocation_order):

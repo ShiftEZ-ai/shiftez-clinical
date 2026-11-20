@@ -2209,7 +2209,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             # Coverage and rule breaches are deficits whose best is usually 0: the core-based worker reaches it
             # 5-10x sooner. The wall-clock shortlist pays one cold start; deterministic work budgets
             # and the full-candidate pass retain the core/portfolio fallback.
-            deficit = names[tier] in {'coverage', 'rules'}
+            deficit = names[tier] in {'coverage', 'desired_coverage', 'rules'}
             limit = (remaining * (.5 if shortlist else 1)
                      if names[tier] in {'coverage', 'desired_coverage'} or values is None else share)
             if names[tier] == 'desired_coverage' and fill_budget is not None:
@@ -2251,7 +2251,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 control.fairness_stall_seconds = options.fairness_plateau_seconds
                 control.fairness_loss = components['fairness'][0] if control.fairness_plateau and 'fairness' in components else None
                 search_model = model
-                if components and names[tier] == 'coverage':
+                if components and names[tier] in {'coverage', 'desired_coverage'}:
                     # Only total, derived score arithmetic is omitted; every hard constraint remains in this clone.
                     control.check()
                     search_model = model.clone()
@@ -2355,6 +2355,15 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     if coverage_gate_blocked:
         block_later_tiers()
     tiers = [outcome[tier] for tier in sorted(outcome)]
+    desired_row = next((row for row in tiers if row['name'] == 'desired_coverage'), None)
+    if values is not None and desired_row and desired_row['value']:
+        reason = ('This shortfall is proven unavoidable at the preceding priorities under the hard constraints.'
+                  if desired_row['proven_optimal'] else
+                  'Search stopped without further improvement; this shortfall was not proved unavoidable.'
+                  if desired_row['stopped_without_improvement'] else
+                  'Search ended without proving this shortfall unavoidable.')
+        result.setdefault('warnings', []).append(
+            f"Desired cover remains short by {desired_row['value']} seat-minutes. {reason}")
     result['_deterministic_search_seconds'] = spent[0] if deterministic else 0
     solved = time.monotonic()
     control.phase('validation')
