@@ -1,6 +1,6 @@
 """Conflicting lines end to end (docs/design/rule-catalogue.md §1, §5): what the check says about duplicates, overlaps
-and warnings, that rule.propose refuses exactly what the check reports (422 the same line twice, 409 overlaps not
-acknowledged), that approvers see the same on the waiting version, and that the validator and the scheduler apply the
+and warnings, that rule.propose refuses duplicate lines but accepts ordered overrides without acknowledgement,
+that approvers see the same on the waiting version, and that the validator and the scheduler apply the
 line the check says wins."""
 import copy
 import uuid
@@ -95,15 +95,15 @@ CASES = {
     'other dates': ([], [], [], {}, 200),
     'dates partly overlapping': ([[0, 1]], [], [], {}, 422),
     'other measure': ([], [], [], {}, 200),
-    'person over everyone': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 409),
+    'person over everyone': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 200),
     'person over rank over everyone': ([], [(0, [1, 2], 3), (1, [2], 1)], [],
-                                       {0: [(1, 1), (2, 2)], 1: [(0, 1), (2, 2)], 2: [(0, 2), (1, 2)]}, 409),
+                                       {0: [(1, 1), (2, 2)], 1: [(0, 1), (2, 2)], 2: [(0, 2), (1, 2)]}, 200),
     'other where': ([], [], [], {}, 200),
     'tag and rank': ([], [], ['both'], {0: [(1, None)], 1: [(0, None)]}, 200),
-    'person over tag': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 409),
-    'migrated settings and a new line': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 409),
-    'inherits a conflict': ([], [(0, [1], 1)], ['inherits'], {0: [(1, 1)], 1: [(0, 1)]}, 409),
-    'None removes the conflict': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 409),
+    'person over tag': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 200),
+    'migrated settings and a new line': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 200),
+    'inherits a conflict': ([], [(0, [1], 1)], ['inherits'], {0: [(1, 1)], 1: [(0, 1)]}, 200),
+    'None removes the conflict': ([], [(0, [1], 1)], [], {0: [(1, 1)], 1: [(0, 1)]}, 200),
     'safety weaker': ([], [], ['weaker'], {}, 200),
     'safety stricter': ([], [], [], {}, 200),
     'safety cap weaker': ([], [], ['weaker'], {}, 200),
@@ -138,16 +138,48 @@ def test_the_check_and_propose_agree_case_by_case(h, case):
     assert sorted(w['kind'] for w in found['warnings']) == warnings
     assert {ids.index(k): [(ids.index(o['line_id']), o['winner'] and ids.index(o['winner'])) for o in v] for k, v in found['line_overlaps'].items()} == {
         k: [(o, w) for o, w in v] for k, v in line_overlaps.items()}
-    # rule.propose refuses exactly what the check reports, and the overlaps it names are the check's.
-    refused = propose(h, entry, lines, status=status)
+    # Ordered overrides are quiet relations; duplicate lines still refuse the proposal.
+    response = propose(h, entry, lines, status=status)
     if status == 422:
-        assert refused['error']['code'] == 'DUPLICATE_LINES'
-    if status == 409:
-        assert refused['error']['code'] == 'OVERLAPS_UNACKNOWLEDGED'
-        assert [o['line_id'] for o in refused['error']['details']] == [o['line_id'] for o in found['overlaps']]
-        assert propose(h, entry, lines, acknowledged=[o['line_id'] for o in found['overlaps']][:-1], status=409)  # all of them, not some
-        record = propose(h, entry, lines, acknowledged=[o['line_id'] for o in found['overlaps']])['record']
-        assert record['status'] == 'proposed'
+        assert response['error']['code'] == 'DUPLICATE_LINES'
+    else:
+        assert response['record']['status'] == 'proposed'
+        assert response['check']['line_replaces'] == found['line_replaces']
+        expected = {}
+        for loser, winners, _ in overlaps:
+            for winner in winners:
+                expected.setdefault(ids[winner], []).append({'replaced_line_id': ids[loser],
+                    'numbers': sorted(set(lines[loser]['numbers']) & set(lines[winner]['numbers']))})
+        assert found['line_replaces'] == expected
+
+
+def test_a_larger_weekly_maximum_wins_in_a_mixed_safety_rule(h):
+    p = h.seed['people'][0]
+    anchor = line(numbers=most(5), settings={'max_duties': {'window': 'week'}})
+    personal = line(who=person(p), numbers=most(6), settings=anchor['settings'])
+    restriction = line(numbers={'apply': {}}, weekdays=[0], settings={'restriction': {}})
+    response = h.client('coordinator').post('/api/rules/catalogue/workload_limit/check',
+        json={'catalogue_version': 2, 'lines': [anchor, personal, restriction]})
+    assert response.status_code == 200, response.text
+    found = response.json()
+    assert found['issues'] == []
+    assert found['line_replaces'] == {
+        personal['id']: [{'replaced_line_id': anchor['id'], 'numbers': ['max']}]}
+    assert found['warnings'] == []
+
+
+def test_safety_weaker_warning_requires_shared_people(h):
+    a, b, _ = h.seed['people']
+    group = tag_people(h, 'Synthetic disjoint group', [b])
+    everyone = line(numbers={'min': {'value': 11}})
+    tagged = line(who=person(group), numbers={'min': {'value': 10}})
+    own = line(who=person(a), numbers={'min': {'value': 8}})
+
+    found = check(h, 'rest_between_duties', [everyone, tagged, own])
+    assert found['issues'] == []
+    assert found['line_replaces'] == {} and found['overlaps'] == []
+    assert [(w['kind'], w['line_id'], w['other_id']) for w in found['warnings']] == [
+        ('weaker', tagged['id'], everyone['id']), ('weaker', own['id'], everyone['id'])]
 
 
 def test_approvers_see_the_check_of_the_waiting_version_and_the_page_reads_what_the_check_said(h):
@@ -160,13 +192,15 @@ def test_approvers_see_the_check_of_the_waiting_version_and_the_page_reads_what_
     live = approve(h, first)
     shown = next(e for e in h.get('auditor', '/api/rules/catalogue')['entries'] if e['id'] == 'duties_per_week')
     assert shown['line_overlaps'] == found['line_overlaps'] and shown['overlaps'] == 1
-    # A version removing the person line has nothing to acknowledge; one adding a rank line names only the new loser.
+    # Removing or adding ordered exceptions needs no acknowledgement; the active version stays unchanged.
     removed = propose(h, 'duties_per_week', [everyone], policy_id=live['id'], revision=live['revision'])['record']
     assert [x['id'] for x in removed['definition']['rule']['lines']] == [everyone['id']]
     h.command('coordinator', 'policy.decline', {'reason': 'Withdrawn with Undo by the person who proposed it'}, removed['id'], removed['revision'])
     ranked = line(who=rank(h.seed['category']), numbers=most(4))
-    refused = propose(h, 'duties_per_week', [everyone, mine, ranked], policy_id=live['id'], revision=live['revision'], acknowledged=[everyone['id']], status=409)
-    assert [o['line_id'] for o in refused['error']['details']] == [ranked['id']]
+    added = propose(h, 'duties_per_week', [everyone, mine, ranked], policy_id=live['id'], revision=live['revision'])
+    assert added['record']['status'] == 'proposed'
+    assert added['check']['line_replaces'][mine['id']] == [
+        {'replaced_line_id': everyone['id'], 'numbers': ['max']}, {'replaced_line_id': ranked['id'], 'numbers': ['max']}]
     shown = next(e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['id'] == 'duties_per_week')
     assert shown['line_overlaps'] == found['line_overlaps']  # the rule in force is unchanged
 
@@ -201,7 +235,7 @@ def test_needs_attention_reads_the_rules_in_force_and_the_drafts_they_block(h):
     live = approve(h, propose(h, 'duties_per_week', [everyone, mine, ending], acknowledged=[everyone['id']])['record'])
     found = h.get('auditor', '/api/rules/catalogue')['attention']
     assert [(x['kind'], x['line_ids'], x['fixes'][0]['kind']) for x in found] == [
-        ('overlap', [everyone['id'], mine['id']], 'acknowledge'), ('ending', [ending['id']], 'acknowledge')]
+        ('ending', [ending['id']], 'acknowledge')]
     assert all(x['rule_id'] == live['id'] for x in found)
     # b works twice in a week against the line for everyone (1): the draft is blocked by that mandatory line.
     w = h.workspace(start='2026-10-04', end='2026-10-11')
@@ -248,14 +282,16 @@ def test_reach_counts_people_by_the_clinics_they_can_work_at_and_an_empty_group_
 
 def test_acknowledgements_are_shared_audited_undone_and_expire_when_the_issue_changes(h):
     """rule.acknowledge / rule.unacknowledge: coordinators and admins acknowledge Needs attention issues for everyone
-    (who, when, note); the overlaps acknowledged when proposing are the same acknowledgement; a changed line expires it."""
-    a = h.seed['people'][0]
-    everyone, mine = line(numbers=most(1)), line(who=person(a), numbers=most(3))
+    (who, when, note); ordered winners stay quiet, while a changed issue expires its acknowledgement."""
+    _, groups = lines_for(h, 'tag and rank')
     ending = line(where={'conditions': [{'field': 'service_ids', 'values': [h.seed['services'][0]]}]}, numbers=most(4), ends_on='2026-10-20')
-    live = approve(h, propose(h, 'duties_per_week', [everyone, mine, ending], acknowledged=[everyone['id']])['record'])
+    live = approve(h, propose(h, 'duties_per_week', [*groups, ending])['record'])
     attention = {item['kind']: item for item in h.get('auditor', '/api/rules/catalogue')['attention']}
-    overlap, soon = attention['overlap'], attention['ending']
-    assert overlap['acknowledged']['note'] == 'When proposed: Conflict check' and overlap['acknowledged']['by']
+    both, soon = attention['both'], attention['ending']
+    assert 'overlap' not in attention and both['acknowledged'] is None
+    assert h.command('coordinator', 'rule.acknowledge', {'fingerprints': [both['fingerprint']], 'note': 'Both groups reviewed'})['acknowledged'] == 1
+    both = next(x for x in h.get('auditor', '/api/rules/catalogue')['attention'] if x['kind'] == 'both')
+    assert both['acknowledged']['note'] == 'Both groups reviewed' and both['acknowledged']['by']
     assert soon['kind'] == 'ending' and soon['acknowledged'] is None
     for role in ('auditor', 'approver', 'staff'):
         h.command(role, 'rule.acknowledge', {'fingerprints': [soon['fingerprint']]}, status=403)
@@ -266,7 +302,7 @@ def test_acknowledgements_are_shared_audited_undone_and_expire_when_the_issue_ch
     stale = h.command('coordinator', 'rule.acknowledge', {'fingerprints': ['0' * 64]}, status=409)
     assert stale['error']['code'] == 'ISSUE_CHANGED'
     with transaction(h.app.state.engine) as db:
-        assert [e.action for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.action.like('rule.%acknowledge')))] == ['rule.acknowledge'] * 2
+        assert [e.action for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.action.like('rule.%acknowledge')))] == ['rule.acknowledge'] * 3
     # Undo takes it back for everyone; acknowledging again restores it.
     assert h.command('coordinator', 'rule.unacknowledge', {'fingerprints': [soon['fingerprint']]})['unacknowledged'] == 1
     assert next(x for x in h.get('auditor', '/api/rules/catalogue')['attention'] if x['kind'] == 'ending')['acknowledged'] is None
@@ -276,12 +312,11 @@ def test_acknowledgements_are_shared_audited_undone_and_expire_when_the_issue_ch
                 select(m.DefinitionHistory.object_id).where(m.DefinitionHistory.reason == 'Taken back'))).order_by(m.DefinitionHistory.object_revision))]
         assert kept == [('Winter only, ends as planned', 'Winter only, ends as planned'), ('Taken back', 'Winter only, ends as planned')]
     h.command('coordinator', 'rule.acknowledge', {'fingerprints': [soon['fingerprint']], 'note': 'Ends as planned'})
-    # A new version changing only the ending line: its acknowledgement expires; the overlap's holds (same lines).
-    approve(h, propose(h, 'duties_per_week', [everyone, mine, {**ending, 'ends_on': '2026-10-25'}], policy_id=live['id'], revision=live['revision'],
-                       acknowledged=[everyone['id']])['record'])
+    # A new version changing only the ending line: its acknowledgement expires; the equal-tier conflict's holds.
+    approve(h, propose(h, 'duties_per_week', [*groups, {**ending, 'ends_on': '2026-10-25'}], policy_id=live['id'], revision=live['revision'])['record'])
     after = {x['kind']: x for x in h.get('auditor', '/api/rules/catalogue')['attention']}
     assert after['ending']['acknowledged'] is None and after['ending']['fingerprint'] != soon['fingerprint']
-    assert after['overlap']['fingerprint'] == overlap['fingerprint'] and after['overlap']['acknowledged'] == overlap['acknowledged']
+    assert after['both']['fingerprint'] == both['fingerprint'] and after['both']['acknowledged'] == both['acknowledged']
 
 
 def test_a_blank_number_is_inherited_and_shown_and_none_removes_it(h):
@@ -294,11 +329,13 @@ def test_a_blank_number_is_inherited_and_shown_and_none_removes_it(h):
     assert found['inherited'] == {alex['id']: {'min': {'value': 1.0, 'level': 'mandatory', 'from': everyone['id']}}}
     [overlap] = found['overlaps']
     assert overlap['numbers'] == ['max'] and overlap['people'] == 1 and 'on its max' in overlap['message']
+    assert found['line_replaces'] == {alex['id']: [{'replaced_line_id': everyone['id'], 'numbers': ['max']}]}
     live = approve(h, propose(h, 'duties_per_month', [everyone, alex], acknowledged=[everyone['id']])['record'])
     shown = next(e for e in h.get('auditor', '/api/rules/catalogue')['entries'] if e['id'] == 'duties_per_month')
     assert shown['inherited'] == {alex['id']: {'min': {'value': 1.0, 'level': 'mandatory', 'from': everyone['id']}}}
     none = {**alex, 'numbers': {'min': {'value': None}, 'max': {'value': 10}}}
     found = check(h, 'duties_per_month', [everyone, none])
     assert found['inherited'] == {} and found['overlaps'][0]['numbers'] == ['max', 'min']
+    assert found['line_replaces'] == {alex['id']: [{'replaced_line_id': everyone['id'], 'numbers': ['max', 'min']}]}
     record = propose(h, 'duties_per_month', [everyone, none], policy_id=live['id'], revision=live['revision'], acknowledged=[everyone['id']])['record']
     assert record['definition']['rule']['lines'][1]['numbers']['min']['value'] is None

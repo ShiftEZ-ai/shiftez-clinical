@@ -43,7 +43,7 @@ def test_balance_off_is_proposed_approved_and_in_force(browser, live_server, h):
         expect(pop).to_have_count(0)
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         expect(page.get_by_role('dialog')).to_contain_text('Balance between people: Off — each line is balanced on its own')
-        page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended').check()  # Alex's line
+        expect(page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
         reason(page, 'Each line on its own', 'Propose')
         expect(page.locator('.rc-waiting')).to_contain_text('Balance between people off')
         waiting = entry(h, 'duties_per_week')['proposed']

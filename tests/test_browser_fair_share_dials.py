@@ -80,7 +80,7 @@ def test_fair_share_line_sets_its_share_leeway_and_off(browser, live_server, h, 
         panel.get_by_role('button', name='Keep change', exact=True).click()
         panel.get_by_role('button', name='Close panel', exact=True).click()
         page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
-        page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended', exact=True).check()
+        expect(page.get_by_role('dialog').get_by_label('I have read which lines give way and that is intended', exact=True)).to_have_count(0)
         reason(page, 'Half a share for a part-timer', 'Propose')
         expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
         navigate(review, 'rules/fair_share')

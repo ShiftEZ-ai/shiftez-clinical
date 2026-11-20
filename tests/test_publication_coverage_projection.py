@@ -112,11 +112,11 @@ def test_coverage_projection_reuses_across_apps_and_invalidates_inputs(pg, monke
 @pytest.mark.cpu_budget
 def test_coverage_projection_cpu_budget(pg, monkeypatch):
     state = test_coverage_projection_reuses_across_apps_and_invalidates_inputs(pg, monkeypatch)
-    assert state['warm']['cpu_seconds'] < python_budget(1), state['warm']
+    assert state['warm']['cpu_seconds'] < state['python_budget'](1), state['warm']
 
 
 @pytest.mark.postgres
 @pytest.mark.wall_benchmark
 def test_coverage_projection_wall_budget(pg, monkeypatch):
     state = test_coverage_projection_reuses_across_apps_and_invalidates_inputs(pg, monkeypatch)
-    assert state['warm']['wall_seconds'] < python_budget(3), state['warm']
+    assert state['warm']['wall_seconds'] < state['python_budget'](3), state['warm']
