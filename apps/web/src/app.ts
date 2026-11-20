@@ -71,7 +71,7 @@ import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
-import {routingPage,reviewPanel,approvalDialog,decidesStep,SWAP_KIND_WORDS} from './governance.js';
+import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
@@ -113,7 +113,7 @@ import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effect
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
 import {tagsPage,tagEditor,tagLabel,tagRefs,tagsFor} from './tags.js';
-import {PAGE_TABS,parseRoute,routeHash,ruleNotice} from './routes.js';
+import {PAGE_TABS,parseRoute,routeHash,ruleNotice,withoutPrototype} from './routes.js';
 import {grantRefusal} from './role_grants.js';
 import {integrationsPage} from './integrations.js';
 import {signInConfigPage} from './sign_in_config.js';
@@ -414,7 +414,7 @@ const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.g
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
-  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>={
+  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>=withoutPrototype({
   // Every account lands on Home, so Home always fits a phone (its phone branch keeps only phone work): never a refusal.
   home:{title:'Home',roles:[],phone:()=>true,live:['workspace','publication','rules','catalogue','requests','swaps','availability','access','inbox']},
   schedule:{title:'Schedule',roles:[CAPABILITY.STAFF,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR],
@@ -448,7 +448,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   inbox:{title:TERMS.inbox,roles:[],phone:()=>true,live:['inbox']},
   // Everyone's own reports (feedback.ts); Developers triage all of them in System › Feedback.
   feedback:{title:'My feedback',roles:[],phone:()=>true,live:['feedback']},
-};
+});
 const permits=(...keys:string[])=>Boolean(me&&keys.some(key=>hasAccess(me!.roles,key)));
 const may=(p:Permission)=>Boolean(me&&grants(me.roles,p));
 const acts=(status:string)=>Boolean(me&&actsOn(status,me.roles));
@@ -1715,7 +1715,7 @@ async function renderPage(live=false){
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
     const content=el('div',{});buildingPage(content);const renderer:Record<string,(target:HTMLElement)=>Promise<void>>={
-    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
+    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedPanel,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
     schedule:schedulePage,
     requests:t=>requestsPage(ctx(),t,{query:routeQuery,setQuery:q=>{routeQuery=q;history.replaceState(null,'',routeHash(view,routeParts,q));},
       showDay:(day,person)=>navigate(routeHash('schedule',['week',day],{person}).slice(1))}),
@@ -2182,9 +2182,14 @@ const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>(
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
 const baselinePreview=(w:Row)=>background<BaselineRefreshPreview>(`/api/workspaces/${encodeURIComponent(String(w.id))}/baseline/refresh-preview`);
 /** The planner bar's drift control: one maker for the bar and for an answer that lands after the bar was drawn. */
-const baselineDriftButton=(w:Row,changes:number)=>iconButton(`${changes} department change${changes===1?'':'s'} · review`,
-  'history',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError),
-  {class:'bare baseline-drift','data-tip':'Department changes since this draft was created'});
+/** "N department changes": the one wording for the planner bar and the Rules page. */
+const departmentChanges=(n:number)=>plural(n,'department change');
+const driftName=(n:number)=>`${departmentChanges(n)} since this draft was created`;
+// Visible text, never icon-only: it changes what the draft is built on. A tight bar keeps icon + count (the count pills' step).
+const baselineDriftButton=(w:Row,changes:number)=>{
+  const b=el('button',{type:'button',class:'health-pill baseline-drift','aria-label':driftName(changes)},
+    icon('history'),el('span',{class:'num'},String(changes)),el('span',{class:'label'},`department change${changes===1?'':'s'}`));
+  b.addEventListener('click',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError));return b;};
 /** D-053: a failed drift check says so with Retry (never nothing on the bar, which reads as "no department changes"). */
 const baselineDriftFailed=(e:unknown,retry:()=>void)=>{const n=failedNote('Couldn’t check department changes.',e,retry);
   n.classList.add('baseline-drift');n.querySelector('button')?.setAttribute('aria-label','Retry checking department changes');return n;};
@@ -2496,12 +2501,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return;const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
+      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
     if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
-      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
+      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
@@ -5642,10 +5647,8 @@ function draftHealth(policy:Row):HTMLElement{
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
-    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(
-      `${drift.changes.length} department change${drift.changes.length===1?'':'s'}`,
-      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',
-      {'aria-label':`${drift.changes.length} department change${drift.changes.length===1?'':'s'} since this draft was created`}):'';
+    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
+      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
     if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
@@ -8420,6 +8423,16 @@ async function auditPage(target:HTMLElement){
     bar.sync();
   };
   target.append(el('section',{class:'panel'},bar.root,list,pager),footerStatus(shown));draw();
+}
+
+/** Home's Self-approved decisions: the last 30 days the server lets this reader see (the department's, or their own).
+ *  A list, so it docks beside the page (DESIGN: lists are panels, not modals). */
+function selfApprovedPanel(){
+  dockPanel({key:'self-approved',title:'Self-approved decisions',build:({body})=>{
+    const load=()=>get(`/api/audit?self_approved=true&people=false&from=${addDays(departmentToday(),-30)}`).then(d=>{
+      body.replaceChildren(d.events.length?auditFeed(d.events):empty('No self-approved decisions','None in the last 30 days.',null,'history'));
+    },e=>{if(!sessionChanged(e))body.replaceChildren(failedNote(couldntLoad('the self-approved decisions',e),e,load));});
+    void load();}});
 }
 
 let polling=false;

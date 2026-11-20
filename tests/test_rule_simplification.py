@@ -274,6 +274,8 @@ def test_grouping_through_governance_checks_the_same_and_undoes(h):
     assert evaluate(h.snapshot(w))['findings'] == checked['findings']
     for record in result['records']:
         activate(h, record)
+    # Draft rules stay captured until their baseline is explicitly refreshed.
+    w = h.refresh_draft_baseline(h.detail(w)['workspace'])
     after = h.snapshot(w)
     id_map = {i: r['id'] for r in result['records'] for i in r['definition']['merged_ids']}
     assert len([p for p in after['policies'] if p['status'] == 'active']) == 4  # three grouped rules plus seeded Fair share
@@ -289,6 +291,10 @@ def test_grouping_through_governance_checks_the_same_and_undoes(h):
         live = next(p for p in h.get('approver', '/api/policies?status=active')['policies'] if p['id'] == record['id'])
         restored = h.command('approver', 'policy.retire', {'reason': 'Undo the grouping'}, live['id'], live['revision'])['restored_ids']
         assert sorted(restored) == sorted(record['definition']['merged_ids'])
+    active = {p['id']: p for p in h.get('approver', '/api/policies?status=active')['policies']}
+    assert all(active[record['id']]['active'] for record in made)
+    assert not {record['id'] for record in result['records']} & active.keys()
+    w = h.refresh_draft_baseline(h.detail(w)['workspace'])
     assert evaluate(h.snapshot(w))['findings'] == checked['findings']
 
 
