@@ -800,7 +800,8 @@ def pytest_runtest_makereport(item, call):
     def test_guard_refuses_readding_a_still_retired_node(self):
         node = self.QUARANTINE_NODE
         flake = {**self.FLAKE, "nodeid": node, "blocker": True}
-        files = {policy.QUARANTINE: ([], [flake]), policy.QUARANTINE_RETIRED: ([node], [node])}
+        # Base retired, candidate list emptied: the check must read the BASE list.
+        files = {policy.QUARANTINE: ([], [flake]), policy.QUARANTINE_RETIRED: ([node], [])}
         with self.assertRaisesRegex(ValueError, "may not re-add a retired entry: " + re.escape(node)):
             self.run_guard(policy.QUARANTINE, files=files)
         files[policy.QUARANTINE_RETIRED] = ([], [])

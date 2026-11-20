@@ -650,8 +650,8 @@ def test_trusted_verdict_refuses_a_failing_retired_node(trusted_result, outcome)
 
 
 @pytest.mark.parametrize("branch", ["dev", "preview"])
-def test_trusted_verdict_uses_only_base_retirements(trusted_result, branch):
-    # Invert the former base-only expectation while retaining the collected node identities.
+def test_trusted_verdict_uses_base_and_candidate_retirements(trusted_result, branch):
+    # A retirement in the candidate alone already removes the node's excuse in the same run.
     events = ("pull_request", "merge_group") if branch == "dev" else ("pull_request",)
     for event in events:
         result, _ = trusted_result(event, branch=branch, event=event, outcome="failed", retry="failed",
