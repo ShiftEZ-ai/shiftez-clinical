@@ -95,10 +95,6 @@ def test_a_tier_change_is_a_governed_proposal_with_undo(browser, live_server, h)
 def test_score_settings_history_restores_an_earlier_version(browser, live_server, h):
     w, _, _ = _world(h)
     current = h.get('admin', '/api/score-settings')
-    if current['settings'] is None:  # no stored version yet (score_settings.py): the department's settings become version 1
-        h.command('admin', 'score.settings', {'definition': current['definition'], 'reason': 'Store the current settings'},
-                  h.seed['department_id'], None)
-        current = h.get('admin', '/api/score-settings')
     h.command('admin', 'score.settings', {'definition': {**current['definition'], 'strengths': {'low': 1, 'medium': 4, 'high': 12, 'critical': 30}},
                                           'reason': 'Calibrate tiers'}, h.seed['department_id'], current['settings']['revision'])
     context, page = sign_in(browser, live_server, 'admin', viewport={'width': 1440, 'height': 900})

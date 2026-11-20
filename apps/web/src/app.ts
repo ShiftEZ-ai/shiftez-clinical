@@ -7,13 +7,13 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
 import {dateRange,lastDayIncluded,shiftMonth} from './date_picker.js';
 import {storedSetup,keepSetup,addTimeStep,addTimeRoom,scopeCapability,parseGroup,type RunSetup} from './autoschedule_setup.js';
-import {peopleToSchedule,PEOPLE_POPOVER} from './schedule_group.js';
+import {peopleToSchedule,peoplePopoverKey} from './schedule_group.js';
 import {rememberedAccount,rememberAccount,forgetAccount,signingInAs,forgetDeviceMemory} from './account_memory.js';
 import {applyTheme,setTheme,theme,isDark,motionStill,setMotionStill,navPinned,setNavPinned,clearPrefs,nameMode,setNameMode,type Theme,type NameMode,setDepartmentNames,ownNameMode} from './theme.js';
 import {openPalette,compactSearch,type PaletteItem} from './palette.js';
@@ -120,7 +120,7 @@ import {signInConfigPage} from './sign_in_config.js';
 import {readinessRegion,requirementEvidence,currency,notCompared,SUPERSEDED,type Currency} from './planning_context.js';
 import {openAmendment} from './published_amendment.js';
 import {publishedSession,changesChip,markChanges,loadChanges,forgetChanges,changeable,replaceNext,stagedCoverage,changedSessions,markDiff,type ChangeDiff,type PublishedHooks} from './published_changes.js';
-import {ruleCataloguePage,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
+import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
@@ -295,6 +295,11 @@ function readAhead(boot=false){
 }
 /** The reads started ahead for this rota, taken once by the render that uses them. */
 function takeAhead(id:string){const a=ahead;if(!a||a.id!==id||a.epoch!==scheduleEpoch)return null;ahead=null;return a;}
+/** FE-PERF (scale): a Rules list address starts the page's own reads at boot beside the lists (rule_catalogue.ts
+ *  readRulesAhead), not after them. Only where the first draw is that list (allowed, not desktop-only, the rule catalogue
+ *  on, no ?source= that may open a rule instead); taken by the next draw, whichever page it is, so never kept for later. */
+let rulesAhead:ReturnType<typeof readRulesAhead>|null=null;
+const rulesListFirst=()=>view==='rules'&&!routeParts.length&&!routeQuery.has('source')&&ruleCatalogueOn()&&allowed(view)&&(!phoneLite()||fitsPhone(view,routeParts,routeQuery));
 /** A rota's days in view: compact detail, then every page of its sessions and findings there. A rota that changes while
  *  the pages are read is read whole instead. */
 async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[]):Promise<WorkspaceData|null>{
@@ -1282,6 +1287,8 @@ const pageName=(target:string)=>{const [page,part]=target.replace(/^#/,'').split
   return page==='configuration'&&part?kindLabel(kindAt(part)):paths[page]?.title||'another page';};
 // The docked item panel is asked last: it closes with its page (unless it holds unsaved changes).
 function leaving(then?:()=>void,where='another page'){
+  // A dialog with unsaved changes (an Approve note, a person, a rule) asks first: Back never discards it silently.
+  if(askDirtyDialog(then))return false;
   // An unchanged record form closes at once; a changed one asks, and Discard changes closes it and goes on to `then`.
   if(catalogueSource){const source=catalogueSource;if(source.dialog.isConnected)source.tryClose();
     if(source.dialog.isConnected){if(then)source.tryCloseThen(()=>{source.close();then();});return false;}source.clear();}
@@ -1561,7 +1568,7 @@ async function boot(card?:HTMLElement|null){
     // in the page's own read. Without it the first pulse cannot tell and would redraw the page for nothing.
     // Pages that need deferred lists load them in one read (not the lean set and then the rest, maintenance):
     // the page and the sidebar counts then start their reads together.
-    readAhead(true);
+    readAhead(true);rulesAhead=rulesListFirst()?readRulesAhead(ctx()):null;
     await Promise.all([loadCatalogues(needsDeferredCatalogues(),leave),background<Row>('/api/pulse').then(p=>{seenActivity=p.activity;noticeNewVersion(p.build);},()=>{})]);
     // Live updates from the pulse just read, not from the first 10 s fallback tick: a change committed meanwhile that only
     // the stream announces (a worker's check completing) was missed, the stream's baseline being taken after it.
@@ -1635,7 +1642,7 @@ const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pa
 async function renderPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
-  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
+  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
@@ -1732,7 +1739,7 @@ async function renderPage(live=false){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
@@ -7376,7 +7383,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // The panel's place shows its shape while the jobs are read, never an empty column (FD-03).
   const sk=skeleton('panel','Loading auto-schedule…');target.append(sk);
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
-  const handover=awaitAdoption(PEOPLE_POPOVER);
+  const peopleKey=peoplePopoverKey(w.id),handover=awaitAdoption(peopleKey);
   try{
   const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
   const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
@@ -7446,7 +7453,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       button('Use the department setting',()=>{st().keep=undefined;keptSetup(st());syncGroup();},'link-button')]:[]));};
   const syncGroup=()=>{keep.input.checked=keeping();keep.input.disabled=grouped()&&!rebalanceGroup;groupNote.hidden=!st().group;syncKeep();
     groupNote.textContent=!st().group?'':keeping()?'Existing assignments stay as they are. Only these people are added.':'Only these people’s unlocked assignments may change. Everyone else’s stay.';};
-  const people=scopeCap?peopleToSchedule({fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
+  const people=scopeCap?peopleToSchedule({key:peopleKey,fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
     words:p=>conditionsSummary(p,namer(ctx()).label),onChange:(v,required)=>{Object.assign(st(),{group:v,pickGroup:required,scopeError:''});keptSetup(st());syncGroup();syncRun();}}):null;
   // A group asked for where the scheduler cannot take one: everyone only when chosen, never by itself.
   const noGroups:HTMLElement|null=!scopeCap&&grouped()?el('p',{class:'auto-stale',role:'status'},icon('alert'),'This scheduler cannot schedule only some people. ',

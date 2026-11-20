@@ -56,7 +56,7 @@ from .read_io import IndependentFileResponse, IndependentStaticFiles, background
 from packages.web_assets import WEB, asset_url, available_bundle_version
 from .schema import supported_revision
 from .snapshots import (domain_snapshot,
-                        publication_snapshot, workspace_shifts, fingerprint, snapshot_hash)
+                        publication_snapshot, fingerprint, snapshot_hash)
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
@@ -2349,7 +2349,7 @@ def create_app(settings: Settings | None = None, engine=None):
                       for p in shift["participants"]]
             return {"fresh": fresh, "checked": bool(validation), "people": people, "active_rules": len({p["id"] for p in policies})}
 
-    @app.get("/api/workspaces/{workspace_id}/rule-map")
+    @app.get("/api/workspaces/{workspace_id}/rule-map", response_model=s.RuleMapResponse)
     def workspace_rule_map(workspace_id: str, request: Request):
         """Which rules touch which sessions, people and days of this rota, and the marks that explain them
         (own numbers, overrides, exceptions, this rota's changes). Unchanged rules, people and sessions: 304."""
@@ -2382,7 +2382,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.read_projections import cached as cached_projection
             prepared = {}
             def build_map(_):
-                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False)
+                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False, rule_map_bindings=True)
                 prepared['data'] = data
                 return rule_map(data, originals)
             result = cached_projection(db, [workspace.id], 'rule_map', {workspace.id: tag},
@@ -2611,13 +2611,12 @@ def create_app(settings: Settings | None = None, engine=None):
             from .snapshots import project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
-            own_shifts = None
             if canonical is not None and workspace.status == "draft":
                 focus = set(canonical.get("focus_ids") or ())
                 own_shifts = [row for row in canonical.get("shifts", ()) if row.get("id") in focus]
-            data["shifts"] = project_series_shifts(
-                                                   db, workspace,
-                                                   workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts,
+            else:
+                own_shifts = workspace_detail.full_shifts(db, workspace.id)
+            data["shifts"] = project_series_shifts(db, workspace, own_shifts,
                                                    external_out=external_context if data["wishes"] else None)
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
