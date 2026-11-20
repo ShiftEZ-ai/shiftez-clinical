@@ -853,8 +853,9 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             org = db.get(m.Organisation, actor.organisation_id)
+            department = db.get(m.Department, actor.department_id)
             return {"identity_id": actor.identity_id, "display_name": actor.display_name,
-                    "department": record(db.get(m.Department, actor.department_id)), "organisation": record(org),
+                    "department": record(department), "organisation": record(org),
                     "catalogue_version": department_version(db, actor.department_id),
                     "roles": sorted(actor.roles), "person_id": actor.person_id,
                     "permissions": sorted(name for name in s.PERMISSION_NAMES if actor.permits(*s.PERMISSIONS[name])),
@@ -1263,7 +1264,9 @@ def create_app(settings: Settings | None = None, engine=None):
     def home_summary(request: Request):
         """Home: role-scoped counts and short lists of what needs this person (services/home.py)."""
         with transaction(engine) as db:
-            return home_service.home(db, actor_for(request, db), settings=settings)
+            actor = actor_for(request, db)
+            db.info['_request_parents'] = {}
+            return home_service.home(db, actor, settings=settings)
 
     @app.get('/api/home/rotas', response_model=s.HomeRotaList)
     def home_rotas(request: Request, start: s.date, end: s.date,
@@ -2004,6 +2007,7 @@ def create_app(settings: Settings | None = None, engine=None):
             archived_only = archived_only or archived
             representation = [limit, offset, start, end, current_only, archived, include_archived, archived_only, q,
                               copy_starts_on, search_options.model_dump(mode="json") if search_options else None]
+            db.info['_request_parents'] = {}
             tag = workspace_list_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
@@ -2948,6 +2952,7 @@ def create_app(settings: Settings | None = None, engine=None):
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
+            db.info['_request_parents'] = {}
             from .services.read_projections import cached_department
             return cached_department(
                 db, actor, 'requests', tag,
