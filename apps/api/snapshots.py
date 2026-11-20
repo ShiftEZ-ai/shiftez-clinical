@@ -946,13 +946,15 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = True, own_shifts: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
+    mandatory_overlay_changed = False
     baseline = None
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
@@ -997,13 +999,17 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=bool(draft_rules), validity_baseline=validity_baseline)
+                                              include_mandatory=bool(draft_rules) or current_mandatory,
+                                              validity_baseline=validity_baseline)
+            mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
     result = DomainSnapshot(result, read_quality=read_quality)
     if draft_rules:
         result['_draft_policy_basis'] = draft_rules['draft_policy_basis']
+    if current_mandatory and mandatory_overlay_changed:
+        result['_mandatory_overlay_changed'] = True
     if result['organisation']['id'] != org.id:
         raise ValueError('Snapshot inputs belong to another organisation')
     department_ids = result.pop('department_ids')
@@ -1336,8 +1342,8 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
-    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'include_fairness', 'include_objectives',
-                                         'include_fairness_history'} or value is None
+    supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'current_mandatory',
+                                         'include_fairness', 'include_objectives', 'include_fairness_history'} or value is None
                                  for key, value in kwargs.items())
     if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
         db.flush()
