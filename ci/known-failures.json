@@ -2280,12 +2280,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_score_review.py::test_an_admin_only_account_reads_the_score_settings_it_changes",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_scoring_c2_equivalence.py::test_admin_edited_migrated_lead_cap_participates_in_score[case-dpjnneecklgebackpndfabmgnmckmapbijbioadfgilhnpbdiimfcgidhniohkol]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
