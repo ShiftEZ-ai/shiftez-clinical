@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 
 from apps.api import models as m
 from apps.api.auth import require_role
+from apps.api.db import current_request_parent
 from apps.api.errors import require
 from apps.api.serialization import record
 from apps.api.snapshots import domain_snapshot, project_series_shifts, snapshot_hash, workspace_content, workspace_shifts
@@ -177,7 +178,7 @@ def _disclosed_change(change, db, actor):
         return change
     if actor is None:
         return {key: value for key, value in change.items() if key not in {'absence_reason', 'reason'}}
-    department = db.get(m.Department, actor.department_id)
+    department = current_request_parent(db, m.Department, actor.department_id)
     row = SimpleNamespace(kind='absence_report', person_id=None, private_reason=change.get('absence_reason'),
                           details={'reporter_category': change.get('absence_reason')})
     wording = leave_wording(department, actor, row, own=False)
