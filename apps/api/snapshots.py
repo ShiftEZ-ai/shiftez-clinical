@@ -950,7 +950,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
-                    include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
+                    include_objectives: bool = True, include_fairness_history: bool = True,
+                    rule_map_bindings: bool = False) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1002,6 +1003,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                                               include_mandatory=bool(draft_rules) or current_mandatory,
                                               validity_baseline=validity_baseline)
             mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
+            if rule_map_bindings and workspace.status == "draft":
+                from packages.domain.rule_lines import seeded_policies
+
+                captured = seeded_policies(saved_inputs.get("policies") or [], saved_inputs.get("policy_seed_lines") or [])
+                effective = live_safety_inputs(db, workspace, saved_inputs, current=live_inputs,
+                                              include_mandatory=True, validity_baseline=validity_baseline)["policies"]
+                if captured != effective:
+                    shared_inputs['_rule_map_policies'] = (captured, effective)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
@@ -1181,15 +1190,21 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["scheduling_facts"] = [({**r, "status": "retired"} if r["id"] in replaced else r)
             for r in result["scheduling_facts"] if r["id"] not in overrides] + list(overrides.values())
     from packages.domain.rule_lines import bound_policies
-    result["policies"] = bound_policies(result["policies"], result, read_quality=read_quality)
-    result["_catalogue_v2_materialized"] = True
     # This rota's adjustments over the department rules (switch off, or another number).
     adjustments = [r for r in (workspace.rule_adjustments or []) if r['policy_id'] not in overridden_ids]
-    if adjustments:
-        from .services.planning import adjusted_rules
-        result["policies"] = [q for q in (adjusted_rules(p, adjustments) for p in result["policies"]) if q is not None]
-    # Rules added for one rota apply to that rota only.
-    result["policies"] = [p for p in result["policies"] if (p.get("definition") or {}).get("workspace_id") in (None, workspace.id)]
+
+    def resolve(policies, quality):
+        policies = bound_policies(policies, result, read_quality=quality)
+        if adjustments:
+            from .services.planning import adjusted_rules
+            policies = [q for p in policies if (q := adjusted_rules(p, adjustments)) is not None]
+        # Rules added for one rota apply to that rota only.
+        return [p for p in policies if (p.get("definition") or {}).get("workspace_id") in (None, workspace.id)]
+
+    if '_rule_map_policies' in result:
+        result['_rule_map_policies'] = [resolve(policies, {}) for policies in result['_rule_map_policies']]
+    result["policies"] = resolve(result["policies"], read_quality)
+    result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
     lo, hi = snapshot_window(workspace, org.timezone)

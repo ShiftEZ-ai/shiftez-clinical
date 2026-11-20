@@ -22,10 +22,10 @@ export type Num={field:string;value:number;maximum?:number|null;unit:string;stri
 /** The rota's workload targets dock (app.ts): rules for this rota are this panel's, the server's rule map. */
 export const ROTA_TARGETS='Workload targets for this rota';
 export type MapRule={id:string;name:string;kind:string;severity:string;strength?:string;safety:boolean;exception_allowed:boolean;adjustable:boolean;overridable?:boolean;
-  number:Num|null;department_value:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
+  number:Num|null;department_value:number|null;binding_value?:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
   overrides:string[];overridden_by:string[];person_side?:boolean;session_side?:boolean;starts_on?:string;ends_on?:string|null;block?:[string,string]|null;
   named:{people:string[];services:string[];locations:string[];types:string[];weekdays:number[]|null;dated:boolean};
-  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:Row[];
+  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:(Row & {binding_value?:number|null})[];
   /** Who follows a line that names no person (a programme's or ranks' line): [first day, end day, index into lines]. */
   line_people?:Record<string,[number,number,number][]>;
   /** Sessions where a person's days say the rule holds but that session does not (a skill held at other clinics only). */
