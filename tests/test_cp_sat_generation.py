@@ -121,7 +121,7 @@ def test_department_month_with_repeating_wishes_and_thousands_of_shape_breaches(
     def check_objectives(model, tiers):
         assert sum(len(flags) for flags in breaches.values()) > 4000
         assert len({pid for _, pid in breaches}) >= 149  # The one external rotation has no available duties.
-        assert [name for name, _, _ in tiers] == ['coverage', 'weighted']
+        assert [name for name, _, _ in tiers] == ['coverage', 'desired_coverage', 'weighted']
         for _, terms, _ in tiers:
             assert terms
             model.minimize(sum(terms))
@@ -286,21 +286,21 @@ def test_valid_schedule_survives_timeout_while_improving(h, monkeypatch):
     def stop_improvement(self, solver, model, tier):
         if tier is None:  # Fixed coverage choices still need their derived score values.
             return original_solve(self, solver, model, tier)
-        phases.append(tier)
+        phases.append(self.context['objective_names'][tier])
         assert model.has_objective()
         # The first search finds a schedule; improving it then runs out of time.
-        return cp_model.UNKNOWN if len(phases) > 1 else original_solve(self, solver, model, tier)
+        return cp_model.UNKNOWN if phases[-1] == 'weighted' else original_solve(self, solver, model, tier)
 
     monkeypatch.setattr(SolverControl, 'solve', stop_improvement)
     result = generate(data, 5)
-    assert phases == [0, 1]
+    assert phases[0] == 'coverage' and phases[-1] == 'weighted'
     # A timed-out weighted search retains the coverage incumbent and reports it as feasible, without an optimum.
-    assert [t['name'] for t in result['objectives']] == ['coverage', 'weighted']
+    assert [t['name'] for t in result['objectives']] == ['coverage', 'desired_coverage', 'weighted']
     assert result['status'] == 'candidate_feasible'
     assert result['validation']['valid'] and not result['optimality_proven']
     assert result['weighted_status'] == 'FEASIBLE'
-    assert result['objectives'][0]['proven_optimal'] and not result['objectives'][1]['proven_optimal']
-    assert result['objectives'][1]['value'] > 0
+    assert all(row['proven_optimal'] for row in result['objectives'][:-1])
+    assert not result['objectives'][-1]['proven_optimal'] and result['objectives'][-1]['value'] > 0
     assert len(result['additions']) == 1
 
 

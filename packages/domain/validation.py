@@ -22,6 +22,7 @@ from .patterns import SHAPE_KINDS
 from .recurrence import inactive, series_definition, usual_assignee_ids, with_series_state
 from .overlap import evaluate_overlaps
 from .supervision_levelling import levelled_finding, session_spread_policies, spread_gap, spread_policy_key
+from .generation_scope import pooled_anchor, selected_session_ids
 
 # 47: bind rotation leave policies and actual-absence conflicts to validation results.
 # 48: invalidate stored checks for actionable, grouped session overlap findings.
@@ -1943,8 +1944,10 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                                 severity='warning', rule=policy, extra=detail)
                     continue
                 peers = cover_peers(policy, a, b) if rule.get('aggregation') == 'service_group' else [shift]
-                affected = sorted(s['id'] for s in peers if s['id'] in (focus if partial is None else partial.get('coverage_focus', focus)))
-                if rule.get('aggregation') == 'service_group' and affected and sid != affected[0]:
+                coverage_focus = focus if partial is None else partial.get('coverage_focus', focus)
+                coverage_selected = set(selected_session_ids(data)) if partial is None else set(partial.get('coverage_focus', coverage_focus))
+                anchor = pooled_anchor([s['id'] for s in peers], coverage_selected, coverage_focus)
+                if rule.get('aggregation') == 'service_group' and anchor and sid != anchor:
                     continue
                 observations = staffing_counts(data, policy, shift, a, b, peers=peers, presence=presence, available=available)
                 if not observations:

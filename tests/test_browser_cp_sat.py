@@ -659,7 +659,7 @@ def test_auto_schedule_steps_review_issues_show_apply_and_undo(browser, cp_serve
         assert 'objective_order' not in factory
         assert job['effective_options'].get('weight_preset') == 'fairness_first'
         assert 'objective_order' not in job['effective_options']
-        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'weighted']
+        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'desired_coverage', 'weighted']
         # What is still to fix: each must-fix cause the run leaves is ONE Fix list row, in the server's words, with its
         # one action (the shortage of ten in both clinics is one cause, not a card per clinic).
         must = [c for c in result['fix_list_after']['causes'] if c['level'] == 'must']
