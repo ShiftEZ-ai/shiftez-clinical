@@ -143,8 +143,9 @@ def test_sparse_zero_and_single_load_bounds(h, scenario, count, balance_measure,
     captured = _capture(cp_sat.generate, data)
     # A fixed eligible audience of fewer than two has no built-in sharing objective.
     assert captured['workloads'] == ([(0, load_upper)] * count if count >= 2 else [])
-    assert [row['name'] for row in captured['tiers']] == ['coverage', 'weighted']
-    assert [row['tolerance'] for row in captured['tiers']] == [0, 0]
+    expected = ['coverage', 'weighted'] if scenario == 'zero' else ['coverage', 'desired_coverage', 'weighted']
+    assert [row['name'] for row in captured['tiers']] == expected
+    assert [row['tolerance'] for row in captured['tiers']] == [0] * len(expected)
 
 
 @pytest.mark.parametrize('balance_measure,demand,limit', [
