@@ -643,7 +643,7 @@ def test_a_rules_panel_shows_the_value_a_revised_mandatory_rule_now_binds(browse
             rule_action(revised, 'Adjust for this rota')
             field = revised.get_by_label(re.compile(r'^New number for .Weekly duty limit. in this rota, captured 5, now binds 2'))
             expect(field).to_have_value('5')
-            expect(revised.locator('.rk-inline-row').filter(has=field)).to_contain_text('now binds 2')
+            expect(field.locator('..')).to_contain_text('now binds 2')  # the field's own row: the number, its unit and the binding value
         assert not errors, errors
     finally:
         context.close()
