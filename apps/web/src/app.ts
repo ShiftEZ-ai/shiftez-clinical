@@ -3043,9 +3043,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       if(draft&&fresh&&w.validation?.quota_report?.rows.some((r:Row)=>r.target_calculation))targetsBox.append(button('Adjust workload target',()=>formDialog('Adjust workload target','Changes apply only to this rota and require its independent approval.',form=>{
         const entries=w.validation!.quota_report!.rows.filter((r:Row)=>r.target_calculation);
         const selectedTarget=select('Employee and target',entries.map((r:Row,i:number)=>({value:String(i),label:r.display_name+' · '+r.policy_name})),'0');
-        const amount=field('Override target','number',entries[0].amount,{required:true,min:0,max:100000,step:entries[0].metric==='duties'?0.01:'any'}),reason=area('Adjustment reason','');reason.input.required=true;reason.input.minLength=3;
+        const targetStep=(metric:Row['metric'])=>metric==='duties'||metric==='lead_turns'?'0.01':'any';
+        const amount=field('Override target','number',entries[0].amount,{required:true,min:0,max:100000,step:targetStep(entries[0].metric)}),reason=area('Adjustment reason','');reason.input.required=true;reason.input.minLength=3;
         const reset=check('Use calculated default again',false);reset.input.disabled=entries[0].target_calculation.override_amount===undefined;
-        selectedTarget.input.addEventListener('change',()=>{const r=entries[Number(selectedTarget.input.value)];amount.input.value=String(r.amount);amount.input.step=r.metric==='duties'?'0.01':'any';reset.input.checked=false;reset.input.disabled=r.target_calculation.override_amount===undefined;amount.input.disabled=false;});
+        selectedTarget.input.addEventListener('change',()=>{const r=entries[Number(selectedTarget.input.value)];amount.input.value=String(r.amount);amount.input.step=targetStep(r.metric);reset.input.checked=false;reset.input.disabled=r.target_calculation.override_amount===undefined;amount.input.disabled=false;});
         reset.input.addEventListener('change',()=>{amount.input.disabled=reset.input.checked;});
         form.append(selectedTarget.wrap,amount.wrap,reset.wrap,reason.wrap);
         return async()=>{const r=entries[Number(selectedTarget.input.value)];await command('workspace.target_override',{policy_id:r.policy_id,person_id:r.person_id,amount:reset.input.checked?null:Number(amount.input.value),reason:reason.input.value},w.id,w.revision);await refresh();};
