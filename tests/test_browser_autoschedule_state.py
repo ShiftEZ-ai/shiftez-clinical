@@ -6,8 +6,9 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.worker.main import process_one
-from .test_browser import auto_setup, auto_result, wait_run_created, browser, live_server, navigate, open_rota, open_scheduling, pick_view, sign_in, wait_held  # noqa: F401
-from .test_browser_cp_sat import cp_server, _apply  # noqa: F401
+from .test_browser import auto_setup, auto_result, wait_run_created, browser, live_server, navigate, open_rota, open_scheduling, pick_view, sign_in, wait_held, wait_until  # noqa: F401
+from .test_browser import holding
+from .test_browser_cp_sat import cp_server, _apply, _joins  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -219,6 +220,18 @@ def _proposal(page, h, panel):
     expect(panel.get_by_role('region', name='Review')).to_be_visible(timeout=15000)
 
 
+def _finish_rota_check(page, h, workspace_id, joined):
+    check = next(j for j in h.get('coordinator', '/api/jobs?workspace_id=' + workspace_id)['jobs']
+                 if j['kind'] == 'validation' and j['status'] == 'queued')
+    status_url = f"/api/jobs/{check['id']}/status"
+    # The page has joined this job before the worker takes it, so its next read can see it finish.
+    wait_until(page, lambda: any(r.url.endswith(status_url) for r in joined),
+               'The page did not join the rota check', seconds=15)
+    with page.expect_response(lambda r: r.url.endswith(status_url) and r.ok
+                              and r.json()['job']['status'] == 'succeeded'):
+        assert h.process_jobs()
+
+
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_server, h, width, scheme):
     """G-17: Apply, then Undo from Recent runs; the Apply message's own Undo is then stale. Pressing it says so once and
@@ -234,18 +247,73 @@ def test_an_undo_already_used_is_refused_once_without_not_saved(browser, cp_serv
         open_scheduling(page)
         panel = page.locator('#auto-panel')
         _proposal(page, h, panel)
-        _apply(page, h, panel, 'Apply 1 change')
+        joined = _joins(page)
+        panel.get_by_role('button', name='Apply 1 change', exact=True).click()
         toast = page.locator('.toast').filter(has_text='Suggestions applied')
         expect(toast).to_be_visible()
+        toast.dispatch_event('mouseenter')  # Pause the toast while both rota checks settle.
+        _finish_rota_check(page, h, w['id'], joined)
         # The applied run keeps its Undo in Recent runs, under the rota check that follows Apply (BE-18).
+        joined = _joins(page)
         press(panel.locator('.run-list').get_by_role('button', name=re.compile('^Undo Auto-schedule ')))
         expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+        # Let the page join and finish the check before recording commands from the stale Undo.
+        _finish_rota_check(page, h, w['id'], joined)
         commands = []
         page.on('request', lambda r: commands.append(r.post_data_json.get('kind')) if r.url.endswith('/api/commands') else None)
         press(toast.get_by_role('button', name='Undo', exact=True))
         expect(page.locator('.toast').filter(has_text='Already undone, or the rota changed since')).to_have_count(1)
         assert commands == []
         expect(page.locator('#save-state')).not_to_contain_text('Not saved')
+    finally:
+        context.close()
+
+
+def test_a_finished_undo_check_clears_the_footer_and_stops_polling(browser, cp_server, h):
+    w = h.shift(h.workspace('Check after undo'), people=[])['workspace']
+    context, page = sign_in(browser, cp_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        page.clock.install()
+        open_rota(page, w['id'])
+        open_scheduling(page)
+        panel = page.locator('#auto-panel')
+        _proposal(page, h, panel)
+        _apply(page, h, panel, 'Apply 1 change')
+        expect(page.locator('.toast').filter(has_text='Suggestions applied')).to_be_visible()
+
+        clock = datetime.fromtimestamp(page.evaluate('Date.now()') / 1000, timezone.utc)
+        page.clock.pause_at(clock + timedelta(seconds=1))
+        # Let the status poll deliver completion before a live update can refresh the kept job list.
+        with holding(page) as held:
+            events = re.compile(r'/api/events(?:\?|$)')
+            held.hold(events)
+            joined = _joins(page)
+            recent = panel.locator('.run-list')
+            recent.get_by_role('button', name=re.compile('^Undo Auto-schedule ')).click()
+            expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+            check = next(j for j in h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs']
+                         if j['kind'] == 'validation' and j['status'] == 'queued')
+            check_id = check['id']
+            status_url = f'{cp_server}/api/jobs/{check_id}/status'
+            state = recent.locator('li').filter(has_text='Full rota check').first.locator('.badge')
+            expect(state).to_have_text('Queued')
+            wait_until(page, lambda: any(f'job_id={check_id}' in r.request.url for r in held[events]),
+                       'the page never joined the Undo check')
+
+            with page.expect_response(status_url) as status:
+                assert h.process_jobs()
+                page.clock.run_for(1_000)  # The joined job's first status poll.
+            assert status.value.ok and status.value.json()['job']['status'] == 'succeeded'
+            after_completion = len(joined)
+            # The panel must show completion before its own job-list poll has a chance to refresh it.
+            expect(state).to_have_text('Checked')
+            page.clock.run_for(1_500)  # A rejoined job would poll again within this window.
+            footer = page.get_by_role('contentinfo', name='Status')
+            expect(footer.locator('[data-check-line]')).to_have_count(0)
+            expect(footer).not_to_contain_text('Waiting to check')
+            expect(footer.locator('[data-check-cancel]')).to_have_count(0)
+            expect(state).to_have_text('Checked')
+            assert not any(r.url == status_url for r in joined[after_completion:]), 'the finished check was polled again'
     finally:
         context.close()
 

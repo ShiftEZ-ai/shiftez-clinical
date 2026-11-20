@@ -232,9 +232,30 @@ def test_a_mandatory_rule_activated_after_the_run_blocks_the_write_it_would_brea
     reply = apply(h, w, job)
     assert reply['proposal_retained'] and reply['reconciliation']['status'] == 'unresolved'
     assert reply['reconciliation']['validation_current']
+    assert any(finding['code'] == 'MAX_DUTIES' and finding['severity'] == 'error'
+               for placement in reply['reconciliation']['conflicting_placements']
+               for finding in placement['findings'])
     assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
     assert h.snapshot(w) == before
     assert h.get('coordinator', '/api/jobs/' + job['id'])['job']['status'] == 'succeeded'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_zero_limit_active_before_generation_prevents_a_conflicting_proposal(request, backend):
+    h = request.getfixturevalue(backend)
+    person = h.seed['people'][0]
+    w = h.shift(h.workspace('Synthetic live zero guard'), people=[person])['workspace']
+    w = h.shift(w, people=[], start='2026-10-05T08:00:00+03:00',
+                end='2026-10-05T12:00:00+03:00')['workspace']
+    h.policy({'kind': 'max_duties', 'maximum': 0})
+    job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation',
+        'generation_scope': group(person)}, revision=w['revision'])['job']
+    assert process_one(h.app.state.engine)
+    saved = h.get('coordinator', '/api/jobs/' + job['id'])['job']
+    assert saved['status'] == 'succeeded' and saved['result']['additions'] == []
+    validation = h.lifecycle(w, 'validate')['validation']
+    assert any(finding['code'] == 'MAX_DUTIES' and finding['severity'] == 'error'
+               for finding in validation['findings'])
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -280,13 +301,29 @@ def test_rules_changed_after_run_retain_even_a_safe_proposal(request, backend, c
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 @pytest.mark.parametrize('non_rule_change', [False, True])
 def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, backend, non_rule_change):
-    from apps.api.input_changes import rules_changed
+    from apps.api.input_changes import rules_changed, watermark
+    from apps.api.snapshots import currency_hint, domain_snapshot
 
     h = request.getfixturevalue(backend)
-    w = h.shift(h.workspace('Synthetic live mandatory guard'), people=[])['workspace']
-    # The draft baseline predates this quota, but the run currency already includes it.
-    h.policy({'kind': 'max_duties', 'maximum': 0})
-    job = run(h, w)
+    person = h.seed['people'][0]
+    w = h.shift(h.workspace('Synthetic live mandatory guard'), people=[person])['workspace']
+    w = h.shift(w, people=[], start='2026-10-05T08:00:00+03:00',
+                end='2026-10-05T12:00:00+03:00')['workspace']
+    # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+    # #797: generation reads live mandatory rules, so the rule must become active after the proposal exists
+    job = run(h, w, population=group(person))
+    assert len(job['result']['additions']) == 1
+    cap = h.policy({'kind': 'max_duties', 'maximum': 1})
+    # A legacy worker could record the live currency while compiling only captured rules.
+    with transaction(h.app.state.engine, write=True) as db:
+        stored = db.get(m.Job, job['id'])
+        workspace = db.get(m.Workspace, w['id'])
+        legacy = domain_snapshot(db, workspace, mandatory_rules=False)
+        stored.input_fingerprint = legacy['fingerprint']
+        stored.input_snapshot = {**stored.input_snapshot, 'fingerprint': stored.input_fingerprint,
+            'input_manifest': legacy['input_manifest'], 'audit_watermark': watermark(db, workspace.department_id),
+            'currency_hint': currency_hint(db, workspace, mandatory_rules=False)}
+        stored.result = {**stored.result, 'input_fingerprint': stored.input_fingerprint}
     if non_rule_change:
         h.command('coordinator', 'availability.record', {'person_id': h.seed['people'][-1],
             'kind': 'recorded_leave', 'start': '2026-10-04T00:00:00+03:00',
@@ -297,6 +334,9 @@ def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, 
     assert reply['reconciliation']['validation_current']
     assert not rules_changed(reply['reconciliation']['changed_facts'])
     assert reply['reconciliation']['addition_indexes'] == reply['reconciliation']['removal_indexes'] == []
+    finding, = [finding for placement in reply['reconciliation']['conflicting_placements']
+                for finding in placement['findings'] if finding['rule_id'] == cap['id']]
+    assert (finding['code'], finding['person_id'], finding['detail']['maximum']) == ('MAX_DUTIES', person, 1)
     assert h.snapshot(w) == before
 
 

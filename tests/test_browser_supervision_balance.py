@@ -106,9 +106,7 @@ def test_supervision_fair_share_line_saves_edits_and_shows_in_fairness(browser, 
         expect(main.locator('[data-line]').filter(has_text='Everyone')).to_contain_text('Workload')
         page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ change')).click()
         dialog = page.get_by_role('dialog')
-        tick = dialog.get_by_label('I have read which lines give way and that is intended', exact=True)
-        if tick.count():
-            tick.check()
+        expect(dialog.get_by_label('I have read which lines give way and that is intended', exact=True)).to_have_count(0)
         reason(page, 'Share supervision fairly between consultants', 'Propose')
         expect(main.locator('.rc-waiting')).to_contain_text('waiting for approval')
         proposed = next(e for e in h.get('approver', '/api/rules/catalogue?include_hidden=true')['entries'] if e['id'] == 'fair_share')['proposed']
