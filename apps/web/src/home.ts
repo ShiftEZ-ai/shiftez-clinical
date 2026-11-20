@@ -33,6 +33,8 @@ export interface HomeHooks {
   openCatalogue:(kind:string)=>void;
   /** Plain words for an audit action (the audit log's own wording). */
   auditWords:(action:string,n:number)=>{chip:string;verb:string;what:string;colour:string};
+  /** The self-approved decisions this reader may see (the department's for audit readers, else their own), in the audit log's words. */
+  selfApproved:()=>void;
   /** The calendar subscription panel (Insights › Exports has the same one). */
   subscription:()=>Promise<HTMLElement>;
   /** False once another page render started (a late reply must not touch the new page's title). */
@@ -338,7 +340,7 @@ export function needsOf(ctx:Context,hooks:HomeHooks,home:HomeData):Need[]{
       case 'ready_to_submit':row={tone:'draft',title:'Ready to submit',...open('Open')};break;
       case 'in_review':row={tone:'info',title:'In review',...open('Open')};break;
       case 'rotations_soon':row={tone:'info',title:s(n,'Rotation changing','Rotations changing'),action:'Open',go:()=>ctx.navigate('programmes'),context:'Starts or ends in the next 2 weeks'};break;
-      case 'self_approved':row={tone:'info',title:s(n,'Self-approved decision','Self-approved decisions'),action:'Open',go:()=>ctx.navigate('system/audit'),context:'In the last 30 days'};break;
+      case 'self_approved':row={tone:'info',title:s(n,'Self-approved decision','Self-approved decisions'),action:'Open',go:hooks.selfApproved,context:'In the last 30 days'};break;
     }
     if(row)out.push({...row,count:n,key:i.key});  // an unknown key (an older client) is skipped
   }

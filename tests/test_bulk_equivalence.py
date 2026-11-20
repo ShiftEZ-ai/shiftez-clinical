@@ -91,6 +91,10 @@ def case(h, kind):
         row = run(role, family + ".create", payload)
         if action == "undo_create":
             return role, command(kind, {"items": [{"id": row["id"], "revision": row["revision"]}]}, row)
+        if action in {"withdraw", "restore"} and family != "grant":
+            if action == "restore":
+                row = run(role, family + ".withdraw", row=row)
+            return role, command(kind, row=row)
         if action == "restore":
             row = run(role, "grant.revoke", {"ends_on": "2027-05-01"}, row)
             return role, command(kind, {"starts_on": "2027-01-01", "ends_on": "2027-06-01"}, row)
@@ -98,6 +102,19 @@ def case(h, kind):
         if action == "update_dates":
             dates["starts_on"] = "2027-01-01"
         return role, command(kind, dates, row)
+    if kind.startswith("programme_membership."):
+        from .test_future_record_withdrawal import _programme
+        row = _programme(h, "2028-02-01")
+        if kind.endswith(".restore"):
+            row = run("coordinator", "programme_membership.withdraw", row=row)
+        return "coordinator", command(kind, row=row)
+    if kind.startswith("rotation."):
+        from .test_rotation_withdrawal import future_value
+        row = h.configure("rotations", future_value(h), role="coordinator")["record"]
+        payload = {"items": [{"id": row["id"], "revision": row["revision"]}]}
+        if kind == "rotation.restore":
+            payload = run("coordinator", "rotation.remove", payload, key="undo")["payload"]
+        return "coordinator", command(kind, payload)
     if kind.startswith("availability."):
         payload = {"person_id": person, "kind": "recorded_leave", "start": "2026-11-01T00:00:00+03:00",
                    "end": "2026-11-02T00:00:00+03:00", "private_reason": "Synthetic confidential reason"}
@@ -287,6 +304,7 @@ def effective_tables(state, kind):
     family = kind.split(".")[0]
     tables = {"catalogue": ["services"], "tag": ["tag_members", "people"], "membership": ["memberships"],
               "eligibility": ["eligibilities"], "grant": ["capability_grants"], "availability": ["availability"],
+              "programme_membership": ["programme_memberships"], "rotation": ["rotations", "mentorships"],
               "availability_pattern": ["availability_patterns"], "wish": ["staff_wishes"], "role": ["role_bindings"],
               "identity": ["identities"], "rule": ["policies"], "policy": ["policies"], "exception": ["policy_exceptions"],
               "person": ["scheduling_facts"], "calendar": ["scheduling_facts"],
@@ -369,6 +387,9 @@ def test_every_bulk_kind_preserves_single_records_and_history(h, monkeypatch, ki
             patched.setattr(uuid, "uuid4", lambda: uuid.UUID(int=next(ids)))
             item = {"item_kind": kind, "target_id": single.target_id, "expected_revision": single.expected_revision,
                     "payload": deepcopy(single.payload)}
+            if kind in {"rotation.remove", "rotation.restore"}:
+                target = item["payload"].pop("items")[0]
+                item.update(target_id=target["id"], expected_revision=target["revision"])
             bulk = command("bulk.apply", {"items": [item]})
             result = dispatch(db, actor, bulk, h.settings)
             db.flush()

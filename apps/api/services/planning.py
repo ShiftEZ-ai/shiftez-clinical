@@ -14,12 +14,14 @@ from packages.domain.validation import (INTERNAL_CHECK_KEYS, evaluate, ancestor_
 from packages.domain.resources import date_set_closes, resource_intervals
 from packages.domain.date_sets import DateSetRangeError, prepare_date_sets
 from packages.domain.rule_map import NUMBERS, adjustable, rule_number, weakens_safety
+from packages.domain.rule_serialization import stored_definition
 from packages.domain.assignment_override import assignment_reason_allowed, ZERO_LIMIT_FINDING_CODES
 
 from apps.api import models as m, snapshots
 from apps.api.auth import require_role, person_access, current_roles
 from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
+from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (domain_snapshot, fingerprint, publication_snapshot,
                                 shift_record, workspace_content, workspace_shifts)
 from .common import scoped, expected, bump_inputs, outbox
@@ -242,12 +244,15 @@ def archive(db, actor, command):
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
-               _overlap_output=None, final_compute=False):
+               _overlap_output=None, final_compute=False, creation_before=None, mandatory_rules=True,
+               current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
     # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
     department = db.get(m.Department, workspace.department_id)
-    data = acquired_data if acquired_data is not None else domain_snapshot(db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs)
+    data = acquired_data if acquired_data is not None else domain_snapshot(
+        db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules,
+        current_mandatory=current_mandatory)
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
                   complete_check(workspace.validation, data, department.generation_defaults)):
@@ -329,6 +334,10 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
             _overlap_output['flags'] = overlap_flags
     else:
         result = computed
+    if creation_before is not None:
+        # Admission shares the saved staffing check and runs after the workspace write in preparation.
+        admit_assignment_change(db, None, workspace, creation_before, 'CREATE_INVALID', staffing_gaps_only=True,
+                                evaluated=(None if amendment_scope else result, full_data))
     if amendment_scope:
         from .published_changes import retain_issued_checks
         result = retain_issued_checks(db, workspace, data, result)
@@ -592,7 +601,8 @@ def assignment_validation_scope(data, before, previous):
 
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
-            external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False):
+            external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
+            staffed_creation=False):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
@@ -650,6 +660,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                             # Preview replies use content and findings, without per-session flags.
                             _overlap_before=None if db.info.get('_planner_preview') else before,
                             _overlap_output=overlap_result,
+                            creation_before=before if staffed_creation else None,
                             final_compute=(db.info.get('_planning_preparation') or {}).get('kind')
                                 in {'shift.action', 'shift.copy', 'series.expand', 'shift.update', 'workspace.undo', 'workspace.redo'})
         if overlap_result:
@@ -941,11 +952,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
                                         next((p.start, p.end) for p in value.participants if p.person_id == pid)
                                         and (not previous[pid].override_reason or pid not in participant_fields_changed)
                                         and pid in known['override_allowed_people']}
-    zero_limits = [p for p in data['policies'] if p['definition']['severity'] == 'mandatory' and (
-        p['definition']['rule']['kind'] == 'block_quota'
-        and p['definition']['rule']['comparison'] == 'maximum' and p['definition']['rule']['amount'] == 0
-        or p['definition']['rule']['kind'] in {'max_duties', 'max_hours'}
-        and p['definition']['rule'].get('maximum', p['definition']['rule'].get('hours')) == 0)]
+    from apps.api.workspace_baselines import _zero_limit_policy
+    zero_limits = [zero for policy in data['policies'] if (zero := _zero_limit_policy(policy)) is not None]
     if zero_limits and counted - blocked:
         shift['participants'] = [{**p, 'id': command_id(db), 'shift_id': shift['id']} for p in shift['participants']]
         trial = {**data, 'policies': zero_limits, 'shifts': [shift], 'focus_ids': [shift['id']],
@@ -957,7 +965,7 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         checked = command_evaluate(db, trial)
         blocked |= zero_limit_blocked(checked)
         known['override_findings'].extend(
-            {'code': f['code'], 'person_id': f['person_id'], 'start': f.get('start'), 'end': f.get('end'),
+            {'code': f['code'], 'message': f['message'], 'person_id': f['person_id'], 'start': f.get('start'), 'end': f.get('end'),
              'severity': f.get('severity'), 'rule_id': f.get('rule_id'), 'detail': f.get('detail')}
             for f in checked['person_findings']
             if f['severity'] == 'error' and f['code'] in ZERO_LIMIT_FINDING_CODES)
@@ -969,7 +977,7 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
 
 def zero_limit_blocked(checked):
     return {f['person_id'] for f in checked['person_findings'] if f['severity'] == 'error'
-            and f['code'] in {'QUOTA_ABOVE_MAXIMUM', 'MAX_DUTIES', 'MAX_HOURS'}}
+            and f['code'] in ZERO_LIMIT_FINDING_CODES}
 
 
 def zero_limit_trial_results(db, trials):
@@ -1052,10 +1060,15 @@ def write_shift(db, actor, workspace, value, existing=None, series_id=None, batc
         # Always name who needs a reason (one or several); one reason never admits several people.
         details = {'people': sorted(needs_reason),
                    'findings': [f for f in known.get('override_findings', []) if f.get('person_id') in needs_reason]}
+        zero_findings = [f for f in details['findings'] if f['code'] in ZERO_LIMIT_FINDING_CODES]
+        current_rule = next((f['rule_id'] for f in zero_findings if (f.get('detail') or {}).get('live_zero')), None)
+        if current_rule:
+            override_refusal += f' (current department rule {current_rule})'
         reasoned = source == 'manual' and reason is not None and len(reason) >= 3
         if len(needs_reason) > 1 and reasoned:
             require(False, 'PERSON_UNAVAILABLE',
-                    'Enter a reason for one person at a time; each admission covers one person and their findings', 422, details)
+                    'Enter a reason for one person at a time; each admission covers one person and their findings'
+                    + (f' (current department rule {current_rule})' if current_rule else ''), 422, details)
         first = details['findings'][0] if details['findings'] else None
         require(reasoned and len(needs_reason) == 1, 'PERSON_UNAVAILABLE',
                 (blocker_text(first['code']) + ' ' if first else '') + override_refusal, 422, details)
@@ -1451,8 +1464,12 @@ def adjusted_rule(policy, entry):
     else:
         field = ADJUSTABLE[rule['kind']]
         rule[field] = int(amount) if isinstance(rule[field], int) and float(amount).is_integer() else amount
-    result = {**policy, "definition": s.PolicyDefinition.model_validate(definition).model_dump(mode="json"), "rota_adjusted": True}
+    raw = stored_definition(definition) if rule['kind'] == 'catalogue' else definition
+    validated = s.PolicyDefinition.model_validate(raw).model_dump(mode="json")
+    result = {**policy, "definition": validated, "rota_adjusted": True}
     if rule['kind'] == 'catalogue':
+        for line, source in zip(validated['rule']['lines'], rule['lines'], strict=True):
+            line.update((key, value) for key, value in source.items() if key.startswith('_'))
         from packages.domain.rule_lines import expand as expand_rule
         expand_rule(result)  # Catalogue v1 numbers are validated by their resolved primitive schemas.
     return result
@@ -1529,7 +1546,9 @@ def adjusted_rules(policy, entries):
     for entry in sorted(entries, key=lambda r: bool(r.get('line_id'))):
         if policy is None:
             break
-        if entry['policy_id'] == policy['id']:
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
+        if entry['policy_id'] == source_id:
             policy = adjusted_rule(policy, entry)
     return policy
 
@@ -1652,7 +1671,8 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
                    and trainee_intervals(shared_inputs, current, person)
                    for person in current['participants']):
             return
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
+    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
+                           include_objectives=False)
     shift = next(s for s in data['shifts'] if s['id'] == row.id)
     missing = [(p, intervals) for p in shift['participants']
                if p['person_id'] not in explicit_clears and not p.get('supervisor_person_id')
@@ -1731,12 +1751,16 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
     for participant, _, _ in pending:
         if (proposed := place(participant, set(), set())) is not None:
             accepted = proposed
-    for participant, _, _ in pending:
-        if pid := participant.get('supervisor_person_id'):
-            db.get(m.Assignment, participant['id']).supervisor_person_id = pid
+    named = [p for p, _, _ in pending if p.get('supervisor_person_id')]
+    for participant in named:
+        db.get(m.Assignment, participant['id']).supervisor_person_id = participant['supervisor_person_id']
+    if named and (preparation := db.info.get('_planning_preparation')):
+        # A preparation snapshot taken to choose pairs predates the saved assignment fields.
+        preparation['snapshots'].clear()
 
 
-def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None, override_reason=None, message=None):
+def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None,
+                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None):
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
@@ -1750,22 +1774,48 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.validation_scope import assignment_scope, evaluate_assignments
     from packages.domain.proposal_reconciliation import comparison as compare_checks
     from packages.domain.input_manifest import shift_input
+    from packages.domain.finding_causes import DRAFT_STAFFING_GAP_CODES, EDIT_NON_REFUSING_CODES
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
+    checked, data = evaluated if evaluated is not None else (None, domain_snapshot(
+        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False))
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
     touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
     prior = [old[row['id']] for row in touched if row['id'] in old]
+    open_places = []
+    if staffing_gaps_only:
+        if not prior and not any(row['participants'] for row in touched):
+            return None
+        # Compare staffing a new session with the same session left empty.
+        open_places = [{**row, 'participants': []} for row in touched if row['id'] not in old]
     scope = assignment_scope(data, prior, touched)
-    baseline = with_series_state({**data, 'shifts': before['shifts'] +
+    if staffing_gaps_only:
+        if checked is not None:
+            from packages.domain.validation import finding_observations
+            gaps = [f for f in finding_observations(checked) if f['code'] in DRAFT_STAFFING_GAP_CODES
+                    and f.get('shift_id') in scope['shifts'] and f['severity'] == 'error']
+            if not gaps:
+                return None
+            checked = {**checked, 'findings': gaps}
+        else:
+            from packages.domain import leadership
+            from packages.domain.validation import effective_type_definition
+            candidates = [row for row in data['shifts'] if row['id'] in scope['shifts']] + prior
+            lead_data = dict(data)
+            leadership.prepare(lead_data)
+            if not any(effective_type_definition(data, row).get('supervision')
+                       or any(p['participation'] == 'trainee' for p in row['participants'])
+                       or leadership.requirements(lead_data, row, row['start'], row['end']) for row in candidates):
+                return None
+    baseline = with_series_state({**data, 'shifts': before['shifts'] + open_places +
         [row for row in data['shifts'] if row['id'] not in focus]})
     def compare():
         before_check = evaluate_assignments(baseline, scope, explain_findings=False)
-        after_check = evaluate_assignments(data, scope, explain_findings=False)
+        after_check = checked if checked is not None else evaluate_assignments(data, scope, explain_findings=False)
         return compare_checks(before_check, after_check), after_check
     preparation = db.info.get('_planning_preparation') if db is not None else None
-    computed = command_compute(db, 'edit_admission', data, compare,
+    computed = compare() if evaluated is not None else command_compute(db, 'edit_admission', data, compare,
         options={'before': [shift_input(row) for row in prior],
                  'scope': {k: sorted(v) if isinstance(v, set) else v for k, v in scope.items()}},
         input_token=data['fingerprint'] if preparation else None,
@@ -1784,9 +1834,10 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
         known_findings = {(f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) for f in findings}
         findings.extend(f for f in current_calendar
                         if (f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) not in known_findings)
-    from packages.domain.finding_causes import EDIT_NON_REFUSING_CODES
     # An open place (a session short of people) stays must-fix work in the Fix list; it never refuses the edit.
     findings = [f for f in findings if f.get('code') not in EDIT_NON_REFUSING_CODES]
+    if staffing_gaps_only:
+        findings = [f for f in findings if f.get('code') in DRAFT_STAFFING_GAP_CODES]
     if override_reason is not None and len(override_reason.strip()) >= 3:
         findings = [f for f in findings if not assignment_reason_allowed(data, f)]
     require(comparison['comparison_complete'], 'CHECK_INCOMPLETE', 'The edit could not be checked completely', 422)
@@ -1795,6 +1846,9 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     # Move and swap have no reason field: keep their own message there.
     refusal_message = ('This edit introduces a conflict that a manual reason cannot override'
                        if refusal_code == 'EDIT_INVALID' else message)
+    current_rule = next((f['rule_id'] for f in findings if (f.get('detail') or {}).get('live_zero')), None)
+    if current_rule:
+        refusal_message = (message or refusal_message) + f' (current department rule {current_rule})'
     # A preview refuses exactly as its save will (F14; Master ruling 10 Nov).
     require(not findings, refusal_code, refusal_message or (findings[0]['message'] if findings else 'The edit introduces a blocking issue'),
             422, refusal_details(findings))
@@ -1844,15 +1898,15 @@ def save_shift(db, actor, command, update=False):
                            and previous.get(p.person_id, {}).get('supervisor_person_id')}
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
-    admission = (admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID', shared_inputs=inputs.get('shared_inputs'),
-                                         override_reason=value.override_reason, message=refusal)
-                 # A new session may be saved with its findings (they block submission); the per-person,
-                 # per-finding reason gate in write_shift covers creates and updates alike.
-                 if update and 'bulk' not in db.info else None)
+    admission = None
+    if 'bulk' not in db.info and update:
+        admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',
+            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal)
     reason = value.override_reason.strip() if value.override_reason is not None else None
     result = changed(db, actor, workspace, before, reason or ("Edit session" if update else "Create session"),
                      shared_inputs=inputs.get('shared_inputs'), defer_assignments=update,
-                     prepared=admission if db.info.get('_assignment_reply') else None)
+                     prepared=admission if db.info.get('_assignment_reply') else None,
+                     staffed_creation=not update and bool(value.participants) and 'bulk' not in db.info)
     result["shift_id"] = row.id
     return result
 
@@ -1917,6 +1971,9 @@ def shift_action(db, actor, command):
         if row.series_id and value.action not in {"lock", "unlock", "refresh_types"}:
             row.series_modified = True
         row.revision += 1
+    if value.action in {'unassign', 'release_unavailable'}:
+        code = 'UNASSIGN_INVALID' if value.action == 'unassign' else 'RELEASE_UNAVAILABLE_INVALID'
+        admit_assignment_change(db, actor, workspace, before, code, staffing_gaps_only=True)
     return changed(db, actor, workspace, before, value.reason)
 
 
@@ -2102,14 +2159,17 @@ def undo(db, actor, command):
     unapplied = []
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
-        # Only the job that made this edit loads its (large) result; its input snapshot is never read here.
-        for job in db.scalars(select(m.Job).options(defer(m.Job.input_snapshot)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == "applied",
-                m.Job.result["applied_content_revision"].as_integer() == change.resulting_content_revision)):
-            if (job.result or {}).get("applied_content_revision") == change.resulting_content_revision:
-                job.status = "succeeded"
-                if (job.result or {}).get('reconciliation'):
-                    job.result = {**job.result, 'reconciliation': {**job.result['reconciliation'], 'status': 'undone'}}
+        receipt_column, raw_revision, current_revision = job_reconciliation_columns()
+        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
+                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+                current_revision == change.resulting_content_revision)):
+            result = job_result_with_reconciliation(job, {'reconciliation': receipt,
+                                                          'applied_content_revision': revision})
+            if result['applied_content_revision'] == change.resulting_content_revision:
+                job.status = 'succeeded'
+                if result['reconciliation']:
+                    retain_job_reconciliation(job, {**result['reconciliation'], 'status': 'undone'})
                 job.progress = job_progress_record(job.progress)
                 job.revision += 1
                 unapplied.append(job.id)
@@ -2185,12 +2245,15 @@ def redo(db, actor, command):
     require_redo_placements(db, actor, workspace, step.before_snapshot, current)
     content_changed = put_back(db, actor, workspace, step.before_snapshot, current)
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
-    for job in db.scalars(select(m.Job).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                              m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
-        receipt = (job.result or {}).get('reconciliation')
+    receipt_column, _, _ = job_reconciliation_columns()
+    revision = workspace.content_revision + int(content_changed)
+    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
+            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+        receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
-        job.result = {**job.result, 'applied_content_revision': workspace.content_revision + int(content_changed), **({'reconciliation': {
-            **receipt, 'status': 'applied', 'applied_content_revision': workspace.content_revision + int(content_changed)}} if receipt else {})}
+        retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
+                                  if receipt else None, applied_revision=revision)
         job.progress = job_progress_record(job.progress)
         job.revision += 1
     return changed(db, actor, workspace, current, value.reason, content_changed=content_changed,
@@ -2507,6 +2570,19 @@ def _publication_approval(db, workspace, fp):
         'APPROVER_REVOKED', 'The approving authority is no longer active; obtain a new review', 409)
 
 
+def review_gate_check(db, workspace, *, reuse=False):
+    """Check current mandatory rules and retain the frozen basis for review and publication evidence."""
+    current = []
+    result = revalidate(db, workspace, data_out=current, include_internal=True, reuse=reuse, store=False,
+                        mandatory_rules=False, current_mandatory=True)
+    if not current[0].get('_mandatory_overlay_changed'):
+        return result, current[0], None
+    frozen = []
+    checked = revalidate(db, workspace, data_out=frozen, include_internal=True, reuse=reuse, store=False,
+                         mandatory_rules=False)
+    return checked, frozen[0], (result, current[0])
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2570,21 +2646,15 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         has_session = db.scalar(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id).limit(1)) is not None
         if prerequisite := submission_prerequisite(int(has_session)):
             require(False, prerequisite['code'], prerequisite['message'], 422, prerequisite)
-        checked_data = []
-        if validation is None:
-            # Reuse requires the current evaluator, complete evidence and exact canonical inputs.
-            result = revalidate(db, workspace, data_out=checked_data, include_internal=True, reuse=True)
-        else:
-            result, data = validation
-            checked_data.append(data)
-            workspace.validation = result
-        acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason)
+        result, data, current = review_gate_check(db, workspace, reuse=True) if validation is None else validation
+        acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
+                                 current=current[0] if current is not None else None)
         swaps.validate_publication(db, workspace)
-        workspace.validation = {**result, "wishes": checked_data[0]["wishes"]}
+        workspace.validation = {**result, "wishes": data["wishes"]}
         from packages.domain.rota_summary import remember_fix_list
         remember_fix_list(result, workspace.validation, submitted=True)
         from .wishes import _applied_reasons
-        receipt = _applied_reasons(db, workspace, checked_data[0], checked_data[0]['wishes'])
+        receipt = _applied_reasons(db, workspace, data, data['wishes'])
         if receipt is not None:
             workspace.validation = {**workspace.validation, 'wish_receipt': receipt}
         workspace.review_snapshot = reviews.resolve_route(db, workspace)
@@ -2593,7 +2663,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         workspace.return_note = None
         # Submission changes preference reservations, but no other scheduling facts.
         # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
-        workspace.submitted_fingerprint = (checked_data[0]['fingerprint'] if not checked_data[0]['wishes']
+        workspace.submitted_fingerprint = (data['fingerprint'] if not data['wishes']
                                            else fingerprint(db, workspace))
         workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint}
         from .published_changes import on_reviewed
@@ -2626,15 +2696,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         swap_request = swaps.validate_publication(db, workspace)
         # Publication mutates duties, availability and ledgers, never these raw configuration rows.
         # Each transaction acquires them independently; post-publication snapshots still read current history.
-        own, checked_data = [], []
-        # Publication remains the final safety boundary: revalidate verifies the
-        # current inputs after pending writes have been flushed inside the writer.
-        # shortcut: publication runs one complete check under the writer, so other writes wait for it; upgrade: verify input revision stamps after flush and reuse the approved check when unchanged.
-        result = revalidate(db, workspace, own, data_out=checked_data, include_internal=True)
-        # The fresh data drives the immutable publication evidence below.
-        acquired = checked_data[0]
+        # The writer flushes pending writes before revalidating current mandatory rules.
+        # shortcut: a late mandatory rule can require two checks under the writer; upgrade: reuse complete frozen evidence when its inputs still match.
+        checked, acquired, current = review_gate_check(db, workspace)
         fp = acquired['fingerprint']
-        result = {key: value for key, value in result.items() if key not in INTERNAL_CHECK_KEYS}
+        result = {key: value for key, value in checked.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
         # still run the current evaluator so publication can never bypass a
         # newly introduced mandatory finding.
@@ -2646,6 +2712,9 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 raise
             approval_error = error
         try:
+            if current is not None:
+                live_result = {key: value for key, value in current[0].items() if key not in INTERNAL_CHECK_KEYS}
+                acknowledged_gaps.require_accepted(workspace, live_result, reviewed=True)
             acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
         except Problem as error:
             if error.code == 'VALIDATION_FAILED' and approval_error is not None:
@@ -2655,6 +2724,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
             raise
         if approval_error is not None:
             raise approval_error
+        focus = set(acquired['focus_ids'])
+        own = [row for row in acquired['shifts'] if row['id'] in focus]
         preparation = db.info.get('_planning_preparation')
         if preparation is not None and not preparation['replay']:
             from .published_changes import change_list, draft_changes
@@ -2663,6 +2734,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 # Unsent changes need successor checks later in this handler; ordinary publication has no more pure work.
                 from .planning_preparation import RollbackPreparation
                 raise RollbackPreparation()
+        workspace.validation = checked
         result['gap_acknowledgements'] = acknowledged_gaps.audit_rows(workspace)
         result['review_items'] = acknowledged_gaps.review_items(workspace)
         result['review_item_decisions'] = (workspace.validation or {}).get('review_item_decisions', [])
@@ -2674,7 +2746,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
                                     effective_until=effective_until,
-                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=checked_data[0]),
+                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)
         db.flush()
@@ -2691,7 +2763,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # With no new availability or changed issued window, final writer-checked inputs remain
         # exact. Ledger rebuilding still refreshes canonical history after removing the predecessor.
         same_window = superseded is None or (superseded.starts_on, superseded.ends_on) == (workspace.starts_on, workspace.ends_on)
-        ledger_data = checked_data[0] if same_window and not (materialized_absences or workspace.replaces_publication_id
+        ledger_data = acquired if same_window and not (materialized_absences or workspace.replaces_publication_id
                                                              or trimmed or effective_until) else None
         on_publish(db, publication, trimmed, own_shifts=own, data=ledger_data, shared_inputs=shared_inputs)
         swaps.published(db, actor, swap_request, publication.id, value.reason)

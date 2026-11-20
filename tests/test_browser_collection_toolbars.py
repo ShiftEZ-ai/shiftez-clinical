@@ -492,17 +492,17 @@ def test_schedule_toolbar_controls_do_not_vanish_between_views(browser, live_ser
 
 
 def test_rules_uses_shared_view_settings(browser, live_server, h):
-    """FD-02: Rules' View settings is the shared Shown properties (show, hide and move), not a checklist of its own."""
+    """FD-02: Rules' View settings is the shared popover, not a checklist of its own. The Rules list is one row per
+    rule with no columns, so it has no Shown properties; its one setting is the Layout (open all or collapsed)."""
     from .test_browser_rule_catalogue import flag
     flag(h)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
         view = toolbar(page.locator('#main'), 'View settings')
-        props = view.get_by_role('list', name='Shown properties')
-        expect(props.locator('.dt-prop')).to_have_count(5)
-        props.get_by_role('button', name='Move Where down', exact=True).click()
-        expect(page.locator('#main thead th').nth(3)).to_contain_text('Numbers')
-        expect(view).to_be_visible()  # moving keeps the popover open, as on every collection
+        expect(view.get_by_role('list', name='Shown properties')).to_have_count(0)
+        expect(view.get_by_role('radiogroup', name='Layout')).to_be_visible()
+        expect(page.locator('#main thead')).to_have_count(0)
+        expect(view).to_be_visible()
     finally:
         context.close()
