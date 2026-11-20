@@ -473,6 +473,11 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
 
+    def test_main_refuses_a_recovery_from_an_earlier_attempt(self):
+        with self.assertRaisesRegex(ValueError, "Release/known-skip execution contains a failure or error"):
+            self.exercise_verdict_materialization("main", recovered={"tests/test_a.py::test_a": "failed"})
+        self.exercise_verdict_materialization("dev", recovered={"tests/test_a.py::test_a": "failed"})
+
     def test_isolated_guard_imports_siblings_from_another_directory(self):
         with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as folder:
             event=Path(folder)/'event.json';event.write_text('{}')
@@ -490,7 +495,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             self.exercise_verdict_materialization('dev',real_reader=True,still_fails=True)
 
     def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request",
-                                         old_base_pr=False, replicas=(1,)):
+                                         old_base_pr=False, replicas=(1,), recovered=None):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
@@ -553,11 +558,16 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 (reports / f"ci-test-1-{suite}-1-1").mkdir(parents=True)
             (reports / "ci-test-1-unit-1-1/conftest.py").write_text("raise RuntimeError('candidate code must never execute')\n")
             maker = types.ModuleType("make_known_failures")
-            from make_known_failures import retry_run
+            from make_known_failures import ReportEvidence, retry_run
+            maker.ReportEvidence = ReportEvidence
             maker.retry_run = retry_run
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
-            maker.collect_reports = lambda *a: [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
+            def collect(*a, evidence=None, **kw):
+                if recovered and evidence is not None:
+                    evidence.recovered.update(recovered)
+                return [{"tests/test_a.py::test_a":"passed", "tests/test_browser_a.py::test_a":"passed"}]
+            maker.collect_reports = collect
             maker.product_error_nodes = lambda *a, **kw: set()
             maker.mixed_listed_nodes = lambda *a: set()
             maker.outside_observations = lambda *a: []
@@ -575,7 +585,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
-            def compare(**stale_options):
+            def compare(*, runs, evidence, product_errors, **stale_options):
                 self.assertEqual(set(stale_options), {"stale_lookup"} if event == "pull_request" and branch == "dev" else set())
                 self.assertEqual(json.loads(Path(policy.KNOWN).read_text()), after)
                 self.assertEqual(json.loads(Path("ci/frozen-baseline-failures.json").read_text()), [] if real_reader else {"origin": base})
@@ -710,7 +720,9 @@ class BootstrapControlTests(unittest.TestCase):
                     with self.assertRaises(ValueError): policy.bootstrap(event, 'merge_group' if change == 'merge_group' else 'pull_request', base)
 
     def test_bootstrap_verdict_never_reads_missing_baseline(self):
-        maker = types.SimpleNamespace(collect_reports=lambda *a:[{'tests/test_a.py::test_a':'failed'}] * 2)
+        from make_known_failures import ReportEvidence
+        maker = types.SimpleNamespace(ReportEvidence=ReportEvidence,
+                                      collect_reports=lambda *a, **kw: [{'tests/test_a.py::test_a': 'failed'}] * 2)
         with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temporary:
             folder = Path(temporary)
             def read(revision, path):
@@ -724,8 +736,10 @@ class BootstrapControlTests(unittest.TestCase):
             self.assertTrue(json.loads((folder/'out/bootstrap-measurement.json').read_text())['bootstrap'])
 
     def test_bootstrap_verdict_refuses_single_replica_errors_and_skips(self):
+        from make_known_failures import ReportEvidence
         for replicas, outcome in (([1],'passed'),([1,2],'error'),([1,2],'skipped')):
-            maker = types.SimpleNamespace(collect_reports=lambda *a:[{'n':outcome}] * len(replicas))
+            maker = types.SimpleNamespace(ReportEvidence=ReportEvidence,
+                                          collect_reports=lambda *a, **kw: [{'n': outcome}] * len(replicas))
             with patch.dict(os.environ, {'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':'1'}), \
                  patch.object(policy, 'read_file', return_value=None):
                 with self.assertRaises(ValueError):

@@ -5716,6 +5716,22 @@ class RuleProposalInput(Decision):
     acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, description='Ignored legacy input; ordered overrides need no acknowledgement.', json_schema_extra={"writeOnly": True})
 
 
+class RuleMapCatalogueLine(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+
+
+class RuleMapEntry(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+    lines: list[RuleMapCatalogueLine | PersonAmount]
+
+
+class RuleMapResponse(Schema):
+    model_config = ConfigDict(extra='allow')
+    rules: list[RuleMapEntry]
+
+
 class RuleMapProposal(Schema):
     """The newest department rule proposal waiting behind one rule-map entry."""
     policy_id: ID
