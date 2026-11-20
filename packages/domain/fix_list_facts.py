@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from packages.contracts.rule_catalogue import FIX_LIST_WORDS
 from packages.contracts.schemas import FIX_ACTION_GROUPS, FIX_GROUP_LABELS
+from .finding_causes import DUTIES_DURING_APPROVED_LEAVE
 from .time import aware
 
 
@@ -194,6 +195,8 @@ def ordered_fixes(action, scope, evidence, *, safety, session_locks):
     codes = {row['code'] for row in evidence}
     supervision = bool(codes & {'SUPERVISION_GAP', 'SUPERVISION_PAIRING', 'ATTACHMENT_PAIRING', 'SUPERVISION_LEVEL'})
     cover = any((row.get('cause') or {}).get('eligible_people_basis') == 'potential_cover_known_records' for row in evidence)
+    if scope.get('classification') == DUTIES_DURING_APPROVED_LEAVE:
+        add('choose_cover')
     if action == 'open_line':
         add('open_line')
     # A lead gap is a role decision on an existing seat.  It must open the
