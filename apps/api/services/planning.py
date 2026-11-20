@@ -244,12 +244,13 @@ def archive(db, actor, command):
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
-               _overlap_output=None, final_compute=False):
+               _overlap_output=None, final_compute=False, mandatory_rules=True):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
     # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
     department = db.get(m.Department, workspace.department_id)
-    data = acquired_data if acquired_data is not None else domain_snapshot(db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs)
+    data = acquired_data if acquired_data is not None else domain_snapshot(
+        db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules)
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
                   complete_check(workspace.validation, data, department.generation_defaults)):
@@ -1662,7 +1663,8 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
                    and trainee_intervals(shared_inputs, current, person)
                    for person in current['participants']):
             return
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
+    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
+                           include_objectives=False)
     shift = next(s for s in data['shifts'] if s['id'] == row.id)
     missing = [(p, intervals) for p in shift['participants']
                if p['person_id'] not in explicit_clears and not p.get('supervisor_person_id')
@@ -1761,7 +1763,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.proposal_reconciliation import comparison as compare_checks
     from packages.domain.input_manifest import shift_input
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False)
+    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
+                           include_objectives=False)
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
@@ -2592,7 +2595,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         checked_data = []
         if validation is None:
             # Reuse requires the current evaluator, complete evidence and exact canonical inputs.
-            result = revalidate(db, workspace, data_out=checked_data, include_internal=True, reuse=True)
+            result = revalidate(db, workspace, data_out=checked_data, include_internal=True, reuse=True, mandatory_rules=False)
         else:
             result, data = validation
             checked_data.append(data)

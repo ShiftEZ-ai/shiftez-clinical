@@ -117,7 +117,12 @@ def test_health_and_complete_web_delivery_bypass_a_saturated_request_pool(h, tmp
         finally:
             release.set()
             await blocked
-    asyncio.run(scenario())
+
+    async def serving():
+        async with app.router.lifespan_context(app):
+            await scenario()
+
+    asyncio.run(serving())
 
 
 @pytest.mark.parametrize('method,headers', [
