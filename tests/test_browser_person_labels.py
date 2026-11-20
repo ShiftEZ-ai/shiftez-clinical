@@ -148,7 +148,7 @@ def test_duty_team_shows_the_label_and_says_the_full_names(browser, live_server,
         card = page.get_by_role('region', name=TRAINEE, exact=True)  # the hub and the card's heading keep the full name
         box = card.locator('.pc .team-box:not(.lg-mark)')
         expect(box).to_have_attribute('aria-label', re.compile(f'supervising {TRAINEE}'))
-        expect(box.locator('.pchip-name', has_text=re.compile(r'^F\. Lewis'))).to_have_count(1)
+        expect(box.locator('.pchip-name', has_text=re.compile('^' + re.escape(short) + '$'))).to_have_count(1)
         shot(page, 'person-card-team', view, scheme)
     finally:
         context.close()
