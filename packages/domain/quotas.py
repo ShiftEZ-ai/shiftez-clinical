@@ -19,6 +19,7 @@ from .recurrence import inactive
 from .participation import presence_intervals
 from .conditions import (active_rules, bind_level_window, conditions_match, scope_tree, counting_key, counting_views,
                          scope_matches_throughout, scope_has_duty_witness, ScopeContextLimit, SCOPE_CONTEXT_BUDGET)
+from .input_manifest import digest
 from .time import aware, local_midnight, local_stamp, overlaps, union_hours, duration_hours
 
 METRIC_VERSION = "block-quota-v6"
@@ -96,8 +97,14 @@ def applicable_policies(data):
             policy = dated(policy, starts_on=first, ends_on=last)
             rule = policy['definition']['rule']
         if rule.get('prorate_department_days'):
+            full = policy.get('_quota_full_window') or (rule['starts_on'], rule['ends_on'])
             window = dated(policy, starts_on=max(rule['starts_on'], w['starts_on']), ends_on=min(rule['ends_on'], w['ends_on']))
-            result.append({**window, '_quota_full_window': policy.get('_quota_full_window') or (rule['starts_on'], rule['ends_on'])})
+            window['_quota_full_window'] = full
+            if rule['comparison'] == 'target':
+                # The rota window clips the evaluation without changing the accepted rule.
+                window['_target_rule_fingerprint'] = digest([
+                    policy.get('_source_policy_id', policy['id']), rule, policy['definition']['scope'], full])
+            result.append(window)
             continue
         alignment = rule.get('window_alignment', 'rolling')
         if alignment in ('fixed', 'calendar_week', 'calendar_month'):
@@ -389,9 +396,9 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
     from .generation_scope import planning_population_people
     planning_people = planning_population_people(data)
 
-    def unresolved(code, message, policy=None, person=None):
+    def unresolved(code, message, policy=None, person=None, **detail):
         report["complete"] = False
-        add(code, message, person=person, rule=policy["id"] if policy else None)
+        add(code, message, person=person, rule=policy["id"] if policy else None, **detail)
 
     context = data.get("quota_context", {})
     if len({p['id'] for p in policies}) > data.get("quota_policy_limit", MAX_POLICIES) or len(policies) > MAX_ROWS or context.get("limit_exceeded"):
@@ -477,6 +484,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             continue
         if not subjects:
             report["empty_policy_ids"].append(policy_id)
+        rule_fingerprint = policy.get('_target_rule_fingerprint')
         for pid in sorted(subjects):
             data.get('_check_budget', lambda: None)()
             # Assignment-only trial cache: targets, exceptions, bounds and report completeness stay fresh below.
@@ -511,12 +519,20 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                 raw = amount * full_days / rule['reference_days']
                 amount = (math.floor(raw) if rule['rounding'] == 'down' else math.ceil(raw) if rule['rounding'] == 'up' else math.floor(raw + .5)) if metric in {'duties', 'lead_turns'} else round(raw, 4)
                 calculation = {'default_amount': rule['amount'], 'reference_days': rule['reference_days'],
-                               'department_days': full_days, 'unrounded_amount': round(raw, 4), 'rounding': rule['rounding'], 'calculated_amount': amount}
+                               'department_days': full_days, 'unrounded_amount': round(raw, 4), 'rounding': rule['rounding'],
+                               'calculated_amount': amount, 'rule_fingerprint': rule_fingerprint}
             override = next((r for r in data['workspace'].get('target_overrides', [])
                              if r['policy_id'] == policy['id'] and r['person_id'] == pid), None) if calculation and comparison == 'target' else None
-            if override and override['policy_revision'] != policy['revision']:
-                unresolved('TARGET_OVERRIDE_STALE', 'Reconfirm the rota target adjustment after its default changed', policy, pid)
-                override = None
+            fingerprints = (override or {}).get('rule_fingerprints') or ()
+            stale_override = bool(override and rule_fingerprint not in fingerprints)
+            person_name = data['people'][pid]['display_name']
+            if stale_override:
+                reason = 'The rule content changed.' if fingerprints else 'Its accepted rule content needs verification.'
+                unresolved('TARGET_OVERRIDE_STALE',
+                           f"Reconfirm the target adjustment for {person_name} under “{policy['name']}”. {reason}", policy, pid,
+                           extra={'adjustment_id': override.get('id'), 'person_name': person_name, 'rule_name': policy['name'],
+                                  'amount': override['amount'], 'reconfirm_command': 'workspace.target_override'})
+                calculation['override_stale'] = True
             proration = None
             try:
                 if override:
@@ -539,13 +555,15 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             if invalid:
                 state = "unresolved"
                 unresolved("QUOTA_PRESENCE_INVALID", "A counted duty has invalid planned-presence data; quota compliance is unresolved", policy, pid)
+            elif stale_override:
+                state = "unresolved"
             elif delta > 1e-9 and comparison in {"maximum", "target"}:
                 state = "above_" + comparison
             elif delta < -1e-9 and comparison in {"minimum", "target"}:
                 state = "below_" + comparison
             exc = exception_for(data, policy, pid, a, b) if state not in {"met", "unresolved"} else None
             row = {"policy_id": policy_id, "policy_revision": policy["revision"], "policy_name": policy["name"],
-                   "person_id": pid, "display_name": data["people"][pid]["display_name"],
+                   "person_id": pid, "display_name": person_name,
                    "starts_on": rule["starts_on"], "ends_on": rule["ends_on"], "metric": metric,
                    "comparison": comparison, "amount": amount, "actual": round(actual, 4),
                    "difference": round(delta, 4), "status": "excepted" if exc else state,

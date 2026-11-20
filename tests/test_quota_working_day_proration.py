@@ -414,8 +414,10 @@ def test_explicit_rate_target_scales_full_window_once_and_preserves_override(wor
     row = add_quota(data, pid, comparison='target', window_alignment='rolling',
                     prorate_department_days=True, reference_days=7, rounding='nearest')
     if override is not None:
+        _, target = checked_row(data)
         data['workspace']['target_overrides'] = [{'policy_id': row['id'], 'policy_revision': row['revision'],
-            'person_id': pid, 'amount': override, 'reason': 'Existing approved target adjustment'}]
+            'person_id': pid, 'amount': override, 'reason': 'Existing approved target adjustment',
+            'rule_fingerprints': [target['target_calculation']['rule_fingerprint']]}]
     _, report_row = checked_row(data)
     assert report_row['amount'] == expected
     assert report_row['target_calculation']['department_days'] == 7
