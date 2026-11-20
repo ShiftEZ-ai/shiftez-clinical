@@ -834,6 +834,114 @@
     },
     {
       "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_palette_normalizes_ranks_exact_matches_and_owns_async_results[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_palette_normalizes_ranks_exact_matches_and_owns_async_results[case-enbloijbadnkcecgmakmdfggjijbpdjihkjpfgegjcedhpjomaiianlgpcijmonh]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_palette_normalizes_ranks_exact_matches_and_owns_async_results[case-jhoeiaogjbedkflkhehlpclcfdegbccbjmammgeoopgaenfbiglmjfoobagjanjl]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_palette_normalizes_ranks_exact_matches_and_owns_async_results[case-kljfloblomgpmhhiidjnligafgeoledjeldchdbgbofnljconmmkiacfacmjheji]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-akaokndafhaejhhjoipinnfdbkpfngckidgmlgamgcoojmmbpbcdacbhhlfifohi]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-belobahijdgejindcohpchafofkbhkneccpnlboihclcmcnaplbohccnkfpbfhhp]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-bphnammbkbppnmcbedpfmnkhhiipebnpnofpmabigjlmkemocdbnineghfpoebma]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-cfmnnmmpfahpfljagibnigcfgnakohcnjblmmhlpefkpnobfnahkokioniagemga]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-cnacchkokckfkinimaoaimdkiidnnmnheipheklplipfnikodoiohbkeomhldail]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-ebkioljnfbmgofafabklfgflmgglolcndnhnblbjnehhhabgcdlpnocjpibgonij]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-edekmdemlmheajalankcepfjnlffkmngnmbfbaedikenafclijiikpplfjhocmjp]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-gcmhmppafianbpbgcgjoioianafdpmmgomogkplgbhmkgenkcokdkoifkgkallph]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-jkcjlhmapnhnihgpbgoiiiiefpagnmionicpdigdlkphdbhfbmofhpoaohfnkbbb]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-kkkheghngdpjlibbladcefmonceegbdmpombpohicamengpeiilmdalfhjlbllej]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-kmhkpdmliijneanajncfhokpkcjdekaojpmciappncnmgjhickkooeeeojkoalke]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-lemmbehlhbnmikccmbdiigkkfppbhbleeglhpfjfkeclmlnacohbbapjjmkocbng]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-peecnbglnlofkbkdiefhfkplmpfbfdlalfbkkkecigbpfcddjlcccckigngilkbc]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_palette_sources.py::test_person_results_open_exact_duplicates_from_home_and_survive_reload[case-pfpccmikaadbnaljkaeemlnaldhgdfioahemlnddadgifgdioddfkfocehjpbioh]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
       "node": "tests/test_browser_people_merged.py::test_a_credentialer_on_a_phone_gets_the_directory_never_the_collection",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -859,6 +967,30 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_perf.py::test_week_redraw_budget",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_person_labels.py::test_duty_team_shows_the_label_and_says_the_full_names[case-adkhnjjbgnaldfggdcbobghdhlgpipcmkoofnccfphilphoeialkdbbjcjgekhgi]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_person_labels.py::test_duty_team_shows_the_label_and_says_the_full_names[case-aicblppcjidooobikfopcleeplgpolijfkejnjgodlnofhfmiacnmjkpicnlcoio]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_person_labels.py::test_duty_team_shows_the_label_and_says_the_full_names[case-fafhokilnpmncacpebkoadpfhdcacglobekgjkalpbgnmhbchnfpcilbpbhppgcn]",
+      "owner": "maintainer",
+      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
+    },
+    {
+      "class": "baseline",
+      "node": "tests/test_browser_person_labels.py::test_duty_team_shows_the_label_and_says_the_full_names[case-hdgbggmdagdpcnbecjhnnclgbehflhhbfdofnfgdnfdlidfebkklopfnhmdkoifg]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1032,12 +1164,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_rules_phase3.py::test_extend_a_clinic_permission_until_changed_with_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_rules_sheet.py::test_rule_rows_marks_pills_and_reach[case-mefjihmgaddfkfjkobbngmochihpgjnkogcaopoekmgganebnkmmkokmijglddfb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1171,12 +1297,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_terms.py::test_coordinator_follows_the_setup_guide_without_admin_actions",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_uiux_action_errors.py::test_custom_eligibility_undo_explains_refused_save_and_preserves_confirmed_state",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
