@@ -7,7 +7,7 @@ from .test_browser import browser, live_server, sign_in, navigate, expect_loaded
 
 pytestmark = pytest.mark.browser
 
-WEEK = """async (findingCount) => {
+WEEK = """async ([findingCounts, rounds]) => {
   const m = await window.importBundle('planner_week.js');
   const days = Array.from({length: 7}, (_, i) => `2026-10-${String(4 + i).padStart(2, '0')}`);
   const people = Array.from({length: 150}, (_, i) => ({id: 'p' + i, display_name: 'Person ' + i}));
@@ -16,19 +16,25 @@ WEEK = """async (findingCount) => {
       start: `${d}T08:00:00+03:00`, end: `${d}T12:00:00+03:00`, attributes: {},
       participants: [{id: 'a' + i, person_id: 'p' + (i % 150)}, {id: 'b' + i, person_id: 'p' + ((i + 7) % 150)}],
       type_snapshot: {name: 'Duty ' + (i % 10), definition: {fields: [], requirements: [{minimum: 1}]}}};});
-  const findings = Array.from({length: findingCount}, (_, i) => ({shift_id: 's' + (i % 500), person_id: 'p' + (i % 150),
+  const findingsOf = count => Array.from({length: count}, (_, i) => ({shift_id: 's' + (i % 500), person_id: 'p' + (i % 150),
     severity: i % 3 ? 'warning' : 'error', code: 'RULE', message: 'Rule ' + (i % 20)}));
   const ctx = {me: {organisation: {timezone: 'Asia/Riyadh', week_start: 6}, person_id: null},
     catalogues: {people, services: [{id: 'v', name: 'Clinic'}], locations: [{id: 'l', name: 'Room'}], memberships: [], categories: [], assignment_types: []}};
-  const data = {workspace: {id: 'perf', revision: 1, status: 'draft', starts_on: '2026-10-04', ends_on: '2026-10-11',
-    validation: {findings, coverage: []}}, shifts, wishes: []};
+  const dataOf = count => ({workspace: {id: 'perf', revision: 1, status: 'draft', starts_on: '2026-10-04', ends_on: '2026-10-11',
+    validation: {findings: findingsOf(count), coverage: []}}, shifts, wishes: []});
   const hooks = {name: p => (p && p.display_name) || '', code: () => 'X', details: () => {}, dnd: n => n, proposal: null,
     editable: true, fresh: true, selected: new Set(), onSelect: () => {}, refresh: async () => {}, tallies: true};
   const period = {days, page: 0, has_previous: false, has_next: false, unit: 'week'};
-  m.weekGrid(ctx, data, shifts, period, () => {}, hooks);  // warm up
-  const t = performance.now();
-  const root = m.weekGrid(ctx, data, shifts, period, () => {}, hooks);
-  return {ms: performance.now() - t, chips: root.querySelectorAll('.pchip').length};
+  const cases = findingCounts.map(count => ({count, data: dataOf(count), ms: Infinity, chips: 0}));
+  for (const c of cases) m.weekGrid(ctx, c.data, shifts, period, () => {}, hooks);  // warm up
+  // Interleaved rounds, keeping each case's fastest draw: other load on the machine only ever adds time.
+  for (let round = 0; round < rounds; round++) for (const c of cases) {
+    const t = performance.now();
+    const root = m.weekGrid(ctx, c.data, shifts, period, () => {}, hooks);
+    c.ms = Math.min(c.ms, performance.now() - t);
+    c.chips = root.querySelectorAll('.pchip').length;
+  }
+  return cases.map(({count, ms, chips}) => ({count, ms, chips}));
 }"""
 
 
@@ -38,8 +44,7 @@ def test_week_redraw_budget(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'people')
-        none = page.evaluate(WEEK, 0)
-        many = page.evaluate(WEEK, 3000)
+        none, many = page.evaluate(WEEK, [[0, 3000], 7])
         assert many['chips'] >= 1000, many
         slack = 3 if os.environ.get('CI') else 2
         assert many['ms'] <= none['ms'] * slack + 150, (none, many)
