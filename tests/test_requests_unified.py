@@ -1,11 +1,12 @@
 """GET /api/requests/all: every kind of request in one paged list, scoped per role like each kind's own list."""
 import json
+import re
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -206,11 +207,11 @@ def department_requests_page(request, scale_harness):
         # The old page read every request (capped at 200, so history was cut off) plus every list beside it.
         before = [h.client("approver").get(p) for p in ("/api/requests", "/api/availability", "/api/availability-patterns", "/api/swaps?limit=100&offset=0",
                                                          "/api/wishes")]
-        return page, body, size, before, elapsed, wall_elapsed, metrics
+        return page, body, size, before, elapsed, wall_elapsed, metrics, h
 
 
 def test_department_scale_page_is_fast_and_small(department_requests_page, capsys):
-    page, body, size, before, elapsed, _, metrics = department_requests_page
+    page, body, size, before, elapsed, _, metrics, _ = department_requests_page
     assert page.status_code == 200
     assert body["total"] == 150 * 70 and len(body["items"]) == 100 and body["items"][0]["stage"] == "waiting"
     with capsys.disabled():
@@ -221,9 +222,31 @@ def test_department_scale_page_is_fast_and_small(department_requests_page, capsy
     assert metrics["sql"].get("SELECT", 0) <= 60, metrics
 
 
+def test_department_scale_pending_scope_avoids_repeated_request_scans(department_requests_page):
+    *_, h = department_requests_page
+    client = h.client("approver")
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    engine = h.app.state.engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get("/api/requests/all?for_me=1")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert len(page["items"]) == page["total"] == page["counts"]["to_decide"] == 30
+    scans = sum(len(re.findall(r"\brequests\.id\s+IN\s+\(SELECT\s+requests\.id\b", sql)) for sql in statements)
+    assert scans <= 1, scans
+
+
 @pytest.mark.cpu_budget
 def test_department_scale_page_is_fast_and_small_cpu_budget(department_requests_page):
-    _, _, _, _, elapsed, _, _ = department_requests_page
+    _, _, _, _, elapsed, _, _, _ = department_requests_page
     import coverage
     budget = 10 if coverage.Coverage.current() else 2
     assert elapsed < budget, (elapsed, budget)
@@ -231,7 +254,7 @@ def test_department_scale_page_is_fast_and_small_cpu_budget(department_requests_
 
 @pytest.mark.wall_benchmark
 def test_department_scale_request_page_wall_benchmark(department_requests_page):
-    _, _, _, _, elapsed, _, _ = department_requests_page
+    _, _, _, _, elapsed, _, _, _ = department_requests_page
     import coverage
     budget = 10 if coverage.Coverage.current() else 2
     assert elapsed < budget, (elapsed, budget)
