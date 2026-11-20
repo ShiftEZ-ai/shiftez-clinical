@@ -49,7 +49,7 @@ from .version import __version__, build
 from .rate_limit import enforce, session_identity
 from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
-from .serialization import record, job_record, json_value
+from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
 from .settings import Settings
 from .read_io import IndependentFileResponse, IndependentStaticFiles, background_io
@@ -326,6 +326,12 @@ def create_app(settings: Settings | None = None, engine=None):
         static = request.url.path.startswith("/assets/") and response.status_code < 400
         route = request.scope.get("route")
         cache_control = response.headers.get("Cache-Control", "no-cache" if static else "no-store")
+        # Server time (application and database) only on replies to a signed-in session, so a slow call can be split from
+        # its network path. Never on identity routes or any unauthenticated reply: separate timings there would sharpen
+        # account probing (OWASP information exposure).
+        if (getattr(request.state, "session_authenticated", False) and request.url.path.startswith("/api/")
+                and not request.url.path.startswith(("/api/account-links/", "/api/account/password"))):
+            response.headers["Server-Timing"] = f"app;dur={(time.monotonic() - started) * 1000:.1f}, db;dur={db_metrics['ms']:.1f}"
         response.headers.update({"X-Correlation-ID": correlation, "Cache-Control": cache_control, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
                                  "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
@@ -2546,7 +2552,6 @@ def create_app(settings: Settings | None = None, engine=None):
             cached = conditional_response(request, fast_tag)
             if isinstance(cached, Response):
                 return cached
-            response.headers.update(cached)
             # The validator above reads only scalar metadata. Hydrate the large JSON
             # columns only for a 200 response that will actually project them.
             db.refresh(workspace, attribute_names=("validation", "review_snapshot"))
@@ -2635,7 +2640,9 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
-            return data
+        result = JSONResponse(projection_json_value(data))
+        result.headers.update(cached)
+        return result
 
     @app.get("/api/publications")
     def publications(request: Request):
