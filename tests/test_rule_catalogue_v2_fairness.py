@@ -73,8 +73,9 @@ def test_bound_replacement_preview_reassembles_once_and_blocks_missing_publicati
         'reason': 'Preview a reviewed replacement limit'})['record']
     candidate = {**waiting, 'status': 'active', 'active': True}
     with transaction(h.app.state.engine) as db:
-        before = domain_snapshot(db, db.get(m.Workspace, draft['id']))
-        after = domain_snapshot(db, db.get(m.Workspace, draft['id']), policy_overrides=[candidate])
+        before = domain_snapshot(db, db.get(m.Workspace, draft['id']), mandatory_rules=False)
+        after = domain_snapshot(db, db.get(m.Workspace, draft['id']), policy_overrides=[candidate],
+                                mandatory_rules=False)
         with pytest.raises(Problem) as refused:
             domain_snapshot(db, db.get(m.Workspace, published['id']), policy_overrides=[candidate])
         assert refused.value.status == 409 and refused.value.code == 'BOUND_PREVIEW_CONTEXT'
@@ -124,7 +125,7 @@ def test_bound_replacement_preview_preserves_safety_and_unrelated_captured_rules
         'reason': 'Preview a personal rest line without weakening the default'})['record']
     with transaction(h.app.state.engine) as db:
         after = domain_snapshot(db, db.get(m.Workspace, draft['id']),
-            policy_overrides=[{**waiting, 'status': 'active', 'active': True}])
+            policy_overrides=[{**waiting, 'status': 'active', 'active': True}], mandatory_rules=False)
     resolved = active_rules(after)
     [captured] = [policy for policy in resolved if policy['id'] == limit['id']]
     assert captured['definition']['rule']['maximum'] == 5
@@ -162,7 +163,7 @@ def test_bound_preview_keeps_captured_safety_stricter_than_proposed(
         'reason': 'Preview a proposed safety relaxation'})['record']
     with transaction(h.app.state.engine) as db:
         after = domain_snapshot(db, db.get(m.Workspace, draft['id']),
-            policy_overrides=[{**waiting, 'status': 'active', 'active': True}])
+            policy_overrides=[{**waiting, 'status': 'active', 'active': True}], mandatory_rules=False)
     resolved = active_rules(after)
     safety = [policy for policy in resolved if policy['kind'] == expected_kind]
     assert safety and ((max if key == 'min' else min)(
@@ -194,7 +195,7 @@ def test_bound_preview_keeps_only_captured_safety_lines_in_mixed_catalogue(h):
         'reason': 'Preview a proposed workload increase'})['record']
     with transaction(h.app.state.engine) as db:
         after = domain_snapshot(db, db.get(m.Workspace, draft['id']),
-            policy_overrides=[{**waiting, 'status': 'active', 'active': True}])
+            policy_overrides=[{**waiting, 'status': 'active', 'active': True}], mandatory_rules=False)
     resolved = active_rules(after)
     maximums = [policy for policy in resolved if policy['kind'] == 'max_duties']
     assert [policy['definition']['rule']['maximum'] for policy in maximums] == [6]

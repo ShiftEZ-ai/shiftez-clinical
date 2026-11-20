@@ -116,7 +116,9 @@ def test_catalogue_zero_reader_keeps_only_mandatory_zero_numbers(version, entry)
         current['settings'] = {kind: {}}
     before = deepcopy(row)
     zero = _zero_limit_policy(row)
-    selected, = zero['definition']['rule']['lines']
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    # Only emitted maxima count here. Selector-only lines retain catalogue precedence.
+    selected, = [line for line in zero['definition']['rule']['lines'] if not line.get('_source_default_only')]
     assert selected['id'] == 'all' and selected['numbers'] == {'max': {'value': 0}}
     original = row['definition']['rule']['lines'][0]
     assert slot_for_number(contract, 'max', row['definition']['rule'], original, original['numbers'])['kind'] == (
@@ -291,6 +293,7 @@ def overtime_draft(h):
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_nonzero_live_overtime_cap_stays_out(request, backend):
+    # This name predates the 19 Nov ruling that positive mandatory caps bind drafts.
     from apps.api.snapshots import domain_snapshot
 
     h = request.getfixturevalue(backend)
@@ -301,12 +304,15 @@ def test_nonzero_live_overtime_cap_stays_out(request, backend):
     with transaction(h.app.state.engine) as db:
         apply_data = domain_snapshot(db, db.get(m.Workspace, draft['id']), mandatory_rules=True)
     data = h.snapshot(draft)
-    assert all(row['id'] != cap['id'] for row in data['policies'])
-    assert all(row['id'] != cap['id'] for row in apply_data['policies'])
+    # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+    assert sum(row['id'] == cap['id'] for row in data['policies']) == 1
+    # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+    assert sum(row['id'] == cap['id'] for row in apply_data['policies']) == 1
     data['people'] = {person: data['people'][person]}
     for generate in (greedy_generate, cp_sat_generate):
         result = generate(deepcopy(data), 2)
-        assert len(result['additions']) == 2 and result['validation']['valid']
+        # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+        assert len(result['additions']) == 1 and result['validation']['valid']
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
@@ -322,6 +328,95 @@ def test_zero_live_overtime_cap_binds_both_solvers(h, metric):
         assert generate(empty_for_person(after, person), 2)['additions'] == []
 
 
+@pytest.mark.parametrize('style', ['legacy', 'catalogue', 'mixed_catalogue'])
+def test_late_zero_quota_is_one_obligation_in_check_generation_and_apply(h, style):
+    import json
+
+    from packages.domain.proposal_reconciliation import overlay
+    from packages.domain.solver_provenance import policy_id
+    from .test_generation_superseded_apply import group
+    from .test_rule_catalogue_api import line, person as person_scope
+    from .test_rule_catalogue_v2_api import proposed
+
+    draft, person = overtime_draft(h)
+    if style != 'legacy':
+        conversion = proposed(h)
+        h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
+                  conversion['id'], conversion['revision'])
+    slot = h.detail(draft)['shifts'][0]
+    job = run(h, draft, sessions=[slot['id']], population=group(person))
+    settings = {'metric': 'duties', 'overtime': 'only',
+                'starts_on': draft['starts_on'], 'ends_on': draft['ends_on']}
+    zero_line = None
+    if style == 'legacy':
+        cap = h.policy({**settings, 'kind': 'block_quota', 'comparison': 'maximum', 'amount': 0},
+                       {'person_id': person})
+    else:
+        broad = line(numbers={'max': {'value': 2, 'level': 'mandatory'}}, settings={'block_quota': settings})
+        zero = line(who=person_scope(person), numbers={'max': {'value': 0, 'level': None}},
+                    settings={'block_quota': settings})
+        zero_line = zero['id']
+        lines = [broad, zero]
+        if style == 'mixed_catalogue':
+            lines.append(line(who=person_scope(h.seed['people'][1]), numbers={'apply': {'value': None}},
+                              settings={'restriction': {}}))
+        waiting = h.command('coordinator', 'rule.propose', {
+            'catalogue_id': 'workload_limit', 'catalogue_version': 2, 'lines': lines,
+            'acknowledged_overlaps': [broad['id']], 'reason': 'Synthetic overtime quota'})['record']
+        cap = h.command('approver', 'policy.activate', {'reason': 'Independent quota review'},
+                        waiting['id'], waiting['revision'])['record']
+
+    def findings(rows):
+        return [row for row in rows if row['rule_id'] == cap['id'] and row['person_id'] == person]
+
+    snapshot = h.snapshot(draft)
+    candidate = overlay(snapshot, job['result'], [0], [])
+    checked = evaluate(candidate)
+    finding, = findings(checked['findings'])
+    assert finding['code'] == 'QUOTA_ABOVE_MAXIMUM'
+    row, = [row for row in checked['quota_report']['rows']
+            if row['policy_id'] == cap['id'] and row['person_id'] == person]
+    assert (row['amount'], row['actual']) == (0, 1)
+
+    empty = empty_for_person(snapshot, person)
+    models = []
+    assert cp_sat_generate(deepcopy(empty), 2, feasibility_only=True, _on_model=models.append)['status'] == 'model_ready'
+    model, = models
+    aliases = {policy['id'] for policy in snapshot['policies']
+               if policy.get('_source_policy_id', policy['id']) == cap['id']}
+    zero_constraints = [constraint for constraint in model.proto.constraints
+                        if policy_id(constraint.name) in aliases
+                        and json.loads(constraint.name.removeprefix('policy:'))['line_id'] == zero_line]
+    assert len(zero_constraints) == 1
+    assert cp_sat_generate(deepcopy(empty), 2)['additions'] == []
+    greedy = greedy_generate(empty, 2)
+    assert greedy['additions'] == []
+    row, = [row for row in greedy['validation']['quota_report']['rows']
+            if row['policy_id'] == cap['id'] and row['person_id'] == person]
+    assert (row['amount'], row['actual']) == (0, 0)
+
+    receipt = apply(h, draft, job)['reconciliation']
+    assert receipt['status'] == 'unresolved' and receipt['addition_indexes'] == []
+    finding, = findings([row for placement in receipt['conflicting_placements'] for row in placement['findings']])
+    assert finding['code'] == 'QUOTA_ABOVE_MAXIMUM'
+    assert h.snapshot(draft) == snapshot
+
+
+def test_late_positive_overtime_quota_binds_a_draft_at_two(h):
+    draft, person = overtime_draft(h)
+    draft = h.shift(draft, typ=h.detail(draft)['shifts'][0]['assignment_type_id'], people=[],
+                    start='2026-10-06T08:00:00+03:00', end='2026-10-06T12:00:00+03:00')['workspace']
+    cap = h.policy({'kind': 'block_quota', 'starts_on': draft['starts_on'], 'ends_on': draft['ends_on'],
+                    'metric': 'duties', 'comparison': 'maximum', 'amount': 2, 'overtime': 'only'},
+                   {'person_id': person})
+    check = h.lifecycle(draft, 'validate')['validation']
+    row, = [row for row in check['quota_report']['rows'] if row['policy_id'] == cap['id']]
+    assert (row['person_id'], row['amount']) == (person, 2)
+    for generate in (greedy_generate, cp_sat_generate):
+        result = generate(empty_for_person(h.snapshot(draft), person), 2)
+        assert len(result['additions']) == 2 and result['validation']['valid']
+
+
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_more_specific_nonzero_live_line_cannot_loosen_zero(request, backend):
     from .test_rule_catalogue_api import approve, line, person, propose
@@ -334,24 +429,31 @@ def test_more_specific_nonzero_live_line_cannot_loosen_zero(request, backend):
                              acknowledged=[everyone['id']])['record'])
     snapshot = h.snapshot(draft)
     carried = next(row for row in snapshot['policies'] if row['id'] == rule['id'])
-    assert len(carried['definition']['rule']['lines']) == 1
-    assert carried['definition']['rule']['lines'][0]['numbers']['max']['value'] == 0
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    zero, = [row for row in carried['definition']['rule']['lines'] if not row.get('_source_default_only')]
+    assert zero['numbers']['max']['value'] == 0
     validation = h.lifecycle(draft, 'validate')['validation']
     blocked = {f['person_id'] for f in validation['findings'] if f['code'] == 'MAX_DUTIES' and f['severity'] == 'error'}
-    assert set(h.seed['people'][:2]) <= blocked
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    allowed, capped = h.seed['people'][:2]
+    assert blocked == {capped}
     for generate in (greedy_generate, cp_sat_generate):
         empty = h.snapshot(draft)
         empty['shifts'] = [{**row, 'participants': []} for row in empty['shifts']]
         empty['people'] = {pid: empty['people'][pid] for pid in h.seed['people'][:2]}
         result = generate(empty, 2)
-        assert result['additions'] == []
+        # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+        assert [row['participant']['person_id'] for row in result['additions']] == [allowed]
     from .test_assignment_override_reason import payload
     draft = h.detail(draft)['workspace']
     value = payload(h, draft, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00')
-    for pid in h.seed['people'][:2]:
-        refused = h.command('coordinator', 'shift.create', {**value, 'participants': [
-            {**value['participants'][0], 'person_id': pid}]}, revision=draft['revision'], status=422)
-        assert refused['error']['code'] == 'PERSON_UNAVAILABLE'
+    refused = h.command('coordinator', 'shift.create', {**value, 'participants': [
+        {**value['participants'][0], 'person_id': capped}]}, revision=draft['revision'], status=422)
+    assert refused['error']['code'] == 'PERSON_UNAVAILABLE'
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    admitted = h.command('coordinator', 'shift.create', {**value, 'participants': [
+        {**value['participants'][0], 'person_id': allowed}]}, revision=draft['revision'])
+    assert not any(f['code'] == 'MAX_DUTIES' and f['person_id'] == allowed for f in admitted['validation']['findings'])
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -642,11 +744,12 @@ def test_apply_checks_both_the_positive_and_zero_limits_in_a_live_revision(reque
     zero_slot = h.shift(positive_slot['workspace'], '2026-10-07T08:00:00+03:00', '2026-10-07T12:00:00+03:00', people=[])
     draft = zero_slot['workspace']
     zero_proposal = run(h, draft, sessions=[zero_slot['shift_id']], population=group(zero_person))
+    # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+    positive_proposal = run(h, draft, sessions=[positive_slot['shift_id']], population=group(positive_person))
     tighten(h, source, {**source['definition']['rule'], 'lines': [
         {**general, 'numbers': {'max': {'value': 2}}},
         line(who=person(zero_person), numbers={'max': {'value': 0}}),
     ]})
-    positive_proposal = run(h, draft, sessions=[positive_slot['shift_id']], population=group(positive_person))
     before = h.snapshot(draft)
     for job, pid, maximum in ((positive_proposal, positive_person, 2), (zero_proposal, zero_person, 0)):
         receipt = apply(h, draft, job)['reconciliation']
@@ -747,5 +850,6 @@ def test_apply_keeps_only_zero_lines_of_an_uncaptured_legacy_overtime_cap(reques
         data = domain_snapshot(db, db.get(m.Workspace, draft['id']), mandatory_rules=True)
     rows = [row for row in active_rules(data['policies'], context=data)
             if row.get('_source_policy_id', row['id']) == source['id']]
-    assert {(row['template_line']['person_id'], row['definition']['rule']['amount'])
-            for row in rows} == {(zero_person, 0)}
+    # #797 ruling 19 Nov: every late mandatory rule, positive included, binds drafts
+    assert sorted((row['template_line']['person_id'], row['definition']['rule']['amount'])
+                  for row in rows) == sorted([(zero_person, 0), (positive_person, 2)])

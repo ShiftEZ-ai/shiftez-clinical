@@ -309,3 +309,78 @@ def test_batch_apply_revises_each_changed_session_once_and_preserves_undo(h, rec
     undone = h.command('coordinator', 'workspace.undo', {'reason': 'Undo reviewed session changes'},
         workspace['id'], applied['workspace']['revision'])['workspace']
     assert h.snapshot(undone)['shifts'] == before['shifts']
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize(
+    "visibility,purpose",
+    [("shared", "alternative"), ("private", "sandbox"), ("shared", "sandbox")],
+    ids=["shared", "private", "sandbox"],
+)
+def test_apply_unchanged_draft(h, visibility, purpose):
+    start, end = ("2026-11-15", "2026-11-22") if visibility == "private" else ("2026-10-04", "2026-10-11")
+    if (visibility, purpose) == ("shared", "alternative"):
+        workspace = h.workspace("Unchanged draft", start=start, end=end)
+    else:
+        workspace = h.command("coordinator", "workspace.create", {
+            "name": "Unchanged draft",
+            "starts_on": start,
+            "ends_on": end,
+            "visibility": visibility,
+            "purpose": purpose,
+        })["workspace"]
+    workspace = h.shift(workspace, start=f"{start}T08:00:00+03:00", end=f"{start}T12:00:00+03:00",
+                        people=[])["workspace"]
+    shift = h.snapshot(workspace)["shifts"][0]
+    job = completed_proposal(h, workspace, [{
+        "shift_id": shift["id"],
+        "participant": {"person_id": h.seed["people"][0], "start": shift["start"], "end": shift["end"]},
+    }])
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Job, job["id"])
+        row.result = {**row.result, "status": "unknown_time_limit"}
+        assert db.get(m.Workspace, workspace["id"]).revision == workspace["revision"]
+
+    applied = h.command("coordinator", "generation.apply", {
+        "workspace_id": workspace["id"],
+        "job_id": job["id"],
+        "reason": "Apply unchanged proposal",
+    }, revision=workspace["revision"])
+
+    assert applied["reconciliation"]["status"] == "applied"
+    assert applied["workspace"]["revision"] == workspace["revision"] + 1
+    assert h.snapshot(applied["workspace"])["shifts"][0]["participants"][0]["person_id"] == h.seed["people"][0]
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+def test_apply_retains_real_session_change(h):
+    workspace = h.shift(h.workspace("Changed draft"), people=[])["workspace"]
+    shift = h.snapshot(workspace)["shifts"][0]
+    job = completed_proposal(h, workspace, [{
+        "shift_id": shift["id"],
+        "participant": {"person_id": h.seed["people"][0], "start": shift["start"], "end": shift["end"]},
+    }])
+    changed = h.command("coordinator", "shift.update", {
+        "workspace_id": workspace["id"],
+        "shift_id": shift["id"],
+        "assignment_type_id": shift["assignment_type_id"],
+        "location_id": shift["location_id"],
+        "service_ids": shift["service_ids"],
+        "attributes": shift["attributes"],
+        "start": "2026-10-04T09:00:00+03:00",
+        "end": "2026-10-04T13:00:00+03:00",
+        "participants": [],
+    }, revision=workspace["revision"])["workspace"]
+    before = h.snapshot(changed)
+
+    reply = h.command("coordinator", "generation.apply", {
+        "workspace_id": changed["id"],
+        "job_id": job["id"],
+        "reason": "Retain changed proposal for review",
+    }, revision=changed["revision"])
+
+    assert reply["proposal_retained"]
+    assert reply["reconciliation"]["status"] == "content_conflict"
+    assert any(fact["kind"] == "shifts" and fact["id"] == shift["id"]
+               for fact in reply["reconciliation"]["changed_facts"])
+    assert h.snapshot(changed) == before
