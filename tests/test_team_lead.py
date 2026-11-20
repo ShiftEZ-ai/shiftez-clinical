@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from tests.historical_staffing import retained_staffing
 from tests.legacy_lead import historical_type
 from packages.domain import generation
 from packages.domain.cp_sat import generate
@@ -318,7 +319,7 @@ def test_several_leads_up_to_the_maximum(h):
         return {'person_id': p, 'start': START, 'end': END, 'team_lead': True}
     ok = h.shift(h.workspace(), typ=typ, people=[lead(a), lead(b), c])['workspace']
     assert not [f for f in h.detail(ok)['workspace']['validation']['findings'] if f['code'].startswith('LEAD')]
-    over = h.shift(h.workspace('Three'), typ=typ, people=[lead(a), lead(b), lead(c)])['workspace']
+    over = retained_staffing(h, h.workspace('Three'), typ=typ, people=[lead(a), lead(b), lead(c)])['workspace']
     assert [f['message'] for f in h.detail(over)['workspace']['validation']['findings'] if f['code'] == 'LEAD_GAP'] == [
         'This session has more team leads than allowed']
 

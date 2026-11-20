@@ -180,8 +180,8 @@ def draft_line_effect(db, actor, catalogue_id, value):
                 'on': original.get('on', True), 'settings': original.get('settings') or {}, 'lines': checked['lines']}})
     effects = []
     for workspace in affected_workspaces(db, actor, [candidate]):
-        before = domain_snapshot(db, workspace)
-        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)])
+        before = domain_snapshot(db, workspace, mandatory_rules=False)
+        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)], mandatory_rules=False)
         effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
             'starts_on': str(workspace.starts_on), 'ends_on': str(workspace.ends_on),
             **effect_projection(before, evaluate(before), after, evaluate(after))})
