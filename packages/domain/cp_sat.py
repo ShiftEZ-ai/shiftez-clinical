@@ -2328,6 +2328,11 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                         continue
                 break
             if not compiled_score_complete:
+                # The kept coverage incumbent has a deficit value even without compiled score values.
+                outcome = {t: row for t, row in outcome.items() if t < tier}
+                outcome[tier] = {'tier': tier, 'name': names[tier], 'value': round(current()),
+                                 'proven_optimal': False, 'stopped_without_improvement': control.stalled,
+                                 'search_status': solver.status_name(status)}
                 break
             values, pairs, overtime_values, lead_values = keep_incumbent()
             best = round(current())
