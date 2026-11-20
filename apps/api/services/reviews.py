@@ -330,8 +330,7 @@ def validate_existing(db, workspace, *, current_fingerprint=None):
     return used
 
 
-def can_review(db, actor, workspace, *, authority_id=None, context=None, independent_only=False, current_review_items=None):
-    from .acknowledged_gaps import review_items
+def can_review(db, actor, workspace, *, authority_id=None, context=None):
     authority_id = authority_id or actor.identity_id
     keys = {person_key(db, actor.identity_id), person_key(db, authority_id)}
     involved = contributors(db, workspace)
@@ -340,8 +339,6 @@ def can_review(db, actor, workspace, *, authority_id=None, context=None, indepen
                        'person:' + swap.proposer_person_id, 'person:' + swap.recipient_person_id}:
         return False
     independent = not keys & involved
-    if independent_only or (review_items(workspace) if current_review_items is None else current_review_items):
-        return independent
     if authority_id != actor.identity_id and person_key(db, authority_id) in involved:
         return False
     return independence.can_decide(db, actor, 'rota.approve', independent, context=context)
@@ -375,12 +372,13 @@ def approve_step(db, actor, workspace, value, *, record_decision=True, current_f
                                      "Every contributor and swap party is excluded from independent review", value.reason, workspace.id)
     require(not keys & used, "DUPLICATE_REVIEWER", "A person or represented principal cannot fill multiple approval seats", 409)
     if not record_decision:
-        return False
-    db.add(m.ReviewDecision(created_at=m.now(), workspace_id=workspace.id, content_revision=workspace.content_revision,
-                            fingerprint=fp, route_hash=snapshot_hash(workspace.review_snapshot),
-                            step_key=pending["key"], approved_by=actor.identity_id, authority_id=authority_id,
-                            authority_role=role, delegation_id=delegation_id, reason=value.reason,
-                            self_approval_id=permission.id if permission else None))
+        return None
+    decision = m.ReviewDecision(created_at=m.now(), workspace_id=workspace.id, content_revision=workspace.content_revision,
+                                fingerprint=fp, route_hash=snapshot_hash(workspace.review_snapshot),
+                                step_key=pending["key"], approved_by=actor.identity_id, authority_id=authority_id,
+                                authority_role=role, delegation_id=delegation_id, reason=value.reason,
+                                self_approval_id=permission.id if permission else None)
+    db.add(decision)
     db.flush()
     complete = progress(db, workspace, current_fingerprint=fp)["complete"]
     if complete:
@@ -391,7 +389,7 @@ def approve_step(db, actor, workspace, value, *, record_decision=True, current_f
     if workspace.review_snapshot["route_id"]:
         outbox(db, actor, f"review:{workspace.id}:{workspace.content_revision}:{actor.identity_id}", "review",
                {"workspace_id": workspace.id})
-    return complete
+    return decision
 
 
 def require_complete(db, workspace, *, current_fingerprint=None):
@@ -401,7 +399,7 @@ def require_complete(db, workspace, *, current_fingerprint=None):
     require(progress(db, workspace, current_fingerprint=fp)["complete"], "REVIEW_INCOMPLETE", "Every configured review step must be completed", 409)
 
 
-def decision_access(db, actor, workspace, progress, *, context=None, current_review_items=None):
+def decision_access(db, actor, workspace, progress, *, context=None):
     """Read the same current route, seats, independence and delegation facts enforced by approve_step."""
     from apps.api.errors import Problem
     result = {'can_decide': False, 'decision_role': None, 'delegation_ids': [], 'decision_reason': None}
@@ -421,8 +419,8 @@ def decision_access(db, actor, workspace, progress, *, context=None, current_rev
             return {**result, 'decision_reason': 'REVIEW_COMPLETE'}
         result['decision_role'] = pending['role']
         own = pending['role'] in actor.roles or pending.get('escalated') and pending.get('escalation_role') in actor.roles
-        independent = can_review(db, actor, workspace, context=context, current_review_items=current_review_items)
-        own = own and independent and person_key(db, actor.identity_id) not in used
+        can_review_own = can_review(db, actor, workspace, context=context)
+        own = own and can_review_own and person_key(db, actor.identity_id) not in used
         delegations = []
         if workspace.review_snapshot and actor.roles & REVIEW_ROLES:
             for row in db.scalars(select(m.ReviewDelegation).where(m.ReviewDelegation.department_id == actor.department_id,
@@ -432,20 +430,19 @@ def decision_access(db, actor, workspace, progress, *, context=None, current_rev
                 try:
                     validate_delegation(db, workspace, pending, row.id, actor.identity_id)
                     keys = {person_key(db, actor.identity_id), person_key(db, row.delegator_id)}
-                    if not keys & used and can_review(db, actor, workspace, authority_id=row.delegator_id, context=context,
-                                                     current_review_items=current_review_items):
+                    if not keys & used and can_review(db, actor, workspace, authority_id=row.delegator_id, context=context):
                         delegations.append(row.id)
                 except Problem:
                     continue
         return {**result, 'can_decide': bool(own or delegations), 'delegation_ids': sorted(delegations),
-            'decision_reason': None if own or delegations else 'SELF_APPROVAL' if not independent else 'REVIEW_STEP_ROLE'}
+            'decision_reason': None if own or delegations else 'SELF_APPROVAL' if not can_review_own else 'REVIEW_STEP_ROLE'}
     except Problem as exc:
         return {**result, 'decision_reason': exc.code}
 
 
-def viewer_progress(db, actor, workspace, *, current_fingerprint=None, context=None, current_review_items=None):
+def viewer_progress(db, actor, workspace, *, current_fingerprint=None, context=None):
     value = progress(db, workspace, current_fingerprint=current_fingerprint)
     if value.get('legacy'):
         value = {**value, 'stale_inputs': workspace.submitted_fingerprint != (
             current_fingerprint if current_fingerprint is not None else fingerprint(db, workspace))}
-    return {**value, **decision_access(db, actor, workspace, value, context=context, current_review_items=current_review_items)}
+    return {**value, **decision_access(db, actor, workspace, value, context=context)}

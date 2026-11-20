@@ -198,7 +198,8 @@ def test_one_thousand_lines_in_one_where_are_fast(department_rule_checks):
     assert duplicates == [] and len(both) == 100 * 99 // 2  # ranks are equal tiers: each pair both applies
     assert beaten[(0, 'max')] == list(range(101, 901)) and beaten[(0, 'min')] == list(range(1, 101))
     assert got[L(101)] == {'min': {'value': 1, 'level': None, 'from': L(100)}}  # a person takes the min of the rank holding for them
-    assert {i['kind'] for i in attention} == {'overlap', 'both'}  # ranks whose people overlap both apply
+    assert {i['kind'] for i in attention} == {'both', 'shadowed'}
+    assert [i['line_ids'] for i in attention if i['kind'] == 'shadowed'] == [[L(0)]]
 
 
 @pytest.mark.cpu_budget

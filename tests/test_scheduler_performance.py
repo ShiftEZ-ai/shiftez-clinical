@@ -379,6 +379,55 @@ def test_fractional_hours_amount_dial_compiles_at_department_scale(h):
     assert len(captured) == 1 and captured[0].validate() == ''
 
 
+@pytest.mark.cpu_budget
+def test_overtime_only_zero_maximum_binds_extra_cover_for_a_department_month(h, request):
+    from ortools.sat.python import cp_model
+
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.snapshots import domain_snapshot
+    from tests.test_overtime_extra_cover import extra_type
+
+    cover = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    data, info = department(h, 7, people=150, days=28, rules='none', leave_rate=0, clinics=9)
+    workspace = data['workspace']
+    h.policy({'kind': 'block_quota', 'starts_on': workspace['starts_on'], 'ends_on': workspace['ends_on'],
+              'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
+             {'person_id': person})
+    with transaction(h.app.state.engine) as db:
+        current = domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=True)
+    data.update({key: current[key] for key in ('policies', 'quota_context') if key in current})
+    data['types'][cover['id']] = cover
+    target = next(s for s in data['shifts'] if s['assignment_type_id'] == info['types']['am'])
+    for shift in data['shifts']:
+        shift.update(assignment_type_id=cover['id'], type_snapshot=cover)
+    assert len(data['people']) == 150 and len(data['shifts']) == 532
+
+    models = []
+    started = time.process_time()
+    result = generate(data, 60, deterministic=True, feasibility_only=True, _on_model=models.append)
+    prepared = time.process_time() - started
+    assert result['status'] == 'model_ready', result.get('status')
+    model, = models
+    size = {'variables': len(model.proto.variables), 'constraints': len(model.proto.constraints)}
+    request.node.user_properties.append(('overtime_maximum_performance', json.dumps({
+        'people': len(data['people']), 'sessions': len(data['shifts']), 'preparation_cpu_seconds': prepared, **size,
+    })))
+    assert prepared < _budget(60), prepared
+    assert size['variables'] < 180_000 and size['constraints'] < 300_000, size
+
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = 1
+    solver.parameters.max_time_in_seconds = 10
+    assert solver.solve(model) == cp_model.OPTIMAL
+    index, = [i for i, variable in enumerate(model.proto.variables)
+              if variable.name == f"{target['id']}:{person}"]
+    model.add(model.get_bool_var_from_proto_index(index) == 1)
+    assert solver.solve(model) == cp_model.INFEASIBLE
+
+
 @pytest.fixture(scope='module')
 def eighty_people_balance_goals(scale_harness):
     """Goals (equal duties, fair weekends, trainee x consultant minimum) stay a small fraction of the model."""
@@ -744,3 +793,80 @@ def test_each_workload_department_validation_and_scheduler_cpu_budget(department
     # Three times the old coverage-aware ceilings: catastrophic guards, not the regression budget.
     for phase, ceiling in (('greedy', 30), ('evaluate', 3), ('model', 36)):
         assert timings['each'][phase]['cpu_seconds'] < _budget(ceiling), timings
+
+
+@pytest.fixture(scope='module')
+def department_preparation_163_people(scale_harness):
+    """Persist the preparation profile's active rules and retired history in PostgreSQL."""
+    from datetime import date
+    from sqlalchemy import select
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from packages.contracts.schemas import PolicyDefinition
+    from tests.test_backend_scale import scale_department
+
+    h = scale_harness('pg')
+    workspace, data, _, _ = scale_department(h, assigned=False)
+    people = list(data['people'])
+    rules = [
+        ({'kind': 'minimum_cover', 'minimum': 2}, {}, 'mandatory'),
+        ({'kind': 'max_duties', 'maximum': 1, 'window': 'day'}, {}, 'mandatory'),
+        ({'kind': 'max_duties', 'maximum': 5, 'window': 'week'}, {}, 'mandatory'),
+        ({'kind': 'max_hours', 'hours': 32, 'window': 'week'}, {}, 'advisory'),
+        ({'kind': 'balance_goal', 'metric': 'duties', 'period': 'month', 'aim': 'equal_share'}, {}, 'advisory'),
+        ({'kind': 'balance_goal', 'metric': 'weekends', 'period': 'month', 'aim': 'equal_share'}, {}, 'advisory'),
+        ({'kind': 'allocation_preference', 'priority': 5, 'session_priority': 2}, {'person_id': people[0]}, 'advisory'),
+        ({'kind': 'allocation_preference', 'priority': 3, 'session_priority': 1}, {'person_id': people[1]}, 'advisory'),
+    ]
+    with transaction(h.app.state.engine, write=True) as db:
+        for shift in db.scalars(select(m.Shift).where(m.Shift.workspace_id == workspace['id'])):
+            snapshot = copy.deepcopy(shift.type_snapshot)
+            snapshot['definition']['requirements'][0].update(minimum=2, target=3, maximum=3)
+            shift.type_snapshot = snapshot
+        for index, (rule, scope, severity) in enumerate(rules):
+            definition = PolicyDefinition.model_validate({'severity': severity, 'scope': scope, 'rule': rule})
+            db.add(m.Policy(department_id=h.seed['department_id'], name=f'Preparation rule {index}',
+                kind=rule['kind'], definition=definition.model_dump(mode='json'), status='active', active=True,
+                starts_on=date(2020, 1, 1), created_by=h.seed['identities']['coordinator'],
+                approved_by=h.seed['identities']['approver'], owner='Synthetic policy owner', source='Preparation fixture'))
+        db.flush()
+        active = list(db.scalars(select(m.Policy).where(m.Policy.department_id == h.seed['department_id'],
+                                                       m.Policy.status == 'active')))
+        assert len(active) == 12
+        for index, source in enumerate(active):
+            for revision in range(83 if index < 5 else 82):
+                db.add(m.Policy(department_id=h.seed['department_id'], name=f'Retired {source.kind} {revision}',
+                    kind=source.kind, definition=copy.deepcopy(source.definition), status='retired', active=False,
+                    revision=revision + 1, starts_on=date(2018, 1, 1), ends_on=date(2019, 1, 1),
+                    created_by=h.seed['identities']['coordinator'], approved_by=h.seed['identities']['approver'],
+                    owner='Synthetic policy owner', source='Preparation fixture'))
+    workspace = h.refresh_draft_baseline(h.detail(workspace)['workspace'])
+    data = h.snapshot(workspace)
+    assert h.app.state.engine.dialect.name == 'postgresql'
+    assert len(data['people']) == 163 and len(data['shifts']) == 768
+    assert len(data['policies']) == 1001 and sum(p['status'] == 'active' for p in data['policies']) == 12
+    assert not any(s['participants'] for s in data['shifts'])
+    return data
+
+
+@pytest.mark.cpu_budget
+@pytest.mark.postgres
+def test_department_preparation_163_people_768_sessions_cpu_budget(department_preparation_163_people, request):
+    from packages.contracts.schemas import GenerationOptions
+    from packages.domain.cp_sat import _prepare
+    from packages.domain.solver_control import SolverControl
+
+    data = department_preparation_163_people
+    options = GenerationOptions.model_validate(data.get('generation_options') or {})
+    control = SolverControl()
+    control.configure_stop_conditions(options, data['organisation']['timezone'])
+    gc.collect()
+    started = time.process_time()
+    prepared = _prepare(data, options.search_minutes * 60, 1, control, options, False, False)
+    elapsed = time.process_time() - started
+    request.node.user_properties.append(('preparation_cpu_seconds', elapsed))
+    assert 'model' in prepared and 'score_program' in prepared, prepared.get('status')
+    assert control.search_spent == 0 and control._solve_started is None
+    control.search_budget = options.search_minutes * 60
+    assert control.remaining() == options.search_minutes * 60
+    assert elapsed < _budget(60), elapsed

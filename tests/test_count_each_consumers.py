@@ -305,7 +305,7 @@ def test_counted_catalogue_goal_lines_keep_separate_people_and_history(h):
     ('weekends', (2, 3), False, (1, 0)),
 ])
 @pytest.mark.parametrize('same_id', [False, True])
-def test_counted_history_uses_each_publications_frozen_place_ancestry(h, monkeypatch, metric, days, move, expected, same_id):
+def test_counted_history_uses_each_publications_frozen_place_ancestry(h, metric, days, move, expected, same_id):
     data = _world(h)
     pid = h.seed['people'][0]
     data['people'] = {pid: data['people'][pid]}
@@ -322,6 +322,7 @@ def test_counted_history_uses_each_publications_frozen_place_ancestry(h, monkeyp
         shift['participants'] = [{**shift['participants'][0], 'shift_id': shift['id'],
                                   'start': shift['start'], 'end': shift['end']}]
         publications.append(SimpleNamespace(id='publication-' + str(index), workspace_id='past-' + str(index), effective_until=None,
+            starts_on=date(2026, 10, day), ends_on=date(2026, 10, day + 1),
             snapshot={'shifts': [shift], 'locations': old if index == 0 else new}))
     # Each bucket has a current eligible audience, even when its historical count is zero.
     focused = []
@@ -334,8 +335,8 @@ def test_counted_history_uses_each_publications_frozen_place_ancestry(h, monkeyp
     data['policies'] = [_policy(data, {'kind': 'balance_goal', 'metric': metric, 'period': 'month',
         'aim': 'target', 'amount': 1}, _count_scope_for_places(north, south), severity='advisory')]
     goals = balance_goals(data)
-    monkeypatch.setattr('apps.api.services.schedule.current_publications', lambda *_: publications)
-    db = SimpleNamespace(execute=lambda _query: [('available_days', pid, None, date(2026, 10, 1), 14.0)])
+    db = SimpleNamespace(scalars=lambda _query: iter(publications),
+                         execute=lambda _query: [('available_days', pid, date(2026, 10, 1), 14.0)])
     history = fairness_service.history(db, data, goals)
     counts = {goal['count_bucket'][-1][1]: history[goal_identity(goal)]['people'][pid]['value'] for goal in goals}
     assert (counts[north], counts[south]) == expected
