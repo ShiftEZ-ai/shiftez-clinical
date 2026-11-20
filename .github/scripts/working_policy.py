@@ -15,9 +15,10 @@ import subprocess
 import tomllib
 import sys
 from urllib.request import Request, urlopen
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import node_census
 import hardening
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_retired
 
 from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_agent_path, private_ignore_content
 
@@ -58,7 +59,6 @@ SHRINK_ONLY = {
     "ci/hosted-env-exceptions.json": ("exceptions",),
     "ci/unstable-seeds.json": ("nodes",),
 }
-QUARANTINE = "tests/quarantine.json"
 QUARANTINE_DAYS = 30
 MARKER = "ci/working-rules.json"
 CONTRACT = {"schema": 4, "ci_result_contract": "failclosed-main-reviewed-errors-v32"}
@@ -71,7 +71,7 @@ LISTS = {
     "ci/root-run-evidence.json": False, NODE_LEDGER: False,
     "ci/hosted-env-exceptions.json": False,
     "ci/unstable-seeds.json": True, "ci/hosted-durations.json": True,
-    "tests/quarantine.json": True,
+    QUARANTINE: True, QUARANTINE_RETIRED: True,
 }
 
 
@@ -189,6 +189,28 @@ def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
             continue
         raise ValueError(QUARANTINE + " may only add entries moved from " + KNOWN
                          + " with their class, or recovered flakes with run evidence: " + node)
+
+
+def quarantine_retired_change(before_raw, after_raw, registry_before, registry_after):
+    try:
+        before = decode_retired(before_raw) if before_raw is not None else {}
+        after = decode_retired(after_raw)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid {QUARANTINE_RETIRED}: {error}") from None
+    append_only = QUARANTINE_RETIRED + " is append-only"
+    base_nodes = {entry["nodeid"] for entry in decode(registry_before)}
+    removed = before.keys() - after.keys()
+    if removed:
+        remaining_nodes = {entry["nodeid"] for entry in decode(registry_after)}
+        if not removed <= base_nodes - remaining_nodes:
+            raise ValueError(append_only + "; remove the same nodes from " + QUARANTINE + " in this change")
+    retained = [(node, token) for node, token in before.items() if node in after]
+    if (list(after.items())[:len(retained)] != retained
+            or before_raw is not None and before == after and before_raw != after_raw):
+        raise ValueError(append_only + "; existing entries must stay byte-unchanged and in order")
+    for node in after.keys() - before.keys():
+        if node not in base_nodes:
+            raise ValueError(append_only + "; new entry is absent from the base " + QUARANTINE + ": " + node)
 
 
 def removal_only(before_raw, after_raw, entry_keys=("fails", "unstable")):
@@ -854,6 +876,9 @@ def guard():
             old, new = read_file(base, path), read_file(candidate, path)
             if path == KNOWN and removal_only(old, new):
                 level, reason = 0, "Known-failures entry removal only"
+            elif not initial and path == QUARANTINE_RETIRED:
+                quarantine_retired_change(old, new, read_file(base, QUARANTINE), read_file(candidate, QUARANTINE))
+                level, reason = 0, "Quarantine retirement or compaction with owned registry removal"
             elif not initial and path == NODE_LEDGER:
                 if not hardening.load()["node_census"] or node_census.ledger_additions(old, new) is None:
                     raise ValueError(NODE_LEDGER + " may only add removed nodes for census verification")

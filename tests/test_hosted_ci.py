@@ -166,6 +166,9 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, mon
         assert sha in {candidate["sha"], candidate["base_sha"]}
         if name == trusted_ci.policy.KNOWN:
             return json.dumps(known).encode()
+        if name == trusted_ci.policy.QUARANTINE_RETIRED:
+            assert sha == candidate["base_sha"]
+            return b"[]"
         assert name == "tests/quarantine.json"
         row = {"nodeid": quarantined, "reason": "baseline: reviewed", "owner": "maintainers",
                "added": "2000-01-01", "expires": "2000-01-02", "issue": 123, "blocker": False}

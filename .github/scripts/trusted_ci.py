@@ -20,7 +20,7 @@ import working_policy as policy
 import canary_evidence as canaries
 import hardening
 import make_known_failures as maker
-from quarantine_registry import QUARANTINE, decode_registry, utc_today
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_registry, decode_retired, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
@@ -341,6 +341,12 @@ def registry_at_revision(revision):
 
 
 def quarantine_policy(base, candidate, known_before, known_after):
+    try:
+        retired = decode_retired(policy.read_file(base, QUARANTINE_RETIRED))
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("Cannot read trusted quarantine retired list: " + QUARANTINE_RETIRED) from None
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid quarantine retired list {QUARANTINE_RETIRED}: {error}") from None
     entries = registry_at_revision(candidate)
     current = policy.known_failure_classes(known_after)
     overlap = current.keys() & entries.keys()
@@ -349,8 +355,8 @@ def quarantine_policy(base, candidate, known_before, known_after):
     before = entries if base == candidate else registry_at_revision(base)
     moved = policy.moved_failure_classes(known_before, current)
     honoured = {node: row for node, (row, source) in entries.items()
-                if (node in before and source == before[node][1])
-                or moved.get(node) == row["reason"].split(":", 1)[0].strip()}
+                if node not in retired and ((node in before and source == before[node][1])
+                                            or moved.get(node) == row["reason"].split(":", 1)[0].strip())}
     return entries.keys(), honoured
 
 

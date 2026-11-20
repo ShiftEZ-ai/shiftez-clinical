@@ -16,7 +16,7 @@ import canary_evidence
 import node_census
 import hardening
 from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, require_pr_merge, settings
-from quarantine_registry import QUARANTINE, expired_issue_summary, utc_today
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
 from latest_reports import earlier_reports, validate_selected_reports
 import stale_evidence
 
@@ -225,8 +225,8 @@ def main():
         data_root = Path(scratch).resolve()
         assert data_root.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve())
         for path in policy.LISTS:
-            if path == QUARANTINE:
-                continue  # The validated registry is passed directly to the verifier.
+            if path in {QUARANTINE, QUARANTINE_RETIRED}:
+                continue  # The verifier receives the effective quarantine directly.
             raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch=='dev' else policy.read_file(base, path)
             if raw is not None:
                 policy.decode(raw)

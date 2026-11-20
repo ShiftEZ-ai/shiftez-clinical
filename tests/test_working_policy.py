@@ -768,6 +768,53 @@ def pytest_runtest_makereport(item, call):
                 self.assert_quarantine_refused(message, [entry])
         self.assert_quarantine_refused("entries need one unique nodeid each", [self.FLAKE, self.FLAKE])
 
+    def retired_case(self, before, after, *, registry_after=None):
+        registry = [self.MOVED, self.FLAKE]
+        changed = policy.QUARANTINE_RETIRED
+        if registry_after is not None:
+            changed += "\0" + policy.QUARANTINE
+        return self.run_guard(changed, files={
+            policy.QUARANTINE: (registry, registry if registry_after is None else registry_after),
+            policy.QUARANTINE_RETIRED: (before, after),
+        })
+
+    def test_guard_accepts_an_unowned_retired_append(self):
+        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
+        report = self.retired_case([first], [first, second])
+        self.assertEqual(report["tier1"], [])
+        self.assertEqual(report["tier2"], [])
+
+    def test_guard_refuses_a_retired_entry_edit(self):
+        node = self.QUARANTINE_NODE
+        edited = b'["\\u0074' + node[1:].encode() + b'"]'
+        with self.assertRaisesRegex(ValueError, "existing entries must stay byte-unchanged"):
+            self.retired_case([node], edited)
+
+    def test_guard_refuses_a_retired_entry_removal_without_registry_removal(self):
+        with self.assertRaisesRegex(ValueError, "append-only; remove the same nodes"):
+            self.retired_case([self.QUARANTINE_NODE], [])
+        with self.assertRaisesRegex(ValueError, "append-only; remove the same nodes"):
+            self.retired_case([self.QUARANTINE_NODE], [], registry_after=[self.MOVED])
+
+    def test_guard_refuses_retired_entry_reordering(self):
+        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
+        with self.assertRaisesRegex(ValueError, "byte-unchanged and in order"):
+            self.retired_case([first, second], [second, first])
+
+    def test_guard_refuses_a_retired_node_absent_from_the_base_registry(self):
+        with self.assertRaisesRegex(ValueError, "new entry is absent from the base"):
+            self.retired_case([], ["tests/test_other.py::test_other"])
+
+    def test_guard_refuses_a_duplicate_retired_node(self):
+        node = self.QUARANTINE_NODE
+        with self.assertRaisesRegex(ValueError, "duplicate retired nodeid"):
+            self.retired_case([node], [node, node])
+
+    def test_guard_accepts_retired_compaction_with_owned_registry_removal(self):
+        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
+        report = self.retired_case([first, second], [second], registry_after=[self.FLAKE])
+        self.assertEqual([row["path"] for row in report["tier1"]], [policy.QUARANTINE])
+
     def test_unowned_known_failures_still_allow_only_removals(self):
         # The base CODEOWNERS leaves ci/known-failures.json without an owner; the guard keeps it removal-only.
         codeowners = (b"/.github/ @ShiftEZ-ai/maintainers\n/ci/ @ShiftEZ-ai/maintainers\n"
@@ -1057,6 +1104,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 if isinstance(quarantine_input, Exception):
                     raise quarantine_input
                 return json.dumps(quarantine_rows).encode() if quarantine_rows else quarantine_input
+            if name == policy.QUARANTINE_RETIRED:
+                return b"[]"
             if name == 'ci/removed-tests.json':return b'{"schema":2,"removed":[],"removed_nodes":[]}'
             return json.dumps({"origin": revision}).encode()
         def fake_git(*args):

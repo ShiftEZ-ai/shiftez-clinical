@@ -452,7 +452,8 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
     import trusted_verdict as trusted
 
     def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
-            base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False):
+            base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
+            base_retired=(), candidate_retired=()):
         sources = historical_verdict_sources
         folder = tmp_path / label
         base, head = "a" * 40, "c" * 40
@@ -495,6 +496,11 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             if name == "tests/quarantine.json":
                 rows = registry_at[revision]
                 return rows if isinstance(rows, bytes) else json.dumps(list(rows)).encode()
+            if name == "tests/quarantine-retired.json":
+                retired = {base: base_retired, candidate: candidate_retired}[revision]
+                if isinstance(retired, OSError):
+                    raise retired
+                return json.dumps(retired).encode() if isinstance(retired, (list, tuple)) else retired
             if name == "ci/root-run-evidence.json":
                 return root_raw
             if name == "ci/failure-classifications.json":
@@ -626,6 +632,43 @@ def test_main_quarantine_xfail_matches_historical_release_failure(trusted_result
                                    candidate_kind="baseline", **execution)
     current, _ = trusted_result("new", outcome="quarantine-xfail", base_registry=[quarantine_row()], **execution)
     assert current == historical == ("Release/known-skip execution contains a failure or error", None)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "quarantine-xfail"])
+def test_trusted_verdict_refuses_a_failing_retired_node(trusted_result, outcome):
+    retry = "failed" if outcome == "failed" else None
+    result, _ = trusted_result("retired", outcome=outcome, retry=retry,
+                               base_registry=[quarantine_row()], base_retired=[RED])
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + RED
+
+
+@pytest.mark.parametrize("branch", ["dev", "preview"])
+def test_trusted_verdict_uses_only_base_retirements(trusted_result, branch):
+    result, _ = trusted_result("candidate-retired", branch=branch, outcome="failed",
+                               base_registry=[quarantine_row()], candidate_retired=[RED])
+    assert result[0] is None and result[1]["passed"]
+
+
+@pytest.mark.parametrize("raw", [b"[", b"{}", b"[1]", b'["not a node"]', b"\xff", None])
+def test_trusted_verdict_refuses_a_malformed_retired_list(trusted_result, raw):
+    result, _ = trusted_result("invalid-retired", outcome="passed", base_retired=raw)
+    assert result[0].startswith("Invalid quarantine retired list tests/quarantine-retired.json:")
+    assert result[1] is None
+
+
+def test_trusted_verdict_refuses_an_unreadable_retired_list(trusted_result):
+    result, _ = trusted_result("unreadable-retired", outcome="passed", base_retired=OSError("fixture"))
+    assert result == ("Cannot read trusted quarantine retired list: tests/quarantine-retired.json", None)
+
+
+def test_main_uses_the_accepted_dev_retired_list(trusted_result):
+    execution = {"branch": "main", "outcome": "passed", "base_registry": [{**quarantine_row(), "blocker": True}]}
+    result, _ = trusted_result("accepted-retirement", base_retired=[RED], **execution)
+    assert result[0] is None and result[1]["passed"]
+    result, _ = trusted_result("candidate-retirement", candidate_retired=[RED], **execution)
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "Release blockers remain in quarantine: " + RED
 
 
 def test_canary_normalization_preserves_quarantine_xfail(tmp_path):
