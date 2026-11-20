@@ -711,6 +711,16 @@ def test_generation_uses_quota_blockers_without_claiming_quota_optimisation(h):
     assert "QUOTA_ABOVE_MAXIMUM" not in codes(result["validation"])
 
 
+def test_greedy_generation_without_fair_share_goal_does_not_raise(h):
+    from packages.domain.generation import generate
+
+    w = h.shift(h.workspace(), people=[])["workspace"]
+    data = h.snapshot(w)
+    assert not any(p["definition"]["rule"]["kind"] == "balance_goal" for p in data["policies"])
+    result = generate(data, 5)
+    assert result["status"] == "candidate_feasible"
+
+
 def test_generator_fills_an_unmet_minimum_without_bypassing_validation(h):
     from packages.domain.generation import generate
     quota(h, comparison="minimum", amount=1)

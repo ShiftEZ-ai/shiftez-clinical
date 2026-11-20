@@ -10,7 +10,7 @@ from playwright.sync_api import expect
 from apps.api import models as m
 from apps.api.db import transaction
 from .test_overtime_volunteer import offer_rule, offer, decide, facts, conditions, REASON
-from .test_browser import browser, live_server, sign_in, navigate, expect_loaded  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, expect_loaded, holding, wait_held  # noqa: F401
 from .test_browser_requests import new_request, row, PHONE
 from .test_browser_live_scopes import command
 
@@ -94,6 +94,30 @@ def test_overtime_eligibility_recovers_from_a_failed_read_and_a_new_line(browser
         navigate(page, 'home')
         navigate(page, 'requests')
         offers_overtime(page, True)
+    finally:
+        context.close()
+
+
+def test_a_new_request_opened_before_eligibility_lands_gains_the_overtime_kind(browser, live_server, h):
+    """New request opens at once with the kinds known then; the eligibility answer that lands afterwards adds Available for
+    overtime to the open dialog instead of leaving it out until the next visit."""
+    offer_rule(h)
+    eligibility = '**/api/requests/overtime-eligibility*'
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        with holding(page) as held:
+            held.hold(eligibility)
+            navigate(page, 'requests')
+            wait_held(page, held[eligibility])
+            page.get_by_role('button', name='New request', exact=True).click()
+            dialog = page.get_by_role('dialog', name='New request')
+            expect(dialog.get_by_role('radio', name='Leave', exact=False).first).to_be_visible()
+            expect(dialog.get_by_role('radio', name='Available for overtime', exact=False)).to_have_count(0)
+            held.release(eligibility)
+            offer = dialog.get_by_role('radio', name='Available for overtime', exact=False)
+            expect(offer).to_have_count(1)
+            offer.check()
+            expect(dialog.get_by_role('button', name='Send offer')).to_be_visible()
     finally:
         context.close()
 

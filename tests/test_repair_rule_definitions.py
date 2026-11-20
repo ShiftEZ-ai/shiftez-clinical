@@ -136,7 +136,7 @@ def test_repair_requires_enabled_admin_and_reason(h):
 
 def test_repair_preserves_scheduling_and_conversion_evidence_but_guards_undo(h):
     from packages.domain.rule_migration_proof import canonical_full_model
-    from tests.test_rule_catalogue_v2_api import proposed
+    from tests.test_rule_catalogue_v2_api import captured_snapshot, proposed
     h.policy({'kind': 'max_duties', 'maximum': 3, 'window': 'week'})
     conversion = proposed(h)
     activated = h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent metadata fixture review'},
@@ -146,7 +146,7 @@ def test_repair_preserves_scheduling_and_conversion_evidence_but_guards_undo(h):
             m.Policy.kind == 'catalogue', m.Policy.status == 'active'))
             if policy.definition['rule']['id'] == 'workload_limit'))
     workspace = h.shift(h.workspace())['workspace']
-    baseline_snapshot = h.snapshot(workspace)
+    baseline_snapshot = captured_snapshot(h, workspace)
     baseline = evaluate(baseline_snapshot)
     baseline_model = canonical_full_model(baseline_snapshot)
     assert baseline_model['ready']
@@ -154,7 +154,7 @@ def test_repair_preserves_scheduling_and_conversion_evidence_but_guards_undo(h):
     before = state(h)
     assert execute(h, apply=True, reason='Fix stored private catalogue line keys')['count'] == 1
     after = state(h)
-    repaired_snapshot = h.snapshot(workspace)
+    repaired_snapshot = captured_snapshot(h, workspace)
     validation = evaluate(repaired_snapshot)
     assert validation['fingerprint'] != baseline['fingerprint']
     assert {key: value for key, value in validation.items() if key != 'fingerprint'} == {

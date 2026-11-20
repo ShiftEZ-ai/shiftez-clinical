@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
 from sqlalchemy import delete, select, func, or_, update, text
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import defer, load_only
 from apps.api import models as m
@@ -747,15 +749,19 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         except Problem as rejected:
             result, error = None, rejected.code
     if job.kind == 'validation' and not error:
+        from apps.api.snapshots import domain_snapshot
         workspace = db.get(m.Workspace, job.workspace_id)
         if (workspace.status != 'draft' or workspace.archived_at is not None
-                or (job.input_snapshot.get('validation_basis') == 'current' and
-                    workspace.content_revision != job.input_snapshot['workspace']['content_revision'])
-                or fingerprint(db, workspace) != (result['fingerprint'] if
-                    job.input_snapshot.get('validation_basis') == 'current' else job.input_fingerprint)):
+                or ('previous_check' in claim
+                    and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
+                or (current_manifest := domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
+            # The same inputs can have newer counters after an access change.
+            if manifest := result.get('input_manifest'):
+                result = {**result, 'input_manifest': {**manifest, 'dirty_hint': current_manifest['dirty_hint']}}
             workspace.validation = result
+            result = {**result, 'checked_revision': workspace.revision}
             # A current-rota check queued only an intent token; record the inputs it checked, so readers comparing a
             # job with the rota's fingerprint (panel, history, Home) see a fresh check as current.
             if job.input_snapshot.get('validation_basis') == 'current':
@@ -947,11 +953,15 @@ def heartbeat(engine, *, deadline=None, record_worker=True):
     if time.monotonic() - _beat.get(id(engine), -60.0) < 10:
         return
     def write(db):
-        row = db.get(m.WorkerHeartbeat, WORKER_ID)
-        if row is None:
-            row = m.WorkerHeartbeat(worker_id=WORKER_ID, started_at=m.now(), last_seen_at=m.now(), passes=0)
-            db.add(row)
-        row.last_seen_at, row.passes, row.release = m.now(), (row.passes or 0) + 1, build()["release"]
+        H = m.WorkerHeartbeat
+        insert = postgres_insert if engine.dialect.name == 'postgresql' else sqlite_insert
+        now = m.now()
+        stmt = insert(H).values(worker_id=WORKER_ID, started_at=now, last_seen_at=now, passes=1,
+                                release=build()["release"])
+        db.execute(stmt.on_conflict_do_update(index_elements=[H.worker_id], set_={
+            "last_seen_at": stmt.excluded.last_seen_at, "passes": func.coalesce(H.passes, 0) + 1,
+            "release": stmt.excluded.release,
+        }))
     try:
         retry_write(engine, write, deadline=deadline, serialize=False)
         _beat[id(engine)] = time.monotonic()
@@ -1120,15 +1130,17 @@ def prune_generation_state(engine, *, settings=None):
 
 
 def prepare_deferred_generation(engine, claim, settings):
-    """Freeze a queued auto-schedule request only after the worker leases it."""
-    if claim['kind'] != 'generation' or not claim['input'].get('_deferred_generation'):
+    """Freeze inputs on lease and refresh preparation if the draft rules changed."""
+    prior = claim['input']
+    deferred = prior.get('_deferred_generation')
+    if claim['kind'] != 'generation' or not (deferred or prior.get('baseline') and 'policies' in prior):
         return
     from apps.api.errors import require
     from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
     from apps.api.services.planning_groups import guard_generation
-    from apps.api.snapshots import domain_snapshot
+    from apps.api.snapshots import domain_snapshot, draft_policy_hint
     from packages.contracts import schemas as s
     from packages.domain.generation_scope import has_population
     from packages.domain.solver_rules import COMPILER_VERSION
@@ -1137,15 +1149,19 @@ def prepare_deferred_generation(engine, claim, settings):
         require(job is not None and job.status == 'running' and job.attempts == claim['attempt'],
                 'STALE_INPUTS', 'The auto-schedule request is no longer current', 409)
         workspace = db.get(m.Workspace, job.workspace_id)
-        requested = claim['input'].get('generation_request') or {}
-        value = s.JobInput.model_validate(requested)
-        expected_revision = claim['input'].get('workspace', {}).get('revision')
-        require(workspace is not None and workspace.revision == expected_revision and workspace.status == 'draft'
+        expected_revision = prior.get('workspace', {}).get('revision')
+        require(workspace is not None and (not deferred or workspace.revision == expected_revision) and workspace.status == 'draft'
                 and workspace.archived_at is None, 'STALE_INPUTS',
                 'The rota changed before auto-scheduling started', 409)
+        department = db.get(m.Department, workspace.department_id)
+        organisation = db.get(m.Organisation, department.organisation_id)
+        if not deferred:
+            hint = (prior.get('input_manifest') or {}).get('dirty_hint') or {}
+            if hint.get('input_revision') == organisation.input_revision and all(
+                    hint.get(key) == value for key, value in draft_policy_hint(workspace).items()):
+                return
         identity = db.get(m.Identity, job.requested_by)
         require(identity is not None and not identity.disabled, 'ACCESS_REVOKED', 'The requester no longer has access', 403)
-        department = db.get(m.Department, workspace.department_id)
         actor = Actor(identity.id, workspace.department_id, department.organisation_id,
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
@@ -1161,6 +1177,19 @@ def prepare_deferred_generation(engine, claim, settings):
         snapshot = domain_snapshot(db, workspace,
                                    wish_debt_cap=options.scoring.wish_debt_cap,
                                    lead_balance=options.scoring.lead_balance)
+        if not deferred:
+            if snapshot['policies'] == prior['policies']:
+                return
+            require(snapshot['baseline']['id'] == baseline.id, 'STALE_INPUTS',
+                    'The draft baseline changed; start a fresh run', 409)
+        requested = (prior.get('generation_request') or {}) if deferred else prior.get('_generation_request') or {
+            'workspace_id': workspace.id, 'kind': 'generation',
+            'session_ids': prior.get('generation_session_ids') or [],
+            'generation_scope': prior.get('generation_scope'),
+            'planning_group_version_id': prior.get('planning_group_version_id'),
+            'lookahead': prior.get('lookahead'),
+        }
+        value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
         if claim['input'].get('generation_scope_source'):
             snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
         guard_generation(db, actor, workspace, snapshot, value)
@@ -1175,7 +1204,7 @@ def prepare_deferred_generation(engine, claim, settings):
         snapshot['generation_options'] = options.model_dump(mode='json')
         snapshot['generation_defaults'] = defaults.model_dump(mode='json')
         snapshot['baseline'] = baseline_reference(baseline)
-        snapshot['generation_options_overridden'] = value.generation_options is not None
+        snapshot['generation_options_overridden'] = prior.get('generation_options_overridden', False)
         snapshot['generation_engine'] = settings.generation_engine
         require(not value.diagnostic_proposal or snapshot['generation_engine'] == 'cp_sat',
                 'DIAGNOSTIC_ENGINE_REQUIRED', 'Diagnostic proposals require the CP-SAT scheduler')
@@ -1206,6 +1235,13 @@ def prepare_deferred_generation(engine, claim, settings):
         if reusable_check(workspace.validation, snapshot['fingerprint'], defaults.model_dump(mode='json')):
             snapshot['fix_list_before'] = rota_summary(workspace.validation,
                 accepted_issues=workspace.accepted_issues or [])['fix_list']
+        snapshot['_generation_request'] = requested
+        if 'continuation' in prior:
+            snapshot['continuation'] = prior['continuation']
+        if not deferred:
+            job.resume_state = job.resume_checkpoint = job.result = None
+            claim['resume_state'] = claim['resume_checkpoint'] = None
+            job.progress = claim['progress'] = {'stage': 'checking', 'elapsed_seconds': 0}
         snapshot['generation_manifest'] = generation_manifest(
             baseline, snapshot, job=job, requester_id=job.requested_by)
         job.input_snapshot = snapshot
@@ -1215,6 +1251,7 @@ def prepare_deferred_generation(engine, claim, settings):
         claim['input'] = snapshot
         claim['input_fingerprint'] = snapshot['fingerprint']
         job.revision += 1
+        return True
 
 
 def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False):
@@ -1269,7 +1306,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         progress = dict(claim.get('progress') or {"stage": "checking", "elapsed_seconds": 0})
         deferred_generation = claim['kind'] == 'generation' and claim['input'].get('_deferred_generation')
         try:
-            prepare_deferred_generation(engine, claim, settings)
+            if prepare_deferred_generation(engine, claim, settings) and not deferred_generation:
+                deferred_generation = True
+                progress = dict(claim['progress'])
         except Exception as exc:
             error = getattr(exc, 'code', type(exc).__name__)
             if deferred_generation:
@@ -1583,6 +1622,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                         require(fingerprint(db, workspace) == claim['input']['fingerprint'],
                                 'STALE_INPUTS', 'The check inputs changed', 409)
                     db.info['_check_budget'] = check_cancelled
+                    # Fix-list receipts depend on the evidence and acknowledgements seen by this check.
+                    claim['previous_check'] = (workspace.validation, workspace.accepted_issues)
                     result = revalidate(db, workspace, store=False, include_internal=True)
                     check_cancelled()
         except Exception as exc:
