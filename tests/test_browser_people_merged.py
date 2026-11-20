@@ -314,6 +314,8 @@ def department_scale_people(browser, live_server, h):
         started = time.perf_counter()
         navigate(page, 'inbox')
         baseline = time.perf_counter() - started
+        # The seed has setup left to do. Wait for the boot-time Configuration read before measuring People.
+        expect(page.locator('#nav-badge-configuration')).to_have_text(re.compile(r'^\d+ of \d+ setup steps done$'))
         calls.clear()
         started = time.perf_counter()
         navigate(page, 'people')
