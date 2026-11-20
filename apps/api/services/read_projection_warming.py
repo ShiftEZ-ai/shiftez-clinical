@@ -1,8 +1,8 @@
 """Warm one stale workspace per pass; unchanged successes and cooling failures do no work."""
 import logging
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import Session, defer
 
 from apps.api import models as m
 from apps.api.db import DatabaseWriteDeferred, DatabaseWriteTimeout, transaction
@@ -13,13 +13,33 @@ from .read_projections import input_stamp, source_identity, CANONICAL_AUDIENCE
 log = logging.getLogger('rota.worker')
 
 
+def warm_process(engine):
+    """Prime one API process using shared definitions and read-only SQL."""
+    from apps.api.auth import prepare_session_reads
+    from apps.api.serialization import record
+    from packages.contracts.schemas import TypeDefinition, table_condition_registry
+    from packages.domain.rule_lines import prepare_catalogue_rule
+
+    m.Base.registry.configure()
+    TypeDefinition.model_rebuild()
+    table_condition_registry()
+    with Session(engine, autoflush=False) as db:
+        if engine.dialect.name == 'postgresql':
+            db.execute(text('SET TRANSACTION READ ONLY'))
+        prepare_session_reads(db)
+        # Scan active department definitions once. Exclude draft-owned rules and retired history.
+        policies = db.scalars(select(m.Policy).where(m.Policy.status == 'active', m.Policy.kind == 'catalogue',
+            m.Policy.definition['workspace_id'].as_string().is_(None)).execution_options(yield_per=100))
+        for policy in policies:
+            prepare_catalogue_rule(record(policy))
+
+
 def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
     settings = settings or engine.get_execution_options().get('rota_write_settings') or Settings()
     reader = engine.execution_options(isolation_level='REPEATABLE READ') if engine.dialect.name == 'postgresql' else engine
     failed, report_failure = None, False
     with transaction(reader) as db:
         W, D, O, C = m.Workspace, m.Department, m.Organisation, m.WorkspaceReadProjection
-        source = source_identity(db)
         compiler = digest(toolchain(quota_policy_limit()))
         fields = {'input': O.input_revision, 'availability': O.availability_revision,
                   'workspace': W.revision, 'content': W.content_revision, 'department': D.revision}
@@ -46,6 +66,7 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
         workspace = db.scalar(query)
         if workspace is None:
             return False
+        source = source_identity(db)
         if engine.dialect.name == 'postgresql':
             from sqlalchemy.dialects.postgresql import insert
         else:
@@ -100,6 +121,11 @@ def warm_one(engine, *, cursor_key='workspaces', blocking=False, settings=None):
             revisions['failure'] = {'identity': identity, 'error_code': type(exc).__name__,
                 'projection_kind': stage, 'error_location': location, 'retry_seconds': retry_seconds,
                 'retry_at': m.now().timestamp() + retry_seconds}
+        if db.info.get('read_projection_store_skipped'):
+            # A reader that lost the SQLite write race cannot publish a successful warm receipt.
+            if blocking:
+                raise RuntimeError('Read projection warming could not store a projection')
+            return False
         value = dict(workspace_id=workspace.id, audience=CANONICAL_AUDIENCE, kind='warm', stamp=stamp, value=revisions)
         db.execute(insert(C).values(**value).on_conflict_do_update(
             index_elements=['workspace_id', 'audience', 'kind'], set_={'stamp': stamp, 'value': revisions}))

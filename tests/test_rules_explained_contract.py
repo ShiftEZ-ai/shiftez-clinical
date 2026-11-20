@@ -8,6 +8,7 @@ from packages.domain.rule_explainer import explain_rules
 from packages.contracts.schemas import CAPABILITIES, PERMISSIONS, ROLE_NAMES
 from .governance_support import identity
 from .test_rule_catalogue_api import approve, line, propose
+from .test_rule_catalogue_conflicts import lines_for
 
 
 def test_rules_page_capability_is_within_rules_read():
@@ -36,15 +37,25 @@ def test_department_explained_groups_legacy_rule_by_its_workload_question(h):
     assert 'a week' in row['summary_short']
 
 
-def test_department_explained_conflicts_are_server_bound_and_reached(h):
+@pytest.mark.parametrize('safety', [False, True], ids=['equal-tier', 'safety'])
+def test_department_explained_conflicts_are_server_bound_and_reached(h, safety):
     day = h.get('coordinator', '/api/rules/catalogue')['day']
     person = h.seed['people'][0]
     lines = [
         line(numbers={'max': {'value': 4, 'level': 'mandatory'}}),
         line(numbers={'max': {'value': 3, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [person]}]}),
     ]
-    policy = propose(h, 'duties_per_month', lines, acknowledged=[lines[0]['id']])
-    policy = approve(h, policy['record'])
+    if safety:
+        catalogue_id, lines = lines_for(h, 'safety cap weaker')
+        expected = [1, 2]
+    else:
+        catalogue_id, equal_tier = lines_for(h, 'tag and rank')
+        lines += equal_tier
+        expected = [3, 4]
+    proposal = propose(h, catalogue_id, lines)
+    if not safety:
+        assert any(lines[1]['id'] in item['winner_ids'] for item in proposal['check']['overlaps'])
+    policy = approve(h, proposal['record'])
     end_day = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
     workspace = h.shift(h.workspace('Why department sessions', day, end_day), start=f'{day}T08:00:00+03:00',
                         end=f'{day}T10:00:00+03:00', people=[person])['workspace']
@@ -54,11 +65,49 @@ def test_department_explained_conflicts_are_server_bound_and_reached(h):
     second = h.get('coordinator', f'/api/rules-explained?group_by=question&at={day}')
     assert first == second
     assert first['status'] is None
-    conflict = next(item for item in first['conflicts'] if policy['id'] in item['rule_ids'])
+    [conflict] = [item for item in first['conflicts'] if policy['id'] in item['rule_ids']]
     assert len(conflict['line_ids']) == len(conflict['rule_ids']) == len(conflict['line_refs']) == 2
-    assert conflict['line_refs'] == [1, 2]
+    assert conflict['line_refs'] == expected
+    assert conflict['line_ids'] == [lines[n - 1]['id'] for n in expected]
     assert conflict['reach']['sessions_count'] == 2
     assert all(isinstance(value, int) and value >= 1 for value in conflict['line_refs'])
+
+
+def test_explained_conflicts_are_unchanged_when_held_reach_is_skipped(h, monkeypatch):
+    from apps.api.services import rule_catalogue
+    from packages.domain.time import local_midnight
+
+    day = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
+    end = day + timedelta(days=1)
+    person = h.seed['people'][0]
+    _, (ranked, tagged) = lines_for(h, 'tag and rank')
+    weekly = {'max_duties': {'window': 'week'}}
+    anchor = line(numbers={'max': {'value': 5}}, settings=weekly)
+    broad_safety = line(numbers={'apply': {}}, settings={'restriction': {}})
+    own_safety = line(numbers={'apply': {}}, settings={'restriction': {}},
+                      who={'conditions': [{'field': 'person_ids', 'values': [person]}]})
+    lines = [anchor, {**ranked, 'settings': weekly}, {**tagged, 'settings': weekly}, broad_safety, own_safety]
+    proposal = propose(h, 'workload_limit', lines, catalogue_version=2)
+    policy = approve(h, proposal['record'])
+    data = {**h.snapshot(h.workspace('Conflict reach parity', day.isoformat(), end.isoformat())), 'policies': [policy]}
+    zone = data['organisation']['timezone']
+    a, b = local_midnight(day, zone), local_midnight(end, zone)
+    rows = rule_catalogue._tagged(data, [policy])
+    reach = rule_catalogue._reach
+
+    would, held = reach(data, rows, a, b)
+    assert person in would[anchor['id']] and person not in held[anchor['id']]
+    assert reach(data, rows, a, b, include_held=False) == (would, {})
+    conflicts = rule_catalogue.explained_conflicts(data)
+    assert [conflict['line_ids'] for conflict in conflicts] == [
+        [ranked['id'], tagged['id']], [broad_safety['id'], own_safety['id']]]
+
+    def with_held(data, rows, a, b, *, include_held):
+        assert include_held is False
+        return reach(data, rows, a, b)
+
+    monkeypatch.setattr(rule_catalogue, '_reach', with_held)
+    assert rule_catalogue.explained_conflicts(data) == conflicts
 
 
 def test_department_people_table_is_null_without_person_workload_rules_and_is_private(h):

@@ -72,7 +72,7 @@ def pin_login_clock(monkeypatch):
 
 
 def fill_failure_budget(h, settings, scope, count, *, username=USERNAME, peer="testclient"):
-    keys = login_keys(username, peer)
+    keys = login_keys(username, peer, settings)
     subject = keys[0] if scope == "login-account" else keys[2]
     with transaction(h.app.state.engine, write=True) as db:
         for _ in range(count):
@@ -80,7 +80,7 @@ def fill_failure_budget(h, settings, scope, count, *, username=USERNAME, peer="t
 
 
 def failure_counts(h, settings, *, username=USERNAME, peer="testclient"):
-    keys = login_keys(username, peer)
+    keys = login_keys(username, peer, settings)
     with transaction(h.app.state.engine) as db:
         return [db.scalar(select(m.RateLimit.hits).where(m.RateLimit.key_hash == counter_key(
             scope, subject, settings.password_login_window_seconds, auth.now())[0])) or 0
@@ -452,7 +452,7 @@ def test_password_only_production_invitation_acceptance_and_login_keep_identity_
         assert client.get("/auth/config").json()["institutional_login"] is False
         assert post_login(client, username, password).status_code == 401
         assert client.post("/api/account-links/" + link_token, json={"password": password}).status_code == 200
-        delay_key = digest("login-delay:" + login_keys(username, "testclient")[2])
+        delay_key = digest("login-delay:" + login_keys(username, "testclient", settings)[2])
         with transaction(pg.app.state.engine) as db:
             deadline = aware(db.get(m.RateLimit, delay_key).expires_at)
         monkeypatch.setattr(auth, "now", lambda: deadline)
@@ -526,7 +526,7 @@ def test_unknown_username_spray_aggregates_but_known_first_failures_and_successe
         events = list(db.scalars(select(m.AuthLoginEvent)))
         assert len(events) == 4  # First unknown aggregate, first known failure, and every success.
         assert [event.outcome for event in events].count("success") == 2
-        known = [event for event in events if event.outcome == "INVALID_LOGIN" and event.account_hash == login_keys(USERNAME, "testclient")[0]]
+        known = [event for event in events if event.outcome == "INVALID_LOGIN" and event.account_hash == login_keys(USERNAME, "testclient", settings)[0]]
         assert len(known) == 1
         assert db.scalar(select(func.count()).select_from(m.LoginAttempt)) == 0
     assert failure_counts(h, settings) == [3, 3]
@@ -591,3 +591,32 @@ def test_configured_password_failure_window_and_pair_limit(h, managed, monkeypat
         monkeypatch.setattr(auth, "now", lambda: later)
         freeze_clock(monkeypatch, auth.now)
         assert post_login(client).status_code == 200
+
+
+def test_stored_sign_in_hashes_are_keyed_not_plain_sha256(h, managed, monkeypatch):
+    # #930: account names and client addresses are low in entropy, so a plain SHA-256 of them reverses.
+    import hashlib
+    pin_login_clock(monkeypatch)
+    client, settings, _, _ = managed
+    assert post_login(client, password=PASSWORD + " wrong").status_code == 401
+    plain = lambda value: hashlib.sha256(value.encode()).hexdigest()
+    with transaction(h.app.state.engine) as db:
+        event = db.scalars(select(m.AuthLoginEvent).where(m.AuthLoginEvent.outcome == "INVALID_LOGIN")).one()
+        keys = login_keys(USERNAME, "testclient", settings)
+        assert (event.account_hash, event.peer_hash) == keys[:2]
+        assert event.account_hash != plain("account:" + USERNAME) and event.peer_hash != plain("peer:testclient")
+        assert keys[2] != plain(f"pair:{len(USERNAME)}:{USERNAME}testclient")
+        counters = set(db.scalars(select(m.RateLimit.key_hash)))
+    window = settings.password_login_window_seconds
+    for scope, subject in (("login-account", "account:" + USERNAME), ("login-address", "peer:testclient")):
+        assert counter_key(scope, plain(subject), window, auth.now())[0] not in counters
+    assert counter_key("login-account", keys[0], window, auth.now())[0] in counters
+    other = replace(settings, fmuc_data_key="02" * 32)
+    assert login_keys(USERNAME, "testclient", other)[0] != keys[0]
+
+
+def test_keyless_production_never_stores_a_sign_in_hash(h):
+    from apps.api.errors import Problem
+    with pytest.raises(Problem) as refused:
+        auth.login_digest("peer:testclient", replace(h.settings, environment="production", fmuc_data_key=""))
+    assert refused.value.code == "LOGIN_UNCONFIGURED"

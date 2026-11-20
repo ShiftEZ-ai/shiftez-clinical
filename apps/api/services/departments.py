@@ -7,7 +7,7 @@ from apps.api import models as m
 from apps.api.auth import require_permission
 from apps.api.errors import require
 from apps.api.serialization import record
-from apps.api.settings import new_department_session_limits
+from apps.api.settings import new_department_display_settings, new_department_session_limits
 from apps.api.snapshots import snapshot_hash
 from packages.contracts import schemas as s
 from .access import live_role_holder, organisation_settings_holders, require_sign_in, sign_in_identities
@@ -87,6 +87,7 @@ def create(db, actor, command, settings):
     department = m.Department(organisation_id=actor.organisation_id, name=value.name,
         generation_defaults=s.GenerationOptions().model_dump(mode='json'),
         wish_settings=s.WishSettings().model_dump(mode='json'), bulk_settings=s.BulkSettings().model_dump(mode='json'),
+        display_settings=new_department_display_settings(),
         **new_department_session_limits())
     db.add(department)
     db.flush()

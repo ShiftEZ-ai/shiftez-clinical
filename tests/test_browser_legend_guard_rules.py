@@ -54,16 +54,18 @@ def test_the_rules_list_keys_every_mark_its_lines_draw(browser, live_server, h):
     try:
         navigate(page, 'rules')
         main = page.locator('#main')
-        main.get_by_role('button', name='Open Duties per month').click()
-        expect(main.locator('tr.rt-line')).to_have_count(5)
+        toggle = main.get_by_role('button', name='Duties per month lines')
+        toggle.click()
+        expect(main.locator('li.rt-ln')).to_have_count(5)
         # Alex is of the demo rank: the minimum (Everyone) and the target (the rank line) come from broader lines.
-        expect(main.locator('tr.rt-line').filter(has_text='Alex Morgan').locator('.rc-inh')).to_have_count(2)
+        expect(main.locator('li.rt-ln').filter(has_text='Alex Morgan').locator('.rc-inh')).to_have_count(2)
         expect(main.locator('.rt > .view-legend')).to_be_visible()  # after the table it explains
         assert_legend_matches(page, root='#main', expect_marks=['numbers', *LINE_MARKS])
         no_footer_key(page)
         # Closed again, its lines' marks go and so do their entries.
-        main.get_by_role('button', name='Close Duties per month').click()
-        expect(main.locator('tr.rt-line')).to_have_count(0)
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        expect(main.locator('li.rt-ln')).to_have_count(0)
         assert_legend_matches(page, root='#main')
     finally:
         context.close()
