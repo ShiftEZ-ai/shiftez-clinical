@@ -404,3 +404,30 @@ def test_rule_review_polls_reuse_each_drafts_feasibility_inputs(backend, monkeyp
     built.clear()
     h.get('approver', path)
     assert drafts[0]['id'] in built and drafts[1]['id'] not in built
+
+
+def test_department_workspace_list_batches_stored_check_stamps(backend):
+    h = backend
+    workspace, _, *_ = scale_department(h)
+    extra = [h.workspace(f'Scale draft {index}')['id'] for index in range(4)]
+    client = h.client('coordinator')
+    path = '/api/workspaces?limit=100&offset=0'
+    first = client.get(path)
+    assert first.status_code == 200
+    assert {workspace['id'], *extra} <= {row['id'] for row in first.json()['workspaces']}
+    stamp_reads = 0
+
+    def count(_conn, _cursor, statement, _parameters, _context, _many):
+        nonlocal stamp_reads
+        columns = statement.split('FROM', 1)[0]
+        if 'workspace_read_projections.stamp' in columns and 'workspace_read_projections.value' not in columns:
+            stamp_reads += 1
+
+    engine = h.app.state.engine
+    event.listen(engine, 'before_cursor_execute', count)
+    try:
+        after = client.get(path)
+    finally:
+        event.remove(engine, 'before_cursor_execute', count)
+    assert (after.status_code, after.content) == (first.status_code, first.content)
+    assert stamp_reads <= 2, stamp_reads
