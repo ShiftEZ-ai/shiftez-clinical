@@ -1794,12 +1794,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_planning_groups_drafts.py::test_private_home_and_permanent_conversion_manifest_ignore_own_sandbox",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
