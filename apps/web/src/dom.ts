@@ -2066,6 +2066,8 @@ export function table(headings: Child[], rows: Child[][], emptyText='Nothing to 
 }
 /** Each open dialog's own close, so leaving a page closes it the same way (closeDialogs). */
 const closers=new WeakMap<HTMLDialogElement,()=>void>();
+/** Each open dialog's unsaved-changes guard, so leaving a page asks a changed one first (askDirtyDialog). */
+const guards=new WeakMap<HTMLDialogElement,ReturnType<typeof guard>>();
 /** A modal dialog. `close` (given to build and returned) closes at once, for use after saving; Close, Escape and a
  *  click on the backdrop go through the unsaved-changes guard (`tryClose`). `onClose` runs once, as it closes by any
  *  way (Cancel, Escape, the browser, leaving the page): the native `close` event comes a task later, after the next
@@ -2078,7 +2080,7 @@ export function showDialog(title: string, description: string, build: (body:HTML
   // Its toasts (and their Undo) move to whatever is underneath before the dialog goes.
   const close=()=>{if(closed)return;closed=true;g.dispose();if(dialog.open)dialog.close();releaseToasts(dialog);dialog.remove();returnFocus(opener);for(const run of closing)run();};
   closers.set(dialog,close);
-  const g=guard(dialog,close);
+  const g=guard(dialog,close);guards.set(dialog,g);
   const body=el('div',{class:'dialog-body'});
   dialog.append(el('header',{class:'dialog-head'},el('div',{},el('h2',{id:titleId},title),description?el('p',{class:'muted'},description):''),iconButton('Close dialog','close',g.tryClose,{class:'bare'})),body);
   // A build that throws leaves no closed, orphaned dialog behind: it goes, and the error reaches the caller's reportError.
@@ -2100,6 +2102,19 @@ export function showDialog(title: string, description: string, build: (body:HTML
 /** Going to another page closes the dialogs left open on the previous one, each through its own close (its `onClose`
  *  runs now, before the next page reads the state). */
 export function closeDialogs(){for(const d of document.querySelectorAll<HTMLDialogElement>('dialog[open]'))(closers.get(d)||(()=>{d.close();releaseToasts(d);d.remove();}))();}
+/** Leaving a page (Back, a link, the menu) while an open form dialog holds unsaved changes: that dialog asks its own
+ *  "Close anyway?" and nothing else happens; Discard changes closes it and goes on to `then`. Windows above it, unchanged,
+ *  close first so the question can be answered. False when no open form has unsaved changes (leaving closes them all). */
+export function askDirtyDialog(then?:()=>void){
+  // Only a form loses what was entered (a window of kept settings, Print or export, closes as before). A form whose save
+  // is under way (its Save busy) is on its way to the server: its own save may go on to the next page.
+  const open=[...document.querySelectorAll<HTMLDialogElement>('dialog[open]')].reverse(),
+    at=open.findIndex(d=>d.querySelector('form')&&guards.get(d)?.dirty()&&!d.querySelector('button[type=submit][aria-busy]'));
+  if(at<0)return false;
+  for(const d of open.slice(0,at))closers.get(d)?.();
+  const d=open[at];guards.get(d)!.tryCloseThen(()=>{closers.get(d)?.();then?.();});
+  return true;
+}
 /** A dialog opens on what it is for (WCAG 2.4.3): an [autofocus] control, else its first field, else its primary button;
  *  never on the header's Close, which the browser would pick. Fields a form draws a moment later still get the focus,
  *  unless the person already moved it. */
