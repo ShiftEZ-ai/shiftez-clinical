@@ -984,12 +984,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_perf.py::test_week_redraw_budget",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_person_labels.py::test_duty_team_shows_the_label_and_says_the_full_names[case-adkhnjjbgnaldfggdcbobghdhlgpipcmkoofnccfphilphoeialkdbbjcjgekhgi]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
