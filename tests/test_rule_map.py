@@ -399,6 +399,22 @@ def test_draft_map_shows_the_live_zero_on_the_captured_rule(h):
     assert finding['detail']['maximum'] == 0
 
 
+@pytest.mark.parametrize('minimum,maximum,binding', [(2, 5, 2), (1, 3, 3), (2, 3, None)])
+def test_rule_map_reads_range_bindings_per_bound(minimum, maximum, binding):
+    from .test_rule_map_relative_witnesses import snapshot
+
+    data, _ = snapshot()
+    quota = {'kind': 'block_quota', 'metric': 'duties', 'comparison': 'range', 'amount': 1, 'maximum_amount': 5,
+             'starts_on': data['workspace']['starts_on'], 'ends_on': data['workspace']['ends_on']}
+    captured = rule(data, 'Quota range', quota)
+    effective = rule(data, 'Quota range', {**quota, 'amount': minimum, 'maximum_amount': maximum})
+    data['policies'] = [captured]
+    data['_rule_map_policies'] = ([captured], [effective])
+
+    displayed = entry(rule_map(data), captured['id'])
+    assert (displayed['number']['value'], displayed['number']['maximum'], displayed['binding_value']) == (1, 5, binding)
+
+
 def test_rota_adjustments_are_mapped_with_who_changed_them(h):
     workload = h.policy({'kind': 'max_hours', 'hours': 12, 'window_days': 7})
     w, _ = base(h)
@@ -715,11 +731,17 @@ def test_map_subview_caches_preserve_uncached_clinic_overnight_and_source_pool_a
 @pytest.fixture(scope='module')
 def department_map_measurement():
     data = big_department()
+    captured = data['policies']
+    prior = next(policy for policy in captured if policy['name'] == 'own3')
+    definition = prior['definition']
+    tightened = {**prior, 'revision': prior['revision'] + 1,
+                 'definition': {**definition, 'rule': {**definition['rule'], 'hours': 40}}}
+    data['_rule_map_policies'] = (captured, [tightened if policy is prior else policy for policy in captured])
     gc.collect()  # Exclude earlier fixtures' garbage; collection remains enabled during mapping.
     began, cpu = time.perf_counter(), time.process_time()
     result = rule_map(data)
     elapsed, cpu = time.perf_counter() - began, time.process_time() - cpu
-    print(f'rule map: {elapsed:.2f} wall s / {cpu:.2f} CPU s for 974 rules, 142 people, {len(data["shifts"])} sessions')
+    print(f'rule map with bindings: {elapsed:.2f} wall s / {cpu:.2f} CPU s for 974 rules, 142 people, {len(data["shifts"])} sessions')
     return data, result, elapsed, cpu
 
 
@@ -747,6 +769,7 @@ def test_large_department_is_fast_and_right(department_map_measurement):
     worked = lambda p: sorted(index[s['id']] for s in data['shifts'] if any(x['person_id'] == p for x in s['participants']))
     own = entry(result, 'own3')
     assert own['people'] == {U('p003'): [[0, 31]]} and own['sessions'] == worked(U('p003'))
+    assert (own['number']['value'], own['binding_value']) == (43, 40)
     svc = entry(result, 'session0')
     assert svc['sessions'] == sorted(index[s['id']] for s in data['shifts'] if U('svc0') in s['service_ids'])
     wing = entry(result, 'session1')   # the wing: every room inside it

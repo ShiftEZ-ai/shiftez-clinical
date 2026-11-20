@@ -152,6 +152,7 @@ def _binding_values(data, a, b, zone):
                         slots.append(((catalogue, template['id'], slot), field, direction))
             elif not template and (number := rule_number(rule)):
                 direction = {'lower': 'min', 'higher': 'max'}.get(number['stricter'])
+                # active_rules splits quota ranges into separate minimum and maximum copies.
                 slot = rule.get('comparison') if rule['kind'] == 'block_quota' else number['field']
                 slots.append(((source_id(copy), None, slot), number['field'], direction))
             for key, field, direction in slots:
