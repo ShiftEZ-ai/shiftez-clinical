@@ -143,7 +143,7 @@ def rule_map_etag(db, actor, workspace):
         func.count(m.Policy.id), func.coalesce(func.sum(m.Policy.revision), 0),
         func.max(m.Policy.created_at), func.max(m.Policy.id)
     ).where(m.Policy.department_id == workspace.department_id, m.Policy.status == 'proposed')).one()
-    return revision_etag("workspace-rule-map", workspace.id, actor.identity_id, actor.person_id,
+    return revision_etag("workspace-rule-map-v2", workspace.id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), tuple(row), workspace.rule_adjustments or [],
                          workspace.target_overrides or [], tuple(proposals))
 

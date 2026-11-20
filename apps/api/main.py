@@ -2349,7 +2349,7 @@ def create_app(settings: Settings | None = None, engine=None):
                       for p in shift["participants"]]
             return {"fresh": fresh, "checked": bool(validation), "people": people, "active_rules": len({p["id"] for p in policies})}
 
-    @app.get("/api/workspaces/{workspace_id}/rule-map")
+    @app.get("/api/workspaces/{workspace_id}/rule-map", response_model=s.RuleMapResponse)
     def workspace_rule_map(workspace_id: str, request: Request):
         """Which rules touch which sessions, people and days of this rota, and the marks that explain them
         (own numbers, overrides, exceptions, this rota's changes). Unchanged rules, people and sessions: 304."""
@@ -2382,7 +2382,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.read_projections import cached as cached_projection
             prepared = {}
             def build_map(_):
-                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False)
+                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False, rule_map_bindings=True)
                 prepared['data'] = data
                 return rule_map(data, originals)
             result = cached_projection(db, [workspace.id], 'rule_map', {workspace.id: tag},
