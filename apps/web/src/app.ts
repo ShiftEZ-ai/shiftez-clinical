@@ -13,7 +13,7 @@ import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
 import {dateRange,lastDayIncluded,shiftMonth} from './date_picker.js';
 import {storedSetup,keepSetup,addTimeStep,addTimeRoom,scopeCapability,parseGroup,type RunSetup} from './autoschedule_setup.js';
-import {peopleToSchedule,PEOPLE_POPOVER} from './schedule_group.js';
+import {peopleToSchedule,peoplePopoverKey} from './schedule_group.js';
 import {rememberedAccount,rememberAccount,forgetAccount,signingInAs,forgetDeviceMemory} from './account_memory.js';
 import {applyTheme,setTheme,theme,isDark,motionStill,setMotionStill,navPinned,setNavPinned,clearPrefs,nameMode,setNameMode,type Theme,type NameMode,setDepartmentNames,ownNameMode} from './theme.js';
 import {openPalette,compactSearch,type PaletteItem} from './palette.js';
@@ -7367,7 +7367,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // The panel's place shows its shape while the jobs are read, never an empty column (FD-03).
   const sk=skeleton('panel','Loading auto-schedule…');target.append(sk);
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
-  const handover=awaitAdoption(PEOPLE_POPOVER);
+  const peopleKey=peoplePopoverKey(w.id),handover=awaitAdoption(peopleKey);
   try{
   const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
   const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
@@ -7437,7 +7437,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       button('Use the department setting',()=>{st().keep=undefined;keptSetup(st());syncGroup();},'link-button')]:[]));};
   const syncGroup=()=>{keep.input.checked=keeping();keep.input.disabled=grouped()&&!rebalanceGroup;groupNote.hidden=!st().group;syncKeep();
     groupNote.textContent=!st().group?'':keeping()?'Existing assignments stay as they are. Only these people are added.':'Only these people’s unlocked assignments may change. Everyone else’s stay.';};
-  const people=scopeCap?peopleToSchedule({fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
+  const people=scopeCap?peopleToSchedule({key:peopleKey,fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
     words:p=>conditionsSummary(p,namer(ctx()).label),onChange:(v,required)=>{Object.assign(st(),{group:v,pickGroup:required,scopeError:''});keptSetup(st());syncGroup();syncRun();}}):null;
   // A group asked for where the scheduler cannot take one: everyone only when chosen, never by itself.
   const noGroups:HTMLElement|null=!scopeCap&&grouped()?el('p',{class:'auto-stale',role:'status'},icon('alert'),'This scheduler cannot schedule only some people. ',

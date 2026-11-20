@@ -73,6 +73,9 @@ def submit_approve_publish(browser, live_server, h, page, w, day, approve_in_ui=
     else:
         h.lifecycle(h.detail(w)['workspace'], 'approve', 'approver')
     assert h.detail(w)['workspace']['status'] == 'approved'
+    if not approve_in_ui:
+        # A fixture write in another process has no live notification on SQLite. Read it in a fresh page.
+        page.reload()
     show(page, f"schedule/day/2026-10-{day:02}?edit={w['id']}")
     page.get_by_role('button', name='Publish…', exact=True).click()
     dialog = page.get_by_role('dialog', name=f"Publish {w['name']}")

@@ -7,7 +7,7 @@ from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, sign_in, navigate, fonts_ready, no_opening_hours  # noqa: F401
 from .test_browser import whole_list
-from .test_browser_overflow import adversarial, ARABIC
+from .test_browser_overflow import adversarial, ARABIC, LONG
 from .rules_support import rule_status
 
 pytestmark = pytest.mark.browser
@@ -92,7 +92,7 @@ def test_approver_phone_home_needs_line_is_short(browser, live_server, h):
         need = page.locator('.home-needs-list li').filter(has_text=re.compile('Leave requests|Requests to decide')).locator('.home-need-text small')
         # The first request and how many more, not every requester's full name.
         expect(need).to_have_text(re.compile(r' · 2 more$'))
-        assert need.inner_text().count('Konstantinopoulos') == 1
+        assert need.inner_text().count(LONG.split()[3].split('-')[0]) == 1
     finally:
         context.close()
 
