@@ -1715,7 +1715,7 @@ async function renderPage(live=false){
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
     const content=el('div',{});buildingPage(content);const renderer:Record<string,(target:HTMLElement)=>Promise<void>>={
-    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
+    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedDialog,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
     schedule:schedulePage,
     requests:t=>requestsPage(ctx(),t,{query:routeQuery,setQuery:q=>{routeQuery=q;history.replaceState(null,'',routeHash(view,routeParts,q));},
       showDay:(day,person)=>navigate(routeHash('schedule',['week',day],{person}).slice(1))}),
@@ -8423,6 +8423,15 @@ async function auditPage(target:HTMLElement){
     bar.sync();
   };
   target.append(el('section',{class:'panel'},bar.root,list,pager),footerStatus(shown));draw();
+}
+
+/** Home's Self-approved decisions: the last 30 days the server lets this reader see (the department's, or their own). */
+function selfApprovedDialog(){
+  showDialog('Self-approved decisions','',body=>{
+    const load=()=>get(`/api/audit?self_approved=true&people=false&from=${addDays(departmentToday(),-30)}`).then(d=>{
+      body.replaceChildren(d.events.length?auditFeed(d.events):empty('No self-approved decisions','None in the last 30 days.',null,'history'));
+    },e=>{if(!sessionChanged(e))body.replaceChildren(failedNote(couldntLoad('the self-approved decisions',e),e,load));});
+    void load();});
 }
 
 let polling=false;

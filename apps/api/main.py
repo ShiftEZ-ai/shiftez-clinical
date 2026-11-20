@@ -3982,7 +3982,11 @@ def create_app(settings: Settings | None = None, engine=None):
         require(not fold or ordered, "INVALID_SORT", "Folded history uses newest changes first")
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            require_permission(actor, "audit.read")
+            # Without audit access a person reads only their own self-approved decisions (Home's row), not who else acted.
+            own = not actor.permits(*s.PERMISSIONS["audit.read"])
+            if own:
+                require(f["self_approved"], "FORBIDDEN", "Your current role does not permit this action", 403)
+                f, people = {**f, "actor_id": actor.identity_id}, False
             query, zone = audit_query(db, actor, f)
             if run_id:
                 query = audit_log.expand(query, run_id)
