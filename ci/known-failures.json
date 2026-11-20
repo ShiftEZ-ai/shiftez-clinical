@@ -2340,12 +2340,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_scoped_job_inputs.py::test_coupled_quota_selects_joint_subset",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_scoped_job_inputs.py::test_rule_metadata_and_unrelated_period_do_not_invalidate_but_active_numbers_do",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
