@@ -244,7 +244,8 @@ def archive(db, actor, command):
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
-               _overlap_output=None, final_compute=False, mandatory_rules=True, current_mandatory=False):
+               _overlap_output=None, final_compute=False, creation_before=None, mandatory_rules=True,
+               current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
     # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
@@ -333,6 +334,10 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
             _overlap_output['flags'] = overlap_flags
     else:
         result = computed
+    if creation_before is not None:
+        # Admission shares the saved staffing check and runs after the workspace write in preparation.
+        admit_assignment_change(db, None, workspace, creation_before, 'CREATE_INVALID', staffing_gaps_only=True,
+                                evaluated=(None if amendment_scope else result, full_data))
     if amendment_scope:
         from .published_changes import retain_issued_checks
         result = retain_issued_checks(db, workspace, data, result)
@@ -596,7 +601,8 @@ def assignment_validation_scope(data, before, previous):
 
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
-            external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False):
+            external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
+            staffed_creation=False):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
@@ -654,6 +660,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                             # Preview replies use content and findings, without per-session flags.
                             _overlap_before=None if db.info.get('_planner_preview') else before,
                             _overlap_output=overlap_result,
+                            creation_before=before if staffed_creation else None,
                             final_compute=(db.info.get('_planning_preparation') or {}).get('kind')
                                 in {'shift.action', 'shift.copy', 'series.expand', 'shift.update', 'workspace.undo', 'workspace.redo'})
         if overlap_result:
@@ -1744,12 +1751,16 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
     for participant, _, _ in pending:
         if (proposed := place(participant, set(), set())) is not None:
             accepted = proposed
-    for participant, _, _ in pending:
-        if pid := participant.get('supervisor_person_id'):
-            db.get(m.Assignment, participant['id']).supervisor_person_id = pid
+    named = [p for p, _, _ in pending if p.get('supervisor_person_id')]
+    for participant in named:
+        db.get(m.Assignment, participant['id']).supervisor_person_id = participant['supervisor_person_id']
+    if named and (preparation := db.info.get('_planning_preparation')):
+        # A preparation snapshot taken to choose pairs predates the saved assignment fields.
+        preparation['snapshots'].clear()
 
 
-def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None, override_reason=None, message=None):
+def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None,
+                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None):
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
@@ -1763,23 +1774,48 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.validation_scope import assignment_scope, evaluate_assignments
     from packages.domain.proposal_reconciliation import comparison as compare_checks
     from packages.domain.input_manifest import shift_input
+    from packages.domain.finding_causes import DRAFT_STAFFING_GAP_CODES, EDIT_NON_REFUSING_CODES
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
-    data = domain_snapshot(db, workspace, shared_inputs=shared_inputs, include_fairness=False,
-                           include_objectives=False)
+    checked, data = evaluated if evaluated is not None else (None, domain_snapshot(
+        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False))
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
     touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
     prior = [old[row['id']] for row in touched if row['id'] in old]
+    open_places = []
+    if staffing_gaps_only:
+        if not prior and not any(row['participants'] for row in touched):
+            return None
+        # Compare staffing a new session with the same session left empty.
+        open_places = [{**row, 'participants': []} for row in touched if row['id'] not in old]
     scope = assignment_scope(data, prior, touched)
-    baseline = with_series_state({**data, 'shifts': before['shifts'] +
+    if staffing_gaps_only:
+        if checked is not None:
+            from packages.domain.validation import finding_observations
+            gaps = [f for f in finding_observations(checked) if f['code'] in DRAFT_STAFFING_GAP_CODES
+                    and f.get('shift_id') in scope['shifts'] and f['severity'] == 'error']
+            if not gaps:
+                return None
+            checked = {**checked, 'findings': gaps}
+        else:
+            from packages.domain import leadership
+            from packages.domain.validation import effective_type_definition
+            candidates = [row for row in data['shifts'] if row['id'] in scope['shifts']] + prior
+            lead_data = dict(data)
+            leadership.prepare(lead_data)
+            if not any(effective_type_definition(data, row).get('supervision')
+                       or any(p['participation'] == 'trainee' for p in row['participants'])
+                       or leadership.requirements(lead_data, row, row['start'], row['end']) for row in candidates):
+                return None
+    baseline = with_series_state({**data, 'shifts': before['shifts'] + open_places +
         [row for row in data['shifts'] if row['id'] not in focus]})
     def compare():
         before_check = evaluate_assignments(baseline, scope, explain_findings=False)
-        after_check = evaluate_assignments(data, scope, explain_findings=False)
+        after_check = checked if checked is not None else evaluate_assignments(data, scope, explain_findings=False)
         return compare_checks(before_check, after_check), after_check
     preparation = db.info.get('_planning_preparation') if db is not None else None
-    computed = command_compute(db, 'edit_admission', data, compare,
+    computed = compare() if evaluated is not None else command_compute(db, 'edit_admission', data, compare,
         options={'before': [shift_input(row) for row in prior],
                  'scope': {k: sorted(v) if isinstance(v, set) else v for k, v in scope.items()}},
         input_token=data['fingerprint'] if preparation else None,
@@ -1798,9 +1834,10 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
         known_findings = {(f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) for f in findings}
         findings.extend(f for f in current_calendar
                         if (f.get('code'), f.get('shift_id'), f.get('start'), f.get('end')) not in known_findings)
-    from packages.domain.finding_causes import EDIT_NON_REFUSING_CODES
     # An open place (a session short of people) stays must-fix work in the Fix list; it never refuses the edit.
     findings = [f for f in findings if f.get('code') not in EDIT_NON_REFUSING_CODES]
+    if staffing_gaps_only:
+        findings = [f for f in findings if f.get('code') in DRAFT_STAFFING_GAP_CODES]
     if override_reason is not None and len(override_reason.strip()) >= 3:
         findings = [f for f in findings if not assignment_reason_allowed(data, f)]
     require(comparison['comparison_complete'], 'CHECK_INCOMPLETE', 'The edit could not be checked completely', 422)
@@ -1861,15 +1898,15 @@ def save_shift(db, actor, command, update=False):
                            and previous.get(p.person_id, {}).get('supervisor_person_id')}
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
-    admission = (admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID', shared_inputs=inputs.get('shared_inputs'),
-                                         override_reason=value.override_reason, message=refusal)
-                 # A new session may be saved with its findings (they block submission); the per-person,
-                 # per-finding reason gate in write_shift covers creates and updates alike.
-                 if update and 'bulk' not in db.info else None)
+    admission = None
+    if 'bulk' not in db.info and update:
+        admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',
+            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal)
     reason = value.override_reason.strip() if value.override_reason is not None else None
     result = changed(db, actor, workspace, before, reason or ("Edit session" if update else "Create session"),
                      shared_inputs=inputs.get('shared_inputs'), defer_assignments=update,
-                     prepared=admission if db.info.get('_assignment_reply') else None)
+                     prepared=admission if db.info.get('_assignment_reply') else None,
+                     staffed_creation=not update and bool(value.participants) and 'bulk' not in db.info)
     result["shift_id"] = row.id
     return result
 
@@ -1934,6 +1971,9 @@ def shift_action(db, actor, command):
         if row.series_id and value.action not in {"lock", "unlock", "refresh_types"}:
             row.series_modified = True
         row.revision += 1
+    if value.action in {'unassign', 'release_unavailable'}:
+        code = 'UNASSIGN_INVALID' if value.action == 'unassign' else 'RELEASE_UNAVAILABLE_INVALID'
+        admit_assignment_change(db, actor, workspace, before, code, staffing_gaps_only=True)
     return changed(db, actor, workspace, before, value.reason)
 
 
