@@ -8,6 +8,7 @@ SQLite: BEGIN IMMEDIATE is a tested local-development analogue, not production.
 """
 from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
+from functools import cache
 import logging
 import os
 from pathlib import Path
@@ -44,6 +45,8 @@ def filter_withdrawn_relationships(state):
             m.Mentorship, live_mentorship_clause(), include_aliases=True))
 
 
+# Reuse the SQL predicate and evaluate current rows on every read.
+@cache
 def live_mentorship_clause():
     """Owned attachments follow live rotations; adopted or independently edited mentorships stay live."""
     from . import models as m
