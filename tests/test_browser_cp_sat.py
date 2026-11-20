@@ -804,7 +804,7 @@ def _change_tile(review, result):
     (where no score is fair to show), the number of changes, which Apply names too."""
     tiles = review.get_by_role('group', name='Result').locator('.auto-stat')
     conflict = result.get('conflict') or next((d for d in result.get('diagnostics') or [] if d.get('strict_status') == 'INFEASIBLE'), None)
-    if (conflict or {}).get('strict_status') == 'INFEASIBLE':
+    if (conflict or {}).get('strict_status') == 'INFEASIBLE' and result['generation_outcome']['candidate'] != 'valid':
         expect(tiles.filter(has_text='Score')).to_have_count(0)
         changes = review.page.locator('#auto-panel').get_by_role('button', name=re.compile(r'^Apply (\d+) changes?$')).inner_text().split(' ')[1]
         expect(tiles.filter(has_text='Changes')).to_have_text(re.compile(rf'^Changes\s*{changes}$'))
