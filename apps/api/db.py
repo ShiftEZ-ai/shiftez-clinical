@@ -129,6 +129,13 @@ def _snapshot_input_parent_paths(cls):
     return [('department_id', m.Department)]
 
 
+def _notice_receipt(row):
+    """An announcement's receipt (delivered, read, acknowledged) is no scheduling input; only an event's reply is.
+    A person's first read of a notice moved the availability revision, and every open page read everything again."""
+    from . import models as m
+    return isinstance(row, m.AnnouncementReceipt) and row.content_id is not None
+
+
 def _snapshot_input_scope_columns(cls):
     from . import models as m
     return ({'id'} if cls is m.Organisation else {'organisation_id'} if hasattr(cls, 'organisation_id')
@@ -225,6 +232,8 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
             continue
         # A proposal does not change operative inputs or invalidate its own conversion proof.
         if isinstance(row, m.CatalogueConversion) and row in session.new and row.status == 'proposed':
+            continue
+        if _notice_receipt(row):
             continue
         category, exclusions = spec
         state = inspect(row)
@@ -327,6 +336,8 @@ def stamp_snapshot_input_statement(execution):
                           if execution.is_delete and not execution.is_orm_statement else [])
         unresolved_ownership, updated_columns = [], {}
         for row in candidates:
+            if _notice_receipt(row):
+                continue
             if by_id:
                 parameters_for_row = by_id.get(getattr(row, 'id', None), parameter_rows[0])
             else:

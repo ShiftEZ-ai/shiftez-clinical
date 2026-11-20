@@ -106,6 +106,14 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
     held = []
     try:
         navigate(page,'home')
+        # The inbox read follows a RISE in the unread count, measured from the count the app's first pulse gave it. On
+        # a loaded runner that pulse may not have come yet, so the first notice would only set the count: take one now
+        # and let the refresh it brings finish (a state, not a time).
+        before = page.locator('#main').element_handle()
+        with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse'):
+            reconnect(page)
+        page.wait_for_function('old => !old.isConnected', arg=before)
+        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'home')
         # Hold an actual server reply, then let another ordinary reconnect refresh replace /api/me.
         page.route('**/api/notifications', lambda route: held.append((route, route_fetch(route))))
         previous = page.locator('#main').element_handle()
