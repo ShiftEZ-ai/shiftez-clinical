@@ -57,7 +57,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -189,6 +189,8 @@ const freshScheduling=(workspace='',open=false)=>({workspace,open,scope:'period'
 let schedulingSettings=freshScheduling();
 // Each rota keeps its own run setup (dates, clinics, priorities) while you switch between rotas; sign-out forgets them.
 const schedulingByRota=new Map<string,ReturnType<typeof freshScheduling>>();
+// #1041: the one Approve review opening per rota (the ?approve= route or a press): a redraw meanwhile holds its button.
+const reviewRuns=new Map<string,Promise<unknown>>();
 // The intended run setup is also kept on this device (autoschedule_setup.ts), so a reload keeps it; runs are the server's.
 const ownSetup=(workspace:string)=>storedSetup(me?.identity_id||'',me?.department.id||'',workspace) as Partial<ReturnType<typeof freshScheduling>>;
 const keptSetup=(s:ReturnType<typeof freshScheduling>)=>{if(s.workspace&&me)keepSetup(me.identity_id,me.department.id,s.workspace,s as RunSetup);};
@@ -2506,14 +2508,21 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Submitted, but rules, people or availability changed since: approving or publishing would be refused.
     const outdated=['submitted','approved'].includes(w.status)&&(data?!!data.review_progress?.stale_inputs:!!w.outdated);
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
+    // #1041: one opening of the review per rota; a second press, or a redraw's button, joins it (held, busy) until it opens.
+    const approveLabel=w.base_publication_id?'Approve changes':'Approve rota',approveWords=busyLabel(approveLabel);
+    const openApproval=()=>joinRun(reviewRuns,w.id,withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),
+      ()=>notify(`${WAIT_WORDS.slow} the review…`,'info'));
+    const approveButton=():HTMLButtonElement=>{const b=button(approveLabel,openApproval,'primary keep-label'),run=reviewRuns.get(w.id);if(!run)return b;
+      notYet(b,approveWords).classList.add('is-busy');b.setAttribute('aria-busy','true');b.replaceChildren(el('span',{class:'spinner','aria-hidden':'true'}),approveWords);
+      void run.then(()=>{if(!b.isConnected)return;const why=b.getAttribute('aria-describedby');b.replaceWith(approveButton());if(why)document.getElementById(why)?.remove();});return b;};
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
+      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
     if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
-      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
+      else if(data&&decidesStep(data))workflow.append(approveButton());}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
