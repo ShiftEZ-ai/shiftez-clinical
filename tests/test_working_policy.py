@@ -28,7 +28,7 @@ import canary_evidence as canaries
 import re
 import xml.etree.ElementTree as ET
 
-# The refusal only the pre-code-owner guard has; ci.yml's Checks step selects dev's old wrapper on it.
+# The refusal only the pre-code-owner guard had; it must not come back.
 LEGACY_ROUTE = "Tier 1 control changes require the audited maintenance route"
 
 import pytest
@@ -498,10 +498,8 @@ def pytest_runtest_makereport(item, call):
         self.assertIn("python -I .github/scripts/working_policy.py guard", [step.get("run") for step in standalone_steps])
         self.assertEqual(next(s for s in standalone_steps if s.get("name") == "Enforce target policy without executing PR code")["env"], guard_env)
         self.assertEqual(standalone["jobs"]["policy"].get("permissions", standalone["permissions"]), {"contents": "read"})
-        run = guard["run"].splitlines()
-        self.assertEqual(run[0], "if grep -qF '%s' .github/scripts/working_policy.py; then" % LEGACY_ROUTE)
-        self.assertEqual(run[-3:], ["else", '  "${{ steps.policy-python.outputs.python }}" -I .github/scripts/working_policy.py guard',
-                                    "fi"])
+        self.assertEqual(guard["run"],
+                         '"${{ steps.policy-python.outputs.python }}" -I .github/scripts/working_policy.py guard')
 
     def run_checks_guard_step(self, guard_source, branch="dev", tier1_path=".github/workflows/ci.yml"):
         import yaml
@@ -515,33 +513,6 @@ def pytest_runtest_makereport(item, call):
             env = {key: value for key, value in os.environ.items() if key != "TRUSTED_BOOTSTRAP"}
             env.update(GITHUB_STEP_SUMMARY=str(Path(trusted) / "summary"), STUB_BRANCH=branch, STUB_TIER1=tier1_path)
             return subprocess.run(["bash", "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
-
-    def test_checks_runs_dev_wrapper_while_dev_has_the_old_guard(self):
-        old_guard = (
-            "import os, sys\n"
-            "KNOWN = 'ci/known-failures.json'\n"
-            "def read_file(sha, path):\n    return b'[]'\n"
-            "def renewal_only(old, new):\n    return False\n"
-            "def findings_report(*args):\n"
-            "    path = os.environ['STUB_TIER1']\n"
-            "    return {'branch': os.environ['STUB_BRANCH'], 'tier1': [{'path': path}] if path else [],\n"
-            "            'target_sha': 'base', 'candidate_tree': 'head'}\n"
-            "def guard():\n"
-            "    if findings_report()['tier1']:\n"
-            "        raise ValueError(%r)\n"
-            "if sys.argv[1:] == ['guard']:\n    print('bare guard'); guard()\n" % LEGACY_ROUTE)
-        allowed = self.run_checks_guard_step(old_guard)
-        self.assertEqual(allowed.returncode, 0, allowed.stderr)
-        self.assertEqual(allowed.stdout.splitlines(), [LEGACY_ROUTE])
-        outside = self.run_checks_guard_step(old_guard, branch="main")
-        self.assertNotEqual(outside.returncode, 0)
-        self.assertIn("Working policy refused: " + LEGACY_ROUTE, outside.stderr)
-        self.assertNotIn("bare guard", outside.stdout)
-        known = self.run_checks_guard_step(old_guard, tier1_path="ci/known-failures.json")
-        self.assertNotEqual(known.returncode, 0)
-        self.assertIn("Known-failures changes must only remove entries or renew expiry through review", known.stderr)
-        clean = self.run_checks_guard_step(old_guard, tier1_path="")
-        self.assertEqual((clean.returncode, clean.stdout), (0, ""))
 
     def test_checks_runs_the_code_owner_guard_once_dev_has_it(self):
         new_guard = "import sys\nprint('code-owner guard', sys.argv[1:])\n"

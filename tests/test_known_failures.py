@@ -112,7 +112,7 @@ ROOT_RUN_FACTS = {("merge-base", ROOT_RUN_BASE, ROOT_RUN_SHA): ROOT_RUN_BASE.enc
 def historical_git(*args):
     if args in ROOT_RUN_FACTS:
         return ROOT_RUN_FACTS[args]
-    pinned =[PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
+    pinned = [PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
     return subprocess.check_output(["git", *pinned], cwd=ROOT)
 
 
