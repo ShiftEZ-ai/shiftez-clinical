@@ -1,4 +1,5 @@
 """Personal attribution stays faithful to issued scores and never grants peer or draft access to staff."""
+from tests.historical_staffing import retained_staffing
 import time
 import uuid
 from collections import Counter
@@ -338,7 +339,7 @@ def test_person_score_keeps_partial_pooled_supervision_improvement_at_the_score_
     start, end = '2026-10-04T08:00:00+03:00', '2026-10-04T12:00:00+03:00'
     participants = [{'person_id': pid, 'start': start, 'end': end, 'participation': 'trainee'}
                     for pid in (first, second)]
-    workspace = h.shift(h.workspace(), typ=typ['id'], people=participants)['workspace']
+    workspace = retained_staffing(h, h.workspace(), typ=typ['id'], people=participants)['workspace']
     source = h.snapshot(workspace)
     [duty] = source['shifts']
     before = evaluate(source)

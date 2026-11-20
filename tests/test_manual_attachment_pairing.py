@@ -2,6 +2,7 @@
 import pytest
 
 from packages.contracts.schemas import ParticipantInput
+from tests.historical_staffing import retained_staffing
 
 from .test_alpha_calendar import programme
 from .test_attachments import END, START, people, setup
@@ -151,7 +152,9 @@ def test_manual_required_attachment_reservation_postgres(pg):
 
 def test_failed_automatic_reassignment_keeps_the_required_pair(h):
     flexible, constrained, first, _, typ = pairing_setup(h, 'required')
-    reply = h.shift(h.workspace(), typ=typ, people=participants([flexible, constrained], [first]))
+    # #915 refuses this new supervision gap, so seed it as retained draft staffing.
+    reply = retained_staffing(h, h.workspace(), typ=typ, pair_attachments=True,
+                              people=participants([flexible, constrained], [first]))
     pairs = {p['person_id']: p['supervisor_person_id'] for p in h.detail(reply['workspace'])['shifts'][0]['participants']}
     assert pairs[constrained] == first and pairs[flexible] is None
     assert not {'SUPERVISOR_CAPACITY', 'SUPERVISOR_SCOPED_CAPACITY'} & {f['code'] for f in reply['validation']['findings']}
