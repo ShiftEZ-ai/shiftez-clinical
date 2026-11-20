@@ -1386,54 +1386,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-bhganamjefomldbnpllccppnmadjmkdhlehomhkhmobljhcigcmjaallofpjaocj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-cgbdanahgpgjejjakdpkmghjbioehdncnjlhednjdncnnakclgcfakcbhejbmgaj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-donefppmkcbbpldggmfchaekochlpemieoepndmhcgadnpcpcggbpipabcmikfbk]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-egpdipigolffabchogojlkjpeddhibcookhfpkpggonodheeaojekagfimeikopi]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-gocbkgfpgpdckbobagbmadejjhggklckfbochdcbpcngcdliibpdmgokihanlpae]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-jkhfpibmchgknmngmeniegdnpigdekhdbeghehdcomcgfoknofgcnjjefjeghfen]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-mehfcbheogcleoncobldfgbedmefcipmdaamkompmegolcchboeadiipfijjfljn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_equivalence.py::test_every_bulk_kind_preserves_single_records_and_history[case-mmnladafnaddhpkcgdomnfjpldkcohcllmlgoopbjncjjijdinmakmpaianlngdc]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_bulk_performance.py::test_150_people_changes_with_current_rotas_and_rule_history[case-kfjnhpbjiiiahgcladkgieacokjlhfoohoamfnpalkcdjnmcmcnfcaocldmfcmka]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
