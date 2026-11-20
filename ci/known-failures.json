@@ -1164,12 +1164,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_rules_phase3.py::test_extend_a_clinic_permission_until_changed_with_undo",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_rules_sheet.py::test_rule_rows_marks_pills_and_reach[case-mefjihmgaddfkfjkobbngmochihpgjnkogcaopoekmgganebnkmmkokmijglddfb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1303,12 +1297,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_terms.py::test_coordinator_follows_the_setup_guide_without_admin_actions",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_uiux_action_errors.py::test_custom_eligibility_undo_explains_refused_save_and_preserves_confirmed_state",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
