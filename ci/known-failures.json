@@ -1368,12 +1368,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_uiux_polling.py::test_pending_badges_release_their_loading_slot_after_same_account_refresh",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_v08_journey.py::test_v08_journey_across_roles",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
