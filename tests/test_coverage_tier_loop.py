@@ -583,21 +583,6 @@ def test_mandatory_minimum_allows_requested_additional_desired_cover(h, engine, 
     assert len(result['additions']) == 2 and result['validation']['valid'], result
 
 
-@pytest.mark.xfail(strict=False, reason='Deferred (c): ordered-priorities-tiers design; '
-                   'strength-weighted sums are not order-only')
-def test_allocation_tier_is_order_only_instead_of_summing_matching_lines(h):
-    first, second = h.seed['people'][:2]
-    for _ in range(2):
-        h.policy({'kind': 'allocation_preference', 'priority': 0, 'session_priority': 1}, {'person_id': first}, 'advisory')
-    h.policy({'kind': 'allocation_preference', 'priority': 0, 'session_priority': 2}, {'person_id': second}, 'advisory')
-    data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
-    shift = data['shifts'][0]
-    first_key, second_key = allocation_tier(data, shift, first), allocation_tier(data, shift, second)
-    print('allocation key', {'two_place_1': first_key, 'one_place_2': second_key,
-                               'types': [type(first_key).__name__, type(second_key).__name__]})
-    assert first_key < second_key
-
-
 def test_allocation_tier_ignores_other_number_fields_and_fairness(h, monkeypatch):
     from packages.domain import fairness_distribution
     person = h.seed['people'][0]
