@@ -170,6 +170,9 @@ class ImporterV34Tests(unittest.TestCase):
             if name == 'ci.yml':
                 self.assertEqual(doc['concurrency']['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
                 self.assertIn("github.event_name == 'schedule' && 'ci-nightly'", doc['concurrency']['group'])
+                # A label added by a person must not start a new run and cancel the running one.
+                self.assertEqual(doc['on']['pull_request']['types'],
+                                 ['opened', 'synchronize', 'reopened', 'ready_for_review'])
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
                 limits = {

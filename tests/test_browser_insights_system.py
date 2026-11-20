@@ -16,6 +16,7 @@ from apps.api.db import transaction
 from packages.contracts.schemas import SYSTEM_ROLES, PersonInput, ServiceInput
 from .governance_support import developer, identity
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, save_dialog  # noqa: F401
+from .test_browser_configuration_shell import expect_coordinator_sections
 from .test_browser_w3_setup_today import no_page_overflow, finish_required_steps
 from .test_block_quotas import quota
 
@@ -282,18 +283,20 @@ def test_configuration_opens_on_the_setup_guide_until_setup_is_done(browser, liv
         expect(page.locator('.setup-hero h2')).to_have_text(re.compile('^Ready to plan'))
     finally:
         context.close()
-    # A coordinator's Configuration is the guide, Scheduling groups (D19: planners read them), Tags and Auto-schedule &
-    # scoring (its Score review only: they propose rule changes); once setup is done it opens on Tags, the guide as Data health.
+    # After setup, coordinators open on the first permitted record section; the guide remains as Data health.
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         expect(page.locator('#department-nav [data-route=configuration]')).to_have_count(1)
         navigate(page, 'configuration')
         nav = page.get_by_role('navigation', name='Configuration sections')
-        expect(nav.get_by_role('button')).to_have_count(4)
+        sections = expect_coordinator_sections(page, h)
         expect(nav.get_by_role('button', name='Auto-schedule & scoring', exact=True)).to_be_visible()
         expect(nav.get_by_role('button', name='Data health', exact=True)).to_be_visible()
         expect(nav.get_by_role('button', name='Scheduling groups', exact=True)).to_be_visible()
         expect(nav.get_by_role('button', name='Tags', exact=True)).to_be_visible()
+        first_record = next(spec for kind, spec in sections.items() if kind != 'setup' and not spec.get('settings'))
+        expect(page.locator('.config-pane .section-head h2').first).to_have_text(first_record['label'])
+        nav.get_by_role('button', name='Tags', exact=True).click()
         expect(page.locator('.config-pane .section-head h2').first).to_have_text('Tags')
         navigate(page, 'configuration/setup')
         expect(page.locator('.setup-hero h2')).to_have_text(re.compile('^Ready to plan'))

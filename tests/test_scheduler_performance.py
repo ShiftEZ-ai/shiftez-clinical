@@ -272,7 +272,7 @@ def department_month_priorities(scale_harness):
 
 def test_department_month_reaches_every_priority_quickly(department_month_priorities):
     result, _, names = department_month_priorities
-    assert names == ['coverage', 'weighted']
+    assert names == ['coverage', 'desired_coverage', 'weighted']
     assert result['objectives'][0]['value'] == 0
     components = result['summary']['score']['components']
     assert components['coverage']['value'] == 1
@@ -294,7 +294,7 @@ def parallel_clinic_week_priorities(scale_harness):
 
 def test_parallel_clinic_week_reaches_every_priority(parallel_clinic_week_priorities):
     result, _, names = parallel_clinic_week_priorities
-    assert names == ['coverage', 'weighted']
+    assert names == ['coverage', 'desired_coverage', 'weighted']
     assert result['objectives'][0]['value'] == 0
     components = result['summary']['score']['components']
     assert components['coverage']['value'] == 1
@@ -337,7 +337,7 @@ def test_weighted_objective_is_bounded_for_150_people_and_532_sessions(weighted_
     result, evidence = weighted_department_measurement
     assert result['status'] == 'candidate_feasible', evidence
     assert result['validation']['error_count'] == 0
-    assert [step['name'] for step in result['objectives']] == ['coverage', 'weighted'], evidence
+    assert [step['name'] for step in result['objectives']] == ['coverage', 'desired_coverage', 'weighted'], evidence
     assert result['weighted_status'] in {'OPTIMAL', 'FEASIBLE'}, evidence
     assert result['objectives'][0]['value'] == 0, evidence
     assert result['objective_components']['coverage']['value'] == 1, evidence
