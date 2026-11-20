@@ -1728,18 +1728,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_home_leave_conflicts.py::test_fix_list_uses_the_home_leave_classification_and_offers_cover[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_home_leave_conflicts.py::test_fix_list_uses_the_home_leave_classification_and_offers_cover[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_initial_seed.py::test_changed_seed_is_refused_after_first_load",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
