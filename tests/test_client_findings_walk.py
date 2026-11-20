@@ -135,3 +135,26 @@ def test_rule_check_replies_walk_the_same(h, client_modules, tmp_path):
     result = walked(client_modules, tmp_path, {'job': job_reply.content, 'job_full': full.content,
                                                'policy_check': check.content})
     assert any('.checks.baseline.' in c and '.technical added=' in c for c in result['job']['narrow'])
+
+
+TEMPLATE_COPY = r"""
+globalThis.document={cookie:''};
+const m=await import(process.argv[1]);
+// A department's own custom fields that happen to be named like a finding's keys, kept in the session's template copies.
+const own={code:'COVERAGE_GAP',message:'Our own words',severity:'error'};
+const reply={workspace:{starts_on:'2026-10-01',ends_on:'2026-11-01',validation:{findings:[
+  {code:'COVERAGE_GAP',message:'raw',severity:'error',shift_id:'s1'}]}},
+  shifts:[{id:'s1',series_snapshot:{definition:{attributes:{...own}}},type_snapshot:{definition:{attributes:{...own}}}}]};
+m.plainFindings(reply);
+console.log(JSON.stringify({finding:reply.workspace.validation.findings[0],series:reply.shifts[0].series_snapshot.definition.attributes,
+  type:reply.shifts[0].type_snapshot.definition.attributes,own}));
+"""
+
+
+def test_template_custom_fields_named_like_a_finding_are_never_rewritten(client_modules):
+    """Fix: a department's custom field that looked like a finding (code, message and severity) was rewritten in the
+    session's template copy; it no longer is, while the reply's real findings still get their plain words."""
+    out = json.loads(subprocess.run(['node', '--input-type=module', '-e', TEMPLATE_COPY,
+                                     (client_modules / 'findings.js').as_uri()], capture_output=True, text=True, check=True).stdout)
+    assert out['finding']['technical'] == 'raw' and out['finding']['message'] != 'raw'
+    assert out['series'] == out['own'] and out['type'] == out['own']
