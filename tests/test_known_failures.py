@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+from types import ModuleType
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -16,11 +17,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ci"))
 import make_known_failures as ratchet
+from quarantine_registry import decode_registry
 
 RED = "tests/test_sample.py::test_red"
 GREEN = "tests/test_sample.py::test_green"
 TODAY = date(2026, 11, 16)
 TREE = "a" * 40
+# Pin the accepted dev parent so both verifiers use the same cross-attempt baseline.
+PRE_QUARANTINE_DEV = "6c679904a82ec9f9c8b5fcf6e9796d405d3a01bf"
 
 
 ROOT_SEAL = "c" * 64
@@ -46,6 +50,130 @@ def listing(fails=(), unstable=(), cleanup=(), cap=10):
 
 def check(current, base, runs, **kwargs):
     return ratchet.evaluate(current, base, runs, today=TODAY, **kwargs)
+
+
+def reviewed_quarantine(*, blocker=False):
+    return decode_registry(json.dumps([{"nodeid": RED, "reason": "baseline: reviewed", "owner": "maintainers",
+                            "added": "2026-11-01", "expires": TODAY.isoformat(), "issue": 123,
+                            "blocker": blocker}]), TODAY)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "error", "passed"])
+def test_moved_quarantine_runs_and_reports_passing_without_refusal(outcome, capsys):
+    assert check(listing(), listing([RED]), [{RED: outcome}], quarantine=reviewed_quarantine(), expected_replicas=1)
+    summary = capsys.readouterr().out
+    assert f"quarantined and passing now: {int(outcome == 'passed')}" in summary
+    assert "expired quarantine (still active): 1" in summary
+    assert f"{RED}: expired {TODAY}, issue 123" in summary
+
+
+@pytest.mark.parametrize("outcome", ["failed", "error"])
+def test_quarantine_does_not_allow_new_red_nodes(outcome):
+    with pytest.raises(ValueError, match=r"New (failures|errors).*test_green"):
+        check(listing(), listing([RED]), [{RED: "failed", GREEN: outcome}],
+              quarantine=reviewed_quarantine(), expected_replicas=1)
+
+
+def test_recovered_unquarantined_failure_is_still_proposed_as_unstable(tmp_path, capsys):
+    runs = [{RED: "failed", GREEN: "passed"}]
+    quarantine = reviewed_quarantine()
+    assert check(listing(), listing([RED]), runs, quarantine=quarantine, group=True, recovered={GREEN})
+    proposed = ratchet.report_outside(listing(), runs, tmp_path, recovered={GREEN: "failed"}, quarantined=quarantine)
+    assert [(row["node"], row["class"], row["status"], row["observations"]) for row in proposed] == [
+        (GREEN, "unstable", "PROPOSED", ["failed", "passed"])]
+    assert json.loads((tmp_path / "outside-observations.json").read_bytes())["observations"] == [
+        {key: value for key, value in proposed[0].items() if key not in {"class", "status"}}]
+    assert "recovered on retry" in capsys.readouterr().out
+
+
+def test_main_refuses_reviewed_nonblocking_quarantine_errors():
+    import known_skips
+
+    quarantine = reviewed_quarantine()
+    runs, _ = known_skips.comparison_runs([{RED: "error"}], set(), release=False, quarantined=quarantine)
+    assert check(listing(), listing([RED]), runs, quarantine=quarantine, expected_replicas=1)
+    with pytest.raises(ValueError, match="Release/known-skip execution contains a failure or error"):
+        known_skips.comparison_runs(runs, set(), release=True, quarantined=quarantine)
+
+
+class PolicyClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls.combine(TODAY, datetime.min.time(), tzinfo=tz)
+
+
+# The audited first pipeline change is reachable only through its pull-request ref, which no CI checkout fetches (the
+# live verdict fetches it by SHA first). Its two history facts are answered from the values verified at that commit.
+ROOT_RUN_SHA, ROOT_RUN_BASE = "39fb3153b4556209265f3c41801067642f682e8a", "e3aa8fab6863bcc8ded33727c5f536a884d5ed27"
+ROOT_RUN_FACTS = {("merge-base", ROOT_RUN_BASE, ROOT_RUN_SHA): ROOT_RUN_BASE.encode() + b"\n",
+                  ("rev-parse", ROOT_RUN_SHA + "^{tree}"): b"1067e0fe84d4d34bfca9215a64ac4a6d25030aff\n"}
+
+
+def historical_git(*args):
+    if args in ROOT_RUN_FACTS:
+        return ROOT_RUN_FACTS[args]
+    pinned =[PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
+    return subprocess.check_output(["git", *pinned], cwd=ROOT)
+
+
+def historical_module(path, source):
+    module = ModuleType(Path(path).stem)
+    module.__file__ = str(ROOT / path)
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    return module
+
+
+@pytest.mark.parametrize("new_failure", [False, True])
+def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_path, capsys, new_failure):
+    git = historical_git
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    old = historical_module("ci/make_known_failures.py", git("show", "HEAD:ci/make_known_failures.py"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "ci").mkdir()
+    for name in ("known-failures", "frozen-baseline-failures", "hosted-env-exceptions",
+                 "root-run-evidence", "failure-classifications", "removed-tests"):
+        path = f"ci/{name}.json"
+        Path(path).write_bytes(git("show", "HEAD:" + path))
+    current = ratchet.decode_list(Path(ratchet.KNOWN).read_text(encoding="utf-8"))
+    runs = [{row["node"]: "error" if row["class"] == "baseline-error" else "failed"
+             for row in current["fails"] + current["unstable"]}]
+    runs[0][RED] = "passed"  # Verified recovery is already normalized in the collector.
+    runs[0][GREEN] = "failed" if new_failure else "passed"
+    plan = {"sha": PRE_QUARANTINE_DEV, "tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
+            "base_sha": PRE_QUARANTINE_DEV, "replicas": [1], "smoke": False}
+    Path("plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    quarantine = decode_registry(b"[]", TODAY)
+
+    def collect_reports(*_, evidence):
+        evidence.recovered[RED] = "failed"
+        evidence.reruns[RED] = 1
+        return runs
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_RUN_ID", "1")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.setattr(ratchet, "utc_today", lambda: TODAY)
+
+    def result(verifier, path, **options):
+        summary = path.with_suffix(".md")
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.setattr(sys, "argv", ["verifier", "--plan", "plan.json", "--reports", str(path),
+                                         "--output", str(path), "--base-sha", PRE_QUARANTINE_DEV])
+        monkeypatch.setattr(verifier, "git", lambda *args: git(*args).decode().strip())
+        monkeypatch.setattr(verifier, "datetime", PolicyClock)
+        monkeypatch.setattr(verifier, "collect_reports", collect_reports)
+        monkeypatch.setattr(verifier, "product_error_nodes", lambda *_, **__: set())
+        verifier.main(**options)
+        verifier.write_summary()
+        captured = capsys.readouterr()
+        return captured.out, captured.err, summary.read_bytes(), {p.name: p.read_bytes() for p in path.iterdir()}
+
+    expected = result(old, tmp_path / "old")
+    actual = result(ratchet, tmp_path / "new", quarantine=quarantine)
+    assert actual == expected
+    assert json.loads(actual[3]["verdict.json"])["passed"] is not new_failure
+    proposals = json.loads(actual[3]["outside-observations.json"])["proposed_list_entries"]
+    assert [row["node"] for row in proposals] == [RED]
 
 
 def test_merge_group_accepts_a_listed_failure_that_remains_red():
@@ -257,30 +385,379 @@ def test_invalid_known_file_is_refused(fault):
         ratchet.decode_list(ratchet.encoded(value))
 
 
-def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser")):
+def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser"), unit_node=RED,
+            unit_outcome=None, unit_retry=None, base_sha=None, run_id="fixture"):
     plan = {"sha": "b" * 40, "tree": TREE, "replicas": list(replicas), "suites": {
         suite: {"shards": [{"files": [file]}]} for suite, file in (
-            ("unit", "tests/test_sample.py"), ("browser", "tests/test_browser_sample.py"))}}
-    for suite, row in plan["suites"].items():
-        node = row["shards"][0]["files"][0] + "::test_red"
+            ("unit", unit_node.split("::")[0]), ("browser", "tests/test_browser_sample.py"))}}
+    if base_sha is not None:
+        plan.update(base_sha=base_sha, smoke=False)
+
+    def invocation(report, node, outcome):
+        if isinstance(outcome, Path):
+            shutil.copyfile(outcome, report)
+            red = any(case.find("failure") is not None or case.find("error") is not None
+                      for case in ET.parse(report).getroot().iter("testcase"))
+        else:
+            red = outcome in ("failed", "error")
+            file, name = node.split("::")
+            xml = ET.Element("testsuite")
+            case = ET.SubElement(xml, "testcase", classname=file[:-3].replace("/", "."), name=name)
+            if outcome == "failed":
+                ET.SubElement(case, "failure")
+            elif outcome == "error":
+                ET.SubElement(case, "error", message="ValueError").text = file + ":1"
+            elif outcome == "skipped":
+                ET.SubElement(case, "skipped", type="pytest.skip", message="QUARANTINED (fixture)")
+            elif outcome in ("quarantine-xfail", "ordinary-xfail"):
+                reason = "QUARANTINED (maintainers, expires 2026-12-19): baseline: Reviewed"
+                ET.SubElement(case, "skipped", type="pytest.xfail",
+                              message=reason if outcome == "quarantine-xfail" else "Expected by the test")
+            ET.ElementTree(xml).write(report)
+        selected = report.with_suffix(".selection.json")
+        deselected = report.with_suffix(".deselected.json")
+        selected.write_text(json.dumps([node]))
+        deselected.write_text("[]")
+        return {"file": report.name, "exit_code": int(red),
+                "sha256": {file.name: hashlib.sha256(file.read_bytes()).hexdigest()
+                           for file in (report, selected, deselected)}}
+
+    for suite in plan["suites"]:
+        node = unit_node if suite == "unit" else "tests/test_browser_sample.py::test_red"
+        outcome = unit_outcome if suite == "unit" and unit_outcome else ("failed" if suite in red_suites else "passed")
         for replica in plan["replicas"]:
             folder = tmp_path / f"ci-test-1-{suite}-1-{replica}"
             folder.mkdir(parents=True)
-            report = folder / "junit.xml"
-            xml = ET.Element("testsuite")
-            case = ET.SubElement(xml, "testcase", classname=node.split("::")[0][:-3].replace("/", "."), name="test_red")
-            if suite in red_suites:
-                ET.SubElement(case, "failure")
-            ET.ElementTree(xml).write(report)
-            report.with_suffix(".selection.json").write_text(json.dumps([node]))
-            report.with_suffix(".deselected.json").write_text("[]")
-            files = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
+            evidence = invocation(folder / "junit.xml", node, outcome)
+            if suite == "unit" and unit_retry is not None:
+                evidence["retry"] = invocation(folder / "junit-retry.xml", node, unit_retry)
             receipt = {"schema": 1, "sha": plan["sha"], "tree": TREE, "plan_sha256": ratchet.digest(plan),
-                       "suite": suite, "shard": 1, "replica": replica, "run_id": "fixture", "run_attempt": "1",
-                       "reports": [{"file": "junit.xml", "exit_code": int(suite in red_suites),
-                                    "sha256": {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in files}}]}
+                       "suite": suite, "shard": 1, "replica": replica, "run_id": run_id, "run_attempt": "1",
+                       "reports": [evidence]}
             (folder / "shard-receipt.json").write_text(json.dumps(receipt))
     return plan
+
+
+@pytest.fixture(scope="module")
+def historical_verdict_sources():
+    paths = (".github/scripts/trusted_verdict.py", ".github/scripts/known_skips.py", "ci/make_known_failures.py",
+             "ci/known-skips.json", "ci/root-run-evidence.json", "ci/frozen-baseline-failures.json",
+             "ci/hosted-env-exceptions.json", "ci/removed-tests.json")
+    return {path: historical_git("show", "HEAD:" + path) for path in paths}
+
+
+@pytest.fixture
+def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
+    import trusted_ci
+    import trusted_verdict as trusted
+
+    def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
+            base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False):
+        sources = historical_verdict_sources
+        folder = tmp_path / label
+        base, head = "a" * 40, "c" * 40
+        plan = reports(folder / "reports", replicas=(1,), red_suites=(), unit_node=node, unit_outcome=outcome,
+                       unit_retry=retry, base_sha=base, run_id="1")
+        candidate = plan["sha"]
+        output = folder / "verdict"
+        plan_path = folder / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        root_evidence = json.loads(sources["ci/root-run-evidence.json"])
+        root_evidence["counts"]["cleanup"] = 1  # The synthetic cleanup fixture has one measured failure.
+        root_raw = json.dumps(root_evidence).encode()
+        metadata = {"node": node, "class": base_kind or candidate_kind, "owner": "maintainers", "reason": "Reviewed"}
+        classifications = json.dumps({"schema": 1, "status": "REVIEWED",
+                                      "entries": [metadata] if metadata["class"] else []}).encode()
+
+        def known(kind):
+            record = {**listing(cap=1), "schema": 3, "root_evidence_sha256": hashlib.sha256(root_raw).hexdigest(),
+                      "root_runs": root_evidence["runs"], "classifications_sha256": hashlib.sha256(classifications).hexdigest()}
+            if kind == "unstable":
+                record["unstable"] = [{**metadata, "issue": 1, "expires_on": "2026-12-19"}]
+            elif kind:
+                record["fails"] = [{**metadata, **({"issue": 1} if kind == "cleanup" else {})}]
+            return json.dumps(record).encode()
+
+        known_at = {base: known(base_kind), candidate: known(candidate_kind)}
+        registry_at = {base: base_registry, candidate: base_registry if candidate_registry is None else candidate_registry}
+
+        skip_list = json.loads(sources["ci/known-skips.json"])
+        if reviewed_skip:
+            skip_list["skips"].append({"node": node, "observed_in": [1], "reason": "Reviewed", "review": "sha256:" + ROOT_SEAL})
+            skip_list["skips"].sort(key=lambda row: row["node"])
+
+        def read_file(revision, name):
+            if reviewed_skip and name == "ci/known-skips.json":
+                return json.dumps(skip_list).encode()
+            if name == ratchet.KNOWN:
+                return known_at[revision]
+            if name == "tests/quarantine.json":
+                rows = registry_at[revision]
+                return rows if isinstance(rows, bytes) else json.dumps(list(rows)).encode()
+            if name == "ci/root-run-evidence.json":
+                return root_raw
+            if name == "ci/failure-classifications.json":
+                return classifications
+            return sources.get(name)
+
+        inventory = b"".join(b"100644 blob " + b"f" * 40 + b"\t" + path.encode() + b"\0"
+                             for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"])
+        git_answers = {
+            ("rev-parse", "HEAD"): PRE_QUARANTINE_DEV.encode(),
+            ("rev-parse", candidate): candidate.encode(),
+            ("rev-parse", candidate + "^{tree}"): TREE.encode(),
+            ("rev-parse", base + "^{tree}"): TREE.encode(),
+            ("rev-parse", root_evidence["sha"] + "^{tree}"): root_evidence["tree"].encode(),
+            ("rev-list", "--parents", "-n", "1", candidate): f"{candidate} {base} {head}".encode(),
+            ("rev-list", "--max-parents=0", candidate): root_evidence["base_sha"].encode(),
+            ("merge-base", root_evidence["base_sha"], root_evidence["sha"]): root_evidence["base_sha"].encode(),
+        }
+
+        def git(*args):
+            if args[0] == "ls-tree":
+                if "--name-only" in args:
+                    return ratchet.KNOWN.encode()
+                return inventory
+            if args[0] == "show":
+                revision, name = args[1].split(":", 1)
+                return read_file(revision, name)
+            if args[0] == "diff":
+                return b""
+            return git_answers[args]
+
+        data = {"pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
+                "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
+                "repository": {"full_name": "fixture/project"}}
+        step_summary = folder / "step-summary.md"
+        with monkeypatch.context() as patch:
+            patch.setattr(sys, "path", sys.path.copy())
+            if old:
+                skips = ".github/scripts/known_skips.py"
+                verifier = ".github/scripts/trusted_verdict.py"
+                maker = "ci/make_known_failures.py"
+                reader = historical_module(maker, sources[maker])
+                patch.setitem(sys.modules, "known_skips", historical_module(skips, sources[skips]))
+                target = historical_module(verifier, sources[verifier])
+            else:
+                reader, target = ratchet, trusted
+            patch.setitem(sys.modules, "make_known_failures", reader)
+            patch.setattr(reader, "git", reader.git)
+            patch.setattr(reader, "collect_reports", reader.collect_reports)
+            patch.setattr(reader, "datetime", PolicyClock)
+            patch.setattr(ratchet, "utc_today", lambda: TODAY)
+            patch.setattr(trusted_ci, "utc_today", lambda: date(2026, 11, 19))
+            patch.setattr(target, "git", git)
+            patch.setattr(target.policy, "git", git)
+            patch.setattr(target.policy, "event", lambda: data)
+            patch.setattr(target.policy, "fetch", lambda ref, expected=None: expected or base)
+            patch.setattr(target.policy, "accepted_dev_commit", lambda tree, tip: base)
+            patch.setattr(target.policy, "read_file", read_file)
+            patch.setattr(target.hardening, "load", lambda: {"canaries": False, "node_census": False})
+            patch.setattr(target, "settings", lambda: {
+                "unit_shards": 1, "browser_shards": 1, "unstable_limit": 80,
+                "unstable_issue": 1, "unstable_expires_on": "2026-12-19", "cleanup_issue": 1,
+            })
+            patch.setattr(sys, "argv", ["trusted_verdict", "--plan", str(plan_path), "--reports", str(folder / "reports"),
+                                       "--output", str(output)])
+            patch.delenv("GH_TOKEN", raising=False)
+            for key, value in {
+                "GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "CANDIDATE_SHA": candidate,
+                "TRUSTED_BOOTSTRAP": "false", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_STEP_SUMMARY": str(step_summary), "RUNNER_TEMP": str(folder),
+                "NEEDS_JSON": json.dumps({key: {"result": "success"} for key in ("checks", "static", "unit", "browser")}),
+            }.items():
+                patch.setenv(key, value)
+            try:
+                target.main()
+            except ValueError as error:
+                refusal = str(error)
+            else:
+                refusal = None
+        captured = capsys.readouterr()
+        artifacts = {path.name: path.read_bytes() for path in output.glob("*.json")}
+        verdict = json.loads(artifacts["verdict.json"]) if "verdict.json" in artifacts else None
+        return (refusal, verdict), (captured, step_summary.read_bytes() if step_summary.exists() else b"", artifacts)
+
+    return run
+
+
+def quarantine_row(node=RED, kind="baseline"):
+    return {"nodeid": node, "reason": kind + ": Reviewed", "owner": "maintainers", "issue": 1, "blocker": False,
+            "added": "2026-11-19", "expires": "2026-12-19"}
+
+
+@pytest.mark.parametrize("branch", ["dev", "preview"])
+def test_trusted_verdict_reports_honoured_quarantine_xfail_as_failing(trusted_result, branch):
+    result, (_, summary, _) = trusted_result("honoured", branch=branch, outcome="quarantine-xfail",
+                                             base_registry=[quarantine_row()])
+    assert result[0] is None and result[1]["passed"]
+    assert b"quarantined and failing now: 1" in summary
+    assert f"- {RED}: quarantined-failing".encode() in summary
+
+
+def test_trusted_verdict_refuses_unhonoured_quarantine_xfail(trusted_result):
+    node = "tests/test_new_feature.py::test_new_feature_works"
+    row = {**quarantine_row(node, "unstable"), "reason": "unstable: recovered on retry", "recovered_runs": ["1"]}
+    result, _ = trusted_result("unhonoured", node=node, outcome="quarantine-xfail", candidate_registry=[row])
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + node
+
+
+def test_trusted_verdict_requires_registry_entry_for_quarantine_prefix(trusted_result):
+    result, _ = trusted_result("unbound", outcome="quarantine-xfail", base_registry=[quarantine_row(GREEN)])
+    assert result == ("Quarantine xfail has no source registry entry: " + RED, None)
+
+
+@pytest.mark.parametrize("outcome", ["skipped", "ordinary-xfail"])
+def test_trusted_verdict_applies_known_skips_to_real_skips_and_ordinary_xfails(trusted_result, outcome):
+    result, _ = trusted_result("unreviewed", outcome=outcome)
+    assert result == ("New skip outside the reviewed known-skips list", None)
+    result, _ = trusted_result("registered", outcome=outcome, base_registry=[quarantine_row()])
+    assert result == ("New skip outside the reviewed known-skips list", None)
+    result, _ = trusted_result("reviewed", outcome=outcome, reviewed_skip=True)
+    assert result[0] is None and result[1]["passed"]
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_main_quarantine_xfail_matches_historical_release_failure(trusted_result, event):
+    execution = {"branch": "main", "event": event}
+    historical, _ = trusted_result("old", old=True, outcome="failed", base_kind="baseline",
+                                   candidate_kind="baseline", **execution)
+    current, _ = trusted_result("new", outcome="quarantine-xfail", base_registry=[quarantine_row()], **execution)
+    assert current == historical == ("Release/known-skip execution contains a failure or error", None)
+
+
+def test_canary_normalization_preserves_quarantine_xfail(tmp_path):
+    import canary_evidence as canaries
+
+    report = tmp_path / "junit.xml"
+    report.write_text(
+        '<testsuite><testcase classname="tests.test_sample" name="test_red">'
+        '<skipped type="pytest.xfail" message="QUARANTINED (fixture)"/></testcase></testsuite>', encoding="utf-8")
+    raw = report.with_suffix(".raw.xml")
+    raw_tree = ET.parse(report)
+    sentinels = {kind: "sentinel_" + kind for kind in ("passed", "failed", "skipped", "error")}
+    for kind, name in sentinels.items():
+        case = ET.SubElement(raw_tree.getroot(), "testcase", name=name)
+        if kind != "passed":
+            ET.SubElement(case, "failure" if kind == "failed" else kind)
+    raw_tree.write(raw)
+    census = report.with_suffix(".collection.json")
+    census.write_text(json.dumps([RED, *sentinels.values()]), encoding="utf-8")
+    identity = {"sha": "a" * 40, "tree": TREE, "run_id": "1", "run_attempt": "1"}
+    (tmp_path / "shard-receipt.json").write_text(
+        json.dumps({**identity, "reports": [{"file": report.name}]}), encoding="utf-8")
+    report.with_suffix(".canaries.json").write_text(json.dumps({**identity, "sentinels": sentinels,
+        "raw_sha256": canaries.sha(raw), "collection_sha256": canaries.sha(census)}), encoding="utf-8")
+
+    canaries.verify_directory(tmp_path)
+    changed = ET.parse(report)
+    changed.find("testcase/skipped").set("message", "Expected by the test")
+    changed.write(report)
+    with pytest.raises(ValueError, match="Normalization changed a product outcome"):
+        canaries.verify_directory(tmp_path)
+
+
+@pytest.mark.parametrize("hosted", [False, True], ids=["local-xfail", "ci-hosted-raw-failure"])
+def test_real_quarantine_plugin_junit_reaches_trusted_verdict(tmp_path, trusted_result, hosted):
+    shutil.copyfile(ROOT / "tests/quarantine.py", tmp_path / "quarantine.py")
+    today = datetime.now(timezone.utc).date()
+    row = {**quarantine_row(), "added": "2000-01-01", "expires": today.isoformat()}
+    (tmp_path / "quarantine.json").write_text(json.dumps([row]), encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_sample.py").write_text("def test_red():\n    assert False\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("CI_CASE_", "PYTEST_")) and k != "FMUC_CLOUD_TEST_REPORTS"}
+    env.update(PYTHONPATH=os.pathsep.join((str(ROOT), str(ROOT / ".github/scripts"))),
+               PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", TMP=str(tmp_path), TEMP=str(tmp_path))
+    report = tmp_path / "quarantined.xml"
+    # The CI shard runners load hosted_ci, so the plugin keeps the raw failure there; a local run marks it xfail.
+    plugins = ["-p", "hosted_ci", "-p", "quarantine"] if hosted else ["-p", "quarantine"]
+    proc = subprocess.run([sys.executable, "-m", "pytest", *plugins, "-c", "pytest.ini", "-q",
+                           "--basetemp=nested", "--junitxml=" + str(report), "tests/test_sample.py"],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+    case = ET.parse(report).getroot().find(".//testcase")
+    if hosted:
+        assert proc.returncode == 1 and "1 failed" in proc.stdout, proc.stdout + proc.stderr
+        assert case.find("failure") is not None and case.find("skipped") is None
+    else:
+        assert proc.returncode == 0 and "1 xfailed" in proc.stdout, proc.stdout + proc.stderr
+        assert case.find("skipped").get("type") == "pytest.xfail"
+    result, (_, summary, _) = trusted_result("plugin", outcome=report, base_registry=[row])
+    assert result[0] is None and result[1]["passed"]
+    assert f"- {RED}: quarantined-failing".encode() in summary
+
+
+def test_same_pr_quarantine_flake_does_not_hide_new_failure(trusted_result):
+    node = "tests/test_new_feature.py::test_new_feature_works"
+    row = {**quarantine_row(node, "unstable"), "reason": "unstable: recovered on retry", "recovered_runs": ["1"]}
+    result, _ = trusted_result("new", node=node, outcome="failed", retry="failed", candidate_registry=[row])
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + node
+    result, evidence = trusted_result("recovered", node=node, outcome="failed", retry="passed", candidate_registry=[row])
+    assert result[0] is None and result[1]["passed"]
+    proposal, = json.loads(evidence[2]["outside-observations.json"])["proposed_list_entries"]
+    assert (proposal["node"], proposal["status"], proposal["observations"]) == (node, "PROPOSED", ["failed", "passed"])
+
+
+def test_verdict_honours_only_same_class_moves(trusted_result):
+    result, _ = trusted_result("move", outcome="failed", base_kind="baseline", candidate_registry=[quarantine_row()])
+    assert result[0] is None and result[1]["passed"]
+    result, _ = trusted_result("wrong-class", outcome="failed", retry="failed", base_kind="baseline",
+                               candidate_registry=[quarantine_row(kind="cleanup")])
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + RED
+
+
+def test_verdict_honours_only_byte_identical_base_entries(trusted_result):
+    row = quarantine_row()
+    another = quarantine_row(GREEN)
+    result, _ = trusted_result("carried", outcome="failed", base_registry=[another, row], candidate_registry=[row])
+    assert result[0] is None and result[1]["passed"]
+    repacked = json.dumps([row], separators=(",", ":")).encode()
+    result, _ = trusted_result("repacked", outcome="failed", retry="failed", base_registry=[row], candidate_registry=repacked)
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + RED
+
+
+def test_verdict_refuses_known_failure_quarantine_overlap(trusted_result):
+    result, _ = trusted_result("duplicate", outcome="passed", base_kind="baseline", candidate_kind="baseline",
+                               candidate_registry=[quarantine_row(kind="unstable")])
+    assert result == ("Known-failure and quarantine entries must be disjoint: " + RED, None)
+
+
+@pytest.mark.parametrize(("outcome", "retry"), [("passed", None), ("failed", "failed"), ("error", "error"),
+                                                ("failed", "passed")], ids=["passed", "failed", "error", "recovered"])
+def test_empty_quarantine_trusted_verdict_matches_history(trusted_result, outcome, retry):
+    expected = trusted_result("old", old=True, outcome=outcome, retry=retry)
+    actual = trusted_result("new", outcome=outcome, retry=retry)
+    assert actual == expected
+    assert actual[0][1]["passed"] is (outcome == "passed" or retry == "passed")
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+@pytest.mark.parametrize("kind", ["baseline", "cleanup", "baseline-error", "unstable"])
+@pytest.mark.parametrize("outcome", ["passed", "failed", "error", "recovered"])
+def test_main_quarantine_verdict_matches_known_failure_history(trusted_result, event, kind, outcome):
+    execution = {"branch": "main", "event": event, "outcome": "failed" if outcome == "recovered" else outcome,
+                 "retry": "passed" if outcome == "recovered" else None}
+    expected, _ = trusted_result("old", old=True, base_kind=kind, candidate_kind=kind, **execution)
+    actual, _ = trusted_result("new", base_registry=[quarantine_row(kind=kind)], **execution)
+    assert actual == expected
+    if outcome == "passed":
+        assert actual[1]["passed"] is (kind == "unstable" or event == "merge_group")
+    elif outcome == "recovered":
+        assert actual == ("Retry must execute exactly the unlisted first-attempt failed nodes", None)
+    else:
+        assert actual == ("Release/known-skip execution contains a failure or error", None)
+
+
+def test_main_refuses_verified_recovery_outside_known_failures(trusted_result):
+    options = {"branch": "main", "outcome": "failed", "retry": "passed"}
+    expected, _ = trusted_result("old", old=True, **options)
+    actual, _ = trusted_result("new", **options)
+    assert actual == expected == ("Release/known-skip execution contains a failure or error", None)
 
 
 def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
@@ -627,7 +1104,7 @@ def test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file(tmp_path):
     repo.mkdir()
     for name in (".github/scripts/hosted_ci.py", "ci/make_known_failures.py", ".github/scripts/canary_evidence.py",
                  ".github/scripts/node_census.py", ".github/scripts/latest_reports.py",
-                 "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
+                 "ci/quarantine_registry.py", "ci/hosted-env-exceptions.json", "ci/removed-tests.json"):
         destination = repo / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
