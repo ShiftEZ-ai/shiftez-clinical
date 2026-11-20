@@ -750,12 +750,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_insights_system.py::test_configuration_opens_on_the_setup_guide_until_setup_is_done",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_kept_replies_live.py::test_a_people_change_on_home_forgets_every_kept_reply",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1260,12 +1254,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_setup_guide.py::test_coordinator_keeps_data_health_beside_tags_on_a_phone",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_source_parity.py::test_a_stored_series_with_the_retired_close_switch_says_so_read_only_and_keeps_it",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1363,12 +1351,6 @@
     {
       "class": "baseline",
       "node": "tests/test_browser_view_settings.py::test_toolbar_order_and_saved_view_journey",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_w3_configuration.py::test_configuration_settings_are_admin_only[case-cneflnfndhjgkipajclafdpoelocnealdjgepjbfcahmoipmfmijaonmbdpghlfh]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
