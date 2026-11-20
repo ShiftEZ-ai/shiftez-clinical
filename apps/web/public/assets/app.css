@@ -2142,7 +2142,7 @@ th .bulk-check,td>.bulk-check{margin:0}
   .topbar .planner-bar>.grow{display:none}
   .topbar.has-planner>.mobile-menu{order:0}
   .topbar .planner-bar>.rota-switcher{order:1;flex:1 1 0;min-width:0}
-  .topbar .planner-bar>.rota-status{order:2}
+  .topbar .planner-bar>:is(.rota-status,.baseline-drift){order:2;flex:none}  /* row 1: the draft's stage and what changed under it */
   .topbar.has-planner>.actions{order:3}
   /* Row 2 (after a line break): icon + count pills, then icon-only actions (fitRow's 'tightest' step) */
   .topbar.has-planner{row-gap:2px}
