@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from operator import itemgetter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import defer, object_session
 from . import models as m
 from .serialization import json_value, record, records_many, rows_many, shift_link_rows
@@ -16,6 +17,7 @@ from packages.domain.conditions import with_tags
 from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
+from packages.domain.serialization import json_default
 from packages.domain.validation import ENGINE_VERSION
 from .settings import Settings, quota_policy_limit
 
@@ -195,8 +197,18 @@ def shift_records(db, rows, *, include_participants=True) -> list[dict]:
     by_person = itemgetter('person_id')
     for assignments in people.values():
         assignments.sort(key=by_person)
-    return [{**(json_value(dict(row)) if isinstance(row, Mapping) else record(row)),
-             "service_ids": sorted(services[sid]), "participants": people[sid]} for row, sid in zip(rows, ids)]
+    result = []
+    for row, sid in zip(rows, ids):
+        if isinstance(row, RowMapping):
+            # Selected columns already own their decoded JSON. Format only the typed dates.
+            shift = {key: json_default(value) if isinstance(value, date) else value for key, value in row.items()}
+        elif isinstance(row, Mapping):
+            shift = json_value(dict(row))
+        else:
+            shift = record(row)
+        shift.update(service_ids=sorted(services[sid]), participants=people[sid])
+        result.append(shift)
+    return result
 
 
 def shift_record(db, row) -> dict:
