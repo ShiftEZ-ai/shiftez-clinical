@@ -666,6 +666,7 @@ def test_personal_pattern_department_month_cpu_budget(personal_pattern_departmen
 @pytest.mark.cpu_budget
 def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h, monkeypatch, request):
     from packages.domain import generation
+    from packages.domain.score import schedule_score
     from tests.test_source_parity_staffing import policy
 
     data, info = department(h, 11, people=80, days=14, rules='full', leave_rate=0.05, clinics=4)
@@ -705,7 +706,14 @@ def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h
         'allowance_seconds': allowance, 'elapsed_seconds': elapsed, 'status': result['status']}
     greedy_deficit = generation.deficit_score(placements[0]['validation'])
     repaired_deficit = generation.deficit_score(validation)
-    measurement.update(greedy_deficit=greedy_deficit, repaired_deficit=repaired_deficit,
+    greedy_pairs, repaired_pairs = (
+        {(a['shift_id'], a['participant']['person_id']) for a in proposal['additions']}
+        for proposal in (placements[0], result))
+    moved = len(greedy_pairs - repaired_pairs)
+    greedy_score = schedule_score(apply(data, placements[0]), placements[0]['validation'])['components']
+    repaired_score = result.get('summary', {}).get('score_saved', {}).get('components', {})
+    measurement.update(greedy_deficit=greedy_deficit, repaired_deficit=repaired_deficit, moved=moved,
+                       greedy_score=greedy_score, repaired_score=repaired_score,
                        placement_issues=[f['code'] for f in placements[0].get('issues', ())])
     request.node.user_properties.append(('greedy_required_cover_scale', json.dumps(measurement)))
     assert placements[0]['status'] == 'candidate_with_gaps', measurement
@@ -714,6 +722,9 @@ def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h
     assert result['status'] == 'candidate_feasible', measurement
     assert result['unmet_requirements'] == [] and validation['valid'], measurement
     assert result['required_cover_repair']['solver_status'] == 'FEASIBLE'
+    assert result['required_cover_repair']['moved'] == moved <= 2, measurement
+    for component in ('fairness', 'rules'):
+        assert repaired_score[component]['value'] >= greedy_score[component]['value'], measurement
     assert elapsed <= allowance + _budget(5), measurement
     assert data == original
 

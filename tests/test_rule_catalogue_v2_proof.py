@@ -264,6 +264,7 @@ def test_strict_solve_passes_cancellation_and_budget_to_both_engines(monkeypatch
     def run(snapshot, seconds, *args, **kwargs):
         calls.append(seconds)
         assert kwargs.get('cancelled') is cancelled
+        assert kwargs.get('deterministic') is True
         return {'status': 'candidate_feasible', 'not_applied': []}
     monkeypatch.setattr(cp_sat, 'generate', run)
     monkeypatch.setattr(generation, 'generate', run)

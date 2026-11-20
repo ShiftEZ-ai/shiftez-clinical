@@ -251,9 +251,10 @@ def test_catalogue_solve_proof_keeps_each_greedy_run_within_ninety_seconds(h, mo
 
     workspace = h.workspace()
     calls = []
-    def greedy(snapshot, time_budget_seconds=None):
+    def greedy(snapshot, time_budget_seconds=None, *, deterministic=False):
         calls.append(time_budget_seconds)
         assert time_budget_seconds == 90
+        assert deterministic is True
         return {'status': 'candidate_feasible', 'not_applied': GREEDY_NOT_APPLIED}
     monkeypatch.setattr(generation, 'generate', greedy)
     monkeypatch.setattr(cp_sat, 'generate', lambda *args, **kwargs: {'status': 'candidate_feasible'})

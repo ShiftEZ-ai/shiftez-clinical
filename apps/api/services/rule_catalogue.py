@@ -96,7 +96,7 @@ def _solve_proof(db, actor, groups, proof):
             r["fill_status"] = solved[0].get("status")
             r["cp_sat_equal"] = r["cp_sat_equal"] and _result(solved[0]) == _result(solved[1])
         r["cp_sat_assignments"] = len(_result(solved[0])[1])
-        greedy = [generation.generate(copy.deepcopy(d), 90) for d in (before, after)]
+        greedy = [generation.generate(copy.deepcopy(d), 90, deterministic=True) for d in (before, after)]
         r["greedy_status"], r["greedy_assignments"] = greedy[0].get("status"), len(_result(greedy[0])[1])
         r["greedy_equal"] = _greedy_same(greedy)
         r["greedy_not_applied"] = greedy[0]['not_applied']
@@ -105,7 +105,7 @@ def _solve_proof(db, actor, groups, proof):
         refilled = [solve(d, diagnostic_proposal=True) for d in empty]
         r["refill_status"], r["refill_assignments"] = refilled[0].get("status"), len(_result(refilled[0])[1])
         r["refill_equal"] = _result(refilled[0]) == _result(refilled[1])
-        greedy = [generation.generate(copy.deepcopy(d), 90) for d in empty]
+        greedy = [generation.generate(copy.deepcopy(d), 90, deterministic=True) for d in empty]
         r["refill_greedy_status"], r["refill_greedy_assignments"] = greedy[0].get("status"), len(_result(greedy[0])[1])
         r["refill_greedy_equal"] = _greedy_same(greedy)
         r["refill_greedy_not_applied"] = greedy[0]['not_applied']

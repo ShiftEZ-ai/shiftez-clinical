@@ -43,6 +43,8 @@ def test_greedy_repairs_required_cover_when_both_existing_orders_strand_a_seat(h
     assert result['algorithm_version'] == generation.ALGORITHM_VERSION
     assert result['required_cover_repair']['solver_status'] == 'FEASIBLE'
     assert result['required_cover_repair']['search_stop']['reason'] == 'optimal'
+    assert result['required_cover_repair']['moved'] == 1
+    assert any('moved 1 greedy suggestion.' in warning for warning in result['warnings'])
     assert 'search_stop' not in result and 'first_solution_seconds' not in result
     assert result['optimality_proven'] is False
     assert result['unmet_requirements'] == []
@@ -51,8 +53,9 @@ def test_greedy_repairs_required_cover_when_both_existing_orders_strand_a_seat(h
                         data['fingerprint'], None, input_fingerprint=data['fingerprint']) is False
     assert [s['participants'][0]['person_id'] for s in draft['shifts']] == [people[0], people[2], people[1]]
     assert data == original
-    repeated = generation.generate(data, 10)
-    assert (repeated['additions'], repeated['removals']) == (result['additions'], result['removals'])
+    for deterministic in (False, True):
+        repeated = generation.generate(data, 10, deterministic=deterministic)
+        assert (repeated['additions'], repeated['removals']) == (result['additions'], result['removals'])
 
 
 def test_greedy_uses_frozen_search_time_unless_an_explicit_budget_is_supplied(monkeypatch):
@@ -104,6 +107,66 @@ def test_failed_required_cover_repair_retains_the_validated_partial_and_its_gaps
     assert result['status'] == ('unknown_time_limit' if repair_status in {'unknown_time_limit', 'cancelled'}
                                 else 'candidate_with_gaps')
     assert result['warnings']
+
+
+def test_required_cover_repair_rejects_an_invalid_candidate(h, monkeypatch):
+    from packages.domain import cp_sat
+
+    data, _ = stranding_world(h)
+    partial = generation._generate_with_redistribution(data, 5)
+    invalid = generation._generate(data, 0)
+    assert not invalid['validation']['valid'] and invalid['additions'] != partial['additions']
+    monkeypatch.setattr(cp_sat, 'generate', lambda *args, **kwargs: {**invalid, 'status': 'candidate_feasible'})
+    result = generation.generate(data, 10)
+    assert result['status'] == 'candidate_with_gaps'
+    for key in ('additions', 'removals', 'validation', 'unmet_requirements'):
+        assert result[key] == partial[key]
+    assert 'required_cover_repair' not in result
+    assert any('found no valid complete rota' in warning for warning in result['warnings'])
+
+
+def test_required_cover_repair_can_use_a_desired_seat(h, monkeypatch):
+    from packages.domain.validation import evaluate
+
+    data, people = stranding_world(h)
+    partial = generation._generate_with_redistribution(data, 5)
+    original = data['shifts'][-1]
+    duty = h.configure('assignment_types', {'name': 'Synthetic desired duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 0, 'target': 1, 'maximum': 1}]}})['record']
+    sid = str(uuid.uuid4())
+    data['types'][duty['id']] = duty
+    data['focus_ids'].append(sid)
+    data['shifts'].append(dict(original, id=sid, assignment_type_id=duty['id'], type_snapshot=duty))
+    data['policies'].append(policy(data, {'kind': 'restriction'},
+                                 {'assignment_type_id': duty['id'], 'person_ids': people[:2]}))
+    # Start with a validated partial that used the person needed for repair on a desired seat.
+    partial['additions'].append({'shift_id': sid, 'participant': {'id': str(uuid.uuid4()), 'shift_id': sid,
+        'person_id': people[2], 'start': original['start'], 'end': original['end'], 'participation': 'staff',
+        'overtime': False, 'revision': 1}})
+    partial['validation'] = evaluate(apply(data, partial))
+    partial['unmet_requirements'] = generation.unmet_requirements(partial['validation'])
+    assert generation.deficit_score(partial['validation']) == (1, 0, 0)
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *args, **kwargs: copy.deepcopy(partial))
+    result = generation.generate(data, 10)
+    assert result['status'] == 'candidate_feasible'
+    assert result['validation']['valid']
+    assert generation.deficit_score(result['validation']) == (0, 0, 1)
+    assert result['unmet_requirements'] and all(f['code'] == 'COVERAGE_TARGET' for f in result['unmet_requirements'])
+
+
+def test_required_cover_repair_skips_many_open_places(h, monkeypatch):
+    from packages.domain import cp_sat
+
+    data, _ = stranding_world(h)
+    for shift in data['shifts']:
+        shift['type_snapshot']['definition']['requirements'][0].update(minimum=2, maximum=2)
+    data['planning_population'] = {s['id']: [] for s in data['shifts']}
+    monkeypatch.setattr(cp_sat, 'generate', lambda *args, **kwargs: pytest.fail('Large shortfall must skip repair'))
+    result = generation.generate(data, 10)
+    assert result['status'] == 'candidate_with_gaps'
+    assert result['unmet_requirements']
+    assert generation.deficit_score(result['validation'])[0] == 6
+    assert any('skipped because 6 required places' in warning for warning in result['warnings'])
 
 
 def test_expired_greedy_budget_keeps_partial_and_lists_missing_required_places(h):

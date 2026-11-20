@@ -549,7 +549,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     tolerated.update(citation_finding_key(f) for f in [*outside, *protected_conflicts])
     kept_sessions = {f['shift_id'] for f in protected_conflicts}
     # Greedy repair uses the original generation boundaries and can move its own suggestions.
-    generating = not feasibility_only or snapshot.get('_greedy_required_cover', False)
+    greedy_repair = snapshot.get('_greedy_required_cover', False)
+    generating = not feasibility_only or greedy_repair
     greedy_placements = snapshot.get('_greedy_placements', frozenset())
     if generating:
         # Fixed usual pools cannot substitute absent members; retain only existing gaps as visible diagnostics.
@@ -678,7 +679,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     participant.update({k: original[pid][k] for k in ('start', 'end', 'segments')})
                 x = model.new_bool_var(f'{sid}:{pid}')
                 decisions.add((sid, pid))
-                if pid in original or (sid, pid) in greedy_placements:
+                if greedy_repair:
+                    model.add_hint(x, int((sid, pid) in greedy_placements))
+                elif pid in original:
                     model.add_hint(x, 1)
             else:
                 participant, x = {**original[pid]}, model.new_constant(1)
@@ -1171,6 +1174,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     append_coverage_score_row(sum(choices[sid, pid] for pid in present_at(shift, a, b, True)),
                         interval_requirements, (b - a) // timedelta(microseconds=1))
             continue
+        repair_targets = {}
         supervision = definition.get('supervision')
         needs_pairing = supervision and (bool(attachments_on(shift)) or supervision.get('require_pairing') or any(
             (p['definition']['rule']['kind'] in {'supervision_limit', 'spread_evenly'} or
@@ -1308,7 +1312,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         limit(sum(counted.values()), rule['maximum'] + extra, policy, len(counted), minutes, subject=sid,
                               people=counted, sessions=[s['id'] for s in group], start=a, end=b)
             interval_requirements = []
-            for r in definition['requirements']:
+            for i, r in enumerate(definition['requirements']):
                 if not (start + timedelta(minutes=r['from_minute']) <= a and b <= (
                         start + timedelta(minutes=r['to_minute']) if r.get('to_minute') is not None else end)):
                     continue
@@ -1324,13 +1328,18 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 if r['maximum'] is not None:
                     model.add(total <= r['maximum']).with_name('duty:' + sid)
                 if r['target'] is not None and r['target'] > r['minimum']:
-                    deficit = model.new_int_var(0, r['target'], 'desired_cover')
-                    model.add(cover + deficit >= r['target'])
-                    desired_coverage.append(minutes * deficit)
-                    if greedy_placements and sid in selected:
-                        placed = sum((sid, pid) in greedy_placements for pid in available)
-                        if placed > r['minimum']:
-                            model.add(cover >= min(placed, r['target'])).with_name('duty:' + sid)
+                    if greedy_repair:
+                        kept_target = min(r['target'], sum((sid, pid) in greedy_placements for pid in available))
+                        if kept_target > r['minimum']:
+                            if i not in repair_targets:
+                                # Count the worst loss once across splits of this configured target.
+                                repair_targets[i] = model.new_int_var(0, r['target'], 'dropped_desired_cover')
+                                desired_coverage.append(repair_targets[i])
+                            model.add(cover + repair_targets[i] >= kept_target)
+                    else:
+                        deficit = model.new_int_var(0, r['target'], 'desired_cover')
+                        model.add(cover + deficit >= r['target'])
+                        desired_coverage.append(minutes * deficit)
                 seats = defaultdict(list)
                 for clause in r['capabilities']:
                     eligible = [pid for pid in available if clause['capability_id'] in caps[pid]]
@@ -1603,9 +1612,19 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     if diagnostic_proposal:
         result['diagnostic_objective_order'] = objective_order
     if feasibility_only:
-        objectives = [[]]
-        # The structural proof captures the same zero objective as the feasibility search.
-        model.minimize(0)
+        if greedy_repair:
+            moves = [1 - choices[pair] for pair in sorted(greedy_placements & decisions)]
+            additions = [choices[pair] for pair in sorted(decisions - greedy_placements)]
+            # Each weight exceeds the full range of all lower priorities. Break ties by adding only needed work.
+            move_weight = len(additions) + 1
+            desired_weight = (len(moves) + 1) * move_weight
+            objectives = [[desired_weight * cp_model.LinearExpr.sum(desired_coverage),
+                           move_weight * cp_model.LinearExpr.sum(moves), *additions]]
+            model.minimize(cp_model.LinearExpr.sum(objectives[0]))
+        else:
+            objectives = [[]]
+            # The structural proof captures the same zero objective as the feasibility search.
+            model.minimize(0)
     # Compile score bounds with the full domains; only search mode fixes the dormant deficits.
     if not diagnostic_proposal:
         for index in diagnostic_domains:
@@ -2075,7 +2094,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     # Every rule is in the model in both passes; the shortlist only narrows who the first pass may choose.
     control.phase('preparation')
     width = options.shortlist_width
-    chances, shortlisted = defaultdict(int), set()
+    chances, shortlisted = defaultdict(int), set(snapshot.get('_greedy_placements', ()))
     for shift in sorted(shifts, key=lambda s: (aware(s['start']), s['id'])):
         control.check()
         sid = shift['id']

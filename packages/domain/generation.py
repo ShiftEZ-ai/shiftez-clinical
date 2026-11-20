@@ -476,7 +476,14 @@ def _sweep_modes(baseline):
     return (True, False) if any(deficit_score(baseline)[:-1]) else (False,)
 
 
-def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None) -> dict:
+def _proposal_placements(snapshot, proposal):
+    removed = {(r['shift_id'], r['assignment_id']) for r in proposal['removals']}
+    kept = {(s['id'], p['person_id']) for s in snapshot['shifts'] for p in s['participants']
+            if (s['id'], p['id']) not in removed}
+    return kept | {(a['shift_id'], a['participant']['person_id']) for a in proposal['additions']}
+
+
+def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None, deterministic=False) -> dict:
     placement_budget = time_budget_seconds
     if placement_budget is None:
         from packages.contracts.schemas import GenerationOptions
@@ -488,27 +495,30 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
     result = _generate_with_redistribution(snapshot, placement_budget, cancelled=cancelled)
     finished_placement = time.monotonic()
     remaining = deadline - finished_placement
-    if (result.get('status') == 'candidate_with_gaps' and finished_placement < started + placement_budget
-            and deficit_score(result['validation'])[0] and not (cancelled and cancelled())):
+    open_required = deficit_score(result['validation'])[0] if result['status'] == 'candidate_with_gaps' else 0
+    # shortcut: repair up to 4 open places (1 repaired in 0.01-3.6 s; 36-38 took 36-40 s); revisit with larger successful repairs.
+    if open_required > 4:
+        result.setdefault('warnings', []).append(
+            f'Required-cover repair skipped because {open_required:g} required places remain open.')
+    elif open_required and finished_placement < started + placement_budget and not (cancelled and cancelled()):
         try:
             from .cp_sat import generate as required_cover
             from .solver_control import SolverControl
             control = SolverControl(cancelled=lambda: time.monotonic() >= deadline or bool(cancelled and cancelled()))
-            removed = {(r['shift_id'], r['assignment_id']) for r in result['removals']}
-            placements = {(s['id'], p['person_id']) for s in snapshot['shifts'] for p in s['participants']
-                          if (s['id'], p['id']) not in removed}
-            placements.update((a['shift_id'], a['participant']['person_id']) for a in result['additions'])
+            placements = _proposal_placements(snapshot, result)
             repaired = required_cover({**snapshot, '_greedy_required_cover': True, '_greedy_placements': placements},
-                                      remaining, workers=1, feasibility_only=True, _control=control)
+                                      remaining, workers=1, feasibility_only=True, deterministic=deterministic, _control=control)
             repair_timed_out = repaired.get('status') in {'cancelled', 'unknown_time_limit', 'needs_more_time'}
             if repair_timed_out and control.validated_result is not None:
                 repaired = {**control.validated_result, 'solver_status': 'FEASIBLE', 'score_completed': False}
+            repair_timed_out = repair_timed_out or repaired.get('search_stop', {}).get('reason') == 'time_limit'
         except ImportError:
             repaired = {'status': 'unavailable'}
-        valid_repair = repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid')
-        if valid_repair and deficit_score(repaired['validation'])[-1] <= deficit_score(result['validation'])[-1]:
+            repair_timed_out = False
+        if repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid'):
+            moved = len(placements - _proposal_placements(snapshot, repaired))
             result = repaired
-            result['required_cover_repair'] = {'algorithm_version': repaired['algorithm_version'],
+            result['required_cover_repair'] = {'algorithm_version': repaired['algorithm_version'], 'moved': moved,
                                                'solver_status': repaired['solver_status'],
                                                **{key: result.pop(key) for key in (
                                                    'phase_timings', 'first_solution_seconds', 'search_elapsed_seconds',
@@ -518,15 +528,14 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
             result['unmet_requirements'] = unmet_requirements(result['validation'])
             if repair_timed_out:
                 result['status'] = 'unknown_time_limit'
+            suggestions = 'suggestion' if moved == 1 else 'suggestions'
             result.setdefault('warnings', []).append(
-                'Required cover was repaired with CP-SAT. Advisory preferences were not optimized by the repair.')
+                f'Required cover was repaired with CP-SAT. The repair moved {moved} greedy {suggestions}.')
         else:
-            timed_out = repaired.get('status') in {'unknown_time_limit', 'needs_more_time', 'cancelled'}
-            if timed_out:
+            if repair_timed_out:
                 result['status'] = 'unknown_time_limit'
-            reason = ('was cancelled' if cancelled and cancelled() else 'ran out of time' if timed_out
+            reason = ('was cancelled' if cancelled and cancelled() else 'ran out of time' if repair_timed_out
                       else 'is unavailable' if repaired.get('status') == 'unavailable'
-                      else 'would leave more desired cover or quotas unfilled' if valid_repair
                       else 'found no valid complete rota')
             result.setdefault('warnings', []).append(
                 f'Required-cover repair {reason}; the best partial proposal is retained.')

@@ -147,7 +147,7 @@ def _solve(before, after, seconds, *, cancelled=None):
 
     solvers = {
         'cp_sat': lambda d: cp_sat.generate(copy.deepcopy(d), seconds, 1, deterministic=True, cancelled=cancelled),
-        'greedy': lambda d: generation.generate(copy.deepcopy(d), seconds, cancelled=cancelled),
+        'greedy': lambda d: generation.generate(copy.deepcopy(d), seconds, cancelled=cancelled, deterministic=True),
     }
     out = {}
     for name, run in solvers.items():
