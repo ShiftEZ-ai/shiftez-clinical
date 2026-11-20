@@ -115,13 +115,13 @@ def run_pr_verdict(tmp_path, monkeypatch, current, runs, options):
         "current": current, "base": current, "base_sha": base, "replicas": [1], "bootstrap": False,
     })
     monkeypatch.setattr(maker, "preflight", lambda *args, **kwargs: None)
-    monkeypatch.setattr(maker, "collect_reports", lambda *args: runs)
+    monkeypatch.setattr(maker, "collect_reports", lambda *args, **kwargs: runs)
     monkeypatch.setattr(maker, "load_frozen_baseline", lambda path: (set(), "fixture"))
     monkeypatch.setattr(maker, "load_env_exceptions", lambda path: (set(), "fixture"))
     monkeypatch.setattr(maker, "load_root_evidence", lambda path, baseline_sha: (
         {"runs": current["root_runs"], "counts": {"cleanup": 0}}, current["root_evidence_sha256"],
     ))
-    monkeypatch.setattr(maker, "report_outside", lambda *args: None)
+    monkeypatch.setattr(maker, "report_outside", lambda *args, **kwargs: None)
     maker.main(**options)
     return json.loads((tmp_path / "verdict.json").read_bytes())
 

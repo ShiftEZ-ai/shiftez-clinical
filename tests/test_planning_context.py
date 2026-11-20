@@ -147,6 +147,33 @@ def test_evidence_binds_exact_observation_and_fingerprint_pages_without_private_
     post(h, w, f"observations/{observation['id']}/evidence", status=409)
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('late_rule', [False, True], ids=['control', 'late-rule'])
+def test_planning_context_accepts_current_draft_fingerprint(h, late_rule):
+    w = h.shift(h.workspace(), people=[])['workspace']
+    before = h.detail(w)['current_fingerprint']
+    if late_rule:
+        h.policy({'kind': 'block_quota', 'starts_on': w['starts_on'], 'ends_on': w['ends_on'],
+                  'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
+                 {'person_id': h.seed['people'][0]})
+        h.command('coordinator', 'workspace.validate', {'reason': 'Check current draft rules'}, w['id'], w['revision'])
+
+    path = f"/api/workspaces/{w['id']}"
+    current = h.detail(w)['current_fingerprint']
+    assert (current != before) == late_rule
+    assert h.get('coordinator', path + '?view=compact')['current_fingerprint'] == current
+    observation = h.get('coordinator', path + '/summary')['observations'][0]
+    payload = {'expected_fingerprint': current, 'session_ids': [observation['shift_id']]}
+    client = h.client('coordinator')
+    readiness = client.post(path + '/readiness', json=payload)
+    evidence = client.post(path + f"/observations/{observation['id']}/evidence", json=payload)
+    assert (readiness.status_code, evidence.status_code) == (200, 200), (readiness.json(), evidence.json())
+    for response in (readiness, evidence):
+        assert response.json()['fingerprint'] == current
+        assert response.json()['checked']
+    assert evidence.json()['observation'] == observation
+
+
 def test_population_and_exclusion_details_use_actual_dates_and_protected_context(h):
     from apps.api.services.planning_context import candidate, exclusion
     from packages.domain.validation import index_person_rows

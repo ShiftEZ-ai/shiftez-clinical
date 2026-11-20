@@ -7,6 +7,7 @@ the shared issue marker (issue_marker.ts) in the supervisor's slot: a triangle f
 and popover (hover, keyboard, tap; one Fix or Why); no dashed outline and no words in a dense view, said once. Words
 show only in the session panel and the person card. Checked in Week and Month at 1440 and 390, light and dark, and in
 Day, List, the phone agenda, the session panel and the person card. Screenshots: TEAM_BOX_SHOTS (a folder) when set."""
+from tests.historical_staffing import retained_staffing
 from itertools import permutations
 import os
 from pathlib import Path
@@ -61,7 +62,10 @@ def fixture(h):
                             (2, paired, [(T5, None)]),                                   # needs supervisor
                             (3, small, [(SUP2, None), (T3, None)]),                      # unpaired
                             (4, small, [(SUP2, None), (T2, SUP)])]:                      # supervisor elsewhere
-        w = h.shift(w, *day(n), typ=kind, people=who(n, *people))['workspace']
+        participants = who(n, *people)
+        result = (retained_staffing(h, w, *day(n), typ=kind, people=participants) if n in (1, 2)
+                  else h.shift(w, *day(n), typ=kind, people=participants))
+        w = result['workspace']
     w = h.lifecycle(w, 'validate')['workspace']
     return w, ids
 
@@ -456,7 +460,7 @@ def test_open_place_marker_and_header_roll_ups(browser, live_server, h):
     # More trainees needing a supervisor in one row than a popover lists.
     for n in range(ISSUE_LIST_LIMIT + 1):
         a, b = day(n, '18:00', '20:00')
-        w = h.shift(w, a, b, typ=paired, people=[{'person_id': ids[T4], 'start': a, 'end': b, 'participation': 'trainee'}])['workspace']
+        w = retained_staffing(h, w, a, b, typ=paired, people=[{'person_id': ids[T4], 'start': a, 'end': b, 'participation': 'trainee'}])['workspace']
     w = h.lifecycle(w, 'validate')['workspace']
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
     try:

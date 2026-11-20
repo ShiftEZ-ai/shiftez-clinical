@@ -1879,8 +1879,11 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
                     manifest = stored_result['generation_manifest']
                 elif frozen is not None:
                     manifest = frozen.get('generation_manifest')
+                elif 'run_context' in (metadata.get('input_snapshot') or {}):
+                    # Modern metadata records missing manifests; reuse loaded input without a deferred read.
+                    manifest = (state.dict.get('input_snapshot') or {}).get('generation_manifest')
                 else:
-                    # Legacy rows predate generation_manifest in read_metadata; recover it once from the frozen input.
+                    # Legacy metadata lacks the input marker; recover the manifest once from the frozen input.
                     manifest = (job.input_snapshot or {}).get('generation_manifest')
                 if manifest:
                     result_metadata = {**(result_metadata or {}),

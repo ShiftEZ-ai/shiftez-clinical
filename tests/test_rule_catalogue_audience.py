@@ -154,9 +154,13 @@ def test_concurrent_same_rights_readers_wait_for_one_durable_build(h, monkeypatc
     assert bodies[0] == bodies[1] == bodies[2]
 
 
-@pytest.mark.parametrize('first_role', ['coordinator', 'credentialer'])
+@pytest.mark.parametrize('first_role', [role for role in s.PERMISSIONS['rules.read']
+                                      if role in {'coordinator', 'auditor'}])
 def test_different_rights_have_separate_bodies_in_both_read_orders(h, monkeypatch, first_role):
-    workspace = h.workspace('Planner-only source')
+    h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
+    workspace = h.command('coordinator', 'workspace.create', {
+        'name': 'Planner-only source', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+        'visibility': 'private', 'purpose': 'sandbox'})['workspace']
     builds = []
     original = rule_catalogue._catalogue_uncached
 
@@ -165,17 +169,18 @@ def test_different_rights_have_separate_bodies_in_both_read_orders(h, monkeypatc
         return original(db, actor, *args, **kwargs)
 
     monkeypatch.setattr(rule_catalogue, '_catalogue_uncached', counted)
-    other = 'credentialer' if first_role == 'coordinator' else 'coordinator'
+    other = 'auditor' if first_role == 'coordinator' else 'coordinator'
     bodies = {role: h.get(role, PATH) for role in (first_role, other)}
     assert len(builds) == 2
     assert workspace['id'] in {row['workspace_id'] for row in bodies['coordinator']['source_options']}
-    assert bodies['credentialer']['source_options'] == [
+    assert bodies['auditor']['source_options'] == [
         {'workspace_id': None, 'label': 'Live', 'captured_at': None, 'changed': 0}]
     for role in (first_role, other):
         assert h.get(role, PATH) == bodies[role]
     assert len(builds) == 2
-    denied = h.client('staff').get(PATH)
-    assert denied.status_code == 403 and 'approved_by_name' not in denied.text
+    for role in ('staff', 'credentialer'):
+        denied = h.client(role).get(PATH)
+        assert denied.status_code == 403 and 'approved_by_name' not in denied.text
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
