@@ -944,6 +944,48 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
     return publications, query
 
 
+def _supplement_shift_catalogue(db, data, live, shifts, *, published=None):
+    locations, services = data['locations'], data['services']
+    neighbour = published is not None
+    issued = {}
+    if published:
+        needed = {published[row['workspace_id']].id for row in shifts if row['workspace_id'] in published
+                  and (row['location_id'] not in locations or any(sid not in services for sid in row['service_ids']))}
+        if needed:
+            p = m.Publication
+            issued = {wid: (places or {}, clinics or {}) for wid, places, clinics in db.execute(
+                select(p.workspace_id, p.snapshot['locations'], p.snapshot['services']).where(p.id.in_(needed)))}
+
+    # Preserve local live checks. Fill neighbour gaps from issued facts so subsequent catalogue edits
+    # cannot reinterpret those sessions. Legacy evidence can fall back to the current catalogue.
+    seen = {key: set() for key in ('types', 'locations', 'services')}
+    for shift in shifts:
+        frozen_type = (shift.get('type_snapshot') or {}) if neighbour else {}
+        issued_places, issued_services = issued.get(shift['workspace_id'], ({}, {}))
+        type_id = shift['assignment_type_id']
+        for key, ids, frozen in (
+            ('types', [type_id], {type_id: frozen_type} if frozen_type.get('department_id') else {}),
+            ('locations', [shift['location_id']], issued_places),
+            ('services', shift['service_ids'], issued_services),
+        ):
+            for ident in ids:
+                if ident in seen[key] or (neighbour and ident in data[key]):
+                    continue
+                row = frozen.get(ident) or live[key].get(ident)
+                if row is None:
+                    continue
+                data[key][ident] = json_value(row)
+                seen[key].add(ident)
+                if neighbour and key == 'locations':
+                    parent_id = row.get('parent_id')
+                    while parent_id and parent_id not in locations:
+                        parent = issued_places.get(parent_id) or live['locations'].get(parent_id)
+                        if parent is None:
+                            break
+                        locations[parent_id] = json_value(parent)
+                        parent_id = parent.get('parent_id')
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -960,6 +1002,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
     live_inputs = shared_inputs
+    own = workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts
     if not current_scheduling:
         from .workspace_baselines import LIVE_VALIDITY_SOURCES, projection as baseline_projection
         baseline, verified_inputs = _verified_baseline(db, workspace)
@@ -968,38 +1011,15 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             # private top-level branch containers while json_value copies records.
             saved_inputs = _baseline_inputs_view(verified_inputs)
             validity_baseline = {key: saved_inputs.get(key) or {} for key in LIVE_VALIDITY_SOURCES}
-            # Drafts keep the captured department inputs even when callers prepared a live shared-input batch.
-            # A draft may add a local duty after capture. Keep only the referenced
-            # catalogue rows needed to interpret that local content. The captured
-            # policy/configuration is the basis for the overlay below.
-            own_ids = list(db.scalars(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)))
-            if own_ids:
-                refs = db.execute(select(m.Shift.assignment_type_id, m.Shift.location_id)
-                                  .where(m.Shift.id.in_(own_ids))).all()
-                type_ids = {row[0] for row in refs}
-                location_ids = {row[1] for row in refs}
-                service_ids = set(db.scalars(select(m.ShiftService.service_id).where(m.ShiftService.shift_id.in_(own_ids))))
+            # Retain captured policies while making the local catalogue available to policy and validity checks.
+            if own:
+                _supplement_shift_catalogue(db, saved_inputs, live_inputs, own)
                 # Baselines freeze governed inputs, not only people already assigned in a draft.
                 # The prepared phase payload already contains every organisation person.
-                current_people = (live_inputs or {}).get('people') or {}
-                people_ids = set(current_people)
-                catalogue_inputs = {
-                    key: {row.id: record(row) for row in db.scalars(select(cls).where(cls.id.in_(ids)))}
-                    for key, cls, ids in (("types", m.AssignmentType, type_ids), ("locations", m.Location, location_ids),
-                                          ("services", m.Service, service_ids)) if ids
-                }
-                if people_ids and workspace.status not in {"draft", "submitted", "approved"}:
-                    catalogue_inputs['people'] = {ident: json_value(row) for ident, row in current_people.items()}
-                for key, ids in (("types", type_ids), ("locations", location_ids), ("services", service_ids), ("people", people_ids)):
-                    saved = dict(saved_inputs.get(key) or {})
-                    current = catalogue_inputs.get(key) or {}
-                    saved.update({ident: current[ident] for ident in ids if ident in current})
-                    saved_inputs[key] = saved
-                shared_inputs = saved_inputs
-            else:
-                shared_inputs = saved_inputs
+                if workspace.status not in {"draft", "submitted", "approved"}:
+                    saved_inputs['people'].update(live_inputs['people'])
             from .workspace_baselines import live_safety_inputs
-            shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
+            shared_inputs = live_safety_inputs(db, workspace, saved_inputs, current=live_inputs,
                                               include_mandatory=bool(draft_rules) or current_mandatory,
                                               validity_baseline=validity_baseline)
             mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
@@ -1257,7 +1277,6 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     from .services.schedule import in_force_shifts
     from packages.contracts.schemas import GenerationOptions
     scoring = GenerationOptions.model_validate(department_settings.get('generation_defaults') or {}).scoring
-    own = workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts
     if own_publication is not None and own_publication.effective_until:
         # A published rota partly replaced by a later one: only the days it is still in force.
         own = in_force_shifts(own_publication, own, org.timezone)
@@ -1293,6 +1312,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if baseline is not None:
+        _supplement_shift_catalogue(db, result, live_inputs, external, published=published)
     from .services.published_changes import staged_availability
     result['availability'] += staged_availability(db, workspace)
     # All snapshot consumers below are evaluation entry points (fairness, rule-map,
