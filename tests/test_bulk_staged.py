@@ -21,6 +21,12 @@ def staged_change(h):
     return row, h.command("coordinator", "bulk.stage", {"payload": payload})["staged"]
 
 
+def test_reopen_missing_staged_change_returns_not_found(h):
+    response = h.client("coordinator").post(f"/api/bulk/staged/{uuid4()}/reopen")
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
 def test_staged_changes_are_owner_only_and_reopen_rechecks_without_saving(h):
     row, staged = staged_change(h)
     mine = h.get("coordinator", "/api/bulk/staged")
