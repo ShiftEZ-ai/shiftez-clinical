@@ -1,7 +1,8 @@
 """Dated scheduling responsibility, using the canonical Conditions evaluator."""
-from datetime import date
+from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
-from .conditions import scope_segments, tag_scope
+from .conditions import INTERNAL, SESSION_FIELDS, has_session_lines, scope_segments, scope_tree, tag_scope
 from .time import aware, local_midnight
 
 
@@ -13,6 +14,14 @@ class GroupResolver:
         self.data = data
         self.groups = {}
         self.cache = {}
+        self.day_cache = {}
+        self.person_segments = {}
+        self.day_bounds = {}
+        # Empty group projections intentionally carry only shifts and focus ids.
+        self.zone = None
+        self.shift_bounds = [(aware(shift['start']), aware(shift['end']))
+                             for shift in data.get('shifts', []) if shift.get('start') and shift.get('end')]
+        self.day_fast_path = True
         for row in groups:
             definition = row.get('definition', row)
             group = {**definition, 'group_id': row['group_id'], 'version_id': row.get('version_id', row.get('id')),
@@ -21,6 +30,10 @@ class GroupResolver:
             group['start'] = local_midnight(date.fromisoformat(str(definition['starts_on'])), data['organisation']['timezone'])
             group['end'] = local_midnight(date.fromisoformat(str(definition['ends_on'])), data['organisation']['timezone']) if definition.get('ends_on') else None
             self.groups.setdefault(group['group_id'], []).append(group)
+            # Skills and internal selectors may depend on the duty's clinic or type.
+            self.day_fast_path &= not has_session_lines(scope_tree(group['scope']),
+                                                        SESSION_FIELDS | INTERNAL | {'capability_ids'})
+        self.day_fast_path &= bool(self.groups)
 
     def primary(self, person_id, shift, participant=None):
         """One primary throughout a duty; ties, unowned or changing responsibility go to the coordinator."""
@@ -31,17 +44,104 @@ class GroupResolver:
             return self.cache[key]
         if person_id not in self.data['people'] or a >= b:
             return None
-        points = {a, b}
+        day_info = self._day_bounds(shift, a, b) if self.day_fast_path else None
+        result = (self._primary_days(person_id, shift, a, b, day_info) if day_info is not None
+                  else self._primary_interval(person_id, shift, a, b))
+        self.cache[key] = result
+        return result
+
+    def _day_bounds(self, shift, a, b):
+        key = (shift.get('id'), a, b)
+        if key not in self.day_bounds:
+            if self.zone is None:
+                self.zone = ZoneInfo(self.data['organisation']['timezone'])
+            try:
+                day = a.astimezone(self.zone).date()
+                last_day = b.astimezone(self.zone).date()
+            except OverflowError:
+                return None
+            if date.max in (day, last_day):
+                return None
+            start = local_midnight(day, self.data['organisation']['timezone'])
+            self.day_bounds[key] = day, start, local_midnight(day + timedelta(days=1), self.data['organisation']['timezone'])
+        return self.day_bounds[key]
+
+    def _primary_days(self, person_id, shift, a, b, day_info):
+        """Resolve person-only memberships once per local day, then combine duty days."""
+        first_day, day_start, day_end = day_info
+        result = None
+        editors = None
+        versions = set()
+        cursor = a
+        if b <= day_end:
+            return self._day_result(person_id, shift, first_day, day_start, day_end)
+        while cursor < b:
+            current = self._day_result(person_id, shift, first_day, day_start, day_end)
+            if current is None:
+                return None
+            if result is None:
+                result = {**current}
+                editors = set(current['editor_identity_ids'])
+            elif result['group_id'] != current['group_id']:
+                return None
+            editors &= set(current['editor_identity_ids'])
+            versions.update(current['responsibility_version_ids'])
+            cursor = min(b, day_end)
+            if cursor < b:
+                first_day += timedelta(days=1)
+                day_start, day_end = day_end, local_midnight(first_day + timedelta(days=1), self.data['organisation']['timezone'])
+        if result is None:
+            return None
+        result['editor_identity_ids'] = sorted(editors)
+        result['responsibility_version_ids'] = sorted(versions)
+        return result
+
+    def _day_result(self, person_id, shift, day, day_start, day_end):
+        current = self.day_cache.get((person_id, day))
+        if current is None and (person_id, day) not in self.day_cache:
+            segments = self._person_segments(person_id, shift, day_start, day_end)
+            current = self._primary_from_segments(day_start, day_end, segments)
+            self.day_cache[(person_id, day)] = current
+        return current
+
+    def _person_segments(self, person_id, shift, a, b):
+        cached = self.person_segments.get(person_id)
+        if cached is not None and cached[0] <= a and b <= cached[1]:
+            return cached[2]
+        bounds = [a, b, *(group['start'] for versions in self.groups.values() for group in versions)]
+        bounds.extend(start for start, _ in self.shift_bounds)
+        ends = [group['end'] for versions in self.groups.values() for group in versions if group['end'] is not None]
+        lo, hi = min(bounds), max([b, *ends, *(bound for _, bound in self.shift_bounds)] if self.shift_bounds else [b, *ends])
+        segments = {}
+        for versions in self.groups.values():
+            for group in versions:
+                start, end = max(lo, group['start']), min(hi, group['end'] or hi)
+                if start < end:
+                    segments[group['version_id']] = list(scope_segments(self.data, group['scope'], person_id,
+                                                                        shift, start, end))
+        self.person_segments[person_id] = (lo, hi, segments)
+        return segments
+
+    def _primary_interval(self, person_id, shift, a, b):
         segments = {}
         for versions in self.groups.values():
             for group in versions:
                 lo, hi = max(a, group['start']), min(b, group['end'] or b)
                 if lo >= hi:
                     continue
-                points.update((lo, hi))
                 spans = list(scope_segments(self.data, group['scope'], person_id, shift, lo, hi))
                 segments[group['version_id']] = spans
-                points.update(t for start, end, _ in spans for t in (start, end))
+        return self._primary_from_segments(a, b, segments)
+
+    def _primary_from_segments(self, a, b, segments):
+        points = {a, b}
+        for versions in self.groups.values():
+            for group in versions:
+                lo, hi = max(a, group['start']), min(b, group['end'] or b)
+                if lo < hi:
+                    points.update((lo, hi))
+        for spans in segments.values():
+            points.update(t for start, end, _ in spans if start < b and a < end for t in (max(a, start), min(b, end)))
         ordered = sorted(points)
         primary, version_ids = None, set()
         for lo, hi in zip(ordered, ordered[1:]):
@@ -70,7 +170,6 @@ class GroupResolver:
             version_ids.add(current['version_id'])
         result = {**primary, 'editor_identity_ids': sorted(primary['editor_identity_ids']),
                   'responsibility_version_ids': sorted(version_ids)} if primary is not None else None
-        self.cache[key] = result
         return result
 
 

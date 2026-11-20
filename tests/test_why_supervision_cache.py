@@ -16,12 +16,12 @@ def competing_supervisor(h, assigned=True):
     subject, supervisor, alternative = h.seed['people']
     typ = h.configure('assignment_types', {'name': 'Why supervisor reservation', 'starts_on': '2020-01-01',
         'definition': {'requirements': []}})['record']['id']
+    h.policy({'kind': 'allocation_preference', 'priority': 10, 'supervisor_ids': [supervisor]},
+             {'person_id': subject}, severity='advisory')
     seat = {'person_id': supervisor, 'start': START, 'end': END, 'participation': 'supervisor'}
     workspace = h.shift(h.workspace(), typ=typ, people=[seat] if assigned else [])['workspace']
     target = h.detail(workspace)['shifts'][0]
     workspace = h.shift(workspace, typ=typ, location=1, people=[seat, subject])['workspace']
-    h.policy({'kind': 'allocation_preference', 'priority': 10, 'supervisor_ids': [supervisor]},
-             {'person_id': subject}, severity='advisory')
     return workspace, target, subject, supervisor, alternative
 
 
@@ -61,6 +61,7 @@ def test_why_runner_up_ranks_fresh_canonical_scores_after_releasing_supervisor(h
         'person_id': second, 'service_id': h.seed['services'][0], 'starts_on': '2020-01-01'})
     h.policy({'kind': 'allocation_preference', 'priority': 10},
              {'person_id': alternative, 'location_id': target['location_id']}, severity='advisory')
+    workspace = h.refresh_draft_baseline(workspace)
     source = h.snapshot(workspace)
     selected_score = schedule_score(source, evaluate(source), {}, limit=0)
     scores = {}

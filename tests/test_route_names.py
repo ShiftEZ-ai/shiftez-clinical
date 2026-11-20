@@ -11,7 +11,7 @@ SRC = Path(__file__).resolve().parents[1] / "apps/web/src"
 
 
 def _table(source, name):
-    return source.split(f"const {name}:", 1)[1].split("={", 1)[1].split("\n};", 1)[0]
+    return source.split(f"const {name}:", 1)[1].split("=withoutPrototype({", 1)[1].split("\n});", 1)[0]
 
 
 def test_web_route_names_match_contract():

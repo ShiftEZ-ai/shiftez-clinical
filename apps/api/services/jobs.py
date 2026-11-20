@@ -710,7 +710,7 @@ def apply_generation(db, actor, command):
     from apps.api.snapshots import preparation_stamp
     if plan.get('writer_current_inputs'):
         # Repeated changes retain the existing current-input reply instead of introducing a new error.
-        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     else:
         if not currency_match(plan['current_stamp'], preparation_stamp(db, workspace)):
             raise GenerationInputsChanged()
