@@ -1,5 +1,5 @@
 from packages.domain.time import now as clock_now
-from sqlalchemy import and_, case, false, func, literal, or_, select, true
+from sqlalchemy import and_, case, false, func, literal, or_, select, true, union_all
 from sqlalchemy.orm import aliased, defer
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -769,26 +769,19 @@ def requests_etag(db, actor, representation):
     decisions, linked rota changes, audit history and an offer crossing its expiry.
     """
     from . import swaps
-    department, organisation = db.execute(select(m.Department, m.Organisation).join(
+    stamp = list(db.execute(select(m.Department.revision, m.Department.catalogue_revision,
+        m.Organisation.revision, m.Organisation.input_revision, m.Organisation.availability_revision).join(
         m.Organisation, m.Organisation.id == m.Department.organisation_id).where(
-            m.Department.id == actor.department_id)).one()
-    stamp = [department.revision, department.catalogue_revision, organisation.revision, organisation.input_revision,
-             organisation.availability_revision]
-    for cls in (m.RequestRecord, m.Availability, m.AvailabilityPattern, m.StaffWish,
-                m.SchedulingFact, m.SwapRequest, m.Publication, m.Workspace):
-        field = cls.department_id if hasattr(cls, "department_id") else None
-        query = select(func.max(cls.revision), func.max(cls.created_at))
-        if field is not None:
-            query = query.where(field == actor.department_id)
-        elif cls is m.Workspace:
-            query = query.where(cls.department_id == actor.department_id)
-        stamp.append(tuple(db.execute(query).one()))
-    # Request history and displayed names are mutable evidence even when the source row
-    # itself is unchanged.  These are deliberately broad and therefore only over-invalidate.
-    stamp.append(tuple(db.execute(select(func.max(m.AuditEvent.revision), func.max(m.AuditEvent.created_at)).where(
-        m.AuditEvent.department_id == actor.department_id)).one()))
-    stamp.append(tuple(db.execute(select(func.max(m.Person.revision), func.max(m.Person.created_at)).where(
-        m.Person.organisation_id == actor.organisation_id)).one()))
+            m.Department.id == actor.department_id)).one())
+    sources = (m.RequestRecord, m.Availability, m.AvailabilityPattern, m.StaffWish,
+               m.SchedulingFact, m.SwapRequest, m.Publication, m.Workspace, m.AuditEvent)
+    scopes = [(cls, cls.department_id == actor.department_id) for cls in sources]
+    # History and displayed names can change independently of their request source.
+    scopes.append((m.Person, m.Person.organisation_id == actor.organisation_id))
+    aggregates = [select(literal(position).label("stamp_order"), func.max(cls.revision), func.max(cls.created_at)).where(scope)
+                  for position, (cls, scope) in enumerate(scopes)]
+    stamp.extend((revision, created_at) for _, revision, created_at in db.execute(
+        union_all(*aggregates).order_by("stamp_order")))
     now = clock_now()
     expiry_count, next_expiry = db.execute(select(
         func.count(m.SwapRequest.id).filter(m.SwapRequest.expires_at <= now),
