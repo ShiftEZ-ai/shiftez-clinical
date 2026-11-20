@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from apps.api import models as m
+from apps.api.db import current_request_parent
 from packages.contracts.schemas import ABSENCE_CATEGORIES, ABSENCE_CATEGORY_LABELS, ABSENCE_REPORT_LABEL, TEAM_READER_ROLES
 from packages.domain.time import aware
 from . import leave_types
@@ -74,7 +75,7 @@ def sanitize_leave_details(body, mode, can_disclose):
 def disclose_leave(db, actor, body):
     """Adds `leave` to every UNAVAILABLE item in `body` (in place; returns it). An item's person and time come from
     itself or the nearest enclosing object (a Why row's person, an open place's session)."""
-    department = db.get(m.Department, actor.department_id)
+    department = current_request_parent(db, m.Department, actor.department_id)
     mode = department.leave_reason_display if department else 'none'
     sanitize_leave_details(body, mode, bool(actor.permits(*PLANNING_ROLES) and mode != 'none'))
     if not actor.permits(*PLANNING_ROLES):
@@ -160,7 +161,7 @@ def staff_overlap_labels(body):
 
 def overlap_labels(db, actor, body, *, disclose=True):
     """Label every time-away clash without mutating stored evidence or a narrower reader's source."""
-    department = db.get(m.Department, actor.department_id)
+    department = current_request_parent(db, m.Department, actor.department_id)
     mode = department.leave_reason_display if department else 'none'
     can_disclose = bool(actor.permits(*PLANNING_ROLES) and mode != 'none')
     flags = []

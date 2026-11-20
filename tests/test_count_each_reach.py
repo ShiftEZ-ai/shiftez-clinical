@@ -4,6 +4,7 @@ import time
 from datetime import date
 import pytest
 
+from packages.contracts.schemas import PERMISSIONS
 from packages.domain.rule_map import reach, rule_map
 from packages.domain.time import local_midnight
 from .test_rule_conditions import line, tree
@@ -236,7 +237,8 @@ def test_reach_api_adds_workspace_counts_and_preserves_legacy_totals(h):
         h.get('coordinator', f"/api/policies/reach?workspace_id={workspace['id']}{suffix}", status=422)
     h.get('staff', endpoint, status=403)
     h.get('credentialer', endpoint, status=403)
-    h.get('credentialer', '/api/policies/reach?day=2026-10-04')
+    h.get('credentialer', '/api/policies/reach?day=2026-10-04',
+          status=200 if 'credentialer' in PERMISSIONS['rules.read'] else 403)
 
 
 def test_unsaved_policy_preview_includes_matched_branches(h):

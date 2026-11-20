@@ -30292,7 +30292,7 @@
       }
     },
     "additionalProperties": false,
-    "description": "A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):\non or off, its settings and every line. Lines that give way to more specific ones are acknowledged by line id.",
+    "description": "A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):\non or off, its settings and every line. Ordered overrides need no acknowledgement.",
     "properties": {
       "reason": {
         "maxLength": 500,
@@ -30403,6 +30403,7 @@
         "type": "array"
       },
       "acknowledged_overlaps": {
+        "description": "Ignored legacy input; ordered overrides need no acknowledgement.",
         "items": {
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
           "type": "string"
@@ -62750,6 +62751,29 @@
         ],
         "title": "RuleInForce",
         "type": "object"
+      },
+      "RuleLineReplacement": {
+        "additionalProperties": false,
+        "properties": {
+          "replaced_line_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Replaced Line Id",
+            "type": "string"
+          },
+          "numbers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Numbers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "replaced_line_id",
+          "numbers"
+        ],
+        "title": "RuleLineReplacement",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -62760,6 +62784,18 @@
         },
         "title": "Also In Force",
         "type": "array"
+      },
+      "line_replaces": {
+        "patternProperties": {
+          "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$": {
+            "items": {
+              "$ref": "#/$defs/RuleLineReplacement"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Line Replaces",
+        "type": "object"
       }
     },
     "required": [

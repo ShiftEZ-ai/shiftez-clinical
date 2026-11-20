@@ -398,6 +398,8 @@ def test_api_converted_quota_global_repeat_and_typed_false_agree_with_runtime(ba
                     if item['id'] == 'workload_limit')
 
     def runtime():
+        nonlocal workspace
+        workspace = h.refresh_draft_baseline(workspace)
         snapshot = h.snapshot(workspace)
         return next(item['definition']['rule'] for item in active_rules(snapshot['policies'], context=snapshot)
                     if item['id'] == source['id'])

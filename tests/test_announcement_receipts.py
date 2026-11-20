@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 import pytest
-from sqlalchemy import event, func, insert, select
+from sqlalchemy import delete, event, func, insert, select
 
 from apps.api import models as m
 from apps.api.commands import NON_SERIALIZED_COMMANDS
@@ -794,3 +794,25 @@ def test_years_of_distinct_audiences_keep_count_queries_within_postgres_paramete
         result = announcement_counts(db, actor, rows)
     assert len(result) == 1000
     assert all(value == {"audience": 75, "delivered": 1, "read": 1, "acknowledged": 0} for value in result.values())
+
+
+def test_a_notice_receipt_is_no_scheduling_input_but_an_event_reply_still_is(h):
+    """A notice delivered, read and acknowledged leaves the rota's inputs, fingerprints and revisions alike, unchanged:
+    a person's first read used to move the availability revision, so every open page read everything again. An event
+    reply still moves the availability revision (its fingerprints stay: tests/test_events.py)."""
+    from tests.test_events import event, event_type, input_revisions, occurrences, semantic_fingerprints
+    workspace = h.shift(h.workspace())['workspace']
+    row = notice(h, {'roles': ['staff']}, importance='must_acknowledge')
+    with transaction(h.app.state.engine, write=True) as db:  # first sight: the read inserts the receipt
+        db.execute(delete(m.AnnouncementReceipt).where(m.AnnouncementReceipt.content_id == row['id']))
+    before, semantic = input_revisions(h), semantic_fingerprints(h, workspace)
+    receipt = seen(h, [row['id']])['receipts'][row['id']]
+    assert receipt['revision'] == 2  # inserted, then read: the first sight
+    h.command('staff', 'notification.acknowledge', {'reason': 'Acknowledged by recipient'}, receipt['id'], receipt['revision'])
+    assert input_revisions(h) == before
+    assert semantic_fingerprints(h, workspace) == semantic
+    made = event(h, event_type(h, blocks_duties=False, rsvp=True))
+    occurrence = next(item for item in occurrences(h, 'staff') if item['event_id'] == made['id'])
+    before = input_revisions(h)
+    h.command('staff', 'event.rsvp', {'response': 'going', 'reason': 'Optional response'}, occurrence['id'], occurrence['revision'])
+    assert input_revisions(h)[1] == before[1] + 1
