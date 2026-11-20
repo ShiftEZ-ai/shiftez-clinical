@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from packages.contracts import schemas as s
 from packages.contracts.schemas import PolicyDefinition
 from packages.domain.conditions import active_rules
 from packages.domain.cp_sat import generate as cp_generate
@@ -15,12 +16,26 @@ from tests.test_autoscheduler_audit_safety import _apply, _assignment
 from tests.test_rule_templates import activate, propose
 
 
+SAFETY_RULES = {
+    'restriction': {},
+    'min_rest': {'hours': 12},
+    'forbidden_transition': {'from_type_ids': ['00000000-0000-4000-8000-000000000001'],
+                             'to_type_ids': ['00000000-0000-4000-8000-000000000001']},
+    'supervision_limit': {'mode': 'capacity', 'maximum': 2},
+    'minimum_cover': {'minimum': 2},
+    'maximum_participants': {'maximum': 2},
+    'team_lead_requirement': {'minimum': 1, 'maximum': 1},
+    'spread_evenly': {'holder': 'supervisors', 'within': 'session', 'mode': 'levelled', 'maximum_gap': 1},
+}
+SAFETY_KINDS = sorted(s.NEVER_OVERRIDDEN)
+
+
+def test_historical_safety_fixture_set_matches_contract():
+    assert set(SAFETY_RULES) == set(SAFETY_KINDS)
+
+
 @pytest.mark.parametrize('rule', [
-    {'kind': 'restriction'}, {'kind': 'min_rest', 'hours': 12},
-    {'kind': 'forbidden_transition', 'from_type_ids': ['00000000-0000-4000-8000-000000000001'],
-     'to_type_ids': ['00000000-0000-4000-8000-000000000001']},
-    {'kind': 'supervision_limit', 'mode': 'capacity', 'maximum': 2},
-    {'kind': 'minimum_cover', 'minimum': 2}, {'kind': 'maximum_participants', 'maximum': 2},
+    {'kind': kind, **SAFETY_RULES[kind]} for kind in SAFETY_KINDS
 ], ids=lambda rule: rule['kind'])
 def test_historical_overrides_preserve_every_protected_safety_kind(rule):
     protected = {'id': 'protected', 'status': 'active', 'definition':
