@@ -911,8 +911,8 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
     try:
         navigate(page, 'home')
         page.locator('#main .home-needs-list li[data-need=self_approved]').get_by_role('button', name='Open', exact=True).click()
-        dialog = page.get_by_role('dialog', name='Self-approved decisions')
-        row = dialog.locator('.audit-row')
+        panel = page.get_by_role('region', name='Self-approved decisions')
+        row = panel.locator('.audit-row')
         expect(row).to_have_count(1)
         expect(row).to_contain_text(name)
         expect(row.locator('.audit-self')).to_contain_text('Self-approved')
