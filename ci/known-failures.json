@@ -2310,12 +2310,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_rule_simplification.py::test_grouping_through_governance_checks_the_same_and_undoes",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_rule_simplification_phase2.py::test_balance_preferences_become_balance_goals_with_what_changes",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
