@@ -12,6 +12,7 @@ from .rules_support import rules_by_family
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, selection, set_numbers, weekly
 from .test_browser_rules_database import entry, propose_all
 from .test_browser_uiux_sessions import switch_account
+from .test_rule_catalogue_conflicts import lines_for
 
 pytestmark = pytest.mark.browser
 
@@ -100,7 +101,7 @@ def test_an_approved_replacement_with_equal_revision_invalidates_the_old_local_d
         expect(page.locator('#main tr[data-row]').filter(has_text='Department default')).to_contain_text('7 Mandatory')
         stage_max(page, 6)
         page.get_by_role('button', name='← Rules').click()
-        propose_all(page, 'Edit the latest approved version', acknowledge=True)
+        propose_all(page, 'Edit the latest approved version')
         proposal = entry(h, 'duties_per_week')['proposed']
         assert proposal['definition']['merged_ids'] == [current['id']]
         assert proposal['definition']['rule']['lines'][0]['numbers']['max']['value'] == 6
@@ -123,12 +124,12 @@ def test_filtered_bulk_selection_changes_only_the_visible_line(browser, live_ser
             page.get_by_role('button', name='Filter', exact=True).click()
             condition(page.locator('.dt-pop'), 'Lines: Who', ['People'])
             page.keyboard.press('Escape')
-        expect(page.locator('tr.rt-line')).to_have_count(1)
+        expect(page.locator('li.rt-ln')).to_have_count(1)
         page.get_by_label(pick, exact=True).check()
         expect(selection(page)).to_contain_text('1 rule · 1 line')
         set_numbers(page, max=2)
         page.get_by_role('searchbox', name='Search rules').fill('')
-        propose_all(page, 'Update only the selected person', acknowledge=True)
+        propose_all(page, 'Update only the selected person')
         lines = entry(h, 'duties_per_week')['proposed']['definition']['rule']['lines']
         assert [x['numbers']['max']['value'] for x in lines] == [5, 2]
     finally:
@@ -174,7 +175,7 @@ def test_a_rule_replaced_under_an_unsent_change_says_so_and_keeps_it_to_compare(
         navigate(page, 'rules/duties_per_week')
         stage_max(page, 6)
         page.get_by_role('button', name='← Rules').click()
-        propose_all(page, 'My own change', acknowledge=True)
+        propose_all(page, 'My own change')
         assert entry(h, 'duties_per_week')['proposed'] is not None
         navigate(page, 'rules/duties_per_week')
         expect(page.locator('#main .rc-summary')).to_contain_text('In force now:')  # read after the proposal
@@ -193,7 +194,7 @@ def test_attention_fix_preserves_other_unsent_numbers(browser, live_server, h):
         page.get_by_role('button', name='← Rules').click()
         view(page, 'Needs attention')
         page.get_by_role('button', name='Give line 2 no min (None)', exact=True).click()
-        propose_all(page, 'Keep the unsent maximum and remove inherited minimum', acknowledge=True)
+        propose_all(page, 'Keep the unsent maximum and remove inherited minimum')
         numbers = entry(h, 'duties_per_month')['proposed']['definition']['rule']['lines'][1]['numbers']
         assert numbers == {'max': {'value': 2, 'level': 'mandatory'}, 'min': {'value': None, 'level': 'mandatory'}}
     finally:
@@ -202,19 +203,19 @@ def test_attention_fix_preserves_other_unsent_numbers(browser, live_server, h):
 
 def test_attention_remove_refuses_to_discard_an_edited_line(browser, live_server, h):
     flag(h)
-    first = weekly(h)
-    overlap = next(x for x in h.get('coordinator', '/api/rules/catalogue')['attention'] if x['kind'] == 'overlap')
-    h.command('coordinator', 'rule.unacknowledge', {'fingerprints': [overlap['fingerprint']]})
+    _, groups = lines_for(h, 'tag and rank')
+    groups[1]['note'] = 'Edited group line'
+    first = catalogue_rule(h, 'duties_per_week', groups)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules/duties_per_week')
-        stage_max(page, 2, 'Return from leave')
+        stage_max(page, 2, 'Edited group line')
         page.get_by_role('button', name='← Rules').click()
         view(page, 'Needs attention')
-        page.get_by_role('button', name='Let line 2 inherit its max', exact=True).click()
+        page.get_by_role('button', name='Remove line 2', exact=True).click()
         expect(page.locator('.toast.warning')).to_contain_text('conflicts with unsent edits')
         expect(page.locator('tr.rt-issue')).to_have_count(1)
-        propose_all(page, 'Preserve the edited person line', acknowledge=True)
+        propose_all(page, 'Preserve the edited person line')
         lines = entry(h, 'duties_per_week')['proposed']['definition']['rule']['lines']
         assert len(lines) == 2 and lines[1]['id'] == first['definition']['rule']['lines'][1]['id']
         assert lines[1]['numbers']['max']['value'] == 2
