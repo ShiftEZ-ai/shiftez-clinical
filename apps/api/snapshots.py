@@ -1298,6 +1298,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if baseline is not None:
+        # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
+        for shift in external:
+            type_id = shift['assignment_type_id']
+            if type_id not in result['types']:
+                issued = shift.get('type_snapshot') or {}
+                source = issued if issued.get('department_id') else live_inputs['types'][type_id]
+                result['types'][type_id] = json_value(source)
     from .services.published_changes import staged_availability
     result['availability'] += staged_availability(db, workspace)
     # All snapshot consumers below are evaluation entry points (fairness, rule-map,
