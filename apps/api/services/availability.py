@@ -8,6 +8,7 @@ from packages.domain.time import aware
 from packages.domain.validation import rotation_leave_findings
 from apps.api import models as m
 from apps.api.auth import require_role, person_access
+from apps.api.db import current_request_parent
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import inactive_series_shift_ids
@@ -806,7 +807,8 @@ def requests_etag(db, actor, representation):
 
 
 def _recorded_details(db, actor):
-    return actor.permits("coordinator", "approver") and db.get(m.Department, actor.department_id).leave_reason_display == "details"
+    return actor.permits("coordinator", "approver") and current_request_parent(
+        db, m.Department, actor.department_id).leave_reason_display == "details"
 
 
 def _stage_order(source):
@@ -1033,7 +1035,7 @@ def absence_report_record(row, actor=None, db=None):
     if row.kind == 'absence_report':
         details = {key: value for key, value in (row.details or {}).items()
                    if key not in {'reporter_category', 'note', 'document_reference'}}
-        department = db.get(m.Department, actor.department_id) if actor and db else None
+        department = current_request_parent(db, m.Department, actor.department_id) if actor and db else None
         wording = leave_wording(department, actor, row)
         item['details'] = {**details, **{key: wording[key] for key in ('absence_reason', 'note', 'document_reference')
                                          if key in wording}}
@@ -1366,6 +1368,17 @@ def _decision_time(source):
     return case((cls.status == "withdrawn", event), (cls.outcome.is_not(None), published), else_=empty)
 
 
+def _self_approved(db, department_id, ids):
+    """The requests whose latest decision was the person's own, under a self-approval permission (the audit's mark)."""
+    latest = {}
+    if ids:
+        for target, detail in db.execute(select(m.AuditEvent.target_id, m.AuditEvent.detail).where(
+                m.AuditEvent.department_id == department_id, m.AuditEvent.target_id.in_(ids),
+                m.AuditEvent.action.like("%.decide")).order_by(m.AuditEvent.created_at, m.AuditEvent.seq)):
+            latest[target] = bool((detail or {}).get("self_approved"))
+    return {target for target, own in latest.items() if own}
+
+
 def _decision_times(db, rows):
     """One limited read per source, rather than one event lookup for each page item."""
     result = {}
@@ -1449,6 +1462,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
                                 duty_cache=_duty_cache(db, [row[0]]) if source == "swap" else None,
                                 assignment_types=assignment_types)
                 item["decided_at"] = _decision_times(db, [(source, row[0])])[(source, row[0].id)]
+                if source in ("request", "pattern") and row[0].id in _self_approved(
+                        db, actor.department_id, [row[0].id] if getattr(row[0], "decided_by", None) else []):
+                    item["self_approved"] = True
                 if source in ('request', 'availability'):
                     leave_types.names(db, actor.department_id, [item])
                 _impact(db, actor, [item])
@@ -1507,8 +1523,12 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     items = [_project(db, actor, team, source, row, names, recorded_details, swap_cache,
                       rotation_names, decidable, duty_cache, assignment_types) for source, row, _ in shown]
     decisions = _decision_times(db, [(source, row) for source, row, _ in shown])
+    own = _self_approved(db, actor.department_id, [row.id for source, row, _ in shown if source in ("request", "pattern")
+                                                   and getattr(row, "decided_by", None)])
     for item in items:
         item["decided_at"] = decisions[(item["source"], item["id"])]
+        if item["id"] in own:  # only when true: every other projection of a request item stays as it was
+            item["self_approved"] = True
     leave_types.names(db, actor.department_id, [i for i in items if i['source'] in ('request', 'availability')])
     if stages:  # a swap whose offer lapsed since it was listed as waiting
         items = [i for i in items if i["stage"] in stages]
@@ -1540,7 +1560,8 @@ def _history(db, actor, source, row, item):
     events = [{"action": "created", "at": json_value(row.created_at),
                "actor": by(item.get("created_by", item.get("proposed_by"))), "reason": ""}]
     targets = [row.id, *([item["record_id"]] if item.get("record_id") else [])]
-    return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason}
+    return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason,
+                      **({"self_approved": True} if (e.detail or {}).get("self_approved") else {})}
                      # A refused command changed nothing: it stays in the audit trail, not in what was done to the request.
                      for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, m.AuditEvent.target_id.in_(targets),
                                                                     m.AuditEvent.action != 'command.refused')

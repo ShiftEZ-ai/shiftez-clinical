@@ -15,7 +15,7 @@ pytestmark = pytest.mark.browser
 def test_test_redirects_mirror_the_route_alias_map():
     """One alias map (routes.ts); the tests' copy must not drift from it."""
     source = (Path(__file__).resolve().parents[1] / 'apps/web/src/routes.ts').read_text(encoding='utf-8')
-    block = source.split('ROUTE_ALIASES:Record<string,Alias>={', 1)[1].split('\n};', 1)[0]
+    block = source.split('ROUTE_ALIASES:Record<string,Alias>=withoutPrototype({', 1)[1].split('\n});', 1)[0]
     # String entries are mirrored here; the Schedule's old pages are function entries in the same map.
     assert dict(re.findall(r"^\s*(\w+):'([^']+)'", block.replace(',', ',\n'), re.M)) == REDIRECTS
     assert set(re.findall(r"^\s*(\w+):\(", block, re.M)) == SCHEDULE_ALIASES

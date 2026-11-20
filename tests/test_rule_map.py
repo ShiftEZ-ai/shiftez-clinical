@@ -292,6 +292,129 @@ def url(w):
     return f"/api/workspaces/{w['id']}/rule-map"
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_submitted_map_shows_a_cap_tightened_after_submit(h):
+    person = h.seed['people'][0]
+    scope = {'person_id': person}
+    cap = {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}
+    captured = h.policy(cap, scope)
+    w = h.workspace()
+    for day in ('04', '05', '06'):
+        w = h.shift(w, f'2026-10-{day}T08:00:00+03:00', f'2026-10-{day}T12:00:00+03:00', people=[person])['workspace']
+    submitted = h.lifecycle(w, 'submit')['workspace']
+    assert submitted['status'] == 'submitted'
+    before = entry(h.get('approver', url(submitted)), captured['id'])
+    assert before['binding_value'] is None
+
+    activate(h, propose(h, {**cap, 'maximum': 2}, scope, replaces_id=captured['id']))
+
+    displayed = entry(h.get('approver', url(submitted)), captured['id'])
+    assert (displayed['number']['value'], displayed['binding_value']) == (5, 2)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_draft_map_keeps_captured_values_and_shows_live_mandatory_caps(h):
+    people = h.seed['people']
+    cap = {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}
+    revised = h.policy(cap, {'person_id': people[0]})
+    unchanged = h.policy(cap, {'person_id': people[1]})
+    advisory = h.policy(cap, {'person_id': people[2]}, severity='advisory')
+    loosened = h.policy({**cap, 'window': 'day'}, {'person_id': people[2]})
+    w, _ = base(h)
+    for day in ('05', '06'):
+        w = h.shift(w, f'2026-10-{day}T16:00:00+03:00', f'2026-10-{day}T20:00:00+03:00', people=[people[0]])['workspace']
+    proposals = []
+    for policy, maximum in ((revised, 2), (advisory, 2), (loosened, 8)):
+        definition = policy['definition']
+        proposals.append(propose(h, {**definition['rule'], 'maximum': maximum}, definition['scope'],
+                                 severity=definition['severity'], name=policy['name'], replaces_id=policy['id']))
+    client = h.client('coordinator')
+    first = client.get(url(w))
+    assert first.status_code == 200 and entry(first.json(), revised['id'])['binding_value'] is None
+
+    active, _, active_loosened = [activate(h, proposal) for proposal in proposals]
+
+    response = client.get(url(w), headers={'if-none-match': first.headers['etag']})
+    assert response.status_code == 200 and response.headers['etag'] != first.headers['etag']
+    result = response.json()
+    assert [rule['id'] for rule in result['rules']] == [rule['id'] for rule in first.json()['rules']]
+    displayed = entry(result, revised['id'])
+    assert (displayed['number']['value'], displayed['department_value'], displayed['binding_value']) == (5, 5, 2)
+    for policy in (unchanged, advisory, loosened):
+        displayed = entry(result, policy['id'])
+        assert (displayed['number']['value'], displayed['binding_value']) == (5, None)
+    live_loosened = next(row for row in h.snapshot(w)['policies'] if row['id'] == active_loosened['id'])
+    assert live_loosened['definition']['rule']['maximum'] == 8
+    findings = h.lifecycle(w, 'validate')['validation']['findings']
+    finding, = [row for row in findings if row['rule_id'] == active['id'] and row['code'] == 'MAX_DUTIES']
+    assert finding['detail']['maximum'] == 2
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_draft_map_shows_the_changed_catalogue_line_from_an_approved_replacement(h):
+    from .test_rule_catalogue_api import approve as approve_catalogue, line, person, propose as propose_catalogue
+
+    everyone = line(numbers={'max': {'value': 1}})
+    own = line(who=person(h.seed['people'][0]), numbers={'max': {'value': 5}})
+    other = line(who=person(h.seed['people'][1]), numbers={'max': {'value': 4}})
+    policy = approve_catalogue(h, propose_catalogue(h, 'duties_per_week', [everyone, own, other])['record'])
+    w, _ = base(h)
+    for day in ('05', '06'):
+        w = h.shift(w, f'2026-10-{day}T16:00:00+03:00', f'2026-10-{day}T20:00:00+03:00', people=[h.seed['people'][0]])['workspace']
+    revised = {**own, 'numbers': {'max': {'value': 2}}}
+    proposal = propose_catalogue(h, 'duties_per_week', [everyone, revised, other],
+                                 policy_id=policy['id'], revision=policy['revision'])['record']
+    client = h.client('coordinator')
+    first = client.get(url(w))
+    assert first.status_code == 200
+    before = entry(first.json(), policy['id'])
+    assert next(line for line in before['lines'] if line['id'] == own['id'])['binding_value'] is None
+
+    active = approve_catalogue(h, proposal)
+
+    response = client.get(url(w), headers={'if-none-match': first.headers['etag']})
+    assert response.status_code == 200 and response.headers['etag'] != first.headers['etag']
+    result = response.json()
+    displayed, = [row for row in result['rules'] if row.get('catalogue_id') == 'duties_per_week']
+    assert displayed['id'] == policy['id'] and displayed['binding_value'] is None
+    assert {line['id']: (line['numbers']['max']['value'], line['binding_value']) for line in displayed['lines']} == {
+        everyone['id']: (1, None), own['id']: (5, 2), other['id']: (4, None)}
+    findings = h.lifecycle(w, 'validate')['validation']['findings']
+    finding, = [row for row in findings if row['rule_id'] == active['id'] and row['code'] == 'MAX_DUTIES']
+    assert (finding['person_id'], finding['detail']['maximum']) == (h.seed['people'][0], 2)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_draft_map_shows_the_live_zero_on_the_captured_rule(h):
+    from .test_live_zero_limits import tighten
+
+    cap = {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}
+    policy = h.policy(cap, {'person_id': h.seed['people'][0]})
+    w, _ = base(h)
+    tighten(h, policy, {**cap, 'maximum': 0})
+    displayed = entry(h.get('coordinator', url(w)), policy['id'])
+    assert (displayed['number']['value'], displayed['department_value'], displayed['binding_value']) == (5, 5, 0)
+    findings = h.lifecycle(w, 'validate')['validation']['findings']
+    finding, = [row for row in findings if row['rule_id'] == policy['id'] and row['code'] == 'MAX_DUTIES']
+    assert finding['detail']['maximum'] == 0
+
+
+@pytest.mark.parametrize('minimum,maximum,binding', [(2, 5, 2), (1, 3, 3), (2, 3, None)])
+def test_rule_map_reads_range_bindings_per_bound(minimum, maximum, binding):
+    from .test_rule_map_relative_witnesses import snapshot
+
+    data, _ = snapshot()
+    quota = {'kind': 'block_quota', 'metric': 'duties', 'comparison': 'range', 'amount': 1, 'maximum_amount': 5,
+             'starts_on': data['workspace']['starts_on'], 'ends_on': data['workspace']['ends_on']}
+    captured = rule(data, 'Quota range', quota)
+    effective = rule(data, 'Quota range', {**quota, 'amount': minimum, 'maximum_amount': maximum})
+    data['policies'] = [captured]
+    data['_rule_map_policies'] = ([captured], [effective])
+
+    displayed = entry(rule_map(data), captured['id'])
+    assert (displayed['number']['value'], displayed['number']['maximum'], displayed['binding_value']) == (1, 5, binding)
+
+
 def test_rota_adjustments_are_mapped_with_who_changed_them(h):
     workload = h.policy({'kind': 'max_hours', 'hours': 12, 'window_days': 7})
     w, _ = base(h)
@@ -336,8 +459,9 @@ def test_rule_map_exposes_the_waiting_replacement_and_catalogue_proposal(h):
     assert proposal['at'] and proposal['self_approval_allowed'] is False
 
     from .test_rule_catalogue_api import approve as approve_catalogue, line, propose as propose_catalogue
+    from .test_rule_catalogue_v2_api import captured_snapshot
     catalogue = approve_catalogue(h, propose_catalogue(h, 'duties_per_week', [line(numbers={'max': {'value': 6}})])['record'])
-    assert catalogue['id'] not in {policy['id'] for policy in h.snapshot(w)['policies']}
+    assert catalogue['id'] not in {policy['id'] for policy in captured_snapshot(h, w)['policies']}
     w = h.refresh_draft_baseline(w)
     w = h.shift(w)['workspace']
     w = h.command('coordinator', 'workspace.rule_adjust', {
@@ -607,11 +731,17 @@ def test_map_subview_caches_preserve_uncached_clinic_overnight_and_source_pool_a
 @pytest.fixture(scope='module')
 def department_map_measurement():
     data = big_department()
+    captured = data['policies']
+    prior = next(policy for policy in captured if policy['name'] == 'own3')
+    definition = prior['definition']
+    tightened = {**prior, 'revision': prior['revision'] + 1,
+                 'definition': {**definition, 'rule': {**definition['rule'], 'hours': 40}}}
+    data['_rule_map_policies'] = (captured, [tightened if policy is prior else policy for policy in captured])
     gc.collect()  # Exclude earlier fixtures' garbage; collection remains enabled during mapping.
     began, cpu = time.perf_counter(), time.process_time()
     result = rule_map(data)
     elapsed, cpu = time.perf_counter() - began, time.process_time() - cpu
-    print(f'rule map: {elapsed:.2f} wall s / {cpu:.2f} CPU s for 974 rules, 142 people, {len(data["shifts"])} sessions')
+    print(f'rule map with bindings: {elapsed:.2f} wall s / {cpu:.2f} CPU s for 974 rules, 142 people, {len(data["shifts"])} sessions')
     return data, result, elapsed, cpu
 
 
@@ -639,6 +769,7 @@ def test_large_department_is_fast_and_right(department_map_measurement):
     worked = lambda p: sorted(index[s['id']] for s in data['shifts'] if any(x['person_id'] == p for x in s['participants']))
     own = entry(result, 'own3')
     assert own['people'] == {U('p003'): [[0, 31]]} and own['sessions'] == worked(U('p003'))
+    assert (own['number']['value'], own['binding_value']) == (43, 40)
     svc = entry(result, 'session0')
     assert svc['sessions'] == sorted(index[s['id']] for s in data['shifts'] if U('svc0') in s['service_ids'])
     wing = entry(result, 'session1')   # the wing: every room inside it

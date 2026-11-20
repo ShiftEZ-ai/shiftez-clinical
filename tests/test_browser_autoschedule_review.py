@@ -225,19 +225,19 @@ def test_success_ready_to_apply_one_score_apply_and_undo(browser, cp_server, h, 
         stored = h.detail(w)['workspace']['validation']['score']['score']
         assert f'{stored:g}' == f'{after:g}', (stored, after)
         expect(page.locator('.app-footer').get_by_role('button', name=f'Ready to submit · score {after:g}', exact=True)).to_be_visible()  # A7
-        # The run just applied reads "Applied" (with Undo); only the run its edit superseded is "Out of date".
+        # The applied run keeps Undo; the older run names the newer run that replaced it.
         rows = runs.locator('li').filter(has_text='Auto-schedule')
         expect(rows).to_have_count(2)
         expect(rows.nth(0)).to_contain_text('Applied')
         expect(rows.nth(0)).not_to_contain_text('Out of date')
-        expect(rows.nth(1)).to_contain_text('Out of date')
+        expect(rows.nth(1)).to_contain_text('Replaced by a newer run')
         expect(rows.nth(1).get_by_role('button', name=re.compile('^Undo'))).to_have_count(0)
         shot(page, f'asr-applied-{_name(view, scheme)}', full_page=False)
         _undo(panel).click()
         expect(page.get_by_text('Undone.', exact=False)).to_be_visible()
         assert not any(s['participants'] for s in h.detail(w)['shifts'])
         # Undone (A4, BE-1): the run is a proposal the rota changed under again. It says so and is applied only after a
-        # check against the current rota; no counts of what was applied, and the older run stays out of date.
+        # check against the current rota; no counts of what was applied, and the older run stays replaced.
         expect(panel.locator('.auto-stale')).to_have_text('The rota changed since this run · Apply checks it against the current rota first')
         # The run's outcome is said as the run's, never that the rota is ready once applied.
         expect(review.locator('.auto-outcome').first).to_have_text('When it ran: all 1 must-fix cause cleared')
@@ -246,7 +246,7 @@ def test_success_ready_to_apply_one_score_apply_and_undo(browser, cp_server, h, 
         expect(panel.get_by_role('button', name='Check again and apply', exact=True)).to_be_visible()
         expect(panel.get_by_role('button', name=re.compile(r'^Apply \d+ changes?$'))).to_have_count(0)
         expect(rows.nth(0)).to_contain_text('Check again to apply')
-        expect(rows.nth(1)).to_contain_text('Out of date')
+        expect(rows.nth(1)).to_contain_text('Replaced by a newer run')
     finally:
         context.close()
 

@@ -1503,8 +1503,9 @@ def grouping_proof(db, actor, groups, model=False, score_may_move=False):
     result = {"rules_before": len(rules), "rules_after": len(after),
               "solver_inputs_equal": expanded(rules, id_map, week_start) == expanded(after, None, week_start), "rotas": []}
     for w in workspaces:
-        before_data = domain_snapshot(db, w, operational=w.status == "published")
-        after_data = domain_snapshot(db, w, operational=w.status == "published", policy_overrides=retire + made)
+        before_data = domain_snapshot(db, w, operational=w.status == "published", mandatory_rules=False)
+        after_data = domain_snapshot(db, w, operational=w.status == "published", policy_overrides=retire + made,
+                                     mandatory_rules=False)
         a, b = evaluate(before_data), evaluate(after_data)
         diff = same_checks(a, b, id_map)
         score = lambda data, validation: schedule_score(data, validation, department.generation_defaults)["score"]

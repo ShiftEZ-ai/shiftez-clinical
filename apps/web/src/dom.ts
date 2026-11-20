@@ -873,7 +873,10 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   // One with `keep` moves to its record's new button instead, and closes only when that record is gone.
   placer = placeNear(panel, () => state.anchor, {placement: options.placement}, () => {
     if (openPopover?.node !== panel) return false;
-    if (options.keep) { if (opened && !rehome()) { close(); return false; } return true; }
+    if (options.keep) {
+      if (opened && !rehome() && !(awaited && awaited.key === state.key)) { close(); return false; }
+      return true;
+    }
     if (!state.key && opened && !state.anchor.isConnected && (panel.matches('[role=menu]') || panel.querySelector('[role=menu]'))) { close(); return false; }
     return true;
   });
@@ -913,7 +916,7 @@ export function awaitAdoption(key: string): () => void {
     if (awaited !== mine) return;
     awaited = null;
     // After the new button's own hand-over (a microtask queued when it was built); one waiting for a frame is pendingAdopt's.
-    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key) openPopover.close(); });
+    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key && !openPopover.rehome()) openPopover.close(); });
   };
 }
 /** A screen redrew itself while its popover was open: the popover stays open and now belongs to the new button.
@@ -936,7 +939,7 @@ export function menuItem(label: string, name: IconName, action: () => unknown, a
 }
 /** The shared reason for a control that cannot be used now. */
 export const PAGE_WHY={first:'This is the first page.',last:'This is the last page.'} as const;
-const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.keepBestStopped;
+const quietWhy=(why:string)=>why===PAGE_WHY.first||why===PAGE_WHY.last||why===TERMS.nothingChanged||why===TERMS.nothingToPropose||why===TERMS.keepBestStopped;
 const whyOf=new WeakMap<HTMLElement,HTMLElement>();
 function sayWhy(b:HTMLElement,why:string,more:Child[]=[],at?:HTMLElement){
   let hint=at||whyOf.get(b);if(!hint){hint=el('small',{class:'why-unavailable'});whyOf.set(b,hint);}
@@ -969,7 +972,7 @@ export function notYet<T extends HTMLElement>(n:T,why:string):T{
   // A menu item's reason is its tip and its press (a menu holds only items).
   if(!n.matches('[role^=menuitem]')){sayWhy(n,why);whyOf.get(n)!.classList.add('sr-only');}
   // Capture, on the control itself: before its own click handler (and the footer's delegated one), which never runs.
-  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();say(why);},true);
+  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(why,'info');},true);  // visible, and said (a toast is a status)
   return n;
 }
 /** A disabled button's reason is visible beside it and referenced by aria-describedby. */
@@ -1418,7 +1421,8 @@ function placeTray(tray:HTMLElement){
 export function releaseToasts(dialog:HTMLElement){const tray=dialog.querySelector<HTMLElement>('#toast-tray');if(tray)placeTray(tray);
   for(const live of liveRegions.values())if(live.parentElement===dialog)topModal().append(live);}
 /** An action failed: say why, unless the signed-in account changed meanwhile (then the result is simply dropped). */
-export function reportError(e:unknown,prefix=''){if(!sessionChanged(e))notify(settledWords(e)??prefix+(e as Error).message,'error',undefined,e);}
+// Only a discarded result (PAGE_LEFT, SESSION_CHANGED) is dropped; anything else thrown (no message, not an Error) is still said.
+export function reportError(e:unknown,prefix=''){if(!sessionChanged(e))notify(settledWords(e)??prefix+((e as Error|undefined)?.message||String(e)),'error',undefined,e);}
 /** A rota decision refused because the rota moved on meanwhile (api.ts re-read it into details.current): what happened,
  *  in one sentence, instead of the generic "another session changed this record". null for any other error. */
 export function settledWords(e:unknown):string|null{
@@ -2077,7 +2081,8 @@ export function showDialog(title: string, description: string, build: (body:HTML
   const g=guard(dialog,close);
   const body=el('div',{class:'dialog-body'});
   dialog.append(el('header',{class:'dialog-head'},el('div',{},el('h2',{id:titleId},title),description?el('p',{class:'muted'},description):''),iconButton('Close dialog','close',g.tryClose,{class:'bare'})),body);
-  document.body.append(dialog); build(body,close,g.tryClose,run=>{closing.push(run);});
+  // A build that throws leaves no closed, orphaned dialog behind: it goes, and the error reaches the caller's reportError.
+  document.body.append(dialog); try{build(body,close,g.tryClose,run=>{closing.push(run);});}catch(e){close();throw e;}
   // Escape is handled here (lists and pickers inside handle their own first), so the browser never closes it unasked.
   dialog.addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.defaultPrevented){e.preventDefault();g.tryClose();}});
   dialog.addEventListener('cancel',e=>{e.preventDefault();g.tryClose();});
