@@ -32,14 +32,18 @@ def test_workspace_create_captures_baseline_and_freezes_evaluation(h):
         assert row.payload_hash == baseline["snapshot_hash"]
         old_policy = db.scalar(select(m.Policy).where(m.Policy.status == "active"))
         old_definition = deepcopy(old_policy.definition)
-        old_policy.definition = {**old_policy.definition, "scope": {"person_ids": ["changed-after-capture"]}}
+        new_definition = {**old_definition, "scope": {"person_ids": [h.seed["people"][0]]}}
+        old_policy.definition = new_definition
         old_policy.revision += 1
         db.get(m.Organisation, h.seed["organisation_id"]).input_revision += 1
         baseline_id = row.id
+        frozen = next(item for item in verify(row)["policies"] if item["id"] == old_policy.id)
+        assert frozen["definition"] == old_definition
 
-    snapshot = h.snapshot(workspace)
-    frozen = next(item for item in snapshot["policies"] if item["id"] == old_policy.id)
-    assert frozen["definition"] == old_definition
+    # A draft check evaluates the current revision against its immutable capture.
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace["id"]), mandatory_rules=True)
+    assert [item["definition"] for item in snapshot["policies"] if item["id"] == old_policy.id] == [new_definition]
 
     with pytest.raises(DatabaseError, match="immutable workspace baseline"):
         with h.app.state.engine.begin() as db:

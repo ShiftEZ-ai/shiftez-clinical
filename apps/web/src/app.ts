@@ -113,7 +113,7 @@ import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effect
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
 import {tagsPage,tagEditor,tagLabel,tagRefs,tagsFor} from './tags.js';
-import {PAGE_TABS,parseRoute,routeHash,ruleNotice} from './routes.js';
+import {PAGE_TABS,parseRoute,routeHash,ruleNotice,withoutPrototype} from './routes.js';
 import {grantRefusal} from './role_grants.js';
 import {integrationsPage} from './integrations.js';
 import {signInConfigPage} from './sign_in_config.js';
@@ -414,7 +414,7 @@ const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.g
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
-  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>={
+  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>=withoutPrototype({
   // Every account lands on Home, so Home always fits a phone (its phone branch keeps only phone work): never a refusal.
   home:{title:'Home',roles:[],phone:()=>true,live:['workspace','publication','rules','catalogue','requests','swaps','availability','access','inbox']},
   schedule:{title:'Schedule',roles:[CAPABILITY.STAFF,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR],
@@ -448,7 +448,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   inbox:{title:TERMS.inbox,roles:[],phone:()=>true,live:['inbox']},
   // Everyone's own reports (feedback.ts); Developers triage all of them in System › Feedback.
   feedback:{title:'My feedback',roles:[],phone:()=>true,live:['feedback']},
-};
+});
 const permits=(...keys:string[])=>Boolean(me&&keys.some(key=>hasAccess(me!.roles,key)));
 const may=(p:Permission)=>Boolean(me&&grants(me.roles,p));
 const acts=(status:string)=>Boolean(me&&actsOn(status,me.roles));
@@ -1715,7 +1715,7 @@ async function renderPage(live=false){
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
     const content=el('div',{});buildingPage(content);const renderer:Record<string,(target:HTMLElement)=>Promise<void>>={
-    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
+    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedPanel,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
     schedule:schedulePage,
     requests:t=>requestsPage(ctx(),t,{query:routeQuery,setQuery:q=>{routeQuery=q;history.replaceState(null,'',routeHash(view,routeParts,q));},
       showDay:(day,person)=>navigate(routeHash('schedule',['week',day],{person}).slice(1))}),
@@ -8423,6 +8423,16 @@ async function auditPage(target:HTMLElement){
     bar.sync();
   };
   target.append(el('section',{class:'panel'},bar.root,list,pager),footerStatus(shown));draw();
+}
+
+/** Home's Self-approved decisions: the last 30 days the server lets this reader see (the department's, or their own).
+ *  A list, so it docks beside the page (DESIGN: lists are panels, not modals). */
+function selfApprovedPanel(){
+  dockPanel({key:'self-approved',title:'Self-approved decisions',build:({body})=>{
+    const load=()=>get(`/api/audit?self_approved=true&people=false&from=${addDays(departmentToday(),-30)}`).then(d=>{
+      body.replaceChildren(d.events.length?auditFeed(d.events):empty('No self-approved decisions','None in the last 30 days.',null,'history'));
+    },e=>{if(!sessionChanged(e))body.replaceChildren(failedNote(couldntLoad('the self-approved decisions',e),e,load));});
+    void load();}});
 }
 
 let polling=false;

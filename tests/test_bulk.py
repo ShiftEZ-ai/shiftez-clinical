@@ -298,6 +298,32 @@ def test_bulk_operational_impact_uses_real_validator_messages_and_safe_resolutio
             assert audit.detail["resolved_finding"]["code"] == issue["code"]
 
 
+@pytest.mark.parametrize("rule_timing", ["captured", "late"])
+def test_bulk_tag_change_refuses_mandatory_weekly_duty_cap(h, rule_timing):
+    tag = h.configure("tags", {"name": "Synthetic duty cap tag", "labels": ["people"]})["record"]
+    person_id = h.seed["people"][0]
+    draft = h.shift(h.workspace(), people=[person_id])["workspace"] if rule_timing == "late" else None
+    cap = h.policy({"kind": "max_duties", "maximum": 0, "window": "week"}, {"tags": [tag["name"]]})
+    if draft is None:
+        draft = h.shift(h.workspace(), people=[person_id])["workspace"]
+    person = next(row for row in h.get("admin", "/api/catalogues")["people"] if row["id"] == person_id)
+    value = {"item_kind": "catalogue.update", "common": {"catalogue": "people"}, "reason": REASON,
+             "items": [{"target_id": person_id, "expected_revision": person["revision"],
+                        "changes": [{"field": "tags", "how": "add", "value": [tag["name"]]}]}]}
+
+    check = preview(h, "admin", value)
+    assert check["counts"]["problem"] == 1
+    finding, = [finding for finding in check["warnings"] if finding["rule_id"] == cap["id"]]
+    assert (finding["code"], finding["severity"]) == ("MAX_DUTIES", "error")
+    assert (finding["workspace_id"], finding["person_id"]) == (draft["id"], person_id)
+    issue, = [issue for issue in check["items"][0]["issues"] if issue["code"] == "MAX_DUTIES"]
+    assert [option["id"] for option in issue["resolutions"]] == ["skip"]
+    reply = h.command("admin", "bulk.apply", value, expected_fingerprint=check["source_fingerprint"], status=409)
+    assert reply["error"]["code"] == "MAX_DUTIES"
+    with transaction(h.app.state.engine) as db:
+        assert tag["name"] not in db.get(m.Person, person_id).tags
+
+
 @pytest.mark.parametrize("collection", ["resource_pools", "operating_calendars"])
 def test_bulk_mandatory_impact_is_attributed_to_indirect_configuration(h, collection):
     from .test_resources_calendars import pool, typ, calendar, attach
