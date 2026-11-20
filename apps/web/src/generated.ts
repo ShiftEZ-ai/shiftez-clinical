@@ -2324,6 +2324,7 @@ export type GenerationOptions = {
   "overtime_penalty"?: number;
   "balance_measure"?: "duties" | "reserved_hours";
   "allocation_order"?: "weighted" | "tiered";
+  "fill_tier_time_share"?: number;
   "pair_limit_max_opportunities"?: number;
   "scoring"?: ScoringSettings;
 };

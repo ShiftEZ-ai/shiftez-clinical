@@ -35,13 +35,54 @@ from .solver_rules import COMPILER_VERSION, SUPPORTED_RULES, compatibility_issue
 from .solver_control import SolverControl, Cancelled, TimeLimit, StopGraceExpired
 from .solver_progress import precheck_issues
 from .solver_provenance import policy_name
-from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
+from .generation_scope import pooled_anchor, population_allows, protects_existing, scope_receipt, selected_session_ids
 from .generation_outcome import DIAGNOSTIC_PROPOSAL_MESSAGE
 from .cp_sat_score import ScorePrecisionError
 from .recurrence import inactive, with_series_state, series_candidate_allowed, series_definition
-from .fill_priority import STAGE_ORDER
+from .fill_priority import STAGE_ORDER, stage_label
 
 CHECKPOINT_INTERVAL_SECONDS = 60
+
+
+def _coverage_floor_key(row):
+    start, end = row.get('start'), row.get('end')
+    if isinstance(start, str):
+        start = aware(start)
+    if isinstance(end, str):
+        end = aware(end)
+    return row.get('shift_id'), row.get('code'), start, end, row.get('rule_id')
+
+
+def _coverage_base_key(row):
+    return row.get('shift_id'), row.get('code'), row.get('rule_id')
+
+
+def _required_coverage_deficit(validation):
+    """Measure only recorded coverage floors in the same seat-minutes as the objective."""
+    floor_rows = {_coverage_floor_key(row): row for row in validation.get('_coverage_floor_rows', ())}
+    rows_by_base = defaultdict(list)
+    for row in floor_rows.values():
+        rows_by_base[_coverage_base_key(row)].append(row)
+    total = 0
+    for finding in finding_observations(validation):
+        if not finding.get('start') or not finding.get('end'):
+            continue
+        detail = finding.get('detail') or {}
+        if 'required' not in detail or 'available' not in detail:
+            continue
+        deficit = max(0, detail['required'] - detail['available'])
+        if not deficit:
+            continue
+        finding_start, finding_end = aware(finding['start']), aware(finding['end'])
+        for row in rows_by_base[_coverage_base_key(finding)]:
+            row_start, row_end = row.get('start'), row.get('end')
+            if row_start is None or row_end is None:
+                minutes = (finding_end - finding_start) // timedelta(minutes=1)
+            else:
+                minutes = (min(finding_end, aware(row_end)) - max(finding_start, aware(row_start))) // timedelta(minutes=1)
+            if minutes > 0:
+                total += minutes * deficit * row.get('weight', 1)
+    return total
 
 
 def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, cancelled=None, feasibility_only=False, diagnostic_proposal=False,
@@ -540,7 +581,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     decisions = set()  # (sid, pid) whose assignment the search decides
     by_person, by_shift = defaultdict(list), defaultdict(list)
     # Coverage stays first; advisory instances feed the same normalized components as the score.
-    coverage, diagnostic_minima, coverage_score_rows = [], [], []
+    coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
+    coverage_floor_rows = []
     diagnostic_domains = {}
     live_coverage = []
     from .cp_sat_score import ScoreModel, SCORE_SCALE, rule_component, stability_component, coverage_component, weighted_component
@@ -860,7 +902,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     strict_constraints = set()
 
     def limit(expression, bound, policy, capacity, minutes, kept_gap=False, editable_cover=False, subject=None,
-              people=(), sessions=(), start=None, end=None):
+              people=(), sessions=(), start=None, end=None, record_objective=True):
         mandatory = policy['definition']['severity'] == 'mandatory'
         diagnostic_cover = mandatory and policy['definition']['rule']['kind'] == 'minimum_cover' and not feasibility_only
         name = policy_name(policy, data=data, person_ids=people, session_ids=sessions, start=start, end=end) if mandatory else None
@@ -877,7 +919,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 strict_constraints.add(constraint.index)
             if not kept_gap:
                 diagnostic_domains[deficit.index] = max(0, capacity)
-            return append_objective(coverage, 4 * minutes * deficit)
+            if subject in selected:
+                pooled_anchors = {sid for sid in sessions if sid in selected} or {subject}
+                coverage_weight = len(pooled_anchors)
+                coverage_floor_rows.append({'shift_id': subject, 'code': 'SCOPED_COVERAGE_GAP',
+                                            'minimum': capacity, 'minutes': minutes,
+                                            'weight': coverage_weight, 'start': start.isoformat(), 'end': end.isoformat(),
+                                            'rule_id': policy['id']})
+                term = minutes * deficit
+                return append_objective(coverage, term) if record_objective else (coverage, term)
         else:
             model.add_max_equality(deficit, [0, expression - bound])
             return penalise(deficit, policy, max(1, capacity), capacity, subject=subject)
@@ -898,8 +948,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             model.add_min_equality(credited[pid], [chosen, enough])
         return credited
 
-    # Coverage counts seat-minutes; a required seat weighs four times a desired one (the score's 1 : 0.25).
-    def coverage_floor(expression, minimum, sid, minutes, open_extra=False, staffed=None):
+    # Required and desired seat-minutes belong to separate lexicographic stages.
+    def coverage_floor(expression, minimum, sid, minutes, open_extra=False, staffed=None, code='COVERAGE_GAP',
+                       start=None, end=None, rule_id=None):
         may_keep_gap = open_extra or diagnostic_proposal or sid in retained_gap_sessions
         deficit = model.new_int_var(0, minimum, 'unfilled_coverage') if may_keep_gap or not feasibility_only else 0
         if not feasibility_only and not open_extra and sid not in retained_gap_sessions:
@@ -907,8 +958,10 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         floor = model.add(expression + deficit >= minimum).with_name('duty:' + sid)
         if staffed is not None:
             floor.only_enforce_if(staffed)
-        if not isinstance(deficit, int):
-            coverage.append(4 * minutes * deficit)
+        if not isinstance(deficit, int) and sid in selected:
+            coverage.append(minutes * deficit)
+            coverage_floor_rows.append({'shift_id': sid, 'code': code, 'minimum': minimum, 'minutes': minutes,
+                                        'start': start.isoformat(), 'end': end.isoformat(), 'rule_id': rule_id})
 
     # Team lead: a variable only for people allowed to lead throughout the duty. Existing leads are hints
     # (or constants when kept as they are); fixed people and fixed leads never change; without a lead
@@ -992,7 +1045,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             expression = sum(distinct_terms.values())
             if req['minimum']:
                 coverage_floor(expression, req['minimum'], min(s['id'] for s, _ in group['duties']),
-                               max(1, int((group['end'] - group['start']).total_seconds() // 60)))
+                               max(1, int((group['end'] - group['start']).total_seconds() // 60)),
+                               code='LEAD_GAP', start=group['start'], end=group['end'],
+                               rule_id=(req.get('policy') or {}).get('id'))
             if req['maximum'] is not None:
                 model.add(expression <= req['maximum']).with_name(
                     'duty:' + min(s['id'] for s, _ in group['duties']))
@@ -1194,7 +1249,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     if cell_key in pooled_cover_cells:
                         limit_receipt, fill_receipt = pooled_cover_cells[cell_key]
                         # Keep every anchor's objective weight without rebuilding the pooled cell.
-                        if limit_receipt is not None:
+                        if limit_receipt is not None and sid in selected:
                             append_objective(*limit_receipt)
                         for costs, terms in fill_receipt:
                             costs.extend(terms)
@@ -1213,12 +1268,14 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                             cover_triggers[key] = model.new_bool_var('cover_trigger')
                             model.add_max_equality(cover_triggers[key], trigger_terms or [0])
                         active = cover_triggers[key]
-                    # Pooled gaps belong to the first focused peer, as in evaluate and schedule_score.
-                    subject = min(s['id'] for s in peers if s['id'] in focus) if rule.get('aggregation') == 'service_group' else sid
+                    # The solver and validator share the same selected pooled subject.
+                    subject = (pooled_anchor([s['id'] for s in peers], selected, focus)
+                               if rule.get('aggregation') == 'service_group' else sid)
                     limit_receipt = limit(rule['minimum'] * active - sum(counted.values()), 0, policy, rule['minimum'], minutes,
                           kept_gap=all(s['id'] in retained_gap_sessions for s in peers),
                           editable_cover=any(s['id'] in editable for s in peers), subject=subject,
-                          people=counted, sessions=[s['id'] for s in peers], start=a, end=b)
+                          people=counted, sessions=[s['id'] for s in peers], start=a, end=b,
+                          record_objective=sid in selected)
                     fill_receipt = ()
                     if fill_priority.enabled:
                         cover_sources = defaultdict(list)
@@ -1226,7 +1283,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                             cover_sources[pid].append(((peer, pid), chosen))
                         before = {stage: len(costs) for stage, costs in fill_priority.costs.items()}
                         fill_priority.target([(1, counted[pid], cover_sources[pid]) for pid in sorted(counted)],
-                            rule['minimum'], active)
+                            rule['minimum'], active,
+                            stage='mandatory_cover' if policy['definition']['severity'] == 'mandatory' else 'desired')
                         fill_receipt = tuple((costs, tuple(costs[before.get(stage, 0):]))
                                              for stage, costs in fill_priority.costs.items()
                                              if len(costs) > before.get(stage, 0))
@@ -1252,20 +1310,25 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         start + timedelta(minutes=r['to_minute']) if r.get('to_minute') is not None else end)):
                     continue
                 interval_requirements.append(r)
-                coverage_floor(cover, r['minimum'], sid, minutes, is_open_extra_cover(definition))
+                coverage_floor(cover, r['minimum'], sid, minutes, is_open_extra_cover(definition),
+                               code='OPEN_EXTRA_COVER' if is_open_extra_cover(definition) else 'COVERAGE_GAP',
+                               start=a, end=b)
                 fill_priority.target([(1, choices[sid, pid], [((sid, pid), choices[sid, pid])])
-                    for pid in available], r['target'] if r['target'] is not None else r['minimum'])
+                    for pid in available], r['minimum'], stage='mandatory_cover')
+                if r['target'] is not None and r['target'] > r['minimum']:
+                    fill_priority.target([(1, choices[sid, pid], [((sid, pid), choices[sid, pid])])
+                        for pid in available], r['target'])
                 if r['maximum'] is not None:
                     model.add(total <= r['maximum']).with_name('duty:' + sid)
-                if r['target'] is not None:
+                if r['target'] is not None and r['target'] > r['minimum']:
                     deficit = model.new_int_var(0, r['target'], 'desired_cover')
                     model.add(cover + deficit >= r['target'])
-                    coverage.append(minutes * deficit)
+                    desired_coverage.append(minutes * deficit)
                 seats = defaultdict(list)
                 for clause in r['capabilities']:
                     eligible = [pid for pid in available if clause['capability_id'] in caps[pid]]
                     coverage_floor(sum(choices[sid, pid] for pid in eligible), clause['minimum'], sid, minutes,
-                                   staffed=staffed)
+                                   staffed=staffed, code='CAPABILITY_GAP', start=a, end=b)
                     if r['distinct_capability_seats']:
                         allocated = []
                         for pid in eligible:
@@ -1273,12 +1336,13 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                             model.add(seat <= choices[sid, pid])
                             seats[pid].append(seat)
                             allocated.append(seat)
-                        coverage_floor(sum(allocated), clause['minimum'], sid, minutes, staffed=staffed)
+                        coverage_floor(sum(allocated), clause['minimum'], sid, minutes,
+                                       staffed=staffed, code='DISTINCT_PERSON_GAP', start=a, end=b)
                         fill_priority.target([(1, seat, [((sid, pid), choices[sid, pid])])
-                            for pid, seat in zip(eligible, allocated)], clause['minimum'])
+                            for pid, seat in zip(eligible, allocated)], clause['minimum'], stage='mandatory_cover')
                     else:
                         fill_priority.target([(1, choices[sid, pid], [((sid, pid), choices[sid, pid])])
-                            for pid in eligible], clause['minimum'])
+                            for pid in eligible], clause['minimum'], stage='mandatory_cover')
                 for same_person in seats.values():
                     model.add(sum(same_person) <= 1)
             append_coverage_score_row(cover, interval_requirements, (b - a) // timedelta(microseconds=1))
@@ -1409,12 +1473,17 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     if not lead_qualified(data, pid, shift, lead, a, b):
                         model.add(lead_terms[sid, pid] == 0).with_name('duty:' + sid)
                 local_minimum = max(r['minimum'] for r in local_requirements)
+                # One floor binds the maximum minimum; key it to that requirement so other findings do not double-count.
+                binding_requirement = max(local_requirements,
+                                          key=lambda r: (r['minimum'], str((r.get('policy') or {}).get('id'))))
                 local_maximums = [r['maximum'] for r in local_requirements if r['maximum'] is not None]
                 coverage_floor(sum(lead_terms[sid, pid] for pid in available
                                    if lead_qualified(data, pid, shift, lead, a, b)), local_minimum, sid, minutes,
-                               staffed=staffed)
+                               staffed=staffed, code='LEAD_GAP', start=a, end=b,
+                               rule_id=(binding_requirement.get('policy') or {}).get('id'))
                 fill_priority.target([(1, lead_terms[sid, pid], [((sid, pid), lead_terms[sid, pid])])
-                    for pid in available if lead_qualified(data, pid, shift, lead, a, b)], local_minimum)
+                    for pid in available if lead_qualified(data, pid, shift, lead, a, b)], local_minimum,
+                    stage='mandatory_cover')
                 if local_maximums:
                     model.add(sum(lead_terms[sid, pid] for pid in present) <= min(local_maximums)).with_name('duty:' + sid)
 
@@ -1508,9 +1577,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         STAGE_ORDER[0]: [('coverage', coverage, 0)],
         STAGE_ORDER[1]: ([('diagnostic_minima', diagnostic_minima, 0)]
                          if diagnostic_minima and diagnostic_proposal else []),
-        STAGE_ORDER[2]: fill_priority.objectives(),
+        STAGE_ORDER[2]: [('desired_coverage', desired_coverage, 0)] if desired_coverage else [],
     }
     tier_list = [tier for stage in STAGE_ORDER for tier in stage_tiers[stage]]
+    # Fix demand before choosing who fills it, so minimum-seat credits cannot block requested extra seats.
+    tier_list.extend(fill_priority.objectives())
     tier_list.extend(weighted_prefix)
     tier_list.append(('weighted', weighted, 0))
     result['optimality_boundary'] = 'Coverage first, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
@@ -1518,6 +1589,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         result['optimality_boundary'] = 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
     if fill_priority.enabled:
         result['optimality_boundary'] += ' Configured fill-priority stages precede weighted quality.'
+    if desired_coverage:
+        result['optimality_boundary'] += ' Required cover and mandatory minima precede desired cover; no coverage weight ratio applies.'
     objective_order = [name for name, _, _ in tier_list]
     objectives = [penalties for _, penalties, _ in tier_list]
     if diagnostic_proposal:
@@ -1621,6 +1694,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         'model': model,
         'diagnostic_domains': diagnostic_domains,
         'diagnostic_minima': diagnostic_minima,
+        'coverage_floor_rows': coverage_floor_rows,
     }
 
 
@@ -1813,7 +1887,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             components, score_variable_start, score_constraint_start, score_constraint_end, evidence, shortages,
             original_validation, protected_conflicts, locked_staffing, score_baseline, before_data, context_changed,
             before_score, scoring, model, live_coverage, diagnostic_domains, diagnostic_minima,
-            strict_probe_seconds=None, _diagnostic_continuation=False, score_program=None):
+            coverage_floor_rows, strict_probe_seconds=None, _diagnostic_continuation=False, score_program=None):
     from .cp_sat_score import SCORE_SCALE
     from .score import publication_baseline, schedule_score
     if not deterministic:
@@ -1877,6 +1951,38 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         return remaining
     strict_constraint_count = len(model.proto.constraints)
     names = ['feasibility'] if feasibility_only else objective_order
+    warning_keys = set()
+
+    def solver_warning(tier, kind, message):
+        key = (names[tier], tier, kind)
+        if key in warning_keys:
+            return
+        warning_keys.add(key)
+        result.setdefault('warnings', []).append(message)
+
+    def block_later_tiers():
+        nonlocal coverage_gate_blocked
+        coverage_gate_blocked = True
+        coverage_tier = next((index for index, name in enumerate(names) if name == 'coverage'), None)
+        if coverage_tier is None:
+            return
+        skipped = []
+        for blocked in range(coverage_tier + 1, len(names)):
+            if blocked in outcome and outcome[blocked].get('search_status') != 'NOT_RUN':
+                continue
+            skipped.append(names[blocked])
+            flat = cp_model.FlatIntExpr(cp_model.LinearExpr.sum(objectives[blocked]))
+            value = (flat.offset + sum(coefficient * incumbent[variable.index]
+                                      for variable, coefficient in zip(flat.vars, flat.coeffs))
+                     if incumbent else None)
+            outcome[blocked] = {'tier': blocked, 'name': names[blocked],
+                               'value': value, 'proven_optimal': False,
+                               'stopped_without_improvement': False, 'search_status': 'NOT_RUN'}
+        if skipped and not any(warning.startswith('Skipped later stages after')
+                               for warning in result.get('warnings', ())):
+            result.setdefault('warnings', []).append(
+                f"Skipped later stages after {stage_label(names[coverage_tier])}: "
+                f"{', '.join(skipped)} were not run because coverage was not proven.")
 
     def complete_score(partial):
         """Evaluate derived score variables at fixed coverage decisions, keeping a valid full-model hint."""
@@ -2048,15 +2154,30 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     # A constant objective still needs a hard-feasibility solve before any
     # incumbent or optimality receipt exists (for example an empty locked rota).
     searched = [tier for tier, penalties in enumerate(objectives) if penalties or feasibility_only] or [0]
+    if names[searched[0]].startswith('fill:'):
+        searched.insert(0, 0)  # Establish a feasible incumbent before spending optional fill time.
     if control.stopped and values is not None:
         searched = []
+    fill_budget = None
+    fill_spent = 0
+    coverage_gate_blocked = False
+    fill_tiers_present = any(name.startswith('fill:') for name in names)
+    if fill_tiers_present:
+        fill_budget = available_search() * options.fill_tier_time_share
     for shortlist in [True, False] if left_out and values is None else [False]:
-        if control.stopped:
+        if control.stopped or coverage_gate_blocked:
             break
         narrow(shortlist)
         if values is None:
             status = cp_model.UNKNOWN  # a shortlist without a schedule says nothing about the whole department
         for tier in searched:
+            coverage_tier = next((index for index, name in enumerate(names) if name == 'coverage'), None)
+            if (values is not None and coverage_tier is not None and tier > coverage_tier and coverage_tier in searched
+                    and not outcome.get(coverage_tier, {}).get('proven_optimal')):
+                if shortlist:
+                    break
+                block_later_tiers()
+                break
             if outcome.get(tier, {}).get('proven_optimal'):
                 if tier not in bounds:  # dropped while an earlier priority improved, which it survived unchanged
                     bound(tier, sum(objectives[tier]), outcome[tier]['value'])
@@ -2088,10 +2209,25 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             # Coverage and rule breaches are deficits whose best is usually 0: the core-based worker reaches it
             # 5-10x sooner. The wall-clock shortlist pays one cold start; deterministic work budgets
             # and the full-candidate pass retain the core/portfolio fallback.
-            deficit = names[tier] in {'coverage', 'rules'}
+            deficit = names[tier] in {'coverage', 'desired_coverage', 'rules'}
             limit = (remaining * (.5 if shortlist else 1)
-                     if names[tier] == 'coverage' or values is None else share)
+                     if names[tier] in {'coverage', 'desired_coverage'} or values is None else share)
+            if names[tier] == 'desired_coverage' and fill_budget is not None:
+                limit = min(limit, max(0, remaining - max(0, fill_budget - fill_spent)))
+            is_fill = names[tier].startswith('fill:')
+            if is_fill:
+                if fill_budget is None:
+                    fill_budget = remaining * options.fill_tier_time_share
+                open_fill = sum(names[t].startswith('fill:') for t in open_tiers if t >= tier)
+                open_fill += sum(names[t].startswith('fill:') for t in open_tiers) if shortlist else 0
+                limit = min(limit, max(0, fill_budget - fill_spent) / open_fill)
+                if limit <= 0 and values is not None:
+                    outcome[tier] = {'tier': tier, 'name': names[tier], 'value': round(current()),
+                                     'proven_optimal': False, 'stopped_without_improvement': False,
+                                     'search_status': 'NOT_RUN'}
+                    continue  # The incumbent bound above preserves this tier while quality uses the reserve.
             until = clock() + limit
+            attempted = False
             for core in ([True] if shortlist and not deterministic else [True, False]) if deficit and values is None else [deficit]:
                 trial_solver = new_solver(core)
                 budget = max(0, limit / 2 if core and values is None and (not shortlist or deterministic) else until - clock())
@@ -2115,7 +2251,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 control.fairness_stall_seconds = options.fairness_plateau_seconds
                 control.fairness_loss = components['fairness'][0] if control.fairness_plateau and 'fairness' in components else None
                 search_model = model
-                if components and names[tier] == 'coverage':
+                if components and names[tier] in {'coverage', 'desired_coverage'}:
                     # Only total, derived score arithmetic is omitted; every hard constraint remains in this clone.
                     control.check()
                     search_model = model.clone()
@@ -2132,9 +2268,15 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                     status = cp_model.UNKNOWN
                     break
                 solver = trial_solver
+                attempted = True
+                solve_started = clock()
                 status = control.solve(solver, search_model, tier)
                 if deterministic:
                     spent[0] += control.last_solve_deterministic_time
+                if names[tier] == 'coverage' and values is not None and status in (cp_model.UNKNOWN, cp_model.INFEASIBLE):
+                    break
+                if is_fill:
+                    fill_spent += max(0, clock() - solve_started)
                 if search_model is not model and status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                     if control.stopped:
                         values, pairs, overtime_values, lead_values = keep_incumbent(solver.response_proto.solution)
@@ -2162,12 +2304,35 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                     break
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 if values is not None:  # out of time before anything better: the schedule in hand stands
-                    outcome.setdefault(tier, {'tier': tier, 'name': names[tier], 'value': round(current()),
-                                              'proven_optimal': False, 'stopped_without_improvement': False})
+                    outcome[tier] = {'tier': tier, 'name': names[tier], 'value': round(current()),
+                                     'proven_optimal': False, 'stopped_without_improvement': False,
+                                     'search_status': solver.status_name(status) if attempted else 'NOT_RUN'}
+                    if status == cp_model.INFEASIBLE:
+                        # The incumbent satisfies this tier's bound; infeasibility cannot be a proof.
+                        outcome[tier]['solver_inconsistency'] = True
+                        solver_warning(tier, 'infeasible_incumbent',
+                            f'Solver inconsistency in {stage_label(names[tier])}: search reported INFEASIBLE despite a '
+                            'feasible incumbent. The incumbent was kept; this stage has no optimality proof.')
+                    elif names[tier] == 'coverage':
+                        if round(current()) <= floor():
+                            outcome[tier]['proven_optimal'] = True
+                            coverage_gate_blocked = False
+                    if names[tier] == 'coverage' and not outcome[tier]['proven_optimal']:
+                        block_later_tiers()
                     if control.fairness_plateau:
                         outcome[tier].update(search=control.last_search)
+                    if ((names[tier] != 'coverage' or outcome[tier]['proven_optimal'])
+                            and status in (cp_model.UNKNOWN, cp_model.INFEASIBLE)
+                            and compiled_score_complete and not control.stopped and available_search() > 0):
+                        bound(tier, objective, current())
+                        continue
                 break
             if not compiled_score_complete:
+                # The kept coverage incumbent has a deficit value even without compiled score values.
+                outcome = {t: row for t, row in outcome.items() if t < tier}
+                outcome[tier] = {'tier': tier, 'name': names[tier], 'value': round(current()),
+                                 'proven_optimal': False, 'stopped_without_improvement': control.stalled,
+                                 'search_status': solver.status_name(status)}
                 break
             values, pairs, overtime_values, lead_values = keep_incumbent()
             best = round(current())
@@ -2177,23 +2342,40 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                     row.update(value=now, proven_optimal=False)
             outcome[tier] = {'tier': tier, 'name': names[tier], 'value': best,
                              'proven_optimal': status == cp_model.OPTIMAL and not shortlist or best <= floor(),
-                             'stopped_without_improvement': control.stalled}
+                             'stopped_without_improvement': control.stalled, 'search_status': solver.status_name(status)}
             if control.fairness_plateau:
                 outcome[tier]['search'] = control.last_search
             if feasibility_only:
                 break
             bound(tier, objective, objective_bound(best, 0))
+    if (values is None and status in (cp_model.UNKNOWN, cp_model.INFEASIBLE)
+            and any(name == 'coverage' for name in names)):
+        block_later_tiers()
+        coverage_gate_blocked = False
     if values is not None and compiled_score_complete:  # only complete score values can prove objective bounds
         for tier, penalties in enumerate(objectives):
-            if not penalties and not feasibility_only and all(t in outcome for t in searched if t < tier):
+            if (not penalties and not feasibility_only and outcome.get(tier, {}).get('search_status') != 'NOT_RUN'
+                    and all(t in outcome for t in searched if t < tier)):
                 outcome[tier] = {'tier': tier, 'name': names[tier], 'value': 0, 'proven_optimal': True}
+    if coverage_gate_blocked:
+        block_later_tiers()
     tiers = [outcome[tier] for tier in sorted(outcome)]
+    desired_row = next((row for row in tiers if row['name'] == 'desired_coverage'), None)
+    if values is not None and desired_row and desired_row['value']:
+        reason = ('This shortfall is proven unavoidable at the preceding priorities under the hard constraints.'
+                  if desired_row['proven_optimal'] else
+                  'Search stopped without further improvement; this shortfall was not proved unavoidable.'
+                  if desired_row['stopped_without_improvement'] else
+                  'Search ended without proving this shortfall unavoidable.')
+        result.setdefault('warnings', []).append(
+            f"Desired cover remains short by {desired_row['value']} seat-minutes. {reason}")
     result['_deterministic_search_seconds'] = spent[0] if deterministic else 0
     solved = time.monotonic()
     control.phase('validation')
     control.stall_seconds = None  # a conflict explanation runs to its own budget
     weighted_row = next((row for row in tiers if row['name'] == 'weighted'), None)
-    result['weighted_status'] = ('OPTIMAL' if weighted_row and weighted_row['proven_optimal']
+    result['weighted_status'] = ('UNKNOWN' if coverage_gate_blocked else
+                                 'OPTIMAL' if weighted_row and weighted_row['proven_optimal']
                                  and all(row['proven_optimal'] for row in tiers) else
                                  'FEASIBLE' if values is not None else
                                  'INFEASIBLE' if status == cp_model.INFEASIBLE else 'UNKNOWN')
@@ -2316,6 +2498,17 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 ZoneInfo(data['organisation']['timezone'])).strftime('%B')
             finding['message'] = f'{month} (context, fixed): {finding["message"]}'
     result['validation'] = validation
+    coverage_row = next((row for row in tiers if row['name'] == 'coverage'), None)
+    if coverage_row is not None:
+        validator_deficit = _required_coverage_deficit({**validation, '_coverage_floor_rows': coverage_floor_rows})
+        if validator_deficit != coverage_row['value']:
+            coverage_tier = next(index for index, row in enumerate(tiers) if row is coverage_row)
+            coverage_row['solver_inconsistency'] = True
+            coverage_row['proven_optimal'] = False
+            solver_warning(coverage_tier, 'required_cover_mismatch',
+                           f'Solver inconsistency in {stage_label(coverage_row["name"])}: validator required-cover '
+                           f'deficit was {validator_deficit} seat-minutes, but the CP-SAT coverage stage reported '
+                           f'{coverage_row["value"]}. The incumbent was kept; this stage has no optimality proof.')
     validation_observations = list(finding_observations(validation))
     if diagnostic_proposal:
         # A continuation is deliberately reviewable even when it breaks a
