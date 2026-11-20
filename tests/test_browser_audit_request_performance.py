@@ -175,7 +175,7 @@ def test_inherited_rule_lines_do_not_block_the_catalogue(browser, live_server, h
                     const work=countWork(()=>tree.rulesDatabase(ctx,host,{...source,entries:[entry],attention:[]},
                         {parts:[],openTag:()=>{},navigate:()=>{}},true,async()=>{}));
                     const inheritedCells=[...host.querySelectorAll('.rc-inh')];
-                    samples.push({count,inherited,milliseconds:work.ms,created:work.created,layout:work.layout,rows:host.querySelectorAll('tr.rt-line').length,
+                    samples.push({count,inherited,milliseconds:work.ms,created:work.created,layout:work.layout,rows:host.querySelectorAll('li.rt-ln').length,
                         inheritedCells:inheritedCells.length,
                         firstInheritedCell:inheritedCells.length ? {text:inheritedCells[0].textContent,
                             tooltip:inheritedCells[0].getAttribute('data-tip')} : null,
