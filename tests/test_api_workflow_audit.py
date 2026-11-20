@@ -144,11 +144,11 @@ def test_catalogue_history_is_sql_paged_beyond_generic_ceiling_with_provenance(a
     retained = next(p for p in last['policies'] if p['id'] == original['id'])
     assert retained['approved_by_name'] and retained['approved_at'] and retained['reason']
     assert statements and all('LIMIT' in q and 'OFFSET' in q and 'definition' in q for q in statements)
-    for role in ('approver', 'credentialer', 'auditor'):
+    for role in s.PERMISSIONS['rules.read']:
+        if role not in h.seed['identities']:
+            identity(h, role, [role])
         assert h.get(role, url + '?limit=1')['policies'][0]['id'] == first['policies'][0]['id']
-    identity(h, 'workflow-history-lead', ['programme_lead'])
-    h.get('workflow-history-lead', url + '?limit=1')
-    for role in ('staff', 'operator'):
+    for role in ('staff', 'operator', 'credentialer'):
         h.get(role, url, status=403)
     h.get('coordinator', '/api/rules/catalogue/unknown/history', status=404)
     h.get('coordinator', url + '?limit=101', status=422)

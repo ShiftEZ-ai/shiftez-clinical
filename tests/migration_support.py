@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateColumn
 
 from apps.api import models as m
@@ -12,7 +13,8 @@ from packages.contracts.schemas import ROLE_NAMES
 
 
 def historical_seed(db):
-    connection, metadata = db.connection(), sa.MetaData()
+    connection = db if isinstance(db, Connection) else db.connection()
+    metadata = sa.MetaData()
     base = {'revision': 1, 'created_at': datetime(2026, 1, 1, tzinfo=timezone.utc)}
 
     def insert(table_name, **values):

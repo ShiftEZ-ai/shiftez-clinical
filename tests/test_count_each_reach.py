@@ -4,11 +4,13 @@ import time
 from datetime import date
 import pytest
 
+from packages.contracts.schemas import PERMISSIONS
 from packages.domain.rule_map import reach, rule_map
 from packages.domain.time import local_midnight
 from .test_rule_conditions import line, tree
 from .test_rule_map import U, base, big_department, rule
 from .test_rule_templates import activate, propose
+from .governance_support import identity
 
 
 def bounds(data):
@@ -236,7 +238,13 @@ def test_reach_api_adds_workspace_counts_and_preserves_legacy_totals(h):
         h.get('coordinator', f"/api/policies/reach?workspace_id={workspace['id']}{suffix}", status=422)
     h.get('staff', endpoint, status=403)
     h.get('credentialer', endpoint, status=403)
-    h.get('credentialer', '/api/policies/reach?day=2026-10-04')
+    day_only = '/api/policies/reach?day=2026-10-04'
+    legacy = h.get('coordinator', day_only)
+    for role in PERMISSIONS['rules.read']:
+        if role not in h.seed['identities']:
+            identity(h, role, [role])
+        assert h.get(role, day_only) == legacy
+    h.get('credentialer', day_only, status=403)
 
 
 def test_unsaved_policy_preview_includes_matched_branches(h):

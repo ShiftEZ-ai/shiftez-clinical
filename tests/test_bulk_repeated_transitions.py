@@ -76,17 +76,37 @@ DECISIONS = [kind for kind in s.BULK_ITEM_KINDS
 
 @pytest.mark.parametrize('kind', DECISIONS)
 def test_registry_decisions_refuse_repeated_state_transitions(h, kind):
-    from apps.api.services.bulk import _model
+    from apps.api.services.bulk import _model, _target_id
     from .test_bulk_equivalence import case
     role, command = case(h, kind)
     h.command(role, kind, command.payload, command.target_id, command.expected_revision)
     model = _model(kind, command.payload)
+    target = _target_id(kind, command.payload, command.target_id)
+    retained = {'include_withdrawn': True}
+    check_audit = kind == 'programme_membership.withdraw'
     with transaction(h.app.state.engine) as db:
-        before = record(db.get(model, command.target_id))
-    result = h.command(role, 'bulk.apply', one_item(kind, before, command.payload), status=409)
-    assert result['error']['code'] in {'WORKFLOW_STATE', 'IDENTITY_STATE'}
+        before = record(db.get(model, target, execution_options=retained))
+        if check_audit:
+            assert before['withdrawn'] is True
+            audit_rows = select(m.AuditEvent).where(
+                m.AuditEvent.department_id == h.seed['department_id']).order_by(m.AuditEvent.id)
+            audit_before = [record(event) for event in db.scalars(audit_rows)]
+            assert sum(event['action'] == kind and event['target_id'] == target for event in audit_before) == 1
+    payload = command.payload
+    if kind == 'rotation.restore':
+        payload = {key: value for key, value in payload.items() if key != 'items'}
+    expected = {
+        'programme_membership.withdraw': (404, {'NOT_FOUND'}),
+        'programme_membership.restore': (409, {'RELATIONSHIP_NOT_WITHDRAWN'}),
+        'rotation.restore': (409, {'ROTATION_NOT_REMOVED'}),
+    }
+    status, codes = expected.get(kind, (409, {'WORKFLOW_STATE', 'IDENTITY_STATE'}))
+    result = h.command(role, 'bulk.apply', one_item(kind, before, payload), status=status)
+    assert result['error']['code'] in codes
     with transaction(h.app.state.engine) as db:
-        assert record(db.get(model, before['id'])) == before
+        assert record(db.get(model, target, execution_options=retained)) == before
+        if check_audit:
+            assert [record(event) for event in db.scalars(audit_rows)] == audit_before
 
 
 @pytest.mark.parametrize('kind', sorted(DATE_ENDINGS))

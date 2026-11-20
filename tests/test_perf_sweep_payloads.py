@@ -17,21 +17,39 @@ def test_department_fix_list_evidence_is_lazy_and_version_bound(pg):
     pg.command('coordinator', 'workspace.validate', {'reason': 'Synthetic scale check'}, workspace['id'], workspace['revision'])
     path = f'/api/workspaces/{workspace["id"]}/fix-list'
     full = pg.client('coordinator').get(path)
-    slim, timing = measure(pg, 'fix-list-lazy', lambda: pg.client('coordinator').get(path+'?include_evidence=false'))
+    slim, timing = measure(pg, 'fix-list-lazy', lambda: pg.client('coordinator').get(path+'?view=lean'))
     expected = full.json()
-    for cause in expected['causes']:
-        cause['evidence'] = []
-    assert slim.status_code == 200 and slim.json() == expected
+    lean = slim.json()
+    assert slim.status_code == 200
+    assert {key: lean[key] for key in ('workspace_id', 'revision', 'fingerprint')} == {
+        key: expected[key] for key in ('workspace_id', 'revision', 'fingerprint')}
+    assert lean['summary'] == {key: expected['summary'].get(key) for key in lean['summary']}
+    fields = ('id', 'level', 'sentence', 'shift_ids', 'session_findings', 'person_ids')
+    assert [{key: cause[key] for key in fields} for cause in lean['causes']] == [
+        {key: cause[key] for key in fields} for cause in expected['causes']]
+    assert all('evidence' not in cause for cause in lean['causes'])
+    # With 768 open sessions, the lean baseline is 123.6 kB against 1,223.8 kB for the full view.
     assert len(slim.content) < len(full.content) * .2
     assert len(slim.content) < 200_000
     assert timing['sql'].get('SELECT', 0) <= 30
-    original = full.json()['causes'][0]
+    legacy = pg.client('coordinator').get(path+'?include_evidence=false')
+    original = expected['causes'][0]
+    without_evidence = {**expected, 'causes': [{**cause, 'evidence': []} for cause in expected['causes']]}
+    assert legacy.status_code == 200 and legacy.json() == without_evidence
     url = path+'?cause_id='+original['id']+'&evidence_hash='+original['evidence_hash']
     detail = pg.get('coordinator', url)
     assert detail['causes'] == [original] and detail['summary'] == full.json()['summary']
     assert pg.client('coordinator').get(url.replace(original['evidence_hash'], 'stale')).status_code == 409
     assert pg.client('coordinator').get(path+'?cause_id=missing').status_code == 409
     assert pg.client('staff').get(url).status_code == 403
+    detail_url = f"{path}?view=detail&cause_id={original['id']}&revision={lean['revision']}&fingerprint={lean['fingerprint']}"
+    assert pg.get('coordinator', detail_url) == {
+        'workspace_id': lean['workspace_id'], 'revision': lean['revision'],
+        'fingerprint': lean['fingerprint'], 'cause': original}
+    assert pg.get('coordinator', detail_url.replace(
+        f"revision={lean['revision']}", f"revision={lean['revision'] + 1}"), status=409)['error']['code'] == 'STALE_REVISION'
+    assert pg.get('coordinator', detail_url.replace(
+        f"fingerprint={lean['fingerprint']}", 'fingerprint=stale'), status=409)['error']['code'] == 'STALE_INPUTS'
     assert pg.client('coordinator').get(path).json() == full.json()
     print('fix-list bytes', {'before': len(full.content), 'after': len(slim.content)})
     return locals()

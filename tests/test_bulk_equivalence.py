@@ -62,6 +62,22 @@ def case(h, kind):
     if kind == "tag.members":
         row = run("admin", "catalogue.create", {"catalogue": "tags", "value": {"name": "Equivalence team", "labels": ["people"]}})
         return "coordinator", command(kind, {"add": [{"kind": "people", "id": person}], "remove": []}, row)
+    if kind in {"programme_membership.withdraw", "programme_membership.restore"}:
+        from .test_future_record_withdrawal import _programme
+
+        row = _programme(h, "2028-02-01")
+        if kind == "programme_membership.restore":
+            row = run("coordinator", "programme_membership.withdraw", row=row)
+        return "coordinator", command(kind, row=row)
+    if kind in {"rotation.remove", "rotation.restore"}:
+        from .test_rotation_withdrawal import future_value, remove
+
+        value = future_value(h)
+        value.pop("mentor_id")
+        row = h.configure("rotations", value, role="coordinator")["record"]
+        payload = (remove(h, [row])["undo"]["payload"] if kind == "rotation.restore"
+                   else {"items": [{"id": row["id"], "revision": row["revision"]}]})
+        return "coordinator", command(kind, payload)
     if kind.startswith(("membership.", "eligibility.", "grant.")):
         family, action = kind.split(".")
         role = "coordinator" if family == "membership" else "credentialer"
@@ -286,6 +302,7 @@ def effective_tables(state, kind):
     """Undo retains lifecycle evidence; compare the effective data independently of that evidence."""
     family = kind.split(".")[0]
     tables = {"catalogue": ["services"], "tag": ["tag_members", "people"], "membership": ["memberships"],
+              "programme_membership": ["programme_memberships"], "rotation": ["rotations"],
               "eligibility": ["eligibilities"], "grant": ["capability_grants"], "availability": ["availability"],
               "availability_pattern": ["availability_patterns"], "wish": ["staff_wishes"], "role": ["role_bindings"],
               "identity": ["identities"], "rule": ["policies"], "policy": ["policies"], "exception": ["policy_exceptions"],
@@ -367,8 +384,12 @@ def test_every_bulk_kind_preserves_single_records_and_history(h, monkeypatch, ki
         with monkeypatch.context() as patched:
             ids = count(1)
             patched.setattr(uuid, "uuid4", lambda: uuid.UUID(int=next(ids)))
-            item = {"item_kind": kind, "target_id": single.target_id, "expected_revision": single.expected_revision,
-                    "payload": deepcopy(single.payload)}
+            payload = deepcopy(single.payload)
+            target, revision = single.target_id, single.expected_revision
+            if kind in {"rotation.remove", "rotation.restore"}:
+                [ref] = payload.pop("items")
+                target, revision = ref["id"], ref["revision"]
+            item = {"item_kind": kind, "target_id": target, "expected_revision": revision, "payload": payload}
             bulk = command("bulk.apply", {"items": [item]})
             result = dispatch(db, actor, bulk, h.settings)
             db.flush()

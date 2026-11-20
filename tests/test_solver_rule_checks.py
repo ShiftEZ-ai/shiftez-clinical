@@ -1,5 +1,6 @@
 import pytest
 
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 from packages.domain.solver_rules import definition_issues, capability_catalogue, SUPPORTED_RULES
 from .governance_support import identity
 
@@ -38,13 +39,15 @@ def test_unsaved_check_and_save_share_compatibility_and_permissions(h):
     assert h.client('staff').get('/api/policies/capabilities').status_code == 403
     assert client.get('/api/policies/capabilities').status_code == 200
 
-@pytest.mark.parametrize('role', ['admin', 'coordinator', 'approver', 'credentialer', 'programme_lead', 'auditor', 'staff', 'operator'])
+@pytest.mark.parametrize('role', ROLE_NAMES)
 def test_capability_metadata_readers_do_not_gain_unsaved_policy_check_permission(h, role):
     if role not in h.seed['identities']:
         identity(h, role, [role])
     client = h.client(role)
-    readable = role not in ('staff', 'operator')
+    readable = role in PERMISSIONS['rules.read']
     response = client.get('/api/policies/capabilities')
+    if role == 'credentialer':
+        assert response.status_code == 403, response.text
     assert response.status_code == (200 if readable else 403), response.text
     if readable:
         expected = capability_catalogue()

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import MetaData, inspect, select, text
 
 from apps.api import models as m
-from apps.api.db import make_engine, transaction
+from apps.api.db import make_engine
 from migrations import safety
 from scripts.manage import alembic_config, check_migrations
 from .migration_support import historical_seed
@@ -39,7 +39,8 @@ def test_bulk_upgrade_from_dev_head_preserves_settings_and_evidence(migration_ur
         assert 'bulk_settings' not in before.tables['departments'].c
         assert 'manual_type_override' not in before.tables['availability'].c
         assert 'batch_id' not in before.tables['definition_history'].c
-        with transaction(engine, write=True) as db:
+        # Historical tables must bypass the current ORM's input revision hooks.
+        with engine.begin() as db:
             seed = historical_seed(db)
             department = seed['department_id']
             moment = m.now()
