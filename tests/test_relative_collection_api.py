@@ -9,6 +9,7 @@ from packages.domain import conditions
 from packages.domain.time import local_midnight
 
 from apps.api import models as m
+from apps.api.auth import Actor
 from apps.api.db import transaction
 from apps.api.services import audiences, collection_filters, condition_context
 from apps.api.services.bulk_staged import _project
@@ -145,8 +146,12 @@ def test_requests_relative_person_and_mixed_date_operands_share_context_with_cou
 
 
 def test_staged_projection_keeps_only_catalogue_relative_token_names():
+    actor = Actor(identity_id="identity", department_id="department", organisation_id="organisation",
+                  display_name="Test coordinator", roles=frozenset({"coordinator"}), person_id=None,
+                  session_id="session")
+    row = m.BulkStaged(payload={})
     operand = relative("today")
-    result = _project(None, None, None, {"source_selection": {"value": operand},
+    result = _project(None, actor, row, {"source_selection": {"value": operand},
         "credential": {"token": "secret"}, "forged": {"kind": "relative", "token": "secret"}}, details=False)
     assert result["source_selection"]["value"] == operand
     assert "token" not in result["credential"] and "token" not in result["forged"]
