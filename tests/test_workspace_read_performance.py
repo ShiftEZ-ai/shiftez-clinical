@@ -1,5 +1,6 @@
 """Query/work budgets are deterministic on native, traced and shared CI runners."""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import Barrier, Event
 import weakref
 
@@ -13,6 +14,32 @@ from apps.api.services import rota_summary as service
 from tests.test_backend_scale import measure, scale_department
 from tests.test_fix_list_performance import backend
 from tests.clock_support import freeze_clock
+
+
+def test_department_workspace_reads_fetch_only_baseline_metadata(backend, monkeypatch):
+    freeze_clock(monkeypatch, datetime(2026, 10, 15, tzinfo=timezone.utc))
+    h = backend
+    workspace, _, *_ = scale_department(h)
+    client = h.client('coordinator')
+    detail = f"/api/workspaces/{workspace['id']}"
+    paths = [detail, detail + '?view=compact', '/api/workspaces?limit=100&offset=0']
+    first = [client.get(path) for path in paths]
+    assert all(response.status_code == 200 for response in first)
+    reads = []
+
+    def counted(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().startswith('SELECT') and 'workspace_baselines.canonical_payload' in statement:
+            reads.append(path)
+
+    engine = h.app.state.engine
+    event.listen(engine, 'before_cursor_execute', counted)
+    try:
+        for path, before in zip(paths, first, strict=True):
+            after = client.get(path)
+            assert (after.status_code, after.content) == (before.status_code, before.content)
+    finally:
+        event.remove(engine, 'before_cursor_execute', counted)
+    assert not reads, f'Selected the baseline payload {len(reads)} times in warmed workspace reads'
 
 
 def test_list_checks_stream_without_loading_workspace_validation_entities(backend):
