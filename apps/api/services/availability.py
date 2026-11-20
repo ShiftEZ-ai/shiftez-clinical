@@ -1243,15 +1243,15 @@ def _pending_queries(db, actor, open_swap_ids=None):
 
 
 def _for_me_sources(db, actor, sources, open_swap_ids=None):
-    """Restrict existing list sources to the exact rows used by ``_counts``."""
+    """Apply the single-table predicates used by ``_counts`` to the existing list rows."""
     by_source = {}
-    for source, query, key in _pending_queries(db, actor, open_swap_ids):
-        by_source.setdefault(source, []).append(query.with_only_columns(key, maintain_column_froms=True))
+    for source, query, _ in _pending_queries(db, actor, open_swap_ids):
+        by_source.setdefault(source, []).append(query.whereclause)
     result = {}
     for source, (query, at, waiting, key) in sources.items():
         pending = by_source.get(source)
         if pending:
-            result[source] = (query.where(or_(*(key.in_(part) for part in pending))), at, waiting, key)
+            result[source] = (query.where(or_(*pending)), at, waiting, key)
     return result
 
 
