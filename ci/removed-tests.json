@@ -78,9 +78,19 @@
       "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
     },
     {
+      "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
+      "owner": "maintainer",
+      "reason": "The same assertions now run for SQLite and PostgreSQL, with additional queue refusal and job persistence checks."
+    },
+    {
       "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
       "owner": "maintainer",
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
     },
     {
       "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",

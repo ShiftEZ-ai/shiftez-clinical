@@ -84,6 +84,7 @@ def _reviewer(db, actor, row, owners=None, people=None):
 
 
 def _project(db, actor, row, value, details=None):
+    require(row is not None, 'NOT_FOUND', 'Staged change not found', 404)
     require(_readable(actor, row), 'NOT_FOUND', 'Staged change not found', 404)
     from .availability import _recorded_details
     from .bulk import PRIVATE

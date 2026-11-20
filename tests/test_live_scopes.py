@@ -263,7 +263,8 @@ def test_all_signal_calls_are_explicit_and_dispatch_families_are_mapped():
     kinds = {node.value for node in ast.walk(dispatch) if isinstance(node, ast.Constant)
              and isinstance(node.value, str) and '.' in node.value and ' ' not in node.value
              and node.value[0].islower() and not node.value.startswith('.')}
-    assert not {kind for kind in kinds if live.command_changes(kind) is None and kind != 'bulk.apply'}
+    # Deliberately silent: bulk.apply announces its items' kinds; a read receipt changes no page anyone has open.
+    assert not {kind for kind in kinds if live.command_changes(kind) is None} - {'bulk.apply', 'department_content.seen'}
 
 
 def test_history_limits_are_configurable(monkeypatch):
@@ -522,3 +523,10 @@ def test_job_events_use_private_topics_and_generation_fans_out_only_to_coordinat
 
 def test_unknown_command_does_not_emit_an_unscoped_signal():
     assert live.command_changes('future.command') is None
+
+
+def test_a_content_read_receipt_announces_no_change():
+    """One person marking announcements seen changes no page anyone has open: no live change, so no open Home re-reads
+    its account and lists and draws again (it restarted the page's own reads)."""
+    assert live.command_changes('department_content.seen', {'ids': ['x']}, {'receipts': {}}) is None
+    assert live.command_changes('department_content.create', {}, {}) is not None  # content itself is still announced

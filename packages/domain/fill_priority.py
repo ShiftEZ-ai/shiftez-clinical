@@ -4,6 +4,23 @@ from math import gcd
 
 
 STAGE_ORDER = ('mandatory_cover', 'mandatory_quota', 'desired')
+STAGE_LABELS = {
+    'mandatory_cover': 'required cover',
+    'mandatory_quota': 'minimum quotas',
+    'desired': 'desired cover',
+}
+
+
+def stage_label(name):
+    """Return the user-facing name for a fill or objective stage."""
+    stage = name.split(':', 2)[1] if name.startswith('fill:') else name
+    if stage == 'coverage':
+        stage = STAGE_ORDER[0]
+    elif stage == 'diagnostic_minima':
+        stage = STAGE_ORDER[1]
+    elif stage == 'desired_coverage':
+        stage = STAGE_ORDER[2]
+    return STAGE_LABELS.get(stage, stage.replace('_', ' '))
 
 
 def stage_progress(before, after, strict_first=True):
@@ -31,13 +48,13 @@ class FillPriority:
                       if enabled else {})
         self.enabled = any(self.tiers.values())
 
-    def target(self, terms, amount, active=1):
+    def target(self, terms, amount, active=1, *, stage='desired'):
         """Each term is (integer quantity, choice, [(assignment key, contributing choice)])."""
         if not self.enabled or amount <= 0 or isinstance(active, int) and not active:
             return
         terms = [(quantity, chosen, sources) for quantity, chosen, sources in terms if quantity > 0]
-        stages = {self.tiers[key] for _, _, sources in terms for key, _ in sources}
-        if not terms or not stages:
+        tiers = {self.tiers[key] for _, _, sources in terms for key, _ in sources}
+        if not terms or not tiers:
             return
         unit = gcd(amount, *(quantity for quantity, _, _ in terms))
         amount //= unit
@@ -46,18 +63,18 @@ class FillPriority:
         credited = defaultdict(list)
         all_credits = []
         for quantity, chosen, sources in terms:
-            by_stage = defaultdict(list)
+            by_tier = defaultdict(list)
             for key, source in sources:
-                by_stage[self.tiers[key]].append(source)
+                by_tier[self.tiers[key]].append(source)
             credits = []
-            for stage, eligible in sorted(by_stage.items()):
+            for tier, eligible in sorted(by_tier.items()):
                 present = eligible[0]
                 if len(eligible) > 1:
                     present = model.new_bool_var('fill_stage_present')
                     model.add_max_equality(present, eligible)
                 credit = model.new_int_var(0, min(quantity, amount), 'fill_stage_credit')
                 model.add(credit <= quantity * present)
-                credited[stage].append(credit)
+                credited[tier].append(credit)
                 credits.append(credit)
             model.add(sum(credits) <= quantity * chosen)
             all_credits.extend(credits)
@@ -70,13 +87,14 @@ class FillPriority:
             gated = model.new_int_var(0, upper, 'active_fill_excess')
             model.add_min_equality(gated, [excess, upper * active])
             excess = gated
-        for stage, credits in credited.items():
+        for tier, credits in credited.items():
             # A surplus unit gains at most one credit and incurs one excess: adding unnecessary work earns nothing.
             bound = amount + max(0, maximum - amount)
             # shortcut: existing 1/1000 preference units; raise scored precision if smaller differences matter.
             cost = model.new_int_var(0, -(-1000 * bound // amount), 'fill_stage_cost')
             model.add(cost * amount >= 1000 * (amount * active - sum(credits) + excess))
-            self.costs[stage].append(cost)
+            self.costs[stage, tier].append(cost)
 
     def objectives(self):
-        return [(f'fill:{stage}', terms, 0) for stage, terms in sorted(self.costs.items(), reverse=True)]
+        return [(f'fill:{group}:{tier}', self.costs[group, tier], 0)
+                for group, tier in sorted(self.costs, key=lambda key: (STAGE_ORDER.index(key[0]), -key[1]))]
