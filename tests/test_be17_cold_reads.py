@@ -83,18 +83,22 @@ def test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation(backend
 def test_preparation_reuse_still_reacquires_under_final_writer_lock(h, monkeypatch):
     saved = open_session(h)
     w, shift = saved['workspace'], saved['shifts'][0]
-    calls, original = [], snapshots._domain_snapshot
+    calls, stamps, original = [], {False: [], True: []}, snapshots.preparation_stamp
     def counted(db, *a, **kw):
-        calls.append(bool(db.connection().info.get('rota_write')))
-        return original(db, *a, **kw)
-    monkeypatch.setattr(snapshots, '_domain_snapshot', counted)
+        value = original(db, *a, **kw)
+        writer = bool(db.connection().info.get('rota_write'))
+        calls.append(writer)
+        stamps[writer].append(value)
+        return value
+    monkeypatch.setattr(snapshots, 'preparation_stamp', counted)
     payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
     payload.update(workspace_id=w['id'], shift_id=shift['id'], participants=[])
     payload['attributes'] = {'note': 'Updated open session'}
     h.command('coordinator', 'shift.update', payload, revision=w['revision'])
     assert False in calls and True in calls
-    # Edit admission reads the original inputs and the edited session in each transaction.
+    # The detached graph replaces full reacquisition; its complete watermark stays authoritative in both transactions.
     assert calls.count(False) <= 2 and calls.count(True) <= 2, calls
+    assert stamps[False] == stamps[True]
 
 
 def test_input_change_during_preparation_refuses_without_saving(h, monkeypatch):

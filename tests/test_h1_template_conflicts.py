@@ -12,6 +12,7 @@ from apps.worker.main import process_one
 from packages.domain.cp_sat import generate as cp_generate
 from packages.domain.generation import generate as greedy_generate, citation_finding_key, coverage_findings
 from packages.domain.validation import evaluate
+from tests.historical_staffing import retained_staffing
 from .test_series_reconciliation import template, edit, amend_template, reconcile
 from .test_template_scheduler_audit import use_cp_sat
 
@@ -252,7 +253,8 @@ def test_supervisor_capacity_findings_include_actual_count_for_no_worse_checks(h
         'definition': {'requirements': [], 'supervision': {'trainee_category_ids': [h.seed['trainee_category']],
             'capability_id': h.seed['supervisor_capability'], 'trainees_per_supervisor': 1, 'require_pairing': True}}})['record']
     a, b = '2026-10-04T08:00:00+03:00', '2026-10-04T12:00:00+03:00'
-    w = h.shift(h.workspace(), typ=typ['id'], people=[
+    # #915 refuses this new supervision gap, so seed it as retained draft staffing.
+    w = retained_staffing(h, h.workspace(), typ=typ['id'], people=[
         {'person_id': supervisor, 'start': a, 'end': b, 'participation': 'supervisor'},
         *[{'person_id': pid, 'start': a, 'end': b, 'participation': 'trainee', 'supervisor_person_id': supervisor}
           for pid in (first, second)]])['workspace']

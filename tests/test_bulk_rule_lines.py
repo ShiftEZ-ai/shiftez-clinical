@@ -122,7 +122,7 @@ def test_add_rule_lines_supports_group_tree_and_one_line_per_person_without_ids(
 
 
 @pytest.mark.parametrize("mode,resolution", [("each", "end_previous_lines"),
-    ("each", "keep_previous_lines"), ("group", "keep_previous_lines")])
+    ("each", "keep_previous_lines"), ("group", None)])
 def test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions(h, mode, resolution):
     who = h.seed["people"][0]
     existing = line(who=person(who), numbers={"max": {"value": 5}}, starts_on="2026-10-01")
@@ -137,19 +137,20 @@ def test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions(h, mod
     added = {"who": condition, "numbers": {"max": {"value": 3}}, "starts_on": "2026-11-01"}
     body = _body(policy, [added])
     checked = preview(h, "coordinator", body)
-    assert checked["counts"]["problem"] == 1
-    issue = checked["items"][0]["issues"][0]
-    assert issue["code"] == "OVERLAPS_UNACKNOWLEDGED"
-    options = {x["id"]: x for x in issue["resolutions"]}
     if mode == "each":
+        assert checked["counts"]["problem"] == 1
+        issue = checked["items"][0]["issues"][0]
+        assert issue["code"] == "OVERLAPS_UNACKNOWLEDGED"
+        options = {x["id"]: x for x in issue["resolutions"]}
         assert options["end_previous_lines"]["label"] == "End them the day before"
         assert options["end_previous_lines"]["best"]
+        assert options["keep_previous_lines"]["label"] == "Keep them"
+        body["resolutions"] = {issue["group_key"]: resolution}
+        assert preview(h, "coordinator", body)["counts"]["waiting"] == 1
     else:
-        assert "end_previous_lines" not in options
-    assert options["keep_previous_lines"]["label"] == "Keep them"
-    body["resolutions"] = {issue["group_key"]: resolution}
-    fixed = preview(h, "coordinator", body)
-    assert fixed["counts"]["waiting"] == 1
+        assert checked["items"][0]["issues"] == []
+        assert checked["counts"]["waiting"] == 1
+    assert _pending(h) == []
     result = h.command("coordinator", "bulk.apply", body)
     proposed = result["items"][0]["results"][0]["record"]
     lines = proposed["definition"]["rule"]["lines"]

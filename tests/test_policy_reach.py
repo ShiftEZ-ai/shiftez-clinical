@@ -10,7 +10,7 @@ import pytest
 from apps.api import models as m
 from apps.api.auth import Actor
 from apps.api.services import policies as service
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 
 from packages.domain.rule_map import reach
 from packages.domain.time import local_midnight
@@ -48,7 +48,10 @@ def test_reach_counts_people_per_rule_with_lines_overrides_and_proposals(h):
     assert reached[everyone['id']] == people - 1   # the narrower rule replaces it for a
     assert (reached[pair['id']], reached[narrow['id']], reached[lines['id']], reached[waiting['id']]) == (2, 1, 2, 1)
     for role in ('admin', 'approver', 'auditor', 'credentialer'):
-        assert counts(h, role)[pair['id']] == 2
+        if role in PERMISSIONS['rules.read']:
+            assert counts(h, role)[pair['id']] == 2
+        else:
+            h.get(role, f'/api/policies/reach?day={DAY}', status=403)
     for role in ('staff', 'operator'):
         h.get(role, f'/api/policies/reach?day={DAY}', status=403)
 
@@ -58,7 +61,7 @@ def test_reach_counts_people_per_rule_with_lines_overrides_and_proposals(h):
 def test_reach_details_use_rule_map_roles(h, role, query):
     if role == 'programme_lead':
         identity(h, role, [role])
-    allowed = role in ('admin', 'coordinator', 'approver', 'programme_lead', 'auditor')
+    allowed = role in PERMISSIONS['rules.read']
     result = h.get(role, f'/api/policies/reach?day={DAY}&{query}', status=200 if allowed else 403)
     if allowed:
         assert 'details' in result
