@@ -326,6 +326,12 @@ def create_app(settings: Settings | None = None, engine=None):
         static = request.url.path.startswith("/assets/") and response.status_code < 400
         route = request.scope.get("route")
         cache_control = response.headers.get("Cache-Control", "no-cache" if static else "no-store")
+        # Server time (application and database) only on replies to a signed-in session, so a slow call can be split from
+        # its network path. Never on identity routes or any unauthenticated reply: separate timings there would sharpen
+        # account probing (OWASP information exposure).
+        if (getattr(request.state, "session_authenticated", False) and request.url.path.startswith("/api/")
+                and not request.url.path.startswith(("/api/account-links/", "/api/account/password"))):
+            response.headers["Server-Timing"] = f"app;dur={(time.monotonic() - started) * 1000:.1f}, db;dur={db_metrics['ms']:.1f}"
         response.headers.update({"X-Correlation-ID": correlation, "Cache-Control": cache_control, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
                                  "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
