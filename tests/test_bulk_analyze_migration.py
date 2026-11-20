@@ -11,11 +11,11 @@ from scripts.manage import alembic_config
 from .test_email_migration import migration_url  # noqa: F401
 
 
+# Autovacuum analyze settings exist only on PostgreSQL; the SQLite upgrade leaves no table options.
+@pytest.mark.parametrize('migration_url', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_bulk_analyze_settings_at_head(migration_url):
     engine = make_engine(migration_url)
     try:
-        if engine.dialect.name != 'postgresql':
-            pytest.skip('Autovacuum analyze settings are PostgreSQL-only')
         migration = import_module('migrations.versions.0148_bulk_analyze')
         config = alembic_config(migration_url)
         query = text("""
