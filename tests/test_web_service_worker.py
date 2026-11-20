@@ -33,20 +33,25 @@ const names=await caches.keys(),shell=names.find(n=>n.startsWith('rota-shell-'))
 assert.deepEqual(names.sort(),['another-app',shell].sort());
 const kept=await caches.open(shell),files=[...kept.entries.keys()].map(u=>new URL(u).pathname).sort();
 assert.deepEqual(files,JSON.parse(process.argv[2]).sort());
-function request(path,method='GET'){let answer;handlers.fetch({request:{url:origin+path,method},respondWith:p=>answer=p});return answer;}
+const pending=[];
+function request(path,method='GET'){let answer;handlers.fetch({request:{url:origin+path,method},respondWith:p=>answer=p,waitUntil:p=>pending.push(p)});return answer;}
 for(const p of ['/api/me','/api/branding','/auth/login','/calendar/private.ics','/assets/app.js','/assets/not-this-version/missing.js','/?state=private'])
   assert.equal(request(p),undefined,p);
 assert.equal(request('/', 'POST'),undefined);
 const module=files.find(p=>p.endsWith('/app.js'));offline=true;
 assert.equal(await (await request(module)).text(),module);assert.equal(network.length,0);
 assert.equal(await (await request('/')).text(),'/');
-offline=false;assert.equal(await (await request('/')).text(),'network');
+offline=false;assert.equal(await (await request('/')).text(),'network');await Promise.all(pending);
 offline=true;assert.equal(await (await request('/')).text(),'network');
 kept.entries.delete(key(module));await assert.rejects(request(module),/offline/);
-offline=false;assert.equal(await (await request(module)).text(),'network');
+offline=false;assert.equal(await (await request(module)).text(),'network');await Promise.all(pending);
 offline=true;assert.equal(await (await request(module)).text(),'network');
 const put=kept.put;kept.put=async()=>{throw new Error('quota');};kept.entries.delete(key(module));
-offline=false;assert.equal(await (await request(module)).text(),'network');kept.put=put;
+offline=false;assert.equal(await (await request(module)).text(),'network');await Promise.all(pending);kept.put=put;
+// A cache write that never finishes holds neither the page nor the next navigation: both answer from the network.
+const waiting=pending.length;kept.put=()=>new Promise(()=>{});kept.entries.delete(key(module));
+assert.equal(await (await request('/')).text(),'network');assert.equal(await (await request(module)).text(),'network');
+assert.equal(await (await request('/')).text(),'network');assert.equal(pending.length,waiting+3);kept.put=put;
 assert([...kept.entries.keys()].every(k=>!new URL(k).pathname.startsWith('/api')));
 console.log(JSON.stringify({shell,files:files.length}));
 '''
