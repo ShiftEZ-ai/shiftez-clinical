@@ -83,6 +83,11 @@
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
     },
     {
+      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
+    },
+    {
       "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
       "owner": "maintainer",
       "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
