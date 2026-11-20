@@ -17,7 +17,7 @@ KINDS = {
     'timeline-item', 'report-duties', 'fix-list',
     # lists and drill-downs moved out of modal dialogs (C26)
     'published-versions', 'archived-rotas', 'new-issues', 'fairness-month', 'fairness-goal', 'duty-people', 'publication-changes',
-    'matched-automatically',
+    'matched-automatically', 'self-approved',
     # page panels (sidePanel)
     'auto-schedule', 'rules-in-context', 'schedule', 'day-summary', 'merge', 'notifications', 'published-changes',
     'rule-proposal',
