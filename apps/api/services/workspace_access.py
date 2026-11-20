@@ -40,33 +40,46 @@ def visible_ids(identity_id, planner):
         or_(access.c.visibility == 'shared', and_(workspace.c.created_by == identity_id, planner))))))
 
 
-@event.listens_for(Session, 'do_orm_execute')
-def filter_workspace_graph(state):
-    """Authenticated product sessions are filtered before joins/counts/pagination; workers retain system access."""
-    actor = state.session.info.get('workspace_actor')
-    if not state.is_select or actor is None:
-        return
-    ids = visible_ids(actor.identity_id, actor.permits('coordinator') and not state.session.info.get('workspace_shared_only'))
-    statement = state.statement.options(with_loader_criteria(m.Workspace, m.Workspace.id.in_(ids), include_aliases=True))
+def _workspace_graph_criteria(identity_id, planner):
+    ids = visible_ids(identity_id, planner)
+    criteria = [with_loader_criteria(m.Workspace, m.Workspace.id.in_(ids), include_aliases=True)]
     for mapper in m.Base.registry.mappers:
         cls = mapper.class_
         if 'workspace_id' in mapper.columns:
             column = getattr(cls, 'workspace_id')
-            statement = statement.options(with_loader_criteria(cls, or_(column.is_(None), column.in_(ids)), include_aliases=True))
-    statement = statement.options(with_loader_criteria(m.WorkspaceMergeProposal,
+            criteria.append(with_loader_criteria(cls, or_(column.is_(None), column.in_(ids)), include_aliases=True))
+    criteria.append(with_loader_criteria(m.WorkspaceMergeProposal,
         m.WorkspaceMergeProposal.source_workspace_id.in_(ids), include_aliases=True))
     shift = m.Shift.__table__
     shifts = select(shift.c.id).where(shift.c.workspace_id.in_(ids))
     for cls in (m.Assignment, m.ShiftService):
-        statement = statement.options(with_loader_criteria(cls, cls.shift_id.in_(shifts), include_aliases=True))
-    statement = statement.options(with_loader_criteria(m.CommandReceipt,
-        or_(m.CommandReceipt.private_owner_id.is_(None), m.CommandReceipt.private_owner_id == actor.identity_id), include_aliases=True))
+        criteria.append(with_loader_criteria(cls, cls.shift_id.in_(shifts), include_aliases=True))
+    criteria.append(with_loader_criteria(m.CommandReceipt,
+        or_(m.CommandReceipt.private_owner_id.is_(None), m.CommandReceipt.private_owner_id == identity_id), include_aliases=True))
     for cls, paths in ((m.Policy, (m.Policy.definition['workspace_id'].as_string(),)),
                        (m.DefinitionHistory, (m.DefinitionHistory.snapshot['workspace_id'].as_string(),
                                               m.DefinitionHistory.snapshot['definition']['workspace_id'].as_string()))):
         for column in paths:
-            statement = statement.options(with_loader_criteria(cls, or_(column.is_(None), column.in_(ids)), include_aliases=True))
-    state.statement = statement
+            criteria.append(with_loader_criteria(cls, or_(column.is_(None), column.in_(ids)), include_aliases=True))
+    return tuple(criteria)
+
+
+@event.listens_for(Session, 'do_orm_execute')
+def filter_workspace_graph(state):
+    """Authenticated product sessions are filtered before joins/counts/pagination; workers retain system access."""
+    info = state.session.info
+    actor = info.get('workspace_actor')
+    if not state.is_select or actor is None:
+        return
+    key = (actor.identity_id, actor.permits('coordinator') and not info.get('workspace_shared_only'))
+    memo = info.get('_request_workspace_criteria')
+    criteria = memo.get(key) if memo is not None else None
+    if criteria is None:
+        criteria = _workspace_graph_criteria(*key)
+        if memo is not None:
+            # The predicates still query live access versions on every SELECT.
+            memo[key] = criteria
+    state.statement = state.statement.options(*criteria)
 
 
 @event.listens_for(Session, 'before_flush')

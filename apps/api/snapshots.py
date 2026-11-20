@@ -504,8 +504,7 @@ def cheap_fingerprints(db, workspaces, *, checks):
 
     current_toolchain = digest(toolchain(quota_policy_limit()))
     departments = {}
-    organisations = {}
-    department_revisions = {}
+    revision_stamps = {}
     result = {}
     for workspace in workspaces:
         check = (checks or {}).get(workspace.id) or {}
@@ -514,19 +513,18 @@ def cheap_fingerprints(db, workspaces, *, checks):
         department = departments.get(workspace.department_id)
         if department is None:
             department = departments[workspace.department_id] = db.get(m.Department, workspace.department_id)
-        organisation = organisations.get(department.organisation_id)
-        if organisation is None:
-            organisation = organisations[department.organisation_id] = db.get(m.Organisation, department.organisation_id)
-        revisions = department_revisions.get(organisation.id)
-        if revisions is None:
-            revisions = department_revisions[organisation.id] = sorted(
-                [row.id, row.revision, row.catalogue_revision]
-                for row in db.scalars(select(m.Department).where(m.Department.organisation_id == organisation.id)))
-        if (currency_match(hint, {'input_revision': organisation.input_revision,
-                      'availability_revision': organisation.availability_revision,
-                      'content_revision': workspace.content_revision,
-                      'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace),
-                      **draft_policy_hint(workspace)})
+        organisation_id = department.organisation_id
+        if organisation_id not in revision_stamps:
+            # Read current revisions even when the request retains the settings rows.
+            rows = db.execute(select(m.Department.id, m.Department.revision, m.Department.catalogue_revision,
+                m.Organisation.input_revision, m.Organisation.availability_revision)
+                .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
+                .where(m.Department.organisation_id == organisation_id).order_by(m.Department.id)).all()
+            revision_stamps[organisation_id] = {
+                'input_revision': rows[0].input_revision, 'availability_revision': rows[0].availability_revision,
+                'department_revisions': [list(row[:3]) for row in rows]}
+        if (currency_match(hint, {**revision_stamps[organisation_id], 'content_revision': workspace.content_revision,
+                      'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
             result[workspace.id] = manifest['token']

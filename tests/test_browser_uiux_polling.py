@@ -110,9 +110,11 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
         page.route('**/api/notifications', lambda route: held.append((route, route_fetch(route))))
         previous = page.locator('#main').element_handle()
         # The reconnect reads the inbox badge when the pulse moved (as the third reconnect below): a notice arrives first.
-        with transaction(h.app.state.engine, write=True) as db:
-            notification(db, h, recipient, 'Notice before the first badge refresh')
+        # The live stream's own re-check can see the new count before the reconnect does, so the badge read is awaited
+        # from the write on, whichever of the two asks first.
         with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications'):
+            with transaction(h.app.state.engine, write=True) as db:
+                notification(db, h, recipient, 'Notice before the first badge refresh')
             reconnect(page)
         page.wait_for_function('old => !old.isConnected', arg=previous)
         # Overview awaits the same non-notification reads as the badge loader.
@@ -133,10 +135,11 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
         delivered.value.finished()
         page.unroute('**/api/notifications')
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-        with transaction(h.app.state.engine, write=True) as db:
-            notification(db, h, recipient, 'Notice after overlapping badge refresh')
-        # A third reconnect must start a fresh badge read, rather than leave badgesLoading locked forever.
+        # A third reconnect must start a fresh badge read, rather than leave badgesLoading locked forever (awaited from the
+        # write on, as above).
         with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications', timeout=5000):
+            with transaction(h.app.state.engine, write=True) as db:
+                notification(db, h, recipient, 'Notice after overlapping badge refresh')
             reconnect(page)
         expect(page.locator('.topbar .bell')).to_have_attribute('aria-label', 'Inbox · 2 unread')  # the unread count sits on the top-bar bell
     finally:
