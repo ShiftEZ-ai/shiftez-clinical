@@ -49,7 +49,7 @@ from .version import __version__, build
 from .rate_limit import enforce, session_identity
 from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
-from .serialization import record, job_record, json_value
+from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
 from .settings import Settings
 from .read_io import IndependentFileResponse, IndependentStaticFiles, background_io
@@ -2546,7 +2546,6 @@ def create_app(settings: Settings | None = None, engine=None):
             cached = conditional_response(request, fast_tag)
             if isinstance(cached, Response):
                 return cached
-            response.headers.update(cached)
             # The validator above reads only scalar metadata. Hydrate the large JSON
             # columns only for a 200 response that will actually project them.
             db.refresh(workspace, attribute_names=("validation", "review_snapshot"))
@@ -2636,7 +2635,9 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
-            return data
+        result = JSONResponse(projection_json_value(data))
+        result.headers.update(cached)
+        return result
 
     @app.get("/api/publications")
     def publications(request: Request):
