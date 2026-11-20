@@ -389,7 +389,7 @@ def _baseline_hint(db, workspace):
     if key in memo:
         return memo[key]
     from .workspace_baselines import latest
-    row = latest(db, workspace.id)
+    row = latest(db, workspace.id, include_payload=False)
     if row is None:
         return [None, None]
     hint = [row.id, row.payload_hash]

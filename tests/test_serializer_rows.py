@@ -1,9 +1,23 @@
+from datetime import date
+from decimal import Decimal
+
 import pytest
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.snapshots import shift_record, workspace_shifts
+
+
+def test_projection_json_preserves_fastapi_wire_values():
+    from apps.api.serialization import projection_json_value
+
+    projection = {0: {'_sa_private': 1, 'values': [1, None, False, -0.0, 1e-07, '\u2028caf\u00e9']},
+                  'nested': [{'date': date(2026, 10, 15), 'amount': Decimal('0.25')},
+                             ('_sa_text', {'_sa_other': 2, 'value': 3})]}
+    assert JSONResponse(projection_json_value(projection)).body == JSONResponse(jsonable_encoder(projection)).body
 
 
 @pytest.mark.parametrize('fixture', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

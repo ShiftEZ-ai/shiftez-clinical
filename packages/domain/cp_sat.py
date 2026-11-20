@@ -2210,6 +2210,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             # 5-10x sooner. The wall-clock shortlist pays one cold start; deterministic work budgets
             # and the full-candidate pass retain the core/portfolio fallback.
             deficit = names[tier] in {'coverage', 'desired_coverage', 'rules'}
+            diagnostic_desired = diagnostic_proposal and names[tier] == 'desired_coverage'
             limit = (remaining * (.5 if shortlist else 1)
                      if names[tier] in {'coverage', 'desired_coverage'} or values is None else share)
             if names[tier] == 'desired_coverage' and fill_budget is not None:
@@ -2237,13 +2238,13 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                     trial_solver.parameters.max_time_in_seconds = 60 + 20 * budget
                 else:
                     trial_solver.parameters.max_time_in_seconds = budget
-                # Presolve pays off on a fresh or narrowed model; widening a schedule in hand starts from a
-                # complete hint.
-                trial_solver.parameters.cp_model_presolve = shortlist or values is None
+                # A diagnostic required-cover hint can leave all desired seats empty. Presolve the
+                # desired search under the required-cover bound even when the hint is complete.
+                trial_solver.parameters.cp_model_presolve = shortlist or values is None or diagnostic_desired
                 control.context.update(tier=tier, candidates='shortlist' if shortlist else 'all')
                 control.stage("finding" if values is None else "improving", tier=tier)
-                # Keep improving while it pays: stop once the last few seconds brought nothing (or only a trickle).
-                control.stall_seconds = (None if feasibility_only or deterministic or names[tier] == 'coverage'
+                # Give diagnostic desired cover its allocated slice so the inherited hint cannot trigger a plateau.
+                control.stall_seconds = (None if feasibility_only or deterministic or names[tier] == 'coverage' or diagnostic_desired
                                          else options.stop_without_improvement_seconds or None)
                 # Widen the provisional shortlist on its ordinary plateau. Spend the fairness extension
                 # comparing every eligible candidate, not polishing an artificially restricted audience.

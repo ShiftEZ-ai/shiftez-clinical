@@ -1,7 +1,7 @@
 """One visibility boundary for the entire workspace graph, including aggregate reads."""
 from contextlib import contextmanager
 
-from sqlalchemy import and_, event, exists, or_, select
+from sqlalchemy import event, exists, or_, select
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from apps.api import models as m
@@ -26,23 +26,33 @@ def shared_scope(db, actor):
                 db.info[key] = value
 
 
-def shared_clause(workspace=m.Workspace):
+def _visibility_clause(workspace, identity_id=None, *, correlate_workspace=False):
     access = m.WorkspaceAccessVersion.__table__
-    return or_(workspace.access_version_id.is_(None), exists(select(1).where(
-        access.c.id == workspace.access_version_id, access.c.workspace_id == workspace.id,
-        access.c.visibility == 'shared')))
+    allowed = access.c.visibility == 'shared'
+    if identity_id is not None:
+        allowed = or_(allowed, workspace.created_by == identity_id)
+    current = exists(select(1).where(access.c.id == workspace.access_version_id,
+                                    access.c.workspace_id == workspace.id, allowed))
+    if correlate_workspace:
+        current = current.correlate_except(access)
+    return or_(workspace.access_version_id.is_(None), current)
+
+
+def shared_clause(workspace=m.Workspace):
+    return _visibility_clause(workspace)
 
 
 def visible_ids(identity_id, planner):
-    workspace, access = m.Workspace.__table__, m.WorkspaceAccessVersion.__table__
-    return select(workspace.c.id).where(or_(workspace.c.access_version_id.is_(None), exists(select(1).where(
-        access.c.id == workspace.c.access_version_id, access.c.workspace_id == workspace.c.id,
-        or_(access.c.visibility == 'shared', and_(workspace.c.created_by == identity_id, planner))))))
+    workspace = m.Workspace.__table__.c
+    return select(workspace.id).where(_visibility_clause(workspace, identity_id if planner else None))
 
 
 def _workspace_graph_criteria(identity_id, planner, shift_workspace_id=None):
     ids = visible_ids(identity_id, planner)
-    criteria = [with_loader_criteria(m.Workspace, m.Workspace.id.in_(ids), include_aliases=True)]
+    workspace_clause = (
+        (lambda workspace: _visibility_clause(workspace, identity_id, correlate_workspace=True)) if planner
+        else (lambda workspace: _visibility_clause(workspace, correlate_workspace=True)))
+    criteria = [with_loader_criteria(m.Workspace, workspace_clause, include_aliases=True)]
     for mapper in m.Base.registry.mappers:
         cls = mapper.class_
         if 'workspace_id' in mapper.columns:
