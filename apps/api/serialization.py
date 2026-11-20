@@ -133,7 +133,7 @@ def _finish_record(table, value, row=None):
     return value
 
 
-def records_many(db, sources, *, exclude=None, order_by=None):
+def records_many(db, sources, *, exclude=None, order_by=None, execution_options=None):
     """Read heterogeneous records together, selecting only their public columns."""
     exclude = exclude or {}
     tables, columns = {}, {}
@@ -142,7 +142,8 @@ def records_many(db, sources, *, exclude=None, order_by=None):
         tables[name] = mapper.local_table.name
         columns[name] = {field.key: field.columns[0] for field in _record_fields(mapper, exclude.get(name, ()))}
     result = {name: [] for name in sources}
-    for name, value in _values_many(db, sources, order_by=order_by, projected_columns=columns):
+    for name, value in _values_many(db, sources, order_by=order_by, projected_columns=columns,
+                                    execution_options=execution_options):
         result[name].append(_finish_record(tables[name], value))
     return result
 
@@ -155,7 +156,7 @@ def rows_many(db, sources, *, order_by=None):
     return result
 
 
-def _values_many(db, sources, *, order_by=None, projected_columns=None):
+def _values_many(db, sources, *, order_by=None, projected_columns=None, execution_options=None):
     import json
     from sqlalchemy import Boolean, Date, DateTime, JSON, Text, cast, func, literal, union_all
     from . import models as m
@@ -192,6 +193,8 @@ def _values_many(db, sources, *, order_by=None, projected_columns=None):
     query = union_all(*queries)
     if order_by:
         query = query.order_by('source', 'position')
+    if execution_options:
+        query = query.execution_options(**execution_options)
     for name, encoded, _ in db.execute(query):
         value = json.loads(encoded)
         for key, convert in converters[name]:
