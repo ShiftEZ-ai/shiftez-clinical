@@ -36,12 +36,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_audit_runs.py::test_action_catalogue_covers_command_branches_and_literal_audit_actions",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_autosched_completion_p0.py::test_completion_allowance_is_cumulative_and_separate_from_stopped_search",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
