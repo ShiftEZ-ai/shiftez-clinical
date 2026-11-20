@@ -1003,7 +1003,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                                               include_mandatory=bool(draft_rules) or current_mandatory,
                                               validity_baseline=validity_baseline)
             mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
-            if rule_map_bindings and workspace.status == "draft":
+            if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
                 from packages.domain.rule_lines import seeded_policies
 
                 captured = seeded_policies(saved_inputs.get("policies") or [], saved_inputs.get("policy_seed_lines") or [])
