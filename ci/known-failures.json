@@ -1626,12 +1626,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_lifecycle_read_performance.py::test_lifecycle_and_fairness_at_department_scale",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_lifecycle_short_writer.py::test_revision_only_race_is_checked_inside_final_writer[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
