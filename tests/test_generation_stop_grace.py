@@ -96,18 +96,28 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
         return cp_model.FEASIBLE if update and stop_at == 'callback' else status
 
     def solve_tier(control, solver, model, tier):
+        control._live_interval = 0  # Observe the assignments at the exact stopping callback.
         status = original_solve(control, solver, model, tier)
         if tier is not None:
             solved.append((tier, status))
         return status
 
     def progress(row):
-        if row['stage'] == 'improving' and row.get('tier') == 0 and 'solution' in row:
+        if row['stage'] != 'improving':
+            return
+        name = row['objective_names'][row['tier']]
+        if name == 'coverage' and 'solution' in row:
             kept[:] = [(p['shift_id'], p['person_id']) for p in row['solution']['pairs']]
-        if row['stage'] == 'improving' and row.get('tier') == 1:
-            if ('objective_value' in row) == (stop_at == 'callback'):
-                assert solved == [(0, cp_model.OPTIMAL)]
-                update['stop'] = True
+        if name == 'desired_coverage':
+            if stop_at == 'callback':
+                if row.get('objective_value') != 0:
+                    return
+                # Desired cover has its own incumbent once its callback reports the filled seat.
+                kept[:] = [(p['shift_id'], p['person_id']) for p in row['solution']['pairs']]
+            elif 'objective_value' in row:
+                return
+            assert solved == [(0, cp_model.OPTIMAL)]
+            update['stop'] = True
 
     monkeypatch.setattr(cp_model.CpSolver, 'solve', solve)
     monkeypatch.setattr(solver_control.SolverControl, 'solve', solve_tier)
@@ -115,11 +125,14 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
     assert update['stop']
     assert bool(stops) == (stop_at == 'callback')
     assert result['status'] == 'candidate_feasible' and result['validation']['valid']
-    assert len(result['additions']) == 1
+    # Desired cover starts after required cover, so a stop before its first solve keeps the empty rota.
+    assert len(result['additions']) == (1 if stop_at == 'callback' else 0)
     assert [(a['shift_id'], a['participant']['person_id']) for a in result['additions']] == kept
     assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
     assert result['objectives'][0]['proven_optimal']
-    assert not result['objectives'][1]['proven_optimal']
+    desired = result['objectives'][1]
+    assert not desired['proven_optimal']
+    assert desired['search_status'] == ('FEASIBLE' if stop_at == 'callback' else 'NOT_RUN')
     assert result['search_stop']['reason'] == result['stop_reason'] == 'operator_stop'
 
 

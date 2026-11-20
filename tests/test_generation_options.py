@@ -212,7 +212,7 @@ def test_run_weight_preset_steers_search_but_saved_and_review_scores_use_departm
 def test_department_defaults_and_run_override_are_snapshotted(h):
     me = h.get('admin', '/api/me')
     dept, org = me['department'], me['organisation']
-    defaults = GenerationOptions(mode='fill_gaps', search_seconds=600).model_dump(mode='json')
+    defaults = GenerationOptions(mode='fill_gaps', search_seconds=600, fill_tier_time_share=0.25).model_dump(mode='json')
     h.command('admin', 'department.settings', {
         'department_name': dept['name'], 'department_revision': dept['revision'],
         'organisation_name': org['name'], 'timezone': org['timezone'],
