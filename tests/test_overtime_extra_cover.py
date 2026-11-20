@@ -1,5 +1,7 @@
 """Extra cover is optional headcount, filled automatically only as permitted overtime."""
+from tests.historical_staffing import retained_staffing
 import copy
+import uuid
 
 import pytest
 from pydantic import ValidationError
@@ -7,6 +9,7 @@ from pydantic import ValidationError
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import job_outcome, job_result_metadata
+from apps.api.snapshots import domain_snapshot
 from packages.contracts.schemas import TypeDefinition
 from packages.domain.cp_sat import generate as cp_sat_generate
 from packages.domain.generation import allocation_settings, generate as greedy_generate
@@ -172,6 +175,11 @@ def test_no_overtime_eligible_people_never_get_regular_placements(h, generate, u
         assert not result.get('optimality_proven', False)
 
 
+def _draft_check_snapshot(h, workspace):
+    with transaction(h.app.state.engine) as db:
+        return domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=True)
+
+
 @pytest.mark.parametrize('safeguard', ['cap', 'rest', 'qualification'])
 def test_extra_cover_overtime_does_not_bypass_safety_or_qualifications(h, generate, safeguard):
     duty_type = extra_type(h)
@@ -187,7 +195,7 @@ def test_extra_cover_overtime_does_not_bypass_safety_or_qualifications(h, genera
         workspace = h.shift(workspace, start='2026-10-04T00:00:00+03:00',
             end='2026-10-04T04:00:00+03:00', people=[person])['workspace']
     workspace = h.shift(workspace, typ=duty_type['id'], people=[])['workspace']
-    data = h.snapshot(workspace)
+    data = _draft_check_snapshot(h, workspace)
     data['people'] = {person: data['people'][person]}
     if safeguard == 'qualification':
         data['eligibilities'] = []
@@ -195,6 +203,140 @@ def test_extra_cover_overtime_does_not_bypass_safety_or_qualifications(h, genera
     assert result['status'] == 'candidate_feasible', result
     assert result['additions'] == [] and result['validation']['valid']
     assert result['summary']['open_extra_cover_places_count'] == 1
+
+
+def test_validator_reports_late_overtime_only_maximum_on_extra_cover(h):
+    duty_type = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    workspace = h.shift(h.workspace(), typ=duty_type['id'], people=[])['workspace']
+    cap = h.policy({'kind': 'block_quota', 'starts_on': workspace['starts_on'], 'ends_on': workspace['ends_on'],
+                    'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
+                   {'person_id': person})
+    data = _draft_check_snapshot(h, workspace)
+    shift, = data['shifts']
+    shift['participants'] = [{'id': str(uuid.uuid4()), 'person_id': person, 'shift_id': shift['id'],
+                             'start': shift['start'], 'end': shift['end'], 'participation': 'staff',
+                             'overtime': True, 'revision': 1}]
+    result = evaluate(data)
+    breaches = [(f['rule_id'], f['person_id'], f['severity'], f['detail']['actual'], f['detail']['amount'])
+                for f in finding_observations(result) if f['code'] == 'QUOTA_ABOVE_MAXIMUM']
+    assert (result['valid'], breaches) == (False, [(cap['id'], person, 'error', 1, 0)])
+
+
+def place_extra_cover(h, draft, duty_type, person, day, status=200):
+    duty = {'start': f'{day}T08:00:00+03:00', 'end': f'{day}T12:00:00+03:00'}
+    return h.command('coordinator', 'shift.create', {'workspace_id': draft['id'],
+        'assignment_type_id': duty_type['id'], 'location_id': h.seed['locations'][0],
+        'service_ids': [h.seed['services'][0]], **duty,
+        'participants': [{**duty, 'person_id': person, 'overtime': True}]},
+        revision=draft['revision'], status=status)
+
+
+def test_late_mandatory_quotas_bind_a_new_run_and_draft_edit(h):
+    from apps.api.workspace_baselines import latest, verify
+    from apps.worker.main import process_one
+
+    duty_type = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    starts_on, ends_on = '2026-10-04', '2026-10-11'
+    rule = {'kind': 'block_quota', 'starts_on': starts_on, 'ends_on': ends_on,
+            'metric': 'duties', 'comparison': 'maximum', 'amount': 2, 'overtime': 'only'}
+    advice = h.policy({**rule, 'amount': 4}, {'person_id': person}, severity='advisory')
+    draft = h.shift(h.workspace(start=starts_on, end=ends_on), typ=duty_type['id'], people=[])['workspace']
+    general = h.policy(rule)
+    cap = h.policy({**rule, 'amount': 0}, {'person_id': person})
+
+    job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
+                    revision=draft['revision'])['job']
+    assert process_one(h.app.state.engine)
+    result = h.get('coordinator', '/api/jobs/' + job['id'])['job']['result']
+    assert result['status'] == 'candidate_feasible' and result['additions'] == []
+    check = h.lifecycle(draft, 'validate')['validation']
+    assert {row['policy_id']: row['amount'] for row in check['quota_report']['rows']
+            if row['person_id'] == person} == {general['id']: 2, cap['id']: 0, advice['id']: 4}
+    rejected = place_extra_cover(h, draft, duty_type, person, '2026-10-05', status=422)
+    assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['person_id'] == person
+               for f in rejected['error']['details']['findings'])
+    submitted = h.lifecycle(draft, 'submit')['workspace']
+    # #945 on dev: review reads live zero limits; the recorded baseline stays immutable
+    with transaction(h.app.state.engine) as db:
+        captured = verify(latest(db, submitted['id']))
+    assert not {general['id'], cap['id']} & {p['id'] for p in captured['policies']}
+    live_zero, = [p for p in h.snapshot(submitted)['policies'] if p.get('_source_policy_id', p['id']) == cap['id']]
+    assert live_zero['_live_zero'] and live_zero['definition']['rule']['amount'] == 0
+    approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
+    assert h.lifecycle(approved, 'publish')['publication_id']
+
+
+def _approved_extra_cover_person_quota(h, monkeypatch, default_maximum):
+    from packages.contracts.schemas import safety_rule
+    from packages.domain.time import aware
+    from tests.clock_support import freeze_clock
+    from tests.test_rule_catalogue_v2_api import proposed as propose_conversion
+
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    duty_type = extra_type(h)
+    allowed, capped = h.seed['people'][:2]
+    for person in (allowed, capped):
+        h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    conversion = propose_conversion(h)
+    h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
+              conversion['id'], conversion['revision'])
+    draft = h.workspace()
+    for day in (4, 5, 6):
+        draft = h.shift(draft, typ=duty_type['id'], people=[], start=f'2026-10-{day:02}T08:00:00+03:00',
+                        end=f'2026-10-{day:02}T12:00:00+03:00')['workspace']
+    settings = {'block_quota': {'metric': 'duties', 'overtime': 'only',
+                                 'starts_on': draft['starts_on'], 'ends_on': draft['ends_on']}}
+    # Master ruling 19 Nov: for non-safety maxima the most specific approved line wins
+    lines = [
+        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': default_maximum, 'level': 'mandatory'}}},
+        {'id': str(uuid.uuid4()), 'settings': settings, 'numbers': {'max': {'value': 2, 'level': 'mandatory'}},
+         'who': {'match': 'all', 'conditions': [{'field': 'person_ids', 'op': 'any', 'values': [allowed]}]}},
+    ]
+    proposed = h.command('coordinator', 'rule.propose', {'catalogue_id': 'workload_limit', 'catalogue_version': 2,
+        'lines': lines, 'acknowledged_overlaps': [lines[0]['id']], 'reason': 'Synthetic overtime limits'})['record']
+    rule = h.command('approver', 'policy.activate', {'reason': 'Independent review'},
+                     proposed['id'], proposed['revision'])['record']
+    assert not safety_rule(rule['definition'])
+    return draft, duty_type, allowed, capped, rule
+
+
+def test_late_catalogue_quota_allows_the_approved_person_line(h, monkeypatch):
+    from apps.worker.main import process_one
+
+    draft, duty_type, allowed, capped, rule = _approved_extra_cover_person_quota(h, monkeypatch, 0)
+    job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
+                    revision=draft['revision'])['job']
+    assert process_one(h.app.state.engine)
+    proposal = h.get('coordinator', '/api/jobs/' + job['id'])['job']['result']
+    assert proposal['status'] == 'candidate_feasible'
+    assert [a['participant']['person_id'] for a in proposal['additions']] == [allowed, allowed]
+    check = h.lifecycle(draft, 'validate')['validation']
+    assert {row['person_id']: row['amount'] for row in check['quota_report']['rows']
+            if row['policy_id'] == rule['id'] and row['person_id'] in {allowed, capped}} == {allowed: 2, capped: 0}
+    denied = place_extra_cover(h, draft, duty_type, capped, '2026-10-07', status=422)
+    assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' and f['person_id'] == capped
+               for f in denied['error']['details']['findings'])
+    edited = place_extra_cover(h, draft, duty_type, allowed, '2026-10-07')
+    assert edited['validation']['valid']
+
+
+def test_late_catalogue_quota_allows_an_approved_person_line_above_a_positive_default(h, monkeypatch):
+    from .test_generation_superseded_apply import apply, group, run
+
+    draft, _, allowed, capped, rule = _approved_extra_cover_person_quota(h, monkeypatch, 1)
+    rows = h.lifecycle(draft, 'validate')['validation']['quota_report']['rows']
+    for person, maximum in ((allowed, 2), (capped, 1)):
+        assert [row['amount'] for row in rows if row['policy_id'] == rule['id']
+                and row['person_id'] == person] == [maximum]
+
+    job = run(h, draft, population=group(allowed))
+    assert [row['participant']['person_id'] for row in job['result']['additions']] == [allowed, allowed]
+    receipt = apply(h, draft, job)['reconciliation']
+    assert receipt['status'] == 'applied' and receipt['addition_indexes'] == [0, 1]
 
 
 def type_floor_definition(h, floor):
@@ -252,10 +394,11 @@ def test_staffed_open_extra_cover_type_floors_stay_mandatory(h, generate, floor)
     duty_type = extra_type(h, **type_floor_definition(h, floor))
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
-        'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
-        'end': '2026-10-04T12:00:00+03:00', 'overtime': True,
-    }])
+    participants = [{'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
+                     'end': '2026-10-04T12:00:00+03:00', 'overtime': True}]
+    workspace = h.workspace()
+    result = (retained_staffing(h, workspace, typ=duty_type['id'], people=participants) if floor == 'lead'
+              else h.shift(workspace, typ=duty_type['id'], people=participants))
     workspace, check = result['workspace'], result['validation']
     assert not check['valid']
     assert any(f['code'] == {'capability': 'CAPABILITY_GAP', 'distinct_capabilities': 'DISTINCT_PERSON_GAP',
@@ -308,12 +451,13 @@ def test_staffed_open_extra_cover_keeps_type_floors_in_unoccupied_intervals(h, g
     duty_type = extra_type(h, **definition)
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
-        'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
+    participants = [{'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
         'end': '2026-10-04T12:00:00+03:00', 'overtime': True, 'team_lead': floor == 'lead',
         'segments': [{'start': '2026-10-04T08:00:00+03:00', 'end': '2026-10-04T09:00:00+03:00'},
-                     {'start': '2026-10-04T11:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'}],
-    }])
+                     {'start': '2026-10-04T11:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'}]}]
+    workspace = h.workspace()
+    result = (retained_staffing(h, workspace, typ=duty_type['id'], people=participants) if floor == 'lead'
+              else h.shift(workspace, typ=duty_type['id'], people=participants))
     assert not result['validation']['valid']
     assert any(f['code'] == ('LEAD_GAP' if floor == 'lead' else 'CAPABILITY_GAP')
                and f['severity'] == 'error' and f['start'] == '2026-10-04T06:00:00+00:00'
@@ -344,7 +488,7 @@ def test_open_extra_cover_never_relaxes_supervision(h, generate):
         'capability_id': h.seed['supervisor_capability'], 'trainees_per_supervisor': 1})
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
+    result = retained_staffing(h, h.workspace(), typ=duty_type['id'], people=[{
         'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
         'end': '2026-10-04T12:00:00+03:00', 'overtime': True, 'participation': 'trainee',
     }])

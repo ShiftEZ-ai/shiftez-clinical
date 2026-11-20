@@ -19,7 +19,7 @@ class GenerationInputsChanged(Exception):
 def refresh_inputs(db, actor, command, plan):
     value = s.GenerationApply.model_validate(command.payload)
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
-    current = domain_snapshot(db, workspace, own_shifts=workspace_content(db, workspace)['shifts'], mandatory_rules=True)
+    current = domain_snapshot(db, workspace, own_shifts=workspace_content(db, workspace)['shifts'])
     return {**plan, 'current_data': current, 'current_stamp': preparation_stamp(db, workspace)}
 
 
@@ -43,7 +43,7 @@ def prepare(db, actor, command):
     ai, ri = indexes('additions', value.addition_indexes), indexes('removals', value.removal_indexes)
     require(ai or ri, 'NO_ADDITIONS', 'Choose at least one suggestion to apply')
     before = workspace_content(db, workspace)
-    current = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+    current = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     captured = deepcopy(current)
     stamp = preparation_stamp(db, workspace)
     frozen = job.input_snapshot
