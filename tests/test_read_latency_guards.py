@@ -1,4 +1,5 @@
 """Pure guards for the bounded first-read paths (CI runs the API fixtures)."""
+from collections import namedtuple
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -7,11 +8,15 @@ from packages.domain import input_manifest
 from packages.domain.rota_summary import cause_summary
 
 
+Row = namedtuple('Row', 'id revision catalogue_revision input_revision availability_revision')
+
+
 class _CurrencyDB:
     def __init__(self, department, organisation):
         self.department = department
         self.organisation = organisation
         self.gets = []
+        self.revision_reads = 0
 
     def get(self, cls, ident):
         self.gets.append((cls, ident))
@@ -21,8 +26,11 @@ class _CurrencyDB:
             return self.organisation
         raise AssertionError(cls)
 
-    def scalars(self, _query):
-        return iter([SimpleNamespace(id=self.department.id, revision=1, catalogue_revision=1)])
+    def execute(self, _query):
+        # One joined column read per organisation: current department and organisation revisions.
+        self.revision_reads += 1
+        row = Row(self.department.id, 1, 1, self.organisation.input_revision, self.organisation.availability_revision)
+        return SimpleNamespace(all=lambda: [row])
 
 
 def test_cheap_fingerprints_never_infers_currency_from_a_stale_hint():
@@ -55,7 +63,7 @@ def test_cheap_fingerprints_reuses_shared_currency_rows():
         'components': {'toolchain': toolchain}}} for workspace in workspaces}
     db = _CurrencyDB(department, organisation)
     assert set(snapshots.cheap_fingerprints(db, workspaces, checks=checks)) == {w.id for w in workspaces}
-    assert db.gets == [(m.Department, department_id), (m.Organisation, organisation_id)]
+    assert db.gets == [(m.Department, department_id)] and db.revision_reads == 1
 
 
 def test_cause_summary_keeps_the_small_projection_free_of_session_rows():

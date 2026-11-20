@@ -290,6 +290,8 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
       {key:'status',label:'Status',server:{field:'stage',value:l=>keyOf(STAGES,l)||l},facet:r=>stageWord(r.stage),options:ORDER.map(stageWord),ordered:ORDER.map(stageWord),
         // A swap says who it waits on in the row (it moves between two people); other kinds keep the reason in the tip.
         cell:r=>{const word=requestStageWord(r,ctx),b=statusBadge(r.stage,word),why=stageDetail(r,ctx);
+          // A decision the person made on their own request under a self-approval permission says so (as the audit does).
+          if(r.self_approved)return el('span',{class:'request-stage'},b,selfApprovedBadge());
           // One line: a long name ends in an ellipsis and the whole status is the tooltip.
           if(!why){b.setAttribute('data-tip',word);return b;}if(r.source==='swap'){b.setAttribute('data-tip',word);return el('div',{class:'request-stage'},b,el('small',{class:'muted'},why));}
           b.setAttribute('data-tip',`${word}: ${why}`);return b;}},
@@ -513,6 +515,8 @@ function overtimeWords(ctx:Context,r:Row){
 /** The kind without its leave type ("Approve leave", not "Approve annual"). */
 const kindTitle=(r:Row)=>title({...r,leave_type_id:null});
 const panelSub=(r:Row,own=false)=>[kindWord(r),own?'':r.person_name||r.calendar_entry_name].filter(x=>x&&x!==title(r)).join(' · ');
+/** The mark a self-approved decision wears, the same as a rota's (governance.ts) and the audit log's. */
+const selfApprovedBadge=()=>badge('Self-approved','warn','audit-self');
 /** The reader's own request (not a swap, which always has two people). */
 const ownRequest=(ctx:Context,r:Row)=>r.source!=='swap'&&!!ctx.me.person_id&&r.person_id===ctx.me.person_id;
 function title(r:Row){
@@ -688,8 +692,8 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
     // A decision's dialog closes once it is saved; the list reloads behind it (LIVE-57), never under a "Saving…" dialog.
     const words=r.source==='pattern'?'counts as unavailable at these times in every rota check':isOvertime(r)?'may be offered overtime on these days, within the department’s limits':impactWords(r)||'is told';
     buttons.push(button('Approve',()=>confirmAction(`Approve ${kindTitle(r).toLowerCase()}`,`${who} · ${when(r,ctx.me.organisation.timezone)}. ${words[0].toUpperCase()+words.slice(1)}.${r.source==='request'&&r.impact_count?' Approving records the absence; the coordinator arranges cover for its published duties.':''}${r.source==='request'&&draftDuties(r)?' On rotas being planned, each overlapping duty shows as a conflict to replace.':''}`,
-      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',undefined,!mine(ctx,r),false,'Reason',true),'secondary small'),
-      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline'),'ghost small'));
+      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',mine(ctx,r)?selfApprovedBadge():undefined,!mine(ctx,r),false,'Reason',true),'secondary small'),
+      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline',mine(ctx,r)?selfApprovedBadge():undefined),'ghost small'));
   }
   // An approved (or later retired) calendar protection is managed (Retire, Undo, Restore) in its own panel, reached from its
   // request in the Decided history: an approver needs no Programmes access for it (JC-01). The panel offers only what this role may do.
@@ -827,7 +831,7 @@ function fillPanel(ctx:Context,id:string,hooks:RequestHooks,setQuery:(change:(q:
           button('Show in Schedule',()=>{d.close();hooks.showDay(i.day,r.person_id);},'ghost small',{'aria-label':`Show ${shortDay(i.day)} in Schedule`})))):null,
         impact>duties.length?el('p',{class:'muted'},`and ${impact-duties.length} more`):null)]:[]),
       el('section',{class:'request-section'},el('h3',{},'History'),el('ol',{class:'request-history'},...data.history.filter(e=>!(e.action==='created'&&data.history.some(x=>x!==e&&eventWord(r,x.action)===eventWord(r,'created')))).map(e=>el('li',{},
-        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:''),
+        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:'',e.self_approved?selfApprovedBadge():''),
         // An undo's reason is the generic "Undo": "Decision undone" says it all.
         el('small',{class:'muted'},`${formatDate(e.at,zone)} ${formatTime(e.at,zone)}`),e.reason&&!(e.action.endsWith('.undo')&&/^Undo\b/.test(e.reason))?el('p',{class:'request-history-why'},e.reason):null)))),
       ...(buttons.length||menu.length?[el('div',{class:'request-actions request-foot'},...buttons,...menu.filter(a=>a.label!=='Show in Schedule').map(a=>{

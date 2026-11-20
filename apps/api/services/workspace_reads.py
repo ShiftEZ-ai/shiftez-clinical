@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from sqlalchemy import func, inspect, literal, select, union_all
 from sqlalchemy.orm import object_session
 from apps.api import models as m
+from apps.api.snapshots import DRAFT_POLICY_BASIS, draft_policy_hint
 from packages.domain.input_manifest import digest
 from .planning import health
 from .conditional_reads import revision_etag
@@ -29,7 +30,7 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
     stamp = [workspace.revision, workspace.content_revision, workspace.status,
              validation_stamp, department.revision, department.catalogue_revision,
              department.leave_reason_display, organisation.revision,
-             organisation.input_revision, organisation.availability_revision]
+             organisation.input_revision, organisation.availability_revision, *draft_policy_hint(workspace).values()]
     if include_check_state:
         from .rota_summary import validation_job_stamp
         stamp.append(validation_job_stamp(db, workspace_id=workspace.id))
@@ -63,8 +64,9 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
 
 def workspace_list_etag(db, actor, representation):
     """Revision validator for the paged workspace menu before health projections run."""
-    department = db.get(m.Department, actor.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    department, organisation = db.execute(select(m.Department, m.Organisation).join(
+        m.Organisation, m.Organisation.id == m.Department.organisation_id).where(
+        m.Department.id == actor.department_id)).one()
     from .job_reads import job_stamp
     workspace_stamp = db.execute(select(
         func.count(m.Workspace.id), func.coalesce(func.sum(m.Workspace.revision), 0),
@@ -95,7 +97,7 @@ def workspace_list_etag(db, actor, representation):
                          (department.revision, department.catalogue_revision, organisation.revision,
                           organisation.input_revision, organisation.availability_revision,
                           today, tuple(workspace_stamp), job_stamp(db, department_id=actor.department_id), tuple(publication_stamp),
-                          tuple(change_stamp), tuple(fork_stamp)))
+                          tuple(change_stamp), tuple(fork_stamp), DRAFT_POLICY_BASIS))
 
 
 def summary_etag(db, actor, workspace, view, group_version_id):
@@ -123,7 +125,7 @@ def summary_etag(db, actor, workspace, view, group_version_id):
                          validation_job_stamp(db, workspace_id=workspace.id),
                          worker_state(db, m.now())['worker_liveness'],
                          workspace.rule_adjustments or [], workspace.target_overrides or [],
-                         workspace.accepted_issues or [])
+                         workspace.accepted_issues or [], *draft_policy_hint(workspace).values())
 
 
 def rule_map_etag(db, actor, workspace):
@@ -143,7 +145,7 @@ def rule_map_etag(db, actor, workspace):
         func.count(m.Policy.id), func.coalesce(func.sum(m.Policy.revision), 0),
         func.max(m.Policy.created_at), func.max(m.Policy.id)
     ).where(m.Policy.department_id == workspace.department_id, m.Policy.status == 'proposed')).one()
-    return revision_etag("workspace-rule-map", workspace.id, actor.identity_id, actor.person_id,
+    return revision_etag("workspace-rule-map-v2", workspace.id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), tuple(row), workspace.rule_adjustments or [],
                          workspace.target_overrides or [], tuple(proposals))
 

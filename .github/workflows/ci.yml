@@ -243,11 +243,88 @@ jobs:
 
           ${{ runner.temp }}/public-ci-playwright
         key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
+    - name: Download browser system packages
+      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      run: |
+        apt_work=$(mktemp -d "$RUNNER_TEMP/ci-apt.XXXXXX")
+        chmod 755 "$apt_work" # The APT download sandbox must be able to reach the lists and archives.
+        apt_bundle="$RUNNER_TEMP/public-ci-apt"
+        mkdir -p "$apt_work/lists" "$apt_work/archives" "$apt_bundle"
+        printf '%s\n' "${ImageVersion:?Hosted image version is missing}" > "$apt_bundle/image-version"
+        printf '%s\tpriority:%s\n' \
+          'https://mirrors.edge.kernel.org/ubuntu/' 1 \
+          'https://mirror.us.leaseweb.net/ubuntu/' 2 \
+          'https://archive.ubuntu.com/ubuntu/' 3 > "$apt_work/mirrors.list"
+        for suite in noble noble-updates noble-backports noble-security; do
+          printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe restricted multiverse\n' \
+            "$apt_work/mirrors.list" "$suite"
+        done > "$apt_work/ubuntu.list"
+        export APT_CONFIG="$apt_work/apt.conf"
+        cat > "$APT_CONFIG" <<EOF
+        Dir::Etc::sourcelist "$apt_work/ubuntu.list";
+        Dir::Etc::sourceparts "-";
+        Dir::State::lists "$apt_work/lists";
+        Acquire::Languages "none";
+        Acquire::Retries "1";
+        Acquire::http::Timeout "15";
+        Acquire::https::Timeout "15";
+        APT::Update::Error-Mode "any";
+        EOF
+
+        apt_retry() {
+          local attempt
+          for attempt in 1 2 3; do
+            # Checks has a 10-min job limit; a fetch that cannot finish leaves the shards their logged fallback.
+            if timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG" "$@"; then return 0; fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Browser APT $1 failed in 3 attempts"
+              return 1
+            fi
+            echo "::warning::Browser APT $1 attempt $attempt failed or stalled; retrying"
+          done
+        }
+
+        read_plan() {
+          # The pinned Playwright dry run reports the simulated transaction and exits 1 when packages are missing.
+          local status=0 line
+          local header='^Missing system dependencies \(([1-9][0-9]*)\):$'
+          local package='^  ([a-z0-9][a-z0-9+.-]+(:amd64)?)$'
+          local -a lines
+          LC_ALL=C python -m playwright install-deps --dry-run chromium > "$apt_work/plan" || status=$?
+          mapfile -t lines < "$apt_work/plan"
+          if [ "$status" = 0 ] && [ "${#lines[@]}" = 1 ] && [ "${lines[0]}" = 'All system dependencies are installed.' ]; then
+            return 0
+          fi
+          [ "$status" = 1 ] && [[ ${lines[0]:-} =~ $header ]] && [ "${BASH_REMATCH[1]}" = "$((${#lines[@]} - 1))" ] || return 1
+          for line in "${lines[@]:1}"; do
+            [[ $line =~ $package ]] || return 1
+            packages+=("${BASH_REMATCH[1]}")
+          done
+        }
+
+        if ! apt_retry update; then
+          echo '::warning::Browser APT index refresh failed; browser shards will use fallback'
+          exit 0
+        fi
+        packages=()
+        if ! read_plan; then
+          echo '::warning::Playwright system package plan was invalid; browser shards will use fallback'
+          exit 0
+        fi
+        if [ "${#packages[@]}" -eq 0 ]; then exit 0; fi
+        if ! apt_retry install --download-only -y --no-install-recommends -o "Dir::Cache::archives=$apt_work/archives" "${packages[@]}"; then
+          echo '::warning::Browser APT package download failed; browser shards will use fallback'
+          exit 0
+        fi
+        # Keep APT's lock and sandbox-only partial directory out of the artifact.
+        shopt -s nullglob
+        debs=("$apt_work/archives/"*.deb)
+        if [ "${#debs[@]}" -gt 0 ]; then cp -- "${debs[@]}" "$apt_bundle/"; fi
     - name: Archive the shared downloads
       if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       run: |
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-dependencies.tar" runtime-archives public-ci-wheels public-ci-npm/_cacache
-        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright
+        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright public-ci-apt
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
       with:
@@ -533,8 +610,6 @@ jobs:
     - synchronize
     - reopened
     - ready_for_review
-    - labeled
-    - unlabeled
   merge_group:
     types:
     - checks_requested
