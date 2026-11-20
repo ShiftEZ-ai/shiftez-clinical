@@ -1,6 +1,7 @@
 import {el,field,select,check,button,armed,tabs,icon,plural,sparkline,duration,durationField,type DurationField} from './dom.js';
 import {GENERATION_TIME_FIELDS,AUTOSCHEDULE_ANIMATION_DEFAULTS,AUTOSCHEDULE_ANIMATION_LIMITS,AUTOSCHEDULE_ANIMATION_CHOICES,type AutoscheduleAnimationSettings,type AutoscheduleBigMoveSettings,type AutoscheduleLiveEvent,type AutoscheduleLivePair,type AutoscheduleProgress,AUTO_SCHEDULE_LIMITS,GENERATION_PROGRESS_STAGES,GENERATION_SEARCH_FINISHED_STAGES,GENERATION_WEIGHT_PRESETS,SCORE_WEIGHT_LABELS,SCORE_WEIGHT_HELP,STRENGTH_LABELS,GENERATION_STOP_FIELDS,GENERATION_CONFLICT_CHOICES,MAX_SCORE_INPUT,MAX_WISH_POINTS,WISH_PRIORITY_FIELDS,type GenerationOptions,type ScoringSettings} from './generated.js';
 import type {Row} from './types.js';
+import {GENERATION_FILL_FIELDS} from './generated.js';
 
 // The one auto-schedule configuration: department defaults in Configuration › Auto-schedule & scoring. A run picks
 // minutes, a preset and Keep existing assignments in the planner's Auto-schedule panel. Factory defaults come from the server.
@@ -116,6 +117,8 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
   const stops=stopFields(initial),stall=stops.stall;
   const fairStall=fairnessPlateauField(initial.fairness_plateau_seconds);
   const shortlist=hint(field('People tried first for each place','number',initial.shortlist_width??3,{required:true,min:0,max:20,step:1}),'Faster for large departments; 0 tries everyone.');
+  const fillMeta=GENERATION_FILL_FIELDS.fill_tier_time_share;
+  const fillShare=hint(field(fillMeta.title,'number',initial.fill_tier_time_share??fillMeta.default,{required:true,min:fillMeta.min,max:fillMeta.max,step:'any'}),fillMeta.help);
   const pairBudget=hint(field('Most pairs a pair limit may weigh','number',initial.pair_limit_max_opportunities??50000,{required:true,min:1,max:1000000,step:1}),
     'A larger department may need more; a run stops and says so when a pair limit needs more.');
   const diagnostics=timeField('diagnostic_seconds',initial.diagnostic_seconds);
@@ -126,7 +129,7 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
   const wishField=(k:keyof typeof WISH_PRIORITY_FIELDS)=>{const f=WISH_PRIORITY_FIELDS[k] as {title:string;help:string;default:number;min:number|null;max:number|null;integer:boolean};
     return hint(field(f.title,'number',s[k]??f.default,{required:true,...(f.min!=null?{min:f.min}:{}),...(f.max!=null?{max:f.max}:{}),step:f.integer?1:'any'}),f.help);};
   const decay=wishField('wish_priority_decay'),credit=wishField('wish_granted_credit'),history=wishField('wish_history_periods');
-  const numbers=[decay,credit,history,overtime,...Object.values(weights),...Object.values(strengths),worstOff,desired,prefMean,prefWorst,maximum,budget,stall,stops.gap,stops.score,fairStall,shortlist,pairBudget,diagnostics,points,cap];
+  const numbers=[decay,credit,history,overtime,...Object.values(weights),...Object.values(strengths),worstOff,desired,prefMean,prefWorst,maximum,budget,stall,stops.gap,stops.score,fairStall,shortlist,fillShare,pairBudget,diagnostics,points,cap];
   const num=(f:{input:HTMLInputElement})=>Number(f.input.value)||0;
   const explain=el('p',{class:'muted score-explain','aria-live':'polite'}),totalLine=el('p',{class:'hint weights-total warn-text','aria-live':'polite'}),
     order=el('p',{class:'muted score-order','aria-live':'polite'});
@@ -151,7 +154,7 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
   };
   const read=():GenerationOptions=>({search_minutes:budget.value(),max_search_minutes:maximum.value(),...stops.read(),stop_by:null,fairness_plateau_seconds:fairStall.value(),shortlist_width:num(shortlist),diagnostic_seconds:diagnostics.value(),
     mode:mode.input.value,balance_measure:balance.input.value,overtime_penalty:num(overtime),
-    allocation_order:fillOrder.input.value,pair_limit_max_opportunities:num(pairBudget),
+    allocation_order:fillOrder.input.value,fill_tier_time_share:num(fillShare),pair_limit_max_opportunities:num(pairBudget),
     // The loaded scoring first: settings this form does not show are kept as they are (F-C1).
     scoring:{...(initial.scoring||{}),weights:Object.fromEntries(WEIGHTS.map(([k])=>[k,num(weights[k])])),wish_budget_points:num(points),wish_period:period.input.value,strengths:Object.fromEntries(STRENGTHS.map(([k])=>[k,num(strengths[k])])),wish_debt_cap:num(cap),
       fairness_worst_off_emphasis:num(worstOff),desired_cover_factor:num(desired),preferences_mean_weight:num(prefMean),preferences_worst_weight:num(prefWorst),
@@ -164,7 +167,7 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
     const ds=(d.scoring||{}) as ScoringSettings,put=(f:{input:HTMLInputElement|HTMLSelectElement},v:unknown)=>{if(v!=null)f.input.value=String(v);};
     put(mode,d.mode);if(d.max_search_minutes!=null)maximum.set(d.max_search_minutes);if(d.search_minutes!=null)budget.set(d.search_minutes);put(balance,d.balance_measure);put(overtime,d.overtime_penalty);
     stops.set(d);fairStall.set(d.fairness_plateau_seconds??GENERATION_TIME_FIELDS.fairness_plateau_seconds.default);put(shortlist,d.shortlist_width??3);if(d.diagnostic_seconds!=null)diagnostics.set(d.diagnostic_seconds);
-    put(fillOrder,d.allocation_order||'weighted');put(pairBudget,d.pair_limit_max_opportunities??50000);
+    put(fillOrder,d.allocation_order||'weighted');put(fillShare,d.fill_tier_time_share??fillMeta.default);put(pairBudget,d.pair_limit_max_opportunities??50000);
     for(const [key,f] of Object.entries(weights))put(f,(ds.weights as Record<string,number>|undefined)?.[key]);
     for(const [key,f] of Object.entries(strengths))put(f,(ds.strengths as Record<string,number>|undefined)?.[key]);
     put(points,ds.wish_budget_points);put(period,ds.wish_period||'month');put(cap,ds.wish_debt_cap??3);
@@ -188,7 +191,7 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
   const advanced=el('div',{},
     group('Advisory rule strength','How much an advisory rule of each strength weighs. Mandatory rules always apply.',...Object.values(strengths).map(f=>f.wrap),explain),
     group('How score parts are measured','The schedule score and auto-schedule measure fairness, desired cover and preferences the same way.',worstOff.wrap,desired.wrap,prefMean.wrap,prefWorst.wrap),
-    group('Search','How widely each run searches.',shortlist.wrap,pairBudget.wrap,diagnostics.wrap));
+    group('Search','How widely each run searches.',shortlist.wrap,fillShare.wrap,pairBudget.wrap,diagnostics.wrap));
   // How long runs search, together (`timing` takes the department's other run controls: Configuration's Add time step).
   const timing=el('div',{},group('Timing','How long each run searches, its ceiling, and when it stops early.',maximum.wrap,budget.wrap,stall.wrap,stops.gap.wrap,stops.score.wrap,fairStall.wrap,stops.conflict.wrap));
   const head=reset?el('div',{class:'auto-options-head'},reset):null,root=el('div',{class:'auto-options'},head,main,timing,preferences,advanced);
