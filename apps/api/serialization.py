@@ -148,6 +148,38 @@ def records_many(db, sources, *, exclude=None, order_by=None, execution_options=
     return result
 
 
+def shift_link_rows(db, ids, *, include_participants, execution_options=None):
+    """Read clinics and public assignment records in one typed statement."""
+    from sqlalchemy import Date, DateTime, null, union_all
+    from .models import Assignment, ShiftService
+
+    links = ShiftService.shift_id.in_(ids)
+    if not include_participants:
+        query = select(ShiftService.shift_id, ShiftService.service_id).where(links)
+        for shift_id, service_id in db.execute(query.execution_options(**(execution_options or {}))):
+            yield shift_id, service_id, None
+        return
+
+    fields = _record_fields(inspect(Assignment), ())
+    keys = [field.key for field in fields]
+    dates = [field.key for field in fields if isinstance(field.columns[0].type, (Date, DateTime))]
+    shift_index = keys.index('shift_id')
+    assignments = select(*(getattr(Assignment, key) for key in keys), null()).where(Assignment.shift_id.in_(ids))
+    # Keep the assignment columns first in the UNION so results use their SQLAlchemy types.
+    services = select(*(ShiftService.shift_id if key == 'shift_id' else null() for key in keys),
+                      ShiftService.service_id).where(links)
+    for row in db.execute(union_all(assignments, services).execution_options(**(execution_options or {}))):
+        shift_id, service_id = row[shift_index], row[-1]
+        if service_id is not None:
+            yield shift_id, service_id, None
+            continue
+        value = dict(zip(keys, row))
+        for key in dates:
+            if (item := value[key]) is not None:
+                value[key] = json_default(item)
+        yield shift_id, None, value
+
+
 def rows_many(db, sources, *, order_by=None):
     """Acquire independent typed rows in one statement, without attaching them to the session."""
     result = {name: [] for name in sources}
