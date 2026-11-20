@@ -520,3 +520,4 @@ def test_auditors_and_programme_leads_read_fairness_and_wishes_but_change_nothin
     h.command(role, 'wish.withdraw', {'reason': 'Not mine'}, wishes[0]['id'], wishes[0]['revision'], status=403)
     h.command(role, 'policy.create', {'name': 'Goal', 'owner': 'Test', 'source': 'Test', 'starts_on': '2026-10-01',
                                       'definition': {**definition, 'scope': {}}}, status=403)
+# Code-owner review check (closed unmerged)
