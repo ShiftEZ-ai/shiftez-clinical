@@ -350,8 +350,9 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             assert json.loads((output / "recovered-tests.json").read_text()) == [
                 {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
             ]
-            recovered = {}
-            ratchet.product_error_nodes(group, recovered=recovered, allow_retry=True)
+            collected = ratchet.ReportEvidence()
+            group_collect(evidence=collected)
+            recovered = collected.recovered
             assert recovered == {RED: "failed"}
             assert check(listing(), listing(), updated, group=True, recovered=recovered)
             summary = output / "summary.md"
@@ -393,12 +394,33 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
     assert len(ratchet.collect_reports(clean_plan, clean, "fixture", "1")) == 1
 
 
+def configure_pr_verdict(tmp_path, reports_dir, monkeypatch, plan, current, *, attempt=1):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    ctx = {"base_sha": plan["base_sha"], "replicas": [1], "bootstrap": False, "base": current, "current": current}
+    output = tmp_path / "verdict"
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", str(attempt))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(sys, "argv", ["make_known_failures.py", "--plan", str(plan_path), "--reports", str(reports_dir),
+                                     "--output", str(output)])
+    monkeypatch.setattr(ratchet, "git", lambda *args: {("rev-parse", "HEAD"): plan["sha"],
+                                                       ("rev-parse", "HEAD^{tree}"): plan["tree"]}.get(args, ""))
+    monkeypatch.setattr(ratchet, "context", lambda _: ctx)
+    monkeypatch.setattr(ratchet, "at_revision", lambda _: current)
+    monkeypatch.setattr(ratchet, "preflight", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ratchet, "load_frozen_baseline", lambda _: (set(), "fixture"))
+    monkeypatch.setattr(ratchet, "load_env_exceptions", lambda _: (set(), "fixture"))
+    monkeypatch.setattr(ratchet, "load_root_evidence", lambda *_: ({"runs": ROOT_RUNS, "counts": {"cleanup": 10}}, ROOT_SEAL))
+    return output, summary
+
+
 @pytest.mark.parametrize("outcome", ["passed", "failed", None])
 def test_pr_verdict_uses_verified_retry(tmp_path, monkeypatch, outcome):
     plan = reports(tmp_path, replicas=(1,), red_suites=("unit",))
     plan.update(smoke=False, base_sha="c" * 40)
-    plan_path = tmp_path / "plan.json"
-    plan_path.write_text(json.dumps(plan), encoding="utf-8")
     for receipt in tmp_path.rglob("shard-receipt.json"):
         data = json.loads(receipt.read_text(encoding="utf-8"))
         data["plan_sha256"] = ratchet.digest(plan)
@@ -419,24 +441,7 @@ def test_pr_verdict_uses_verified_retry(tmp_path, monkeypatch, outcome):
             }
         receipt.write_text(json.dumps(data), encoding="utf-8")
 
-    current = listing()
-    ctx = {"base_sha": plan["base_sha"], "replicas": [1], "bootstrap": False, "base": current, "current": current}
-    output = tmp_path / "verdict"
-    summary = tmp_path / "summary.md"
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
-    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    monkeypatch.setattr(sys, "argv", ["make_known_failures.py", "--plan", str(plan_path), "--reports", str(tmp_path),
-                                     "--output", str(output)])
-    monkeypatch.setattr(ratchet, "git", lambda *args: {("rev-parse", "HEAD"): plan["sha"],
-                                                       ("rev-parse", "HEAD^{tree}"): plan["tree"]}.get(args, ""))
-    monkeypatch.setattr(ratchet, "context", lambda _: ctx)
-    monkeypatch.setattr(ratchet, "at_revision", lambda _: current)
-    monkeypatch.setattr(ratchet, "preflight", lambda *args, **kwargs: None)
-    monkeypatch.setattr(ratchet, "load_frozen_baseline", lambda _: (set(), "fixture"))
-    monkeypatch.setattr(ratchet, "load_env_exceptions", lambda _: (set(), "fixture"))
-    monkeypatch.setattr(ratchet, "load_root_evidence", lambda *_: ({"runs": ROOT_RUNS, "counts": {"cleanup": 10}}, ROOT_SEAL))
+    output, summary = configure_pr_verdict(tmp_path, tmp_path, monkeypatch, plan, listing())
     if outcome is None:
         with pytest.raises(ValueError, match="Missing pull-request retry evidence"):
             ratchet.main()
@@ -455,6 +460,30 @@ def test_pr_verdict_uses_verified_retry(tmp_path, monkeypatch, outcome):
         assert proposal == {"node": RED, "test_file": "tests/test_sample.py", "observations": ["failed", "passed"],
                             "red_count": 1, "class": "unstable", "status": "PROPOSED"}
         assert "recovered on retry" in summary.read_text(encoding="utf-8")
+
+
+def test_pr_verdict_reports_rerun_recovery_for_a_listed_node(tmp_path, monkeypatch):
+    from latest_reports import keep_latest
+
+    reports_dir = tmp_path / "reports"
+    plan = reports(reports_dir, replicas=(1,), red_suites=("unit",))
+    plan.update(smoke=False, base_sha="c" * 40)
+    newer = tmp_path / "newer"
+    reports(newer, replicas=(1,), red_suites=())
+    for artifact in newer.iterdir():
+        artifact.rename(reports_dir / artifact.name.replace("ci-test-1-", "ci-test-2-", 1))
+    for receipt in reports_dir.rglob("shard-receipt.json"):
+        data = json.loads(receipt.read_bytes())
+        data["plan_sha256"] = ratchet.digest(plan)
+        data["run_attempt"] = "2" if receipt.parent.name.startswith("ci-test-2-") else "1"
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+    keep_latest(reports_dir, plan)
+    output, summary = configure_pr_verdict(tmp_path, reports_dir, monkeypatch, plan, listing([RED]), attempt=2)
+    ratchet.main()
+    assert json.loads((output / "verdict.json").read_bytes())["passed"]
+    remark, = json.loads((output / "outside-observations.json").read_bytes())["listed_unstable"]
+    assert remark["node"] == RED and remark["status"] == "PROPOSED_REMARK"
+    assert "recovered on re-run (attempt 1)" in summary.read_text(encoding="utf-8")
 
 
 def test_pr_retry_cannot_move_a_baseline_entry_to_unstable(monkeypatch):
