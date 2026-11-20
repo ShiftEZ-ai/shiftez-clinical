@@ -272,7 +272,7 @@ def department_month_priorities(scale_harness):
 
 def test_department_month_reaches_every_priority_quickly(department_month_priorities):
     result, _, names = department_month_priorities
-    assert names == ['coverage', 'weighted']
+    assert names == ['coverage', 'desired_coverage', 'weighted']
     assert result['objectives'][0]['value'] == 0
     components = result['summary']['score']['components']
     assert components['coverage']['value'] == 1
@@ -294,7 +294,7 @@ def parallel_clinic_week_priorities(scale_harness):
 
 def test_parallel_clinic_week_reaches_every_priority(parallel_clinic_week_priorities):
     result, _, names = parallel_clinic_week_priorities
-    assert names == ['coverage', 'weighted']
+    assert names == ['coverage', 'desired_coverage', 'weighted']
     assert result['objectives'][0]['value'] == 0
     components = result['summary']['score']['components']
     assert components['coverage']['value'] == 1
@@ -337,7 +337,7 @@ def test_weighted_objective_is_bounded_for_150_people_and_532_sessions(weighted_
     result, evidence = weighted_department_measurement
     assert result['status'] == 'candidate_feasible', evidence
     assert result['validation']['error_count'] == 0
-    assert [step['name'] for step in result['objectives']] == ['coverage', 'weighted'], evidence
+    assert [step['name'] for step in result['objectives']] == ['coverage', 'desired_coverage', 'weighted'], evidence
     assert result['weighted_status'] in {'OPTIMAL', 'FEASIBLE'}, evidence
     assert result['objectives'][0]['value'] == 0, evidence
     assert result['objective_components']['coverage']['value'] == 1, evidence
@@ -377,6 +377,55 @@ def test_fractional_hours_amount_dial_compiles_at_department_scale(h):
     result = generate(data, 1, deterministic=True, _on_objectives=lambda model, tiers: captured.append(model))
     assert result['status'] == 'model_ready', result
     assert len(captured) == 1 and captured[0].validate() == ''
+
+
+@pytest.mark.cpu_budget
+def test_overtime_only_zero_maximum_binds_extra_cover_for_a_department_month(h, request):
+    from ortools.sat.python import cp_model
+
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.snapshots import domain_snapshot
+    from tests.test_overtime_extra_cover import extra_type
+
+    cover = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    data, info = department(h, 7, people=150, days=28, rules='none', leave_rate=0, clinics=9)
+    workspace = data['workspace']
+    h.policy({'kind': 'block_quota', 'starts_on': workspace['starts_on'], 'ends_on': workspace['ends_on'],
+              'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'},
+             {'person_id': person})
+    with transaction(h.app.state.engine) as db:
+        current = domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=True)
+    data.update({key: current[key] for key in ('policies', 'quota_context') if key in current})
+    data['types'][cover['id']] = cover
+    target = next(s for s in data['shifts'] if s['assignment_type_id'] == info['types']['am'])
+    for shift in data['shifts']:
+        shift.update(assignment_type_id=cover['id'], type_snapshot=cover)
+    assert len(data['people']) == 150 and len(data['shifts']) == 532
+
+    models = []
+    started = time.process_time()
+    result = generate(data, 60, deterministic=True, feasibility_only=True, _on_model=models.append)
+    prepared = time.process_time() - started
+    assert result['status'] == 'model_ready', result.get('status')
+    model, = models
+    size = {'variables': len(model.proto.variables), 'constraints': len(model.proto.constraints)}
+    request.node.user_properties.append(('overtime_maximum_performance', json.dumps({
+        'people': len(data['people']), 'sessions': len(data['shifts']), 'preparation_cpu_seconds': prepared, **size,
+    })))
+    assert prepared < _budget(60), prepared
+    assert size['variables'] < 180_000 and size['constraints'] < 300_000, size
+
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = 1
+    solver.parameters.max_time_in_seconds = 10
+    assert solver.solve(model) == cp_model.OPTIMAL
+    index, = [i for i, variable in enumerate(model.proto.variables)
+              if variable.name == f"{target['id']}:{person}"]
+    model.add(model.get_bool_var_from_proto_index(index) == 1)
+    assert solver.solve(model) == cp_model.INFEASIBLE
 
 
 @pytest.fixture(scope='module')

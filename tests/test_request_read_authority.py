@@ -1,9 +1,10 @@
 """Request-local reads respect concurrent revocation, writes and transaction boundaries."""
 from datetime import timedelta
+import re
 
 import pytest
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.auth import authenticate, held_roles
@@ -12,6 +13,7 @@ from apps.api.services import workspace_access
 from apps.api.services.independence import active_permissions, today
 from tests.clock_support import freeze_clock
 from tests.governance_support import identity
+from tests.test_backend_scale import scale_department
 from tests.test_planning_groups_drafts import private
 
 
@@ -154,3 +156,32 @@ def test_workspace_criteria_reuse_keeps_access_changes_visible(backend, monkeypa
     visible = h.get('coordinator', '/api/workspaces')['workspaces']
     assert workspace_id in {row['id'] for row in visible}
     assert builds == [(coordinator, True), (coordinator, False), (coordinator, True), (coordinator, True)]
+
+
+def test_department_workspace_list_reads_visibility_from_each_selected_row(backend):
+    h = backend
+    public, _, *_ = scale_department(h)
+    identity(h, 'second_coordinator', ['coordinator'])
+    own_private = private(h)['id']
+    other_private = private(h, 'second_coordinator')['id']
+    readers = {role: h.client(role) for role in ('coordinator', 'second_coordinator', 'approver')}
+    references = []
+
+    def count(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.startswith('SELECT workspaces.access_version_id, workspaces.name,'):
+            references.append(len(re.findall(r'\bFROM workspaces\b', statement)))
+
+    engine = h.app.state.engine
+    event.listen(engine, 'before_cursor_execute', count)
+    try:
+        for role, private_id in (('coordinator', own_private), ('second_coordinator', other_private),
+                                 ('approver', None), ('coordinator', own_private)):
+            response = readers[role].get('/api/workspaces?limit=100&offset=0')
+            assert response.status_code == 200
+            visible = {row['id'] for row in response.json()['workspaces']}
+            assert public['id'] in visible
+            assert visible & {own_private, other_private} == ({private_id} if private_id else set())
+    finally:
+        event.remove(engine, 'before_cursor_execute', count)
+    # The list still checks the publication change-list and access-version rows.
+    assert references and max(references) <= 3, references

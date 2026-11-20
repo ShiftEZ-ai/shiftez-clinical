@@ -187,7 +187,7 @@ def build_preview(db, actor, command, prepared):
         after_snapshot = domain_snapshot(db, workspace, operational=True, **options)
         captured.append({**{key: item[key] for key in ('workspace_id', 'name', 'status')},
             'before': before_snapshot, 'after': after_snapshot,
-            'saved': domain_snapshot(db, workspace, **options) if item['status'] in LIVE else None})
+            'saved': domain_snapshot(db, workspace, mandatory_rules=False, **options) if item['status'] in LIVE else None})
     return {**prepared, 'workspaces': captured}
 
 
