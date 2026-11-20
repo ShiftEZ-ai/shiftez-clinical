@@ -108,15 +108,19 @@ def test_fill_order_uses_department_defaults_and_existing_undo(h):
     payload = {'department_name': dept['name'], 'department_revision': dept['revision'],
                'organisation_name': org['name'], 'timezone': org['timezone'], 'week_start': org['week_start'],
                'reason': 'Configure synthetic allocation stages',
-               'generation_defaults': {'allocation_order': 'tiered', 'pair_limit_max_opportunities': 12000}}
+               'generation_defaults': {'allocation_order': 'tiered', 'fill_tier_time_share': 0.25,
+                                       'pair_limit_max_opportunities': 12000}}
     saved = h.command('admin', 'department.settings', payload, dept['id'], org['revision'])
     assert saved['department']['generation_defaults']['allocation_order'] == 'tiered'
+    assert saved['department']['generation_defaults']['fill_tier_time_share'] == 0.25
     assert saved['department']['generation_defaults']['pair_limit_max_opportunities'] == 12000
     previous = saved['previous']
     assert previous['generation_defaults']['allocation_order'] == 'weighted'
+    assert previous['generation_defaults']['fill_tier_time_share'] == 0.5
     restored = h.command('admin', 'department.settings', {**previous, 'reason': 'Undo allocation stages'},
                          dept['id'], saved['organisation']['revision'])
     assert restored['department']['generation_defaults']['allocation_order'] == 'weighted'
+    assert restored['department']['generation_defaults']['fill_tier_time_share'] == 0.5
     assert restored['department']['generation_defaults']['pair_limit_max_opportunities'] == s.GenerationOptions().pair_limit_max_opportunities
 
 

@@ -14,8 +14,10 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
   if (!FILES.includes(url.pathname) || url.search) return;  // data and stale asset requests go straight to the network
   const cached = () => caches.open(SHELL).then(cache => cache.match(event.request));
-  const network = () => fetch(event.request).then(async response => {
-    if (response.ok) await caches.open(SHELL).then(cache => cache.put(event.request, response.clone())).catch(() => {});
+  // Answer with the network response at once; the cache copy is written in the background, so a slow cache write
+  // never holds a page (or the next navigation) behind it.
+  const network = () => fetch(event.request).then(response => {
+    if (response.ok) event.waitUntil(caches.open(SHELL).then(cache => cache.put(event.request, response.clone())).catch(() => {}));
     return response;
   });
   // Versioned files are immutable. HTML revalidates; offline misses never masquerade as HTML modules.

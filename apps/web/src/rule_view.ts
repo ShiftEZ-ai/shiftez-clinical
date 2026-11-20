@@ -9,7 +9,7 @@ import {quotaUnits} from './quotas.js';
 import {SESSION_FIELDS,RULE_FIELDS,scopeAsConditions,conditionsText} from './conditions.js';
 import type {Row} from './types.js';
 import type {PersonAmount} from './generated.js';
-import type {MapRule} from './planner_rules.js';
+import {bindsNote,type MapRule} from './planner_rules.js';
 import {goalSentence} from './balance_goal.js';
 import {isOrder,catalogueEntryOf} from './forms.js';
 
@@ -397,7 +397,8 @@ export function healthStrip(entry:MapRule,days:string[],fresh:boolean,people:num
   const why=(d:number)=>{const m=short.get(d)![3];return m&&m!==entry.name?` (${m})`:'';};
   const short=new Map((entry.short_days||[]).map(d=>[d[0],d]));
   const touched=entry.days.filter(d=>d<days.length);
-  const counts=people==null?'':` Counts ${plural(people,'person','people')} today.`;
+  const binds=bindsNote(entry.number,entry.binding_value);
+  const counts=(binds&&' '+binds)+(people==null?'':` Counts ${plural(people,'person','people')} today.`);
   if(!touched.length)return el('p',{class:'hint'},`It applies to no day of this draft.${counts}`);
   if(!fresh||entry.status.state==='unchecked')return el('p',{class:'hint'},`Not checked since the draft last changed: check the draft to see where it is met.${counts}`);
   const bars=el('div',{class:'rl-days'},...touched.map(d=>{const s=short.get(d);

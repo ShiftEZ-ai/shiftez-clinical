@@ -18,6 +18,11 @@
       "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
     },
     {
+      "node": "tests/test_browser_rule_balance.py::test_read_only_roles_read_balance_as_a_fact[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
+    },
+    {
       "node": "tests/test_browser_rule_catalogue.py::test_the_rules_table_fits_and_wraps_a_column_from_its_menu",
       "owner": "maintainer",
       "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
@@ -31,6 +36,16 @@
       "node": "tests/test_browser_rule_catalogue_conflicts.py::test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check",
       "owner": "maintainer",
       "reason": "Overlap acknowledgement is removed by design: a winning exception is not a conflict and nothing asks to acknowledge it. Its approver assertions (the check lists each gives-way line and the both-apply warning) are kept in test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflicts."
+    },
+    {
+      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-filfjglkkpihkpdkmogkjpaoaojnhjlkgoeohnfafppokhbpkpmmhkjckihhjmdm]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
+    },
+    {
+      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
     },
     {
       "node": "tests/test_browser_rules_column_menus.py::test_rules_column_menus_sort_filter_wrap_hide_and_move",
@@ -78,9 +93,19 @@
       "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
     },
     {
+      "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
+      "owner": "maintainer",
+      "reason": "The same assertions now run for SQLite and PostgreSQL, with additional queue refusal and job persistence checks."
+    },
+    {
       "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
       "owner": "maintainer",
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
     },
     {
       "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
