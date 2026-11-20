@@ -36,14 +36,14 @@ def test_palette_normalizes_ranks_exact_matches_and_owns_async_results(browser, 
           const {openPalette}=await window.importBundle('palette.js');window.palettePicked=null;window.paletteLoads=[];
           const item=(label,keywords='')=>({label,keywords,group:'People',icon:'people',run:()=>window.palettePicked=label});
           window.openTestPalette=()=>openPalette([
-            item('A broad alias','JoseAlJabali'),item('Dr. José Quinn'),item('JoseAlJabali'),item('نيلوفر الجبلي'),
+            item('A broad alias','JoseQuinn'),item('Dr. José Quinn'),item('JoseQuinn'),item('نيلوفر الجبلي'),
           ],q=>new Promise((resolve,reject)=>window.paletteLoads.push({q,resolve:labels=>resolve(labels.map(x=>item(x))),reject})));
           window.openTestPalette();
         }""")
         menu = page.get_by_role("dialog", name="Command menu")
         field = menu.get_by_role("combobox")
-        field.fill("josealjabali")
-        expect(menu.get_by_role("option").nth(0)).to_contain_text("JoseAlJabali")
+        field.fill("josequinn")
+        expect(menu.get_by_role("option").nth(0)).to_contain_text("JoseQuinn")
         expect(menu.get_by_role("option").nth(1)).to_contain_text("Dr. José Quinn")
         expect(menu.get_by_role("option").nth(2)).to_contain_text("A broad alias")
         field.fill("نيلوفرالجبلي")
@@ -112,7 +112,7 @@ def test_person_results_open_exact_duplicates_from_home_and_survive_reload(brows
     try:
         page.emulate_media(color_scheme=scheme)
         navigate(page, "home")
-        menu = search(page, "nilufaraljabali")
+        menu = search(page, "oliviaquinn")
         choices = menu.get_by_role("option").filter(has_text="Dr. Olivia Quinn")
         expect(choices).to_have_count(2)
         choices.filter(has_text="Beta section").click()
