@@ -18,7 +18,7 @@ from packages.domain.time import aware
 from packages.contracts.schemas import CATALOGUE_READS, EXPLICIT_ROLES, PERMISSIONS, ROLE_NAMES
 
 from .identity_store import HASHER as PASSWORDS, _DUMMY as _DUMMY_HASH
-from .db import liveness_write, log_row_lock_diagnostic
+from .db import current_request_parent, liveness_write, log_row_lock_diagnostic
 # Bound concurrent 64 MiB verification/rehash work within the API's 1 GiB memory budget.
 PASSWORD_VERIFICATIONS = BoundedSemaphore(4)
 LOGIN_ACCOUNT_BUCKET_COUNT = 1 << 16
@@ -74,7 +74,8 @@ def _local_today(db, department_id):
     department = db.get(Department, department_id)
     if department is None:
         return None
-    return now().astimezone(ZoneInfo(db.get(Organisation, department.organisation_id).timezone)).date()
+    organisation = current_request_parent(db, Organisation, department.organisation_id)
+    return now().astimezone(ZoneInfo(organisation.timezone)).date()
 
 
 def _effective(roles):
@@ -92,10 +93,17 @@ def _live(binding, today):
 
 def role_bindings(db, department_id, identity_id=None):
     """Load dated grants once; a window can evaluate them on several dates."""
+    # READ COMMITTED readers must still see a revocation committed after authentication.
+    memo = db.info.get('_request_authority')
+    key = (RoleBinding, department_id, identity_id)
     query = select(RoleBinding).where(RoleBinding.department_id == department_id)
     if identity_id is not None:
         query = query.where(RoleBinding.identity_id == identity_id)
-    return list(db.scalars(query))
+    if memo is None or not db.autoflush or db.new or db.dirty or db.deleted:
+        return list(db.scalars(query))
+    if key not in memo:
+        memo[key] = tuple(db.scalars(query))
+    return list(memo[key])
 
 
 def held_roles(db, identity_id: str, department_id: str, *, day=None, bindings=None) -> frozenset[str]:
@@ -365,21 +373,31 @@ def keep_alive(engine, token: str | None, settings) -> None:
         log.warning('session_liveness_write_skipped', extra={'error_code': type(exc).__name__})
 
 
-def login_keys(username, peer):
-    account = username.strip().casefold()
-    return (digest("account:" + account), digest("peer:" + peer), digest(f"pair:{len(account)}:{account}{peer}"))
-
-
-def login_account_bucket_keys(identifier, settings):
-    """Fixed storage and shared admission for colliding known or unknown identifiers."""
+def _signin_key(settings, purpose: bytes) -> bytes:
     from .data_crypto import data_key_from_secret
     key = data_key_from_secret(settings.fmuc_data_key)
     if key is None:
         require(settings.environment in {"development", "test"}, "LOGIN_UNCONFIGURED",
                 "Sign-in is unavailable; contact the administrator", 503)
-        # Development/test buckets stay stable across workers/restarts without a deployment secret.
+        # Development/test keys stay stable across workers/restarts without a deployment secret.
         key = b"fmuc:signin-account-buckets:public:v1"
-    key = hmac.digest(key, b"fmuc:signin-account-buckets", "sha256")
+    return hmac.digest(key, purpose, "sha256")
+
+
+def login_digest(value: str, settings) -> str:
+    """Keyed hash of a sign-in account name or client address: both are low in entropy, so a plain hash reverses."""
+    return hmac.new(_signin_key(settings, b"signin-event-and-limit-keys:v1"), value.encode(), "sha256").hexdigest()
+
+
+def login_keys(username, peer, settings):
+    account = username.strip().casefold()
+    return (login_digest("account:" + account, settings), login_digest("peer:" + peer, settings),
+            login_digest(f"pair:{len(account)}:{account}{peer}", settings))
+
+
+def login_account_bucket_keys(identifier, settings):
+    """Fixed storage and shared admission for colliding known or unknown identifiers."""
+    key = _signin_key(settings, b"fmuc:signin-account-buckets")
     bucket = int.from_bytes(hmac.digest(key, identifier.casefold().encode(), "sha256"), "big") % LOGIN_ACCOUNT_BUCKET_COUNT
     return digest(f"login-account-consecutive-bucket:{bucket}"), digest(f"login-account-delay-bucket:{bucket}")
 
@@ -425,7 +443,7 @@ def identifier_method(engine, identifier, peer, settings):
     from .db import transaction
     from .rate_limit import enforce
     from .services import auth_configuration
-    enforce(engine, "login-identify", [digest("peer:" + peer)], settings.password_login_address_limit,
+    enforce(engine, "login-identify", [login_digest("peer:" + peer, settings)], settings.password_login_address_limit,
             settings.password_login_window_seconds, "Too many attempts; try again later")
     with transaction(engine) as db:
         config = auth_configuration.current(db, settings)
@@ -476,7 +494,7 @@ def password_login(engine, data, peer: str, settings, *, user_agent=None, correl
         nonlocal reserved_pair_deadline, reserved_account_deadline, reserved_consecutive_stamp, verification_reserved
         account, identity = _login_identity(db, data, settings)
         username = account.username if account else identity.subject if identity else data.username
-        keys = login_keys(username, peer)
+        keys = login_keys(username, peer, settings)
         bucket_keys = login_account_bucket_keys(username, settings) if progressive and password_login_enabled(settings) else ()
         _lock_login(db, (*keys, *bucket_keys))
         limits = (("login-account", keys[0], settings.password_login_account_limit),

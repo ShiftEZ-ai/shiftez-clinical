@@ -124,7 +124,8 @@ def test_issue_facts_and_collection_spacing_in_both_issue_views(browser, live_se
                 expect(choices.filter(has_text=re.compile('acknowledge', re.I))).to_have_count(0)
                 expect(choices.filter(has_text=re.compile('^Let it end$'))).to_have_count(1)
                 if label == 'Acknowledged':
-                    expect(choices.filter(has_text=re.compile('^Keep lines$'))).to_have_count(1)
+                    # A person line outranking a rank line is an ordered exception, never an overlap to acknowledge.
+                    expect(choices.filter(has_text=re.compile('^Keep lines$'))).to_have_count(0)
             if role == 'auditor':
                 expect(page.locator('.rt-issues input[type=checkbox]')).to_have_count(0)
                 expect(page.locator('.rt-best > button, .rt-fixes button, .rt-acked button')).to_have_count(0)
@@ -163,9 +164,8 @@ def test_issue_column_and_view_wrap_controls_are_shared_persistent_and_separate_
     try:
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
-        # A Rules choice remains its own: the issue table starts compact.
-        column(page, 'Rule / who').get_by_role('menuitemcheckbox', name='Wrap this column', exact=True).click()
-        expect(page.locator('.rt-rule .rt-name').first).to_have_class(re.compile('dt-wrap'))
+        # the Rules list has no column menu; Needs attention below keeps the shared menus.
+        expect(page.locator('.rt-scroll thead')).to_have_count(0)
         view(page, 'Needs attention')
         heads = page.locator('.rt-issues th[data-col]')
         expect(heads).to_have_text(['Rule', 'Lines', 'What happens', 'Recommendation'])
@@ -202,9 +202,7 @@ def test_issue_column_and_view_wrap_controls_are_shared_persistent_and_separate_
         settings.get_by_role('switch', name='Wrap all columns', exact=True).uncheck()
         expect(page.locator('.rt-issues .dt-wrap')).to_have_count(0)
         view(page, 'All rules')
-        expect(page.locator('.rt-rule .rt-name').first).to_have_class(re.compile('dt-wrap'))
-        expect(column(page, 'Rule / who').get_by_role('menuitemcheckbox', name='Wrap all columns', exact=True)).to_have_attribute('aria-checked', 'false')
-        page.keyboard.press('Escape')
+        expect(page.locator('.rt-scroll thead')).to_have_count(0)
         assert h.get('auditor', '/api/rules/catalogue') == before
     finally:
         context.close()
