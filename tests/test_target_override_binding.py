@@ -258,6 +258,57 @@ def bind_target(data, policy, person):
         'rule_fingerprints': [row['target_calculation']['rule_fingerprint']]}]
 
 
+@pytest.mark.parametrize('engine', [generation, cp_sat], ids=['greedy', 'cp_sat'])
+@pytest.mark.parametrize('removed', [False, True], ids=['retained', 'removed'])
+def test_target_override_after_an_approved_scope_revision(working_data, engine, removed):
+    data, person = working_data
+    colleague = next(row['person_id'] for row in data['memberships'] if row['person_id'] != person)
+    type_definition(data, requirements=[])
+    data['shifts'][0]['participants'] = []
+    policy = add_quota(data, person, comparison='target', prorate_department_days=True)
+    bind_target(data, policy, person)
+
+    policy['revision'] += 1  # The snapshot now evaluates the approved revision.
+    if removed:
+        policy['definition']['scope']['person_id'] = colleague
+
+    result = engine.generate(data, time_budget_seconds=5)
+    checked = result.get('validation') or evaluate(data)
+    report = checked['quota_report']
+    [row] = report['rows']
+    assert row['policy_revision'] == policy['revision']
+    assert row['person_id'] == (colleague if removed else person)
+    findings = [f for f in checked['findings'] if f['code'] == 'TARGET_OVERRIDE_STALE']
+    if not removed:
+        assert report['complete'] and not findings
+        assert row['target_calculation']['override_amount'] == 4.57
+        assert result['status'] == 'candidate_feasible', result
+        return
+
+    assert not report['complete'] and not checked['valid']
+    assert 'override_amount' not in row['target_calculation']
+    [stale] = findings
+    assert (stale['person_id'], stale['rule_id']) == (person, policy['id'])
+    assert stale['message'].startswith('Remove the target adjustment')
+    assert data['people'][person]['display_name'] in stale['message'] and policy['name'] in stale['message']
+    assert 'reconfirm_command' not in stale['detail']
+    assert result['status'] != 'candidate_feasible'
+    if engine is cp_sat:
+        assert result['status'] == 'invalid_inputs'
+        [issue] = [f for f in result['issues'] if f['code'] == 'TARGET_OVERRIDE_STALE']
+        assert (issue['person_id'], issue['rule_id']) == (person, policy['id'])
+
+    rule = policy['definition']['rule']
+    for view, filters in (({**data, 'quota_subjects': {colleague}}, {}),
+                          ({**data, 'quota_dates': (rule['starts_on'], rule['ends_on'])}, {}),
+                          (data, {'policy_ids': {policy['id']}})):
+        codes = []
+        narrowed = evaluate_quotas(view, lambda code, *args, **kwargs: codes.append(code),
+                                   ancestor_ids, exception_for, **filters)
+        assert narrowed['rows'] and narrowed['complete']
+        assert 'TARGET_OVERRIDE_STALE' not in codes
+
+
 @pytest.mark.parametrize('change', ['person-line', 'guarded-line', 'value', 'validity'])
 def test_catalogue_override_tracks_its_line_instead_of_precedence_guards(working_data, change):
     data, person = working_data

@@ -613,19 +613,24 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
         # Scoped checks cannot establish that every applicable copy was examined.
         source_ids = {p['id']: p['_source_policy_id'] for p in policies
                       if p.get('_source_policy_id') and (p.get('_live_zero') or p.get('_live_mandatory_recheck'))}
-        used, unused = set(), {}
+        used, unused, policy_names = set(), {}, {}
         for row in report['rows']:
-            person = row['person_id']
-            key = source_ids.get(row['policy_id'], row['policy_id']), person
-            if key not in overrides or (planning_people is not None and person not in planning_people):
+            policy_id = source_ids.get(row['policy_id'], row['policy_id'])
+            policy_names.setdefault(policy_id, row['policy_name'])
+            key = policy_id, row['person_id']
+            if key not in overrides:
                 continue
             if 'override_amount' in row.get('target_calculation', {}):
                 used.add(key)
             else:
                 unused.setdefault(key, row['policy_name'])
-        for key, rule_name in unused.items():
-            if key not in used:
-                stale_target(overrides[key], rule_name, reconfirm=False)
+        for key, override in overrides.items():
+            policy_id, person = key
+            if key in used or policy_id not in policy_names or person not in data['people']:
+                continue
+            if planning_people is not None and person not in planning_people:
+                continue
+            stale_target(override, unused.get(key, policy_names[policy_id]), reconfirm=False)
     # A template's default copy may match nobody while its per-person lines do.
     counted = {r["policy_id"] for r in report["rows"]}
     report["empty_policy_ids"] = [i for i in report["empty_policy_ids"] if i not in counted]
