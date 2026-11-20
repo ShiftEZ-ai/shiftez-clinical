@@ -14,10 +14,15 @@ from tests.test_engine_fairness_review import A, DEPT, POLICY, duty, policy, uid
 
 def read_history(data, goals, published):
     ledger = f.ledger_facts(published)
-    db = SimpleNamespace(execute=lambda _query: [(key, pid, other, day, value)
-                                                for pid, other, key, day, value in ledger])
     snapshots = [('synthetic-publication', {'timezone': published['organisation']['timezone'],
                                           'shifts': published['shifts']})]
+    publication = SimpleNamespace(id=snapshots[0][0], snapshot=snapshots[0][1], effective_until=None,
+        starts_on=date.fromisoformat(published['workspace']['starts_on']),
+        ends_on=date.fromisoformat(published['workspace']['ends_on']))
+    rows = [(key, pid, other, day, value) if f.legacy_semantics(data) else (key, pid, day, value)
+            for pid, other, key, day, value in ledger]
+    db = SimpleNamespace(scalar=lambda _query: publication.starts_on,
+                         scalars=lambda _query: iter([publication]), execute=lambda _query: rows)
     with patch.object(service, 'published_snapshots', return_value=snapshots):
         return service.history(db, data, goals)
 
@@ -97,6 +102,7 @@ def test_comparison_keeps_inherited_same_line_strength_copies():
 @pytest.mark.parametrize('catalogue_line', [False, True], ids=['policy-dates', 'line-dates'])
 def test_goal_effective_dates_clip_availability_planned_work_and_history(catalogue_line):
     data = world([duty(1, 4, [A]), duty(2, 5, [A]), duty(3, 7, [A])], '2026-10-04', '2026-10-08')
+    data['fairness_semantics'] = 1
     rule = {'metric': 'duties', 'period': 'custom', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}
     goal = policy(rule)
     if catalogue_line:
