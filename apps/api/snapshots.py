@@ -968,7 +968,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False) -> dict:
+                    rule_map_bindings: bool = False, include_manifest: bool = True) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1356,9 +1356,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["fairness_history"] = history(db, result, goals)
     if score_context:
         result["score_context"] = score_context
-    from packages.domain.input_manifest import manifest
-    result['input_manifest'] = manifest(result)
-    result['fingerprint'] = result['input_manifest']['token']
+    if include_manifest:
+        from packages.domain.input_manifest import manifest
+        result['input_manifest'] = manifest(result)
+        result['fingerprint'] = result['input_manifest']['token']
     return result
 
 

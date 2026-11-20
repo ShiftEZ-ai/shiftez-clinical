@@ -202,7 +202,8 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
                 shift = {**shift, 'participants': [{k: v for k, v in p.items() if k != 'segments'} for p in shift['participants']]}
             shifts.append(shift)
     if chosen:
-        shifts.extend(project_series_shifts(db, chosen, workspace_shifts(db, chosen.id)))
+        own_shifts = workspace_shifts(db, chosen.id)
+        shifts.extend(project_series_shifts(db, chosen, own_shifts))
     # Quota and limit windows can extend beyond the displayed periods, including edge duties' full envelopes.
     data.update(period_records(db, actor.department_id, *overlap_dates(start, end, organisation.timezone)))
     data.update(shifts=shifts, focus_ids=[s['id'] for s in shifts], quota_subjects={person_id},
@@ -219,7 +220,9 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
             period_data['workspace']['target_overrides'] = []
         period_data['policies'] = active_rules(period_data['policies'], context=period_data)
         if chosen and key == 'this_rota':
-            draft = domain_snapshot(db, chosen, include_fairness=False, include_objectives=False)
+            # The response exposes rule fingerprints on quota rows but no snapshot fingerprint.
+            draft = domain_snapshot(db, chosen, own_shifts=own_shifts, include_fairness=False,
+                                    include_objectives=False, include_manifest=False)
             quota = evaluate({**draft, 'quota_subjects': {person_id}}, quota_only=True, explain_findings=False)['quota_report']
         else:
             quota = evaluate_quotas(period_data, lambda *args, **kwargs: None, ancestor_ids, exception_for)
