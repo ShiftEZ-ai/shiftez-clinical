@@ -180,12 +180,15 @@ def shift_records(db, rows, *, include_participants=True) -> list[dict]:
     """Attach clinics and optionally people in batches to ORM sessions or selected session fields."""
     rows = list(rows)
     ids = [row['id'] if isinstance(row, Mapping) else row.id for row in rows]
+    workspaces = {row.get('workspace_id') if isinstance(row, Mapping) else row.workspace_id for row in rows}
+    # Link visibility is evaluated again in SQL, within the scope of the selected rows.
+    options = {'shift_workspace_id': next(iter(workspaces))} if len(workspaces) == 1 else None
     services, people = {i: [] for i in ids}, {i: [] for i in ids}
     for chunk in (ids[k:k + 1000] for k in range(0, len(ids), 1000)):
         sources = {'services': (m.ShiftService, m.ShiftService.shift_id.in_(chunk))}
         if include_participants:
             sources['assignments'] = (m.Assignment, m.Assignment.shift_id.in_(chunk))
-        acquired = records_many(db, sources)
+        acquired = records_many(db, sources, execution_options=options)
         for link in acquired['services']:
             services[link['shift_id']].append(link['service_id'])
         for assignment in sorted(acquired.get('assignments', []), key=lambda row: row['person_id']):
@@ -386,7 +389,7 @@ def _baseline_hint(db, workspace):
     if key in memo:
         return memo[key]
     from .workspace_baselines import latest
-    row = latest(db, workspace.id)
+    row = latest(db, workspace.id, include_payload=False)
     if row is None:
         return [None, None]
     hint = [row.id, row.payload_hash]
