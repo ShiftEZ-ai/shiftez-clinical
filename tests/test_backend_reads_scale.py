@@ -170,3 +170,25 @@ def test_department_boot_catalogues(database, request):
     assert {**compact, **hydrated} == full.json()
     assert len(boot.content) < 150_000 and len(boot.content) < len(full.content) * .15
     assert metrics['sql'].get('SELECT', 0) < 60
+
+
+def test_department_scale_reuses_the_mentorship_sql_expression(scale_harness, monkeypatch):
+    from apps.api import db
+
+    h = scale_harness()
+    workspace, *_ = scale_department(h)
+    client = h.client('coordinator')
+    predicates = []
+    original = db.live_mentorship_clause
+
+    def track():
+        predicate = original()
+        predicates.append(predicate)
+        return predicate
+
+    monkeypatch.setattr(db, 'live_mentorship_clause', track)
+    response = client.get('/api/workspaces/' + workspace['id'], headers={'accept-encoding': 'identity'})
+    assert response.status_code == 200
+    assert len(response.json()['shifts']) >= 500
+    assert len(predicates) > 1
+    assert len({id(predicate) for predicate in predicates}) == 1
