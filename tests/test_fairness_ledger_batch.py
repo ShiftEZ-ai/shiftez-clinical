@@ -4,14 +4,15 @@ from datetime import date
 from sqlite3 import SQLITE_LIMIT_VARIABLE_NUMBER
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import Text, cast, event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services.fairness import rebuild
 from apps.api.snapshots import domain_snapshot
 from packages.domain.fairness import balance_goals, goal_identity, goal_report, ledger_facts
-from tests.test_fairness import goal, ledger, session
+from packages.domain.input_manifest import manifest
+from tests.test_fairness import at, goal, ledger, session
 
 
 def test_ledger_metrics_follow_a_manual_oracle_and_calculate_duration_once(monkeypatch):
@@ -122,6 +123,109 @@ def test_ledger_retains_individual_comparison_and_quota_goal_receipts(h):
     with transaction(h.app.state.engine, write=True) as db:
         assert rebuild(db, db.get(m.Publication, publication_id)) == len(expected)
     assert Counter(ledger(h, publication_id=publication_id)) == Counter(expected)
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_earlier_publication_supplies_new_catalogue_to_later_rebuild(database, request):
+    h = request.getfixturevalue(database)
+    person, other, _ = h.seed['people']
+    policy = goal(h, scope={'person_ids': [person, other]})
+    later = session(h, h.workspace('Later rota', '2026-10-11', '2026-10-18'), 11, [person])
+    later_id = h.publish(later)['publication_id']
+    assignment_type = h.configure('assignment_types', {'name': 'Added duty', 'starts_on': '2020-01-01',
+                                                        'definition': {}})['record']
+    untouched = session(h, h.workspace('Submitted rota', '2026-10-18', '2026-10-25'), 18, [person])
+    h.lifecycle(untouched, 'submit')
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, untouched['id'])
+        submitted_fingerprint = row.submitted_fingerprint
+        before = domain_snapshot(db, row)
+    assert submitted_fingerprint == before['fingerprint']
+
+    location_type = h.get('admin', '/api/catalogues')['location_types'][0]['id']
+    location = h.configure('locations', {'name': 'Added room', 'starts_on': '2020-01-01',
+                                         'location_type_id': location_type, 'parent_id': h.seed['locations'][0]})['record']
+    service = h.configure('services', {'name': 'Added service', 'starts_on': '2020-01-01'})['record']
+    h.command('credentialer', 'eligibility.create', {'person_id': other, 'service_id': service['id'],
+                                                      'starts_on': '2020-01-01'})
+    baseline = select(m.WorkspaceBaseline.payload_hash, cast(m.WorkspaceBaseline.canonical_payload, Text)).where(
+        m.WorkspaceBaseline.workspace_id == later['id']).order_by(m.WorkspaceBaseline.workspace_revision)
+    publication = select(m.Publication.fingerprint, cast(m.Publication.snapshot, Text)).where(m.Publication.id == later_id)
+    with transaction(h.app.state.engine) as db:
+        stored_baselines = db.execute(baseline).all()
+        stored_publication = db.execute(publication).one()
+    assert stored_baselines and all(assignment_type['id'] not in payload for _, payload in stored_baselines)
+
+    earlier = h.workspace('Earlier rota', '2026-10-04', '2026-10-11')
+    start, end = at(4)
+    earlier = h.command('coordinator', 'shift.create', {
+        'workspace_id': earlier['id'], 'assignment_type_id': assignment_type['id'], 'location_id': location['id'],
+        'service_ids': [service['id']], 'start': start, 'end': end,
+        'participants': [{'person_id': other, 'start': start, 'end': end}],
+    }, revision=earlier['revision'])['workspace']
+    h.publish(earlier)
+    h.configure('assignment_types', {'name': 'Updated duty', 'starts_on': assignment_type['starts_on'],
+                                    'definition': assignment_type['definition']},
+                assignment_type['id'], assignment_type['revision'])
+
+    with transaction(h.app.state.engine) as db:
+        assert db.execute(baseline).all() == stored_baselines
+        assert db.execute(publication).one() == stored_publication
+        data = domain_snapshot(db, db.get(m.Workspace, later['id']))
+        row = db.get(m.Workspace, untouched['id'])
+        assert (row.status, row.submitted_fingerprint) == ('submitted', submitted_fingerprint)
+        after = domain_snapshot(db, row)
+    assert data['types'][assignment_type['id']]['name'] == assignment_type['name']
+    assert any(shift['workspace_id'] == earlier['id'] and shift['location_id'] == location['id']
+               and service['id'] in shift['service_ids'] for shift in after['shifts'])
+    # Keep the new shift in both inputs. Only catalogue additions beyond the capture would cause a false fingerprint change.
+    assert after['fingerprint'] == manifest({**after, 'locations': before['locations'],
+                                             'services': before['services']})['token']
+    assert (other, None, 'goal:' + policy['id'], date(2026, 10, 11), 1.0) in [
+        row[:5] for row in ledger(h, publication_id=later_id)]
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_new_neighbour_location_preserves_existing_ledger_rows(database, request):
+    h = request.getfixturevalue(database)
+    person = h.seed['people'][0]
+    goal(h, period='rota')
+    later = session(h, h.workspace('Later rota', '2026-10-11', '2026-10-18'), 11, [person])
+    later_id = h.publish(later)['publication_id']
+    original = Counter(ledger(h, publication_id=later_id))
+    assert original
+
+    location_type = h.get('admin', '/api/catalogues')['location_types'][0]['id']
+    place = {'starts_on': '2020-01-01', 'location_type_id': location_type}
+    parent = h.configure('locations', {**place, 'name': 'Added suite'})['record']['id']
+    child = h.configure('locations', {**place, 'name': 'Added room', 'parent_id': parent})['record']['id']
+    earlier = h.workspace('Earlier rota', '2026-10-04', '2026-10-11')
+    start, end = at(4)
+    earlier = h.command('coordinator', 'shift.create', {
+        'workspace_id': earlier['id'], 'assignment_type_id': h.seed['type'], 'location_id': child,
+        'service_ids': [h.seed['services'][0]], 'start': start, 'end': end,
+        'participants': [{'person_id': person, 'start': start, 'end': end}],
+    }, revision=earlier['revision'])['workspace']
+    h.publish(earlier)
+
+    assert Counter(ledger(h, publication_id=later_id)) == original
+    with transaction(h.app.state.engine) as db:
+        data = domain_snapshot(db, db.get(m.Workspace, later['id']))
+    assert any(shift['location_id'] == child for shift in data['shifts'])
+    assert child not in data['locations'] and parent not in data['locations']
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_snapshot_without_own_shifts_keeps_catalogue_for_stored_sessions(database, request):
+    h = request.getfixturevalue(database)
+    workspace = h.workspace()
+    assignment_type = h.configure('assignment_types', {'name': 'Added duty', 'starts_on': '2020-01-01',
+                                                        'definition': {}})['record']
+    h.shift(workspace, typ=assignment_type['id'])
+    with transaction(h.app.state.engine) as db:
+        data = domain_snapshot(db, db.get(m.Workspace, workspace['id']), own_shifts=[])
+    assert data['focus_ids'] == []
+    assert data['types'][assignment_type['id']]['name'] == assignment_type['name']
 
 
 @pytest.mark.parametrize('variable_limit', [None, 8000])
