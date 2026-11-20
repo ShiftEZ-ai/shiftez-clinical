@@ -614,6 +614,38 @@ def test_rota_rules_panel_offers_a_number_for_catalogue_rules(browser, live_serv
         context.close()
 
 
+def test_a_draft_rules_panel_shows_the_value_a_revised_mandatory_rule_now_binds(browser, live_server, h):
+    """A draft captured a weekly cap of 5; the department rule was then revised to 2 (approved). The draft's rules panel
+    says both numbers for that rule, in its words and in the number field's name; an unchanged rule says one."""
+    a = h.seed['people'][0]
+    cap = activate(h, propose(h, {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}, name='Weekly duty limit'))
+    activate(h, propose(h, {'kind': 'min_rest', 'hours': 11}, name='Rest between duties'))
+    w = h.workspace('Revised cap')
+    w = h.shift(w, *MON, people=[a])['workspace']
+    w = h.shift(w, *TUE, people=[a])['workspace']
+    w = h.lifecycle(w, 'validate')['workspace']
+    activate(h, propose(h, {'kind': 'max_duties', 'maximum': 2, 'window': 'week'}, name='Weekly duty limit', replaces_id=cap['id']))
+    context, page = sign_in(browser, live_server, 'coordinator'); errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        open_planner(page, w)
+        planner_tool(page, 'Rules in this rota')
+        panel = page.get_by_role('dialog', name='Rules in this rota')
+        revised = rule_row(panel, 'Weekly duty limit')
+        expect(revised.locator('.rk-status')).to_contain_text(re.compile(r'Captured 5, now binds 2 dut'))
+        unchanged = rule_row(panel, 'Rest between duties')
+        expect(unchanged).to_be_visible()
+        expect(unchanged).not_to_contain_text('now binds')
+        expect(unchanged).not_to_contain_text('Captured')
+        rule_action(revised, 'Adjust for this rota')
+        field = revised.get_by_label(re.compile(r'^New number for .Weekly duty limit. in this rota, captured 5, now binds 2'))
+        expect(field).to_have_value('5')
+        expect(revised.locator('.rk-inline-row')).to_contain_text('now binds 2')
+        assert not errors, errors
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('unmet', [False, True], ids=['all-met', 'one-unmet'])
 def test_click_on_a_day_head_does_not_pin_the_rules_panel(browser, live_server, h, unmet):
     """REQ-PANEL: mouse and keyboard open the selected day in the same panel, and focus moves to its first stop
