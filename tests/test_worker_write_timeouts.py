@@ -233,6 +233,18 @@ def test_worker_status_heartbeat_forwards_lease_deadline(monkeypatch):
     assert deadlines == [123.0]
 
 
+def simulated_clock(monkeypatch):
+    clock = [time.monotonic()]
+
+    def advance(seconds):
+        clock[0] += seconds
+
+    clock_source = SimpleNamespace(monotonic=lambda: clock[0], sleep=advance)
+    monkeypatch.setattr(worker, 'time', clock_source)
+    monkeypatch.setattr(database, 'time', clock_source)
+    return clock
+
+
 def test_waiting_to_claim_does_not_consume_new_job_lease(h, monkeypatch):
     assert_waiting_to_claim_preserves_lease(h, monkeypatch)
 
@@ -243,18 +255,11 @@ def test_waiting_to_claim_does_not_consume_new_job_lease_on_postgres(pg, monkeyp
 
 def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
     job_id = generation_job(h)
-    clock = [time.monotonic()]
+    clock = simulated_clock(monkeypatch)
     finish_attempts = []
     retry_write = worker.retry_write
     lease_seconds = h.settings.db_pool_timeout_seconds + worker.GENERATION_HEARTBEAT_SECONDS + 1
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', lease_seconds)
-
-    def advance(seconds):
-        clock[0] += seconds
-
-    clock_source = SimpleNamespace(monotonic=lambda: clock[0], sleep=advance)
-    monkeypatch.setattr(worker, 'time', clock_source)
-    monkeypatch.setattr(database, 'time', clock_source)
 
     def write(engine, operation, **kwargs):
         if operation is worker.claim_job:
@@ -275,17 +280,25 @@ def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
 
 
 def test_completion_deadline_reserves_configured_pool_wait(h, monkeypatch):
+    assert_completion_deadline_reserves_pool_wait(h, monkeypatch)
+
+
+def test_completion_deadline_reserves_configured_pool_wait_on_postgres(pg, monkeypatch):
+    assert_completion_deadline_reserves_pool_wait(pg, monkeypatch)
+
+
+def assert_completion_deadline_reserves_pool_wait(h, monkeypatch):
     generation_job(h)
     engine = h.app.state.engine
     engine.update_execution_options(rota_write_settings=replace(h.settings, db_pool_timeout_seconds=60))
-    clock = time.monotonic()
+    clock = simulated_clock(monkeypatch)[0]
     deadlines = []
     retry_write = worker.retry_write
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', 65)
-    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock, sleep=lambda seconds: None))
 
     def record_deadline(engine, operation, **kwargs):
         if kwargs.get('deadline') is not None:
+            assert not deadlines, 'Unexpected retry of a lease-bound write while measuring the completion deadline'
             deadlines.append(kwargs['deadline'])
         return retry_write(engine, operation, **kwargs)
 
