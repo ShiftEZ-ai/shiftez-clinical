@@ -2,7 +2,7 @@
  *  is published): a line's relation to the broader line with the same where, its effect on the drafts its dates overlap,
  *  reach over the line's own dates, the relax seed, the approver's review and one-step activation. Screens import from
  *  here, so a contract change moves only this file. */
-import {get,request,command,serverChecking} from './api.js';
+import {get,request,command,serverChecking,rotaMeta} from './api.js';
 import type {RuleLine,RuleLineEffectInput,PromoteAdjustmentInput,PromoteAdjustmentSeed,RotaSummary} from './generated.js';
 import type {Row} from './types.js';
 
@@ -83,7 +83,7 @@ export const CHECK_STOPPED_WHY='check-stopped-why';
 export const checkEndedStopped=(status?:string,current=false)=>status==='failed'||status==='cancelled'&&!current;
 /** DL-024: is the rota's check current, read after its job was set aside? A failed read is "not current": the page cannot
  *  show the rota as checked, so it says the check stopped and offers Check again (Design Lead, 10 Nov 2026). */
-export const rotaCheckCurrent=(id:string)=>get<{workspace:{validation_current?:boolean}}>('/api/workspaces/'+id)
+export const rotaCheckCurrent=(id:string)=>rotaMeta(id)
   .then(d=>d.workspace?.validation_current===true,()=>false);
 /** A rota's check in words, from its JOB's own status (Master, 10 Nov 2026; never from a reply's scope). DL-018, one
  *  state one verb: queued → "Waiting to check" (the same queued rule), past the bound → it hasn't started (the person's
@@ -184,7 +184,7 @@ export const adjustmentEffect=(workspaceId:string,name:string,revision:number,a:
     effect:(r.effect.adds?'adds':r.effect.clears?'clears':'no_change') as Effect['effect']}] as Effect[]);
 /** The workspace's revision when the caller has none (the adjustment is saved against it). */
 // The compact detail: the whole rota (megabytes on a real month) is never read for one number.
-export const workspaceRevision=(id:string)=>get<{workspace:{revision:number}}>(`/api/workspaces/${encodeURIComponent(id)}?view=compact`).then(r=>r.workspace.revision);
+export const workspaceRevision=(id:string)=>rotaMeta(id).then(r=>r.workspace.revision);
 
 // ---- Rule pickers: active choices only, with how many are hidden (maintenance) ----
 export type ActiveChoices={services?:{id:string}[];locations?:{id:string}[];assignment_types?:{id:string}[];

@@ -373,7 +373,7 @@ export function selectTicked(ids:string[]){
 /** Puts the ticked sessions held now into the open panel's selection; true when the panel must redraw. */
 function applyTicked():boolean{
   if(!pinned||!dataNow||pinned.workspace!==dataNow.workspace.id)return false;
-  const byId=new Map(dataNow.shifts.map(x=>[String(x.id),x])),ts=tickedIds.map(id=>byId.get(id)).filter((x):x is Row=>!!x).map(sessionTarget);
+  const byId=new Map(dataNow.shifts.map(x=>[String(x.id),x])),ts=tickedIds.map(id=>byId.get(id)).filter(x=>x!==undefined).map(sessionTarget);
   // None ticked: a panel showing the ticked set goes back to the rota's rules; one showing a clicked selection stays.
   if(!ts.length){if(!pinned.ticked)return false;pinned.target={kind:'rota',label:'Rules in this rota'};pinned.sel=undefined;pinned.ticked=false;return true;}
   pinned.target=ts[0];pinned.sel=ts;pinned.ticked=true;return true;
@@ -690,13 +690,13 @@ function cellDetails(t:Target):HTMLElement{
   const facts=factsAt([t]);
   if(!list.length)return el('div',{},facts||'',el('p',{class:'muted rk-none'},'No session here.'));
   return el('div',{},facts||'',...list.map(s=>{const open=button('Open session',()=>{if(!sessionOpener?.(s))notify('Open the planner to see this session.','info');},'ghost small');
-    return el('section',{class:'rk-session','aria-label':s.type_snapshot.name},el('h3',{class:'rk-h3'},s.type_snapshot.name),
+    return el('section',{class:'rk-session','aria-label':s.type_snapshot.name},el('h3',{class:'rk-h3'},String(s.type_snapshot.name)),
       el('p',{class:'rk-session-facts'},[`${formatTime(s.start,z)}–${formatTime(s.end,z)}`,name('locations',s.location_id),...(s.service_ids||[]).map((id:string)=>name('services',id))].filter(Boolean).join(' · ')),
-      (s.participants||[]).length?el('ul',{class:'rk-people'},...(s.participants as Row[]).map(p=>el('li',{},personLink(p.person_id,name('people',p.person_id)||'Someone',v=>ctxNow?.navigate(v))))):el('p',{class:'muted'},'No one yet'),open);}));
+      (s.participants||[]).length?el('ul',{class:'rk-people'},...s.participants.map(p=>el('li',{},personLink(p.person_id,name('people',p.person_id)||'Someone',v=>ctxNow?.navigate(v))))):el('p',{class:'muted'},'No one yet'),open);}));
 }
 /** A person's duties in this rota, in date order: each opens its session. */
 function dutiesOf(personId:string):HTMLElement{
-  const z=zone(),mine=(dataNow?.shifts||[]).filter(s=>(s.participants||[]).some((p:Row)=>p.person_id===personId)).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
+  const z=zone(),mine=(dataNow?.shifts||[]).filter(s=>s.participants.some(p=>p.person_id===personId)).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
   if(!mine.length)return el('p',{class:'muted rk-none'},'No duties in this rota.');
   return el('ul',{class:'rk-rules rk-duties'},...mine.map(s=>{const b=el('button',{type:'button',class:'link-button'},`${formatDate(s.start,z)} · ${formatTime(s.start,z)}–${formatTime(s.end,z)} · ${s.type_snapshot.name}`);
     b.addEventListener('click',()=>{if(!sessionOpener?.(s))notify('Open the planner to see this session.','info');});return el('li',{},b);}));

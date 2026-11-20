@@ -1,4 +1,5 @@
-import type {Command,IdentifierResponse,OIDCContinuation,OIDCDepartmentChoice,OIDCDepartmentChoices,OIDCDepartmentSession,LiveScope,LiveChange,CatalogueUpdating} from './generated.js';
+import type {WorkspaceData} from './types.js';
+import type {Command,IdentifierResponse,OIDCContinuation,OIDCDepartmentChoice,OIDCDepartmentChoices,OIDCDepartmentSession,LiveScope,LiveChange,CatalogueUpdating,WorkspaceDetailView} from './generated.js';
 import {WEB_KEPT_READS,UNAVAILABLE_OUTCOME,GENERATION_TIME_FIELDS,GENERATION_STOP_FIELDS,WISH_PRIORITY_FIELDS} from './generated.js';
 import {plainFindings,refusalText} from './findings.js';
 import {track,setRetryAfresh,readTimeout,timedOutWords} from './loading.js';
@@ -672,7 +673,10 @@ function read<T>(path:string,scope:'page'|'app',quiet=false):Promise<T>{
 export const get=<T=any>(path:string,o:{quiet?:boolean}={}):Promise<T>=>read<T>(path,'page',!!o.quiet);
 /** A rota's metadata, revision, check summary, health and review state (`?view=compact`, a few KB at department scale):
  *  for a decision, a revision or a fingerprint. Never its sessions or findings: those are the full read (WorkspaceData). */
-export const rotaMeta=(id:string)=>get<{workspace:Row;current_fingerprint:string;health:Record<string,any>}>('/api/workspaces/'+encodeURIComponent(id)+'?view=compact');
+type RotaMeta={workspace:Row;current_fingerprint:string;health:Record<string,any>};
+const rotaPath=(id:string,view:Exclude<WorkspaceDetailView,'full'>)=>'/api/workspaces/'+encodeURIComponent(id)+'?view='+view;
+export const rotaMeta=(id:string,reader:typeof get=get)=>reader<RotaMeta>(rotaPath(id,'compact'));
+export const rotaWhole=(id:string,reader:(path:string)=>Promise<WorkspaceData>=get<WorkspaceData>)=>reader(rotaPath(id,'schedule'));
 const jobWatches=new Map<string,number>();
 export const watchedJobs=()=>[...jobWatches.keys()];
 export function watchJob(id:string){
