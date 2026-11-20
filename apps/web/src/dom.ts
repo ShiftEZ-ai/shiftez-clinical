@@ -873,7 +873,10 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   // One with `keep` moves to its record's new button instead, and closes only when that record is gone.
   placer = placeNear(panel, () => state.anchor, {placement: options.placement}, () => {
     if (openPopover?.node !== panel) return false;
-    if (options.keep) { if (opened && !rehome()) { close(); return false; } return true; }
+    if (options.keep) {
+      if (opened && !rehome() && !(awaited && awaited.key === state.key)) { close(); return false; }
+      return true;
+    }
     if (!state.key && opened && !state.anchor.isConnected && (panel.matches('[role=menu]') || panel.querySelector('[role=menu]'))) { close(); return false; }
     return true;
   });
@@ -913,7 +916,7 @@ export function awaitAdoption(key: string): () => void {
     if (awaited !== mine) return;
     awaited = null;
     // After the new button's own hand-over (a microtask queued when it was built); one waiting for a frame is pendingAdopt's.
-    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key) openPopover.close(); });
+    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key && !openPopover.rehome()) openPopover.close(); });
   };
 }
 /** A screen redrew itself while its popover was open: the popover stays open and now belongs to the new button.

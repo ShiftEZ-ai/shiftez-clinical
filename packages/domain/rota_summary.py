@@ -250,6 +250,7 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
         keys = sorted({issue_key(findings[i]) for i in indices})
         evidence, lines, who, pids, sids, starts, ends, rule_names, templates = [], {}, {}, set(), set(), [], [], set(), []
         prefills = {}
+        leave_duties = set()
         acknowledgeable = level == 'must'
         for i in indices:
             for observation in observations[i]:
@@ -279,6 +280,9 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
                 if leave_classification(observation) == DUTIES_DURING_APPROVED_LEAVE:
                     sids.update(observation.get('leave_shift_ids') or observation_cause.get('leave_shift_ids')
                                 or detail.get('leave_shift_ids') or [])
+                    if (family == 'leave_conflict' and observation['code'] == 'UNAVAILABLE'
+                            and observation.get('person_id') and observation.get('shift_id')):
+                        leave_duties.add((observation['person_id'], observation['shift_id']))
                 hints = observation.get('fix_hints') or []
                 evidence_ids = set(detail.get('affected_shift_ids') or ([observation['shift_id']] if observation.get('shift_id') else []))
                 for hint in hints:
@@ -396,7 +400,9 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
         cid = hashlib.sha256(json.dumps([context.get('workspace', {}).get('id'), identity], sort_keys=True).encode()).hexdigest()[:24]
         evidence_hash = hashlib.sha256(json.dumps(sorted(evidence, key=lambda row: json.dumps(row, sort_keys=True)), sort_keys=True).encode()).hexdigest()
         matches = [accepted.get(key, {}) for key in keys]
-        meta = template['meta'].format(people=people, dates=dates, rules=rules, checks=len(indices))
+        # Quota and overlapping absence evidence can describe the same leave duty.
+        checks = len(leave_duties) or len(indices)
+        meta = template['meta'].format(people=people, dates=dates, rules=rules, checks=checks)
         if action == 'open_eligibility' and any(row['code'] == 'CAPABILITY_GAP' for row in evidence):
             meta += ' · A credentialer grants the required skill'
         acknowledged = (acknowledgeable and all(a.get('cause_id') == cid and a.get('evidence_hash') == evidence_hash
@@ -424,7 +430,7 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
             for sid in row['shift_ids']:
                 if sid in sids:
                     session_findings.setdefault(sid, row['finding_key'])
-        causes.append({'id': cid, 'level': level, 'checks': len(indices),
+        causes.append({'id': cid, 'level': level, 'checks': checks,
             'who': list(who.values()), 'person_ids': sorted(pids), 'shift_ids': sorted(sids),
             'safety': identity[4], 'new': cid not in check['fix_list_state']['previous_ids'] if check.get('fix_list_state') else False,
             'sentence': session_words(fact_sentence or cause_sentence),

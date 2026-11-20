@@ -2100,6 +2100,9 @@ class GenerationOptions(Schema):
     overtime_penalty: int = Field(default=1, ge=1, le=MAX_SCORE_INPUT, strict=True)
     balance_measure: Literal['duties', 'reserved_hours'] = 'reserved_hours'
     allocation_order: Literal['weighted', 'tiered'] = 'weighted'
+    fill_tier_time_share: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False,
+        title='Fill-priority time share (0–1)',
+        description='Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.')
     pair_limit_max_opportunities: int = Field(default=50000, ge=1, le=1000000, strict=True)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
 
@@ -5711,6 +5714,22 @@ class RuleProposalInput(Decision):
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=8, json_schema_extra={"bulk": True})
     lines: list[RuleLine] = Field(default_factory=list, max_length=2000, json_schema_extra={"bulk": True})
     acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, description='Ignored legacy input; ordered overrides need no acknowledgement.', json_schema_extra={"writeOnly": True})
+
+
+class RuleMapCatalogueLine(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+
+
+class RuleMapEntry(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+    lines: list[RuleMapCatalogueLine | PersonAmount]
+
+
+class RuleMapResponse(Schema):
+    model_config = ConfigDict(extra='allow')
+    rules: list[RuleMapEntry]
 
 
 class RuleMapProposal(Schema):
