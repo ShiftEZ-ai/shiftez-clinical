@@ -156,7 +156,7 @@ def prepare_preview(db, actor, command):
             # No ORM rows or session escape: validation needs only these bounded, plain snapshots.
             captured = [{"workspace_id": w.id, "name": w.name, "status": w.status,
                          "before": before[w.id], "after": after[w.id],
-                         "saved": domain_snapshot(db, w, shared_inputs=shared) if w.status in LIVE else None} for w in rows]
+                         "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False) if w.status in LIVE else None} for w in rows]
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",

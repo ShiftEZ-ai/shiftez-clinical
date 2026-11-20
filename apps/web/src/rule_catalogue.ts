@@ -387,6 +387,9 @@ export function wire(lines:RuleLine[],saved:RuleLine[]):RuleLine[]{
 }
 /** Propose a new version of a catalogue rule. A more specific line winning over a broader one is the rule working as
  *  meant: nothing to acknowledge (the server keeps acknowledged_overlaps only as an ignored legacy field). */
+/** A line proposed from the line panel (relax or promote): the rule's other lines with it, and the rule's own on or off,
+ *  settings and balance as the draft holds them. Adding a line never switches the rule on or off. */
+export const lineProposal=(draft:Draft,lines:RuleLine[]):Body=>({on:draft.on,lines,settings:draft.settings,balance:draft.balance,seen:draft.seen});
 export async function propose(e:Entry,body:Body,reason:string):Promise<Row>{
   const payload={catalogue_id:e.id,catalogue_version:e.catalogue_version,expected_policy_id:e.rule?.id??null,expected_revision:e.rule?.revision??null,on:body.on,settings:body.settings??settingsOf(e),balance_between_people:body.balance??balanceOf(e),
     expected_line_ids:body.seen??linesOf(e).map(l=>l.id),lines:wire(body.lines,linesOf(e)),acknowledged_overlaps:[],reason};
@@ -1003,7 +1006,7 @@ function lineEditor(ctx:Context,e:Entry,draft:Draft,names:Namer,o:Options,s:{edi
         }
         async function proposeLine(b:HTMLButtonElement,reason:string):Promise<void>{
           if(!valid_())return;
-          const body={on:true,lines:withW().map(clone),settings:draft.settings,balance:draft.balance,seen:draft.seen};
+          const body=lineProposal(draft,withW().map(clone));
           const done=busy(b);
           try{const [now]=await checkBeforeProposing([{e,body}],()=>proposeLine(b,reason))||[];if(!now)return;
             if(now.duplicates.length||now.issues.length){notify([...now.duplicates.map(x=>checkWords(e,()=>body.lines,names).same(x)+'.'),...now.issues.map(x=>String(x.message))].join(' '),'error');return;}
@@ -1814,7 +1817,7 @@ export async function promoteAdjustment(ctx:Context,policyId:string,workspaceId:
 async function openSeed(ctx:Context,seed:{catalogue_id:string;line:RuleLine;lines:RuleLine[]},relax:{done:()=>void;rota?:{adjustment:Adjustment;workspace_id:string;name?:string;revision?:number}}){
   const d=await get<{entry:Entry;day:string}>(`/api/rules/catalogue/${encodeURIComponent(seed.catalogue_id)}/detail?version=2&day=${departmentToday()}`);
   const e=d.entry,names=namer(ctx);learn(linesOf(e),e.line_specificity);learnValidity(e,d.day);
-  const draft:Draft={on:true,lines:seed.lines.filter(l=>l.id!==seed.line.id),settings:clone(settingsOf(e)),balance:balanceOf(e),
+  const draft:Draft={on:isOn(e),lines:seed.lines.filter(l=>l.id!==seed.line.id),settings:clone(settingsOf(e)),balance:balanceOf(e),
     base:e.rule?.revision??null,baseId:e.rule?.id??null,seen:linesOf(e).map(l=>l.id)};
   pendingLines.set(e.id,clone(seed.line));
   lineEditor(ctx,e,draft,names,{parts:[],openTag:()=>undefined,navigate:ctx.navigate},{editable:true,family:RULE_FAMILIES.find(([id])=>id===e.family)?.[1]||e.family,
