@@ -2362,7 +2362,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.read_projections import cached as cached_projection
             prepared = {}
             def build_map(_):
-                data = domain_snapshot(db, workspace, include_fairness=False)
+                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False)
                 prepared['data'] = data
                 return rule_map(data, originals)
             result = cached_projection(db, [workspace.id], 'rule_map', {workspace.id: tag},

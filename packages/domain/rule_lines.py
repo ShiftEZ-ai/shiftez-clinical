@@ -1311,9 +1311,17 @@ def _expand(policy, outrank=True, stored_goal=True):
     sources = _source_lines(policy)
     source_keys = [source_key(policy, line) for line in lines]
     level_groups = {}
-    beaten = outranking_by_number(policy) if outrank and not policy.get('_zero_max_projection') else {}
+    beaten = outranking_by_number(policy) if outrank else {}
     broader = _broader_levels(lines, _by_number(rule)) if any(v.get('level', 'mandatory') is None for line in lines
                                                                for v in (line.get('numbers') or {}).values()) else {}
+    # An inherited advisory line cannot replace a mandatory zero.
+    inherited_winners = {w for (n, k), winners in beaten.items() if k == 'max'
+                         and lines[n]['numbers'][k].get('value') == 0
+                         for w in winners if lines[w]['numbers'][k].get('level', 'mandatory') is None}
+    winner_levels = {w: dict(_levels(lines, w, 'max', broader, entry,
+        _slot(entry, 'max', rule, lines[w], list(lines[w]['numbers'])), sources, source_keys, level_groups))
+        for w in sorted(inherited_winners)}
+    live_zero_lines = set(policy.get('_live_zero_line_ids', ()))
     plans = []  # per line: {(kind, fixed, level, winners): [first key, [(slot, value, key)]]}
     for n, line in enumerate(lines):
         settings, groups, keys = _settings(rule, line), {}, list(line.get('numbers') or {})
@@ -1325,9 +1333,14 @@ def _expand(policy, outrank=True, stored_goal=True):
             for level, selector in _levels(lines, n, key, broader, entry, slot, sources, source_keys, level_groups):
                 if policy.get('_zero_max_projection') and level != 'mandatory':
                     continue
+                if key == 'max' and level == 'mandatory' and line['id'] in live_zero_lines:
+                    continue
                 if slot['advisory'] and level == 'mandatory':
                     raise ValueError(f"{entry['name']}: a {key.replace('_', ' ')} here is a preference, not mandatory")
-                winners = tuple(beaten.get((n, key), ()))
+                winners = tuple((w, None) for w in beaten.get((n, key), ()))
+                if key == 'max' and level == 'mandatory' and number.get('value') == 0:
+                    winners = tuple((w, winner_levels.get(w, {}).get('mandatory')) for w, _ in winners
+                                    if 'mandatory' in winner_levels.get(w, (lines[w]['numbers'][key].get('level', 'mandatory'),)))
                 group = groups.setdefault((slot['kind'], json.dumps(slot['fixed'], sort_keys=True), level, winners, selector), [key, []])
                 group[1].append((slot, number.get('value'), key))
         plans.append((settings, groups))
@@ -1343,7 +1356,7 @@ def _expand(policy, outrank=True, stored_goal=True):
 
 
 def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sources, selector, stored_goal=True):
-    if line.get('_source_default_only'):
+    if line.get('_source_default_only') and (kind != 'block_quota' or not selector):
         return None
     d = policy['definition']
     advisory = any(slot['advisory'] for slot, _, _ in numbers)
@@ -1377,10 +1390,13 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
         valid = _valid(json.dumps({**valid, 'rule': {**block, 'starts_on': a, 'ends_on': b}}, sort_keys=True, default=str))
         if selector and b is not None:
             sources[source_key(policy, line)]['inherit'][numbers[0][2]]['block'] = (a, b)
+    if line.get('_source_default_only'):
+        return None
     scope = valid['scope']
     if winners:
-        people = sorted({p for w in winners if unconditional_people(lines[w]) for p in named_people(lines[w])}) if kind == 'block_quota' else []
-        dynamic = [source_key(policy, lines[w]) for w in winners if not (kind == 'block_quota' and unconditional_people(lines[w]))]
+        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])}
+        people = sorted({p for w in direct for p in named_people(lines[w])})
+        dynamic = [guard or source_key(policy, lines[w]) for w, guard in winners if w not in direct]
         extra = ([{'field': 'person_ids', 'op': 'none', 'values': people}] if people else []) + (
             [{'field': OUTRANKED, 'op': 'none', 'values': dynamic}] if dynamic else [])
         scope = {**scope, 'conditions': {'match': 'all', 'conditions': ([scope['conditions']] if scope.get('conditions') else []) + extra}}
