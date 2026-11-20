@@ -2295,6 +2295,9 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         shift['participants'] = proposed
     control.stage("validating")
     data.pop('_policy_applies_cache', None)
+    data.pop('_line_index_cache', None)
+    if hasattr(data, '_fair_share_measurement_cache'):
+        del data._fair_share_measurement_cache
     data.pop('_workload_matches_cache', None)
     data.pop('_supervision_commitments', None)
     for key in ('_candidate_evidence_cache', '_candidate_evidence_policy_source', '_policy_name_static',

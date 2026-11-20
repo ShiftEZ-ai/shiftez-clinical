@@ -83,6 +83,8 @@ def test_workload_reports_keep_live_assignments_and_planned_values(kind, cache_m
                                   'participation', 'usual', 'overtime'])
 def test_default_workload_preparation_is_fresh_after_in_place_fact_edits(change):
     data, goal = workload_world()
+    if change == 'policy-date':
+        data['fairness_semantics'] = 1
     if change == 'grant':
         goal['definition']['scope'] = {'capability_ids': [uid(45)]}
     before = f.goal_report(data, goal)

@@ -350,6 +350,7 @@ def test_automatic_scheduling_never_uses_manual_override(h, kind, engine):
     control = generate(only_person_0(h.snapshot(workspace)), time_budget_seconds=2)
     assert [item['participant']['person_id'] for item in control['additions']] == [pid], control
     absence(h, kind)
+    workspace = h.refresh_draft_baseline(workspace)
     alone = generate(only_person_0(h.snapshot(workspace)), time_budget_seconds=2)
     assert all(item['participant']['person_id'] != pid for item in alone['additions']), alone
     result = generate(h.snapshot(workspace), time_budget_seconds=2)

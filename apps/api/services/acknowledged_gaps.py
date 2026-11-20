@@ -1,6 +1,4 @@
-"""Exact, independently reviewed non-safety gaps on the existing accepted-issues state."""
-from sqlalchemy import select
-
+"""Exact, reviewed non-safety gaps on the existing accepted-issues state."""
 from apps.api import models as m
 from apps.api.errors import require
 from apps.api.snapshots import workspace_content
@@ -9,9 +7,10 @@ from . import reviews
 from .rota_adjustments import adjustment_review_items, remove_rejected_adjustments
 
 
-def projection(workspace, validation=None):
-    value = rota_summary(validation if validation is not None else workspace.validation,
-                         accepted_issues=workspace.accepted_issues or [])['fix_list']
+def projection(workspace, validation=None, *, summary=None):
+    value = (summary if summary is not None else rota_summary(
+        validation if validation is not None else workspace.validation,
+        accepted_issues=workspace.accepted_issues or []))['fix_list']
     value = {**value, 'summary': {**value['summary'], 'check_status': None, 'check_queued_at': None}}
     return {**value, 'workspace_id': workspace.id, 'revision': workspace.revision,
             'review_items': review_items(workspace, current=value)}
@@ -55,15 +54,12 @@ def submit(db, actor, workspace, result, acknowledgements, reason):
     return require_accepted(workspace, result)
 
 
-def decide(db, actor, workspace, result, value):
+def require_gap_decisions(workspace, result, value):
     current = require_accepted(workspace, result)
     must = [c for c in current['causes'] if c['level'] == 'must']
     accepted = {d.item_id for d in value.decisions if d.kind == 'gap' and d.accept}
     require(accepted == {c['id'] for c in must}, 'GAP_DECISION_REQUIRED',
             'Explicitly accept every acknowledged cause or return the rota to its coordinator', 409)
-    if must:
-        require_independent(db, actor, workspace, value)
-    return current
 
 
 def validate_item_decisions(db, actor, workspace, value):
@@ -74,13 +70,13 @@ def validate_item_decisions(db, actor, workspace, value):
     require(all(d.kind == ('gap' if items[ident]['kind'] == 'acknowledged_gap' else 'adjustment')
                 for ident, d in selected.items()), 'REVIEW_ITEM_CHANGED', 'Use the current item kind', 409)
     if items:
-        require_independent(db, actor, workspace, value)
+        require_item_reviewer(db, actor, workspace, value)
 
 
-def require_independent(db, actor, workspace, value):
+def require_item_reviewer(db, actor, workspace, value):
     delegation = db.get(m.ReviewDelegation, value.delegation_id) if value.delegation_id else None
     require(reviews.can_review(db, actor, workspace,
-            authority_id=delegation.delegator_id if delegation else None, independent_only=True), 'SELF_APPROVAL',
+            authority_id=delegation.delegator_id if delegation else None), 'SELF_APPROVAL',
             'Rota review items require an independent approver', 403)
 
 
@@ -100,7 +96,6 @@ def reject_items(db, actor, workspace, value):
     items = {item['id']: item for item in review_items(workspace)}
     require(selected <= items.keys(),
             'REVIEW_ITEM_CHANGED', 'Select current review items once each', 409)
-    require_independent(db, actor, workspace, value)
     reviews.approve_step(db, actor, workspace, value, record_decision=False)
     before = workspace_content(db, workspace)
     remove_rejected_adjustments(workspace, selected)
@@ -121,26 +116,23 @@ def reject_items(db, actor, workspace, value):
             'rejected_review_items': [items[key] for key in sorted(selected)]}
 
 
-def record_decision(db, actor, workspace, value):
+def record_decision(actor, workspace, value, decision):
     if not value.decisions:
         return
-    rows = decision_rows(actor, value)
+    self_approval = {'self_approval_id': decision.self_approval_id} if decision.self_approval_id else {}
+    rows = decision_rows(actor, value, self_approval=self_approval)
     workspace.validation = {**(workspace.validation or {}), 'review_item_decisions': rows}
-    gaps = {item.item_id: item for item in value.decisions if item.kind == 'gap'}
-    if not gaps:
-        return
-    decision = db.scalar(select(m.ReviewDecision).where(m.ReviewDecision.workspace_id == workspace.id,
-        m.ReviewDecision.content_revision == workspace.content_revision, m.ReviewDecision.approved_by == actor.identity_id)
-        .order_by(m.ReviewDecision.created_at.desc(), m.ReviewDecision.seq.desc()).limit(1))
-    workspace.accepted_issues = [{**a, 'decisions': [*a.get('decisions', []), {
-        'by': actor.identity_id, 'at': m.now().isoformat(), 'reason': gaps[a['cause_id']].reason or value.reason,
-        'review_decision_id': decision.id}]} if a.get('cause_id') in gaps else a
-        for a in workspace.accepted_issues or []]
+    gaps = {row['item_id']: {'by': row['by'], 'at': row['at'], 'reason': row['reason'],
+                           'review_decision_id': decision.id, **self_approval}
+            for row in rows if row['kind'] == 'gap'}
+    if gaps:
+        workspace.accepted_issues = [{**a, 'decisions': [*a.get('decisions', []), gaps[a['cause_id']]]}
+                                     if a.get('cause_id') in gaps else a for a in workspace.accepted_issues or []]
 
 
-def decision_rows(actor, value):
+def decision_rows(actor, value, *, self_approval=None):
     return [{**item.model_dump(mode='json'), 'reason': item.reason or value.reason,
-             'by': actor.identity_id, 'at': m.now().isoformat()} for item in value.decisions]
+             'by': actor.identity_id, 'at': m.now().isoformat(), **(self_approval or {})} for item in value.decisions]
 
 
 def reopen_undo(db, actor, workspace, reason):
