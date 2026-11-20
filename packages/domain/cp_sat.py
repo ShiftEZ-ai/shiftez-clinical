@@ -548,7 +548,10 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         publish_issues(protected_conflicts, 'protected')
     tolerated.update(citation_finding_key(f) for f in [*outside, *protected_conflicts])
     kept_sessions = {f['shift_id'] for f in protected_conflicts}
-    if not feasibility_only:
+    # Greedy repair uses the original generation boundaries and can move its own suggestions.
+    generating = not feasibility_only or snapshot.get('_greedy_required_cover', False)
+    greedy_placements = snapshot.get('_greedy_placements', frozenset())
+    if generating:
         # Fixed usual pools cannot substitute absent members; retain only existing gaps as visible diagnostics.
         kept_sessions.update(s['id'] for s in shifts if s['id'] in selected
             and series_definition(s).get('usual_assignees_fixed') and s.get('usual_assignee_unavailability'))
@@ -629,8 +632,6 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             if scope_matches_throughout(data, selector, None, shift, a, b):
                 restriction_policies.append(policy)
         candidate_data = {**data, 'policies': restriction_policies}
-        # A greedy repair is a generation candidate, so keep its edit and population boundaries.
-        generating = not feasibility_only or snapshot.get('_greedy_required_cover', False)
         fixed_people = {pid for pid, participant in original.items() if sid not in editable or (
             keep_assignment(data, shift, participant) if generating else assignment_fixed(shift, participant))}
         reports = {}
@@ -677,7 +678,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     participant.update({k: original[pid][k] for k in ('start', 'end', 'segments')})
                 x = model.new_bool_var(f'{sid}:{pid}')
                 decisions.add((sid, pid))
-                if pid in original:
+                if pid in original or (sid, pid) in greedy_placements:
                     model.add_hint(x, 1)
             else:
                 participant, x = {**original[pid]}, model.new_constant(1)
@@ -1326,6 +1327,10 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     deficit = model.new_int_var(0, r['target'], 'desired_cover')
                     model.add(cover + deficit >= r['target'])
                     desired_coverage.append(minutes * deficit)
+                    if greedy_placements and sid in selected:
+                        placed = sum((sid, pid) in greedy_placements for pid in available)
+                        if placed > r['minimum']:
+                            model.add(cover >= min(placed, r['target'])).with_name('duty:' + sid)
                 seats = defaultdict(list)
                 for clause in r['capabilities']:
                     eligible = [pid for pid in available if clause['capability_id'] in caps[pid]]

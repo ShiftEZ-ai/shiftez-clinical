@@ -477,29 +477,36 @@ def _sweep_modes(baseline):
 
 
 def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None) -> dict:
-    if time_budget_seconds is None:
+    placement_budget = time_budget_seconds
+    if placement_budget is None:
         from packages.contracts.schemas import GenerationOptions
-        time_budget_seconds = GenerationOptions.model_validate(
-            snapshot.get('generation_options', snapshot.get('generation_defaults')) or {}).search_minutes * 60
+        placement_budget = 90.0
+        options = GenerationOptions.model_validate(snapshot.get('generation_options', snapshot.get('generation_defaults')) or {})
+        time_budget_seconds = max(placement_budget, options.search_minutes * 60)
     started = time.monotonic()
     deadline = started + time_budget_seconds
-    # Leave time for local validation and a joint repair if local choices strand required cover.
-    result = _generate_with_redistribution(snapshot, time_budget_seconds / 4, cancelled=cancelled)
-    remaining = deadline - time.monotonic()
-    if (result.get('status') in {'candidate_with_gaps', 'unknown_time_limit'}
-            and deficit_score(result['validation'])[0] and remaining > 0 and not (cancelled and cancelled())):
+    result = _generate_with_redistribution(snapshot, placement_budget, cancelled=cancelled)
+    finished_placement = time.monotonic()
+    remaining = deadline - finished_placement
+    if (result.get('status') == 'candidate_with_gaps' and finished_placement < started + placement_budget
+            and deficit_score(result['validation'])[0] and not (cancelled and cancelled())):
         try:
             from .cp_sat import generate as required_cover
             from .solver_control import SolverControl
             control = SolverControl(cancelled=lambda: time.monotonic() >= deadline or bool(cancelled and cancelled()))
-            repaired = required_cover({**snapshot, '_greedy_required_cover': True}, remaining, workers=1, feasibility_only=True,
-                                      _control=control)
+            removed = {(r['shift_id'], r['assignment_id']) for r in result['removals']}
+            placements = {(s['id'], p['person_id']) for s in snapshot['shifts'] for p in s['participants']
+                          if (s['id'], p['id']) not in removed}
+            placements.update((a['shift_id'], a['participant']['person_id']) for a in result['additions'])
+            repaired = required_cover({**snapshot, '_greedy_required_cover': True, '_greedy_placements': placements},
+                                      remaining, workers=1, feasibility_only=True, _control=control)
             repair_timed_out = repaired.get('status') in {'cancelled', 'unknown_time_limit', 'needs_more_time'}
             if repair_timed_out and control.validated_result is not None:
                 repaired = {**control.validated_result, 'solver_status': 'FEASIBLE', 'score_completed': False}
         except ImportError:
             repaired = {'status': 'unavailable'}
-        if repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid'):
+        valid_repair = repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid')
+        if valid_repair and deficit_score(repaired['validation'])[-1] <= deficit_score(result['validation'])[-1]:
             result = repaired
             result['required_cover_repair'] = {'algorithm_version': repaired['algorithm_version'],
                                                'solver_status': repaired['solver_status'],
@@ -519,6 +526,7 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
                 result['status'] = 'unknown_time_limit'
             reason = ('was cancelled' if cancelled and cancelled() else 'ran out of time' if timed_out
                       else 'is unavailable' if repaired.get('status') == 'unavailable'
+                      else 'would leave more desired cover or quotas unfilled' if valid_repair
                       else 'found no valid complete rota')
             result.setdefault('warnings', []).append(
                 f'Required-cover repair {reason}; the best partial proposal is retained.')

@@ -67,11 +67,12 @@ def test_greedy_uses_frozen_search_time_unless_an_explicit_budget_is_supplied(mo
         ({}, None, GenerationOptions().search_minutes * 60),
         ({'generation_defaults': {'search_minutes': 2}}, None, 120),
         ({'generation_options': {'search_minutes': 3}}, None, 180),
+        ({'generation_options': {'search_minutes': 1}}, None, 90),
         ({'generation_options': {'search_minutes': 3}}, 0, 0),
         ({'generation_options': {'search_minutes': 3}}, 10, 10),
     ):
         result = generation.generate(snapshot, explicit)
-        assert allowances[-1] == expected / 4
+        assert allowances[-1] == (90 if explicit is None else expected)
         assert result['time_limit_seconds'] == expected
         assert result['elapsed_seconds'] >= 0
 
@@ -86,6 +87,8 @@ def test_failed_required_cover_repair_retains_the_validated_partial_and_its_gaps
     assert original['status'] == 'candidate_with_gaps'
     monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_, **kwargs: copy.deepcopy(original))
     def repair(_snapshot, budget, **options):
+        placements = _snapshot.pop('_greedy_placements')
+        assert placements == {(a['shift_id'], a['participant']['person_id']) for a in original['additions']}
         assert _snapshot == {**data, '_greedy_required_cover': True} and 0 < budget <= 10
         assert options['workers'] == 1 and options['feasibility_only'] is True
         assert options['_control'].cancelled() is False
@@ -111,6 +114,28 @@ def test_expired_greedy_budget_keeps_partial_and_lists_missing_required_places(h
     assert result['validation']['valid'] is False
     assert len(result['unmet_requirements']) == 3
     assert 'does not prove' in result['message']
+
+
+def test_exhausted_placement_does_not_use_frozen_search_time_for_repair(h, monkeypatch):
+    from types import SimpleNamespace
+
+    from packages.domain import cp_sat
+
+    data, _ = stranding_world(h)
+    data['generation_options'] = {'search_minutes': 5}
+    partial = generation._generate_with_redistribution(data, 5)
+    assert partial['status'] == 'candidate_with_gaps'
+
+    def unexpected_repair(*args, **kwargs):
+        pytest.fail('Placement used its allowance; repair must not start')
+
+    clock = iter((0, 90, 90))
+    monkeypatch.setattr(generation, 'time', SimpleNamespace(monotonic=lambda: next(clock)))
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_, **kwargs: copy.deepcopy(partial))
+    monkeypatch.setattr(cp_sat, 'generate', unexpected_repair)
+    result = generation.generate(data)
+    assert result['status'] == 'candidate_with_gaps'
+    assert result['unmet_requirements'] == partial['unmet_requirements']
 
 
 @pytest.mark.parametrize('protection', ['existing', 'population', 'series'])

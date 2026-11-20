@@ -666,12 +666,26 @@ def test_personal_pattern_department_month_cpu_budget(personal_pattern_departmen
 @pytest.mark.cpu_budget
 def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h, monkeypatch, request):
     from packages.domain import generation
+    from tests.test_source_parity_staffing import policy
 
-    data, _ = department(h, 11, people=80, days=14, rules='full', leave_rate=0.05, clinics=4)
-    # This regression measures required cover, without advisory target seats.
-    for typ in [*data['types'].values(), *(s['type_snapshot'] for s in data['shifts'])]:
-        for requirement in typ['definition']['requirements']:
-            requirement['target'] = None
+    data, info = department(h, 11, people=80, days=14, rules='full', leave_rate=0.05, clinics=4)
+    reserved = sorted(h.seed['people'])
+    regular = sorted(set(data['people']) - set(reserved))
+    data['planning_population'] = {s['id']: regular for s in data['shifts']}
+    data['availability'] = [a for a in data['availability'] if a['person_id'] not in reserved]
+    data['policies'] = [p for p in data['policies'] if p['id'] != info['policies']['prefer_seed']]
+    data['policies'].append(policy(data, {'kind': 'max_duties', 'maximum': 1, 'window': 'week'},
+                                   {'person_ids': reserved}))
+    duty = h.configure('assignment_types', {'name': 'Synthetic required cover', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1, 'maximum': 1}]}})['record']
+    data['types'][duty['id']] = duty
+    mornings = {s['start']: s for s in data['shifts'] if s['assignment_type_id'] == info['types']['am']}
+    # Both greedy orders strand a seat unless an earlier assignment moves.
+    for template, allowed in zip(mornings.values(), ((0,), (1, 2), (0, 1))):
+        sid = str(uuid.uuid5(uuid.NAMESPACE_URL, 'required-cover-scale:' + template['start']))
+        data['shifts'].append(dict(template, id=sid, participants=[], assignment_type_id=duty['id'], type_snapshot=duty))
+        data['focus_ids'].append(sid)
+        data['planning_population'][sid] = [reserved[i] for i in allowed]
     original = copy.deepcopy(data)
     placements = []
     place = generation._generate_with_redistribution
@@ -680,7 +694,7 @@ def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h
         placements.append(partial)
         return partial
     monkeypatch.setattr(generation, '_generate_with_redistribution', record_placement)
-    allowance = _budget(20)
+    allowance = _budget(60)
     began = time.monotonic()
     result = generation.generate(data, allowance)
     elapsed = time.monotonic() - began
@@ -689,9 +703,14 @@ def test_greedy_required_cover_repair_finishes_after_placement_budget_at_scale(h
         'required_seats': sum(r['minimum'] for s in data['shifts'] for r in s['type_snapshot']['definition']['requirements']),
         'placed_before_repair': len(placements[0]['additions']), 'additions': len(result['additions']),
         'allowance_seconds': allowance, 'elapsed_seconds': elapsed, 'status': result['status']}
+    greedy_deficit = generation.deficit_score(placements[0]['validation'])
+    repaired_deficit = generation.deficit_score(validation)
+    measurement.update(greedy_deficit=greedy_deficit, repaired_deficit=repaired_deficit,
+                       placement_issues=[f['code'] for f in placements[0].get('issues', ())])
     request.node.user_properties.append(('greedy_required_cover_scale', json.dumps(measurement)))
-    assert placements[0]['status'] == 'unknown_time_limit', measurement
-    assert generation.deficit_score(placements[0]['validation'])[0] > 0, measurement
+    assert placements[0]['status'] == 'candidate_with_gaps', measurement
+    assert greedy_deficit[0] > 0, measurement
+    assert repaired_deficit[-1] <= greedy_deficit[-1], measurement
     assert result['status'] == 'candidate_feasible', measurement
     assert result['unmet_requirements'] == [] and validation['valid'], measurement
     assert result['required_cover_repair']['solver_status'] == 'FEASIBLE'
