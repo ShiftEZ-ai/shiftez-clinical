@@ -1,11 +1,12 @@
 from datetime import date, datetime
 from copy import deepcopy
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.inspection import inspect
 from packages.contracts.schemas import AutoscheduleAnimationSettings, WishSettings
 from packages.domain.time import aware
 from packages.domain.rota_summary import normalized_check, normalized_score
-from packages.domain.serialization import json_default, json_value
+from packages.domain.serialization import PLAIN, json_default, json_value
 from packages.domain.generation_scope import selected_session_ids
 
 
@@ -18,6 +19,21 @@ JOB_INPUT_FIELDS = ('generation_engine', 'generation_options', 'compiler_version
                     'proof_scope', 'completion', 'planning_population', 'generation_session_ids', 'generation_manifest', 'continuation',
                     'planner_command_kind', 'planner_source_fingerprint', 'planner_expected_revision', 'fill_options',
                     '_deferred_generation')
+
+
+def projection_json_value(value):
+    """Keep FastAPI's JSON representation while fast-pathing plain projected rows."""
+    if type(value) is dict:
+        encoded = {}
+        for key, child in value.items():
+            if isinstance(key, str) and key.startswith('_sa'):
+                continue
+            key = key if type(key) is str else jsonable_encoder(key)
+            encoded[key] = child if type(child) in PLAIN else projection_json_value(child)
+        return encoded
+    if type(value) is list:
+        return [child if type(child) in PLAIN else projection_json_value(child) for child in value]
+    return jsonable_encoder(value)
 
 
 def generation_options_record(options):
