@@ -65,7 +65,10 @@ def test_the_all_rules_key_lists_the_marks_the_list_draws_on_one_line(browser, l
         navigate(page, 'rules')
         view(page, 'All rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-rule .rt-waiting-chip').first).to_be_visible()
+        waiting = main.locator('li.rt-item .rt-waiting-chip').first
+        expect(waiting).to_be_visible()
+        expect(waiting).to_have_class(re.compile(r'\binfo\b'))
+        expect(waiting.locator('.icon')).to_have_count(1)  # information plus the shared clock mark.
         key = main.locator('.rt > .view-legend')
         expect(key).to_be_visible()
         # The marks drawn are listed (words in the key, including any behind "+N").

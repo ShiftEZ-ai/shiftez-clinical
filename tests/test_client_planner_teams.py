@@ -172,7 +172,8 @@ def test_gripped_headings_keep_their_own_names():
     rules = (src / 'rules_tree.ts').read_text(encoding='utf-8')
     week = (src / 'planner_week.ts').read_text(encoding='utf-8')
     menu = (src / 'table_menu.ts').read_text(encoding='utf-8')
-    assert "el('th',{scope:'col',class:cls,'aria-label':label,'data-col':key},menu(key,label,sort),grip(key,label))" in rules
+    # The Rules list has no table headings (one row per rule); the issue table's headings are its only gripped ones.
+    assert rules.count(',grip(') == 1
     assert "el('th',{scope:'col','aria-label':c.label,'data-col':c.key," in rules
     # Named first: the corner then takes tabindex=-1 so its grip keeps focus (maintenance, 0d503d2ec), and a heading that
     # already has a tabindex is an interactive one, which gripHeadingName leaves unnamed.
