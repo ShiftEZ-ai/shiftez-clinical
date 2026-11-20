@@ -125,10 +125,9 @@ def test_coverage_gate_reports_skipped_later_tiers(h, monkeypatch):
     requirement = data['shifts'][0]['type_snapshot']['definition']['requirements'][0]
     requirement.update(minimum=3, target=4, maximum=4)
     requirement['capabilities'] = []
-    checkpoints = []
-    baseline = generate(data, 5, deterministic=True, diagnostic_proposal=True, checkpoint=checkpoints.append)
-    assert baseline['status'] == 'candidate_with_gaps' and checkpoints
-    resume = next(state for state in reversed(checkpoints) if state.get('checkpoint_assignments'))
+    resume = {}
+    baseline = generate(data, 5, deterministic=True, diagnostic_proposal=True, checkpoint=lambda state: resume.update(copy.deepcopy(state)))
+    assert baseline['status'] == 'candidate_with_gaps' and resume.get('model') and resume.get('checkpoint_assignments')
     original, seen = SolverControl.solve, []
 
     def solve(self, solver, model, tier):
@@ -143,6 +142,11 @@ def test_coverage_gate_reports_skipped_later_tiers(h, monkeypatch):
     monkeypatch.setattr(SolverControl, 'solve', solve)
     result = generate(data, 5, deterministic=True, diagnostic_proposal=True, resume_state=resume)
     rows = {row['name']: row for row in result['objectives']}
+    assert rows['coverage']['search_status'] == 'UNKNOWN'
+    assert result['status'] == 'candidate_with_gaps'
+    baseline_values = {row['name']: row['value'] for row in baseline['objectives']}
+    assert rows['desired_coverage']['value'] == baseline_values['desired_coverage']
+    assert rows['weighted']['value'] == baseline_values['weighted']
     assert rows['desired_coverage']['search_status'] == 'NOT_RUN'
     assert rows['weighted']['search_status'] == 'NOT_RUN'
     assert rows['desired_coverage']['value'] is None or rows['desired_coverage']['value'] != rows['coverage']['value']
@@ -155,10 +159,10 @@ def test_proven_coverage_does_not_report_skipped_later_tiers(h, monkeypatch):
     data = tier_loop_data(h)
     requirement = data['shifts'][0]['type_snapshot']['definition']['requirements'][0]
     requirement.update(minimum=1, target=2, maximum=2)
-    checkpoints = []
-    baseline = generate(data, 5, deterministic=True, diagnostic_proposal=True, checkpoint=checkpoints.append)
-    assert baseline['status'] in {'candidate_feasible', 'candidate_with_gaps'} and checkpoints
-    resume = next(state for state in reversed(checkpoints) if state.get('checkpoint_assignments'))
+    resume = {}
+    baseline = generate(data, 5, deterministic=True, diagnostic_proposal=True, checkpoint=lambda state: resume.update(copy.deepcopy(state)))
+    assert baseline['status'] in {'candidate_feasible', 'candidate_with_gaps'} and resume.get('model') and resume.get('checkpoint_assignments')
+    assert next(row for row in baseline['objectives'] if row['name'] == 'coverage')['value'] == 0
     original = SolverControl.solve
 
     def solve(self, solver, model, tier):
@@ -170,6 +174,7 @@ def test_proven_coverage_does_not_report_skipped_later_tiers(h, monkeypatch):
     monkeypatch.setattr(SolverControl, 'solve', solve)
     result = generate(data, 5, deterministic=True, diagnostic_proposal=True, resume_state=resume)
     rows = {row['name']: row for row in result['objectives']}
+    assert result['preparation_reused']
     assert rows['coverage']['proven_optimal']
     assert rows['desired_coverage'].get('search_status') != 'NOT_RUN'
     assert rows['weighted'].get('search_status') != 'NOT_RUN'
