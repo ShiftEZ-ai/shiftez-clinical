@@ -96,6 +96,106 @@ def rule_number(rule):
     return {'field': field, 'value': rule.get(field), 'unit': unit, 'stricter': stricter}
 
 
+def _binding_values(data, a, b, zone):
+    """Changed numbers from the check's resolved policies, indexed by source and slot."""
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+    from packages.contracts.schemas import safety_direction
+
+    captured, effective = data.get('_rule_map_policies', ((), ()))
+    if not effective:
+        return {}, {}
+    department = data['workspace']['department_id']
+    sources = {p['id']: p['id'] for p in captured
+               if p['department_id'] == department and p['status'] == 'active' and p.get('active', True)}
+    predecessors = {p['id']: p['definition']['replaces_id']
+                    for p in data.get('_live_safety_staleness', {}).get('policies', ())
+                    if p['department_id'] == department and p['definition'].get('replaces_id')}
+
+    def source_id(policy):
+        ident = policy.get('_source_policy_id', policy['id'])
+        prior, path = ident, set()
+        while prior not in sources and prior in predecessors and prior not in path:
+            path.add(prior)
+            prior = predecessors[prior]
+        source = sources.get(prior, prior if prior not in path else ident)
+        sources.update(dict.fromkeys(path, source))
+        return source
+
+    def index(policies):
+        policies = [p for p in policies if p['department_id'] == department]
+        catalogue_slots = {}
+        for policy in policies:
+            rule = policy['definition']['rule']
+            if rule['kind'] != 'catalogue' or policy['status'] != 'active' or not policy.get('active', True):
+                continue
+            entry = catalogue_entry(rule['id'], rule.get('catalogue_version', 1))
+            for i, line in enumerate(rule.get('lines') or ()):
+                ident = line.get('_source_identity', line['id'])
+                for key, number in line['numbers'].items():
+                    slot = slot_for_number(entry, key, rule, line, line['numbers'])
+                    if slot['field'] and number.get('value') is not None:
+                        catalogue_slots[policy['id'], ident, line.get('_source_index', i), key] = (rule['id'], slot['field'])
+
+        numbers, zeroes = {}, set()
+        for copy in active_rules(policies, context=data):
+            if not within_dates(copy, a, b, zone):
+                continue
+            definition, template = copy['definition'], copy.get('template_line') or {}
+            rule = definition['rule']
+            slots = []
+            if 'id' in template and 'slot' in template:
+                for slot in template['slot'].split('+'):
+                    match = catalogue_slots.get((copy['id'], template['id'], template['line'], slot))
+                    if match:
+                        catalogue, field = match
+                        direction = safety_direction(rule['kind'], field) or {'max': 'min', 'min': 'max'}.get(slot)
+                        slots.append(((catalogue, template['id'], slot), field, direction))
+            elif not template and (number := rule_number(rule)):
+                direction = {'lower': 'min', 'higher': 'max'}.get(number['stricter'])
+                # active_rules splits quota ranges into separate minimum and maximum copies.
+                slot = rule.get('comparison') if rule['kind'] == 'block_quota' else number['field']
+                slots.append(((source_id(copy), None, slot), number['field'], direction))
+            for key, field, direction in slots:
+                values = numbers.setdefault(key, set())
+                if definition['severity'] == 'mandatory' and (value := rule.get(field)) is not None:
+                    values.add((value, direction))
+                    if value == 0 and copy.get('_live_zero'):
+                        zeroes.add(key)
+
+        def scalar(values):
+            amounts = {value for value, _ in values}
+            directions = {direction for _, direction in values}
+            if len(amounts) == 1:
+                return next(iter(amounts)), next(iter(directions)) if len(directions) == 1 else None
+            if directions == {'min'}:
+                return min(amounts), 'min'
+            if directions == {'max'}:
+                return max(amounts), 'max'
+            return None, None
+
+        return {key: scalar(values) for key, values in numbers.items()}, zeroes
+
+    before, _ = index(captured)
+    after, zeroes = index(effective)
+    changed = {}
+    # shortcut: loosened revisions show the captured value because review still checks it; show both once review reads live (#1032)
+    for key, (value, direction) in after.items():
+        if key not in before and key in zeroes:
+            changed[key] = 0
+            continue
+        saved, saved_direction = before.get(key, (None, None))
+        if value is not None and saved is not None and direction == saved_direction and (
+                direction == 'min' and value < saved or direction == 'max' and value > saved):
+            changed[key] = value
+    return changed, sources
+
+
+def _one_changed(values):
+    # A scalar cannot describe several independently changed numbers.
+    changed = [value for value in values if value is not None]
+    return changed[0] if len(changed) == 1 else None
+
+
 def adjustable(rule):
     """Whether a rota may use another number for this rule (a range has two: change it in the rule)."""
     if rule['kind'] == 'catalogue':
@@ -215,6 +315,7 @@ def rule_map(data, originals=None):
     n = (last - first).days
     days = [(first + timedelta(days=i)).isoformat() for i in range(n)]
     A, B, full = local_midnight(first, zone), local_midnight(last, zone), (1 << n) - 1
+    bindings, binding_sources = _binding_values(data, A, B, zone)
     dept = ws['department_id']
     focus = set(data['focus_ids'])
     shifts = [s for s in data['shifts'] if s['id'] in focus and not inactive(s)]
@@ -511,12 +612,20 @@ def rule_map(data, originals=None):
     rules, entries = [], {}
     for p in policies + [originals[i] for i, r in adjustments.items() if r['mode'] == 'off' and i in originals and i not in live]:
         if p['definition']['rule']['kind'] == 'catalogue':
-            entry = entries[p['id']] = _catalogue_entry(data, p, [c for c in copies if c['id'] == p['id']], found, line_people, dated, ws, adjustments, p['id'] not in live, originals.get(p['id'], p))
+            entry = entries[p['id']] = _catalogue_entry(data, p, [c for c in copies if c['id'] == p['id']], found, line_people, dated, ws, adjustments, p['id'] not in live, originals.get(p['id'], p), bindings)
             rules.append(entry)
             continue
         definition, off = p['definition'], p['id'] not in live
         sessions, masks, day_mask, not_here = found.get(p['id'], (set(), {}, 0, None))
-        number = rule_number(definition['rule'])
+        rule = definition['rule']
+        number = rule_number(rule)
+        binding = None
+        if bindings and number and definition.get('severity') == 'mandatory':
+            comparison = rule.get('comparison') if rule['kind'] == 'block_quota' else None
+            slots = ('minimum', 'maximum') if comparison == 'range' else (comparison or number['field'],)
+            ident = p.get('_source_policy_id', p['id'])
+            source_id = binding_sources.get(ident, ident)
+            binding = _one_changed(bindings.get((source_id, None, slot)) for slot in slots)
         before = originals.get(p['id'], p)
         adjusted = stored_adjustments.get(p['id'])
         gone = {pid: m & ~masks.get(pid, 0) for pid, m in plain.get(p['id'], ({}, {}, 0))[1].items()}
@@ -527,6 +636,7 @@ def rule_map(data, originals=None):
             'overridable': overridable(definition), 'starts_on': p.get('starts_on'), 'ends_on': p.get('ends_on'),
             'block': [definition['rule']['starts_on'], definition['rule']['ends_on']] if definition['rule']['kind'] == 'block_quota' else None,
             'number': number, 'department_value': (rule_number(before['definition']['rule']) or {}).get('value'),
+            'binding_value': binding,
             'adjusted': {'mode': adjusted['mode'], 'amount': adjusted.get('amount'), 'by': adjusted.get('by'), 'at': adjusted.get('at'),
                          **({'applied': False} if p['id'] not in adjustments else {})} if adjusted else None,
             'off': off, 'workspace_only': definition.get('workspace_id') == ws['id'],
@@ -595,7 +705,7 @@ def rule_map(data, originals=None):
     return {'days': days, 'shifts': [s['id'] for s in shifts], 'rules': rules, 'markers': markers}
 
 
-def _catalogue_entry(data, p, mine, found, line_people, dated, ws, adjustments, off, original):
+def _catalogue_entry(data, p, mine, found, line_people, dated, ws, adjustments, off, original, bindings):
     """A catalogue rule in the rule map: one entry, its lines (dated within the rota) and what each line's copies reach."""
     from packages.contracts.rule_catalogue import catalogue_entry
     rule = p['definition']['rule']
@@ -607,6 +717,10 @@ def _catalogue_entry(data, p, mine, found, line_people, dated, ws, adjustments, 
     scoped = [r for r in ws.get('rule_adjustments') or [] if r['policy_id'] == p['id'] and r.get('line_id')]
     shown_rule = original['definition']['rule'] if scoped else rule
     lines = shown_rule.get('lines') or []
+    displayed_lines = [{**line, 'binding_value': _one_changed(
+        bindings.get((catalogue['id'], line.get('_source_identity', line['id']), slot)) for slot in line['numbers'])}
+        for line in lines if dated(line)]
+    number = rule_number(shown_rule)
     shown = {i: k for k, i in enumerate(i for i, line in enumerate(lines) if dated(line))}
     display_index = {copy.get('template_line', {}).get('line'): shown[index]
                      for copy in mine if copy.get('template_line')
@@ -617,7 +731,8 @@ def _catalogue_entry(data, p, mine, found, line_people, dated, ws, adjustments, 
             'severity': 'mandatory' if any(c['definition']['severity'] == 'mandatory' for c in mine) else 'advisory', 'strength': None,
             'safety': any(safety_rule(c['definition']) for c in mine),
             'exception_allowed': bool(p['definition'].get('exception_allowed')) and not any(safety_rule(c['definition']) for c in mine), 'adjustable': adjustable(shown_rule),
-            'overridable': False, 'starts_on': p.get('starts_on'), 'ends_on': p.get('ends_on'), 'block': None, 'number': rule_number(shown_rule),
+            'overridable': False, 'starts_on': p.get('starts_on'), 'ends_on': p.get('ends_on'), 'block': None, 'number': number,
+            'binding_value': displayed_lines[0]['binding_value'] if number and displayed_lines else None,
             'scoped_adjustments': scoped,
             'department_value': (rule_number(original['definition']['rule']) or {}).get('value'), 'off': off, 'workspace_only': False, 'overrides': [], 'overridden_by': [],
             'adjusted': {'mode': adjusted['mode'], 'amount': adjusted.get('amount'), 'by': adjusted.get('by'), 'at': adjusted.get('at')} if adjusted else None,
@@ -627,7 +742,7 @@ def _catalogue_entry(data, p, mine, found, line_people, dated, ws, adjustments, 
             'person_side': any(person_side(c['definition']) for c in mine),
             'session_side': any(c.get('_protected_interval') or session_side(c['definition']) for c in mine),
             'sessions': sorted(sessions), 'people': {pid: _ranges(m) for pid, m in masks.items()}, 'replaced': {},
-            'days': _days(day_mask), 'not_here': not_here or {}, 'lines': [line for line in lines if dated(line)],
+            'days': _days(day_mask), 'not_here': not_here or {}, 'lines': displayed_lines,
             'line_people': {pid: [[a, b, display_index.get(n, shown.get(n, n))] for a, b, n in spans
                                   if n in display_index or n in shown] for pid, spans in line_people.get(p['id'], {}).items()}}
 

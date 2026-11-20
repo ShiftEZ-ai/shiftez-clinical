@@ -739,12 +739,18 @@ def _who_wins(copies, line, id_map):
                  if c['id'] in values and (c.get('template_line') or {}).get('person_id')}
         return ['own', sorted(found)]
     index = source_index(copies)[1]
-    winners = [index[key] for key in values if key in index]
+    from .conditions import outranking_source
+    sources = [outranking_source(value) for value in values]
+    guarded = sorted({json.dumps(_level_meaning(copies, guard), sort_keys=True)
+                      for _, guard in sources if guard})
+    winners = [index[key] for key, guard in sources if guard is None and key in index]
     people = [_listed_people(c['definition']['scope']) for c in winners]
     if winners and all(c['whole_person'] and p is not None and len(p) == 1 for c, p in zip(winners, people)):
-        return ['own', sorted({(next(iter(p)), str(c.get('starts_on')), str(c.get('ends_on'))) for p, c in zip(people, winners)})]
-    return ['outranked', sorted({json.dumps([_canonical_scope(_person_scope(c['definition']['scope'])), str(c.get('starts_on')),
-                                             str(c.get('ends_on'))]) for c in winners})]
+        ordinary = ['own', sorted({(next(iter(p)), str(c.get('starts_on')), str(c.get('ends_on'))) for p, c in zip(people, winners)})]
+    else:
+        ordinary = ['outranked', sorted({json.dumps([_canonical_scope(_person_scope(c['definition']['scope'])),
+            str(c.get('starts_on')), str(c.get('ends_on'))]) for c in winners})]
+    return ['guarded', ordinary, guarded] if guarded else ordinary
 
 
 def _level_meaning(copies, value):

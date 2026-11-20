@@ -221,10 +221,21 @@ def test_fairness_intervals_split_at_catalogue_selector_source_dates():
              'starts_on': '2026-10-10', 'who': {'match': 'all', 'conditions': [
                  {'field': 'person_ids', 'op': 'any', 'values': [A]}]}},
         ]}}}]
+    # Issued snapshots keep dated selector boundaries; current goals measure the full window.
+    data['fairness_semantics'] = 1
     goal = next(goal for goal in f.balance_goals(data) if goal['template_line']['id'] == everyone)
     assert f.goal_intervals(data, goal, A, *f.rota_dates(data)) == [(date(2026, 10, 4), date(2026, 10, 10))]
     row = next(row for row in f.goal_report(data, goal)['people'] if row['person_id'] == A)
     assert (row['planned'], row['available_days']) == (1, 6)
+    data['fairness_semantics'] = f.SEMANTICS
+    goals = {goal['template_line']['id']: goal for goal in f.balance_goals(data)}
+    assert f.goal_intervals(data, goals[everyone], A, *f.rota_dates(data)) == []
+    [row] = f.goal_report(data, goals[everyone])['people']
+    assert (row['person_id'], row['planned'], row['available_days']) == (B, 0, 14)
+    assert f.goal_intervals(data, goals[personal], A, *f.rota_dates(data)) == [
+        (date(2026, 10, 4), date(2026, 10, 18))]
+    [row] = f.goal_report(data, goals[personal])['people']
+    assert (row['person_id'], row['planned'], row['available_days']) == (A, 2, 14)
 
 
 @pytest.mark.parametrize(('metric', 'expected'), [('duties', 3), ('hours', 12), ('session_units', 6), ('pair_exposure', 3)])

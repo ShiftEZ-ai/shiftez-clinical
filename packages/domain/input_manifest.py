@@ -164,7 +164,7 @@ def manifest(data, *, content_revision=None):
             continue
         value = project(row, ('id', 'revision', 'department_id', 'starts_on', 'ends_on', 'active', 'definition',
             'template_line', 'count_bucket', '_count_scope', '_quota_full_window', '_protected_interval',
-            '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
+            '_live_zero', '_legacy_own_lines', '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
             '_balance_sources', '_balance_people', '_balance_broad'))
         if row['id'] in bound_exceptions:
             value['exception_binding_revision'] = row.get('revision')
@@ -201,6 +201,8 @@ def manifest(data, *, content_revision=None):
                   'baseline': [(data.get('baseline') or {}).get('id'),
                                (data.get('baseline') or {}).get('snapshot_hash')
                                or (data.get('baseline') or {}).get('hash')]}
+    if basis := data.get('_draft_policy_basis'):
+        dirty_hint['draft_policy_basis'] = basis
     if data.get('_live_safety_departments') is not None:
         dirty_hint['department_revisions'] = sorted(
             [row.get('id'), row.get('revision'), row.get('catalogue_revision')]

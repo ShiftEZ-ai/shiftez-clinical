@@ -33,7 +33,7 @@ def test_undated_schedule_and_home_only_offer_actionable_drafts(browser, live_se
     while h.process_jobs():
         pass
     assert h.get('coordinator', '/api/jobs/' + check['id'])['job']['status'] == 'succeeded'
-    # A participant edit retains the earlier check as stale, so Home must say "needs a check".
+    # A participant edit retains the earlier check as stale, so the Home footer must say "needs a check".
     shift = h.detail(draft)['shifts'][0]
     payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
     payload.update(workspace_id=draft['id'], shift_id=shift['id'],
@@ -55,7 +55,7 @@ def test_undated_schedule_and_home_only_offer_actionable_drafts(browser, live_se
                 else:
                     expect(rota).to_have_count(0)
                 expect(rota.get_by_role('button', name='Open D001 draft', exact=True)).to_have_count(1 if can_draft else 0)
-                expect(rota.get_by_text('needs a check', exact=True)).to_have_count(1 if can_draft else 0)
+                expect(page.locator('.app-footer .footer-status').filter(has_text='needs a check')).to_have_count(1 if can_draft else 0)
             else:
                 expect(page.locator('.home-rota')).to_have_count(0)
 
