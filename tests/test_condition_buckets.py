@@ -521,6 +521,11 @@ def test_grouping_preserves_repeated_each_nodes_and_their_independent_bucket_pat
 def test_full_department_rule_map_matches_the_current_dated_facts_golden_result():
     # Requalified the 919434f fixture for rotation-dated cohort membership; only 25 cohort-scoped rules change.
     result = rule_map(big_department())
+    for rule in result['rules']:
+        assert rule.pop('binding_value') is None
+        if rule['kind'] == 'catalogue':
+            for line in rule['lines']:
+                assert line.pop('binding_value') is None
     encoded = json.dumps(result, sort_keys=True, separators=(',', ':')).encode()
     assert len(result['rules']) == 974 and len(result['shifts']) == 531
     assert hashlib.sha256(encoded).hexdigest() == '4bd3dd4b354ec1be069a4a89728261f4510896ddad6ce3cff401eaf1eb8ad803'

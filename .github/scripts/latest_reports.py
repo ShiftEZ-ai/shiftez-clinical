@@ -3,7 +3,6 @@ import argparse
 import json
 from pathlib import Path
 import re
-import shutil
 
 
 def planned_shards(plan):
@@ -39,6 +38,10 @@ def validate_selected_reports(plan, directory):
     require_planned_shards(planned_shards(plan), set(identities))
 
 
+def earlier_reports(directory):
+    return directory.with_name(directory.name + ".earlier")
+
+
 def keep_latest(directory, plan):
     artifacts = {}
     for folder in sorted(directory.iterdir()):
@@ -53,7 +56,14 @@ def keep_latest(directory, plan):
         print("Keeping " + attempts[newest].name)
         for attempt, folder in attempts.items():
             if attempt != newest:
-                shutil.rmtree(folder)
+                archive = earlier_reports(directory)
+                if archive.is_symlink():
+                    raise ValueError("Invalid earlier shard artifact directory")
+                archive.mkdir(exist_ok=True)
+                destination = archive / folder.name
+                if destination.exists() or destination.is_symlink():
+                    raise ValueError("Duplicate shard artifact attempt: " + folder.name)
+                folder.rename(destination)
 
 
 if __name__ == "__main__":
