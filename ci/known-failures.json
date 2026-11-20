@@ -312,12 +312,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be_wave4_security.py::test_cross_origin_and_transport_security_headers[case-icilgnbbomimeeeobfhnipdfjpjgpmoinboaeknfpejjceamjiholbemjpmeccbg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_a11y.py::test_toolbar_fitting_observers_are_released_when_pages_change",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1632,12 +1626,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_deployment_preflight.py::test_production_requires_managed_passwords_and_refuses_sqlite_secret_file_shortcut",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_environment_contracts.py::test_authored_environment_journeys_reference_existing_local_functions[case-bflhidcbmlileifajepehoeihjiepcnibeomobobmliiefbdghafocjbnlablmpa]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1926,18 +1914,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_oidc_logout.py::test_production_oidc_cookies_are_host_bound[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_oidc_logout.py::test_production_oidc_cookies_are_host_bound[case-mojafnmhhgpnfnkfdhbmeaefjfnmiemgolelnabcinibmdcjppdhkkchkgdgcbjp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_open_ended_attachments.py::test_sqlite_attachment_upgrade_preserves_rows_and_guards",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1987,12 +1963,6 @@
     {
       "class": "baseline",
       "node": "tests/test_overtime_volunteer.py::test_an_approved_offer_does_not_survive_retirement_of_its_required_cap",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_password_login.py::test_production_passwords_require_store_and_legacy_oidc_values_do_not_configure_provider",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
