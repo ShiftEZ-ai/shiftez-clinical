@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import uuid
 import pytest
 from pydantic import ValidationError
+from tests.historical_staffing import retained_staffing
 from packages.contracts.schemas import TypeDefinition, CustomField, SeriesDefinition, InstantInterval, RequirementSegment, validate_attributes
 from packages.domain.time import aware, overlaps, union_hours, local_stamp
 from packages.domain.validation import evaluate, matching_size
@@ -94,7 +95,10 @@ def test_capability_co_counting_vs_distinct_people(h):
 def test_supervision_cannot_be_bypassed_by_labelling_trainee_as_staff(h):
     learner=h.seed["people"][0]
     h.command("coordinator","membership.create",{"person_id":learner,"category_id":h.seed["trainee_category"],"starts_on":"2020-01-01"})
-    data,result=prepared(h,{"supervision":{"trainee_category_ids":[h.seed["trainee_category"]],"capability_id":h.seed["supervisor_capability"],"trainees_per_supervisor":2}})
+    typ = h.configure('assignment_types', {'name': 'Retained supervision fixture', 'starts_on': '2020-01-01',
+        'definition': {'supervision': {'trainee_category_ids': [h.seed['trainee_category']],
+            'capability_id': h.seed['supervisor_capability'], 'trainees_per_supervisor': 2}}})['record']['id']
+    result = retained_staffing(h, h.workspace(), typ=typ, people=[learner])
     assert "SUPERVISION_GAP" in {f["code"] for f in result["validation"]["findings"]}
 
 
