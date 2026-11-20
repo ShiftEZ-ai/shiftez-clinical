@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
 from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
-from packages.contracts.schemas import TypeDefinition, requirement_key, safety_rule, validate_attributes
+from packages.contracts.schemas import INTERNAL_CHECK_KEYS, TypeDefinition, requirement_key, safety_rule, validate_attributes
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
@@ -31,8 +31,6 @@ from .generation_scope import pooled_anchor, selected_session_ids
 ENGINE_VERSION = "manual-core-52"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
-
-INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 
 
 # Rule kinds the per-person rule loop of `evaluate` leaves to other checks (restrictions, quotas, cover, shapes...).
