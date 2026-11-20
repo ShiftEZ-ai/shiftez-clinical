@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.snapshots import domain_snapshot
 from packages.contracts.rule_catalogue import catalogue_counts
 from packages.domain.conditions import active_rules
 from packages.domain.rule_lines import SCORING_DEFAULT_SOURCE
@@ -99,11 +100,16 @@ def proposed(h):
         'version': 2, 'plan_hash': plan['plan_hash'], 'reason': 'Review the whole department conversion'})['record']
 
 
+def captured_snapshot(h, workspace):
+    with transaction(h.app.state.engine) as db:
+        return domain_snapshot(db, db.get(m.Workspace, workspace['id']), mandatory_rules=False)
+
+
 def test_one_proposal_keeps_sources_then_atomically_activates_and_undoes(h):
     source = h.policy({'kind': 'max_duties', 'maximum': 1, 'window': 'week'})
     w = h.workspace()
     h.shift(w)
-    before = h.snapshot(w)
+    before = captured_snapshot(h, w)
     plan = preview(h)
     assert plan['proof']['identical'], plan['proof']
     change = proposed(h)
@@ -111,12 +117,12 @@ def test_one_proposal_keeps_sources_then_atomically_activates_and_undoes(h):
     assert summary['id'] == change['id'] and 'plan' not in summary and 'proof' not in summary
     assert h.get('auditor', '/api/rules/catalogue/conversions/' + change['id'])['record'] == change
     h.get('staff', '/api/rules/catalogue/conversions/' + change['id'], status=403)
-    assert h.snapshot(w)['policies'] == before['policies']
+    assert captured_snapshot(h, w)['policies'] == before['policies']
     h.command('coordinator', 'rule.catalogue.activate', {'reason': 'Cannot decide own proposal'},
               change['id'], change['revision'], status=403)
     active = h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent full review'},
                        change['id'], change['revision'])['record']
-    after = h.snapshot(w)
+    after = captured_snapshot(h, w)
     def effective(data):
         rows = [{k: v for k, v in p.items() if k != '_v2_source'}
                 for p in active_rules(data['policies'], context=data)]
