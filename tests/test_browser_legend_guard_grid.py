@@ -2,6 +2,7 @@
 codes grid, both counts grids, Coverage and List draw one rota holding every kind of mark they have (leave, wishes, a
 rule issue, a pair, a trainee alone, a team lead, an open place, a closed session, the published layer); every mark drawn
 is stamped with its entry in the view's one key, and every entry has a mark on screen (tests/legend_guard.py)."""
+from tests.historical_staffing import retained_staffing
 import pytest
 from playwright.sync_api import expect
 
@@ -32,7 +33,8 @@ def marked(h):
     d = h.shift(d, s, e, typ=paired, people=[{'person_id': a, 'start': s, 'end': e, 'participation': 'trainee', 'supervisor_person_id': b},
         {'person_id': b, 'start': s, 'end': e, 'participation': 'supervisor', 'team_lead': True}])['workspace']
     s, e = at(17)
-    d = h.shift(d, s, e, typ=paired, people=[{'person_id': a, 'start': s, 'end': e, 'participation': 'trainee'}])['workspace']
+    d = retained_staffing(h, d, s, e, typ=paired, people=[
+        {'person_id': a, 'start': s, 'end': e, 'participation': 'trainee'}])['workspace']
     d = h.shift(d, *at(17, '13', '17'), people=[b])['workspace']
     closed = [x['id'] for x in h.detail(d)['shifts'] if x['assignment_type_id'] == h.seed['type'] and str(x['start']).startswith('2026-10-17') and any(p['person_id'] == b for p in x['participants'])]
     d = h.command('coordinator', 'shift.action', {'workspace_id': d['id'], 'shift_ids': closed, 'action': 'cancel',
