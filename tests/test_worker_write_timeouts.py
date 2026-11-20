@@ -234,20 +234,41 @@ def test_worker_status_heartbeat_forwards_lease_deadline(monkeypatch):
 
 
 def test_waiting_to_claim_does_not_consume_new_job_lease(h, monkeypatch):
+    assert_waiting_to_claim_preserves_lease(h, monkeypatch)
+
+
+def test_waiting_to_claim_does_not_consume_new_job_lease_on_postgres(pg, monkeypatch):
+    assert_waiting_to_claim_preserves_lease(pg, monkeypatch)
+
+
+def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
     job_id = generation_job(h)
     clock = [time.monotonic()]
+    finish_attempts = []
     retry_write = worker.retry_write
     lease_seconds = h.settings.db_pool_timeout_seconds + worker.GENERATION_HEARTBEAT_SECONDS + 1
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', lease_seconds)
-    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda seconds: None))
 
-    def wait_for_claim(engine, operation, **kwargs):
+    def advance(seconds):
+        clock[0] += seconds
+
+    clock_source = SimpleNamespace(monotonic=lambda: clock[0], sleep=advance)
+    monkeypatch.setattr(worker, 'time', clock_source)
+    monkeypatch.setattr(database, 'time', clock_source)
+
+    def write(engine, operation, **kwargs):
         if operation is worker.claim_job:
             clock[0] += lease_seconds * 2
+        if (kwargs.get('context') or {}).get('job_phase') == 'finish':
+            finish_attempts.append(clock[0])
+            if len(finish_attempts) == 1:
+                raise DatabaseWriteTimeout()
         return retry_write(engine, operation, **kwargs)
 
-    monkeypatch.setattr(worker, 'retry_write', wait_for_claim)
+    monkeypatch.setattr(worker, 'retry_write', write)
     assert worker.process_one(h.app.state.engine, scheduler=lambda *args, **kwargs: {'status': 'candidate_feasible'})
+    assert len(finish_attempts) >= 2
+    assert finish_attempts[1] > finish_attempts[0]
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job_id)
         assert row.status == 'succeeded' and row.result['status'] == 'candidate_feasible'
