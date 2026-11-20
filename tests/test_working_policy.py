@@ -374,9 +374,11 @@ def pytest_runtest_makereport(item, call):
                            "unresolved_executable_references": list(unresolved)})
             return report
         def read(rev, name):
-            if files and name in files and rev in {base, candidate}:
-                value = files[name][rev == candidate]
-                return value if isinstance(value, bytes) else json.dumps(value).encode()
+            if files and name in files and (rev in {base, candidate} or branch == "main" and rev == source):
+                value = files[name][rev != base]
+                return value if value is None or isinstance(value, bytes) else json.dumps(value).encode()
+            if name == policy.QUARANTINE_RETIRED:
+                return b"[]"
             if name == ".github/CODEOWNERS":
                 if rev == candidate and after_codeowners is not None:
                     return after_codeowners
@@ -768,8 +770,8 @@ def pytest_runtest_makereport(item, call):
                 self.assert_quarantine_refused(message, [entry])
         self.assert_quarantine_refused("entries need one unique nodeid each", [self.FLAKE, self.FLAKE])
 
-    def retired_case(self, before, after, *, registry_after=None):
-        registry = [self.MOVED, self.FLAKE]
+    def retired_case(self, before, after, *, registry_before=None, registry_after=None):
+        registry = [self.MOVED, self.FLAKE] if registry_before is None else registry_before
         changed = policy.QUARANTINE_RETIRED
         if registry_after is not None:
             changed += "\0" + policy.QUARANTINE
@@ -779,10 +781,31 @@ def pytest_runtest_makereport(item, call):
         })
 
     def test_guard_accepts_an_unowned_retired_append(self):
-        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
-        report = self.retired_case([first], [first, second])
-        self.assertEqual(report["tier1"], [])
-        self.assertEqual(report["tier2"], [])
+        first, second = self.FLAKE["nodeid"], self.QUARANTINE_NODE
+        for failure_class in ("baseline", "baseline-error"):
+            with self.subTest(failure_class=failure_class):
+                row = {**self.MOVED, "reason": failure_class + ": measured"}
+                report = self.retired_case([first], [first, second], registry_before=[row, self.FLAKE])
+                self.assertEqual(report["tier1"], [])
+                self.assertEqual(report["tier2"], [])
+
+    def test_guard_refuses_retiring_a_release_blocker(self):
+        with self.assertRaisesRegex(ValueError, "release blockers may not be retired"):
+            self.retired_case([], [self.QUARANTINE_NODE], registry_before=[{**self.MOVED, "blocker": True}])
+
+    def test_guard_refuses_retiring_an_unstable_entry(self):
+        with self.assertRaisesRegex(ValueError, "only baseline or baseline-error entries may be retired"):
+            self.retired_case([], [self.FLAKE["nodeid"]])
+
+    def test_guard_refuses_readding_a_still_retired_node(self):
+        node = self.QUARANTINE_NODE
+        flake = {**self.FLAKE, "nodeid": node, "blocker": True}
+        files = {policy.QUARANTINE: ([], [flake]), policy.QUARANTINE_RETIRED: ([node], [node])}
+        with self.assertRaisesRegex(ValueError, "may not re-add a retired entry: " + re.escape(node)):
+            self.run_guard(policy.QUARANTINE, files=files)
+        files[policy.QUARANTINE_RETIRED] = ([], [])
+        report = self.run_guard(policy.QUARANTINE, files=files)
+        self.assertEqual([row["path"] for row in report["tier1"]], [policy.QUARANTINE])
 
     def test_guard_refuses_a_retired_entry_edit(self):
         node = self.QUARANTINE_NODE
@@ -814,6 +837,24 @@ def pytest_runtest_makereport(item, call):
         first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
         report = self.retired_case([first, second], [second], registry_after=[self.FLAKE])
         self.assertEqual([row["path"] for row in report["tier1"]], [policy.QUARANTINE])
+
+    def test_guard_accepts_retired_compaction_after_prior_registry_removal(self):
+        report = self.retired_case([self.QUARANTINE_NODE], [], registry_before=[self.FLAKE])
+        self.assertEqual(report["tier1"], [])
+        self.assertEqual(report["tier2"], [])
+
+    def test_guard_allows_an_absent_retired_list_only_before_activation(self):
+        script = ".github/scripts/working_policy.py"
+        for branch in ("dev", "main"):
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(branch=branch, kind=kind):
+                    files = {policy.QUARANTINE_RETIRED: (None, None), script: (b"import json", b"import json")}
+                    report = self.run_guard("apps/ordinary.py", branch=branch, kind=kind, files=files)
+                    self.assertEqual(report["branch"], branch)
+                    active = b"from quarantine_registry import QUARANTINE_RETIRED"
+                    files[script] = (active, active)
+                    with self.assertRaisesRegex(ValueError, "retired list is missing"):
+                        self.run_guard("apps/ordinary.py", branch=branch, kind=kind, files=files)
 
     def test_unowned_known_failures_still_allow_only_removals(self):
         # The base CODEOWNERS leaves ci/known-failures.json without an owner; the guard keeps it removal-only.
@@ -1164,8 +1205,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
-            def compare(*, runs, evidence, product_errors, quarantine, release, **stale_options):
+            def compare(*, runs, evidence, product_errors, quarantine, release, quarantine_registry, **stale_options):
                 self.assertEqual(quarantine, {row["nodeid"]: row for row in quarantine_rows})
+                self.assertEqual(quarantine_registry, quarantine)
                 self.assertEqual(release, branch == "main")
                 if release and quarantine:
                     actual_reader.evaluate(None, None, runs, quarantine=quarantine, release=release)
@@ -1215,10 +1257,12 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             if expired_summary:
                 self.assertIn(expired_summary + "\n", step_summary.read_text(encoding="utf-8"))
             self.assertEqual(summaries, [True])
-            self.assertEqual({revision for revision, name in reads if name == policy.QUARANTINE},
-                             {base} if branch == "main" else {base, candidate})
+            quarantine_paths = {policy.QUARANTINE, policy.QUARANTINE_RETIRED}
+            for path in quarantine_paths:
+                self.assertEqual({revision for revision, name in reads if name == path},
+                                 {base} if branch == "main" else {base, candidate})
             self.assertTrue(all(revision == base for revision, name in reads
-                                if name not in {policy.KNOWN, policy.QUARANTINE, 'ci/removed-tests.json'}))
+                                if name not in quarantine_paths | {policy.KNOWN, 'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
             return fetched.call_args_list
 

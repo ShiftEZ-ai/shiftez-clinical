@@ -13,6 +13,9 @@ from ci.quarantine_registry import decode_registry, expired_entries
 
 from tests.quarantine import entries
 
+FIXTURES = Path(__file__).with_name("fixtures")
+MOVED_REGISTRY = FIXTURES / "quarantine_after_migration.json"
+
 
 def test_reviewed_quarantine_is_valid_and_current():
     today = datetime.now(timezone.utc).date()  # real clock: quarantine expiry is wall-clock policy
@@ -26,14 +29,16 @@ def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
     monkeypatch.syspath_prepend(str(root / ".github/scripts"))
     import working_policy as policy
 
-    # Exact known-failures bytes at the migration base, available even in a squash or shallow checkout.
-    raw = (Path(__file__).parent / "fixtures/known_failures_before_quarantine.json").read_bytes()
+    # Freeze the exact inputs and outputs so the proof also works in a squash or shallow checkout.
+    raw = (FIXTURES / "known_failures_before_quarantine.json").read_bytes()
     assert hashlib.sha256(raw).hexdigest() == (
         "0e4b5d48e8ba5e68f37141d049e67ddf998932dd5b6b7dc3a6b97f4041d2a569")
     source = json.loads(raw)
     expected = {row["node"]: row["class"] for row in source["fails"] + source["unstable"]}
-    new_q = (root / policy.QUARANTINE).read_bytes()
-    new_kf = (root / policy.KNOWN).read_bytes()
+    new_q = MOVED_REGISTRY.read_bytes()
+    new_kf = (FIXTURES / "known_failures_after_quarantine.json").read_bytes()
+    assert hashlib.sha256(new_q).hexdigest() == "0f6dd8b78e91ec87f8200bdf76762a16d56c0de3d1d60ad7a32c20abf57d51dc"
+    assert hashlib.sha256(new_kf).hexdigest() == "21a5511dde774fa6dd9d8ca4f40cb33c7c370ef93a47765c30d72b6070b7aae7"
     policy.quarantine_change(b"[]\n", new_q, raw, new_kf)
     assert policy.removal_only(raw, new_kf)
     assert {row["nodeid"]: row["reason"].partition(":")[0] for row in json.loads(new_q)} == expected
@@ -41,7 +46,7 @@ def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
 
 
 def test_the_quarantine_migration_counts_each_class():
-    rows = json.loads(Path(__file__).with_name("quarantine.json").read_bytes())
+    rows = json.loads(MOVED_REGISTRY.read_bytes())
     counts = Counter(row["reason"].partition(":")[0] for row in rows)
     assert counts == {"baseline": 388, "baseline-error": 26, "unstable": 33}
     assert sum(row["blocker"] for row in rows) == 0

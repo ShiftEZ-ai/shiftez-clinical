@@ -193,7 +193,7 @@ def main():
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
     release = branch == "main"
-    quarantine_nodes, quarantine = quarantine_policy(base, base if release else candidate, old, current)
+    quarantine_registry, quarantine = quarantine_policy(base, base if release else candidate, old, current)
     if quarantine:
         maker.write_summary_lines([expired_issue_summary(quarantine, utc_today())])
     retry = maker.retry_run(plan)
@@ -245,7 +245,7 @@ def main():
             evidence = maker.ReportEvidence()
             runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
                                          output, listed=failure_nodes | quarantine.keys(),
-                                         evidence=evidence, quarantine_nodes=quarantine_nodes)
+                                         evidence=evidence, quarantine_nodes=quarantine_registry.keys())
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
@@ -281,7 +281,7 @@ def main():
                         "--unstable-expires-on", str(config["unstable_expires_on"] or ""),
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
             maker.main(runs=compared, evidence=evidence, product_errors=product_errors,
-                       quarantine=quarantine, release=release,
+                       quarantine=quarantine, release=release, quarantine_registry=quarantine_registry,
                        **stale_options(kind, branch, data, base, candidate, scope))
             verdict = policy.decode((output / "verdict.json").read_bytes())
             if partial:
