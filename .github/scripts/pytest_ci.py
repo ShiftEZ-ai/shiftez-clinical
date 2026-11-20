@@ -1,6 +1,5 @@
 """Retry only reviewed flaky failures on non-partitioned PR/dev pushes; retain both attempts and report FLAKY."""
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -171,15 +170,20 @@ def run_tests(args):
             last_failed = Path(cache) / "v/cache/lastfailed"
             failed = {node: True for node, row in cases([report]).items() if row["outcome"] == "failed"}
             no_retry = case_properties(report, "fmuc_no_retry")
+            from ci.quarantine_registry import canonical_node, utc_today
             from tests.quarantine import entries
             # The reviewed registry is the classification source; issue observations alone are advisory.
+            today = utc_today()
             try:
-                classified = entries(root / "tests/quarantine.json",
-                                     datetime.now(timezone.utc).date(), current=False)  # real clock: registry expiry is UTC policy
+                classified = entries(root / "tests/quarantine.json", today)
             except (ValueError, OSError) as exc:
                 classified = {}
                 print("Retry classification unavailable: " + type(exc).__name__, file=sys.stderr)
-            retryable = {node: True for node in failed if node in classified and node not in no_retry}
+            # The legacy wrapper only retries during the reviewed retry window.
+            eligible = {node for node, row in classified.items() if row["expires"] > today.isoformat()}
+            parametrized = {node.partition("[")[0] for node in eligible if "[" in node}
+            retryable = {node: True for node in failed if node not in no_retry and (
+                node in eligible or node.partition("[")[0] in parametrized and canonical_node(node) in eligible)}
             if retryable:
                 # A teardown skip can clear pytest's cache after a call failure; JUnit retains the failure wave.
                 last_failed.parent.mkdir(parents=True, exist_ok=True)
