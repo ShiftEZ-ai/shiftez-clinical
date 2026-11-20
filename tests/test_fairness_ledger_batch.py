@@ -11,7 +11,7 @@ from apps.api.db import transaction
 from apps.api.services.fairness import rebuild
 from apps.api.snapshots import domain_snapshot
 from packages.domain.fairness import balance_goals, goal_identity, goal_report, ledger_facts
-from packages.domain.validation import ancestor_ids
+from packages.domain.input_manifest import manifest
 from tests.test_fairness import at, goal, ledger, session
 
 
@@ -134,9 +134,17 @@ def test_earlier_publication_supplies_new_catalogue_to_later_rebuild(database, r
     later_id = h.publish(later)['publication_id']
     assignment_type = h.configure('assignment_types', {'name': 'Added duty', 'starts_on': '2020-01-01',
                                                         'definition': {}})['record']
+    untouched = session(h, h.workspace('Submitted rota', '2026-10-18', '2026-10-25'), 18, [person])
+    h.lifecycle(untouched, 'submit')
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, untouched['id'])
+        submitted_fingerprint = row.submitted_fingerprint
+        before = domain_snapshot(db, row)
+    assert submitted_fingerprint == before['fingerprint']
+
     location_type = h.get('admin', '/api/catalogues')['location_types'][0]['id']
     location = h.configure('locations', {'name': 'Added room', 'starts_on': '2020-01-01',
-                                         'location_type_id': location_type})['record']
+                                         'location_type_id': location_type, 'parent_id': h.seed['locations'][0]})['record']
     service = h.configure('services', {'name': 'Added service', 'starts_on': '2020-01-01'})['record']
     h.command('credentialer', 'eligibility.create', {'person_id': other, 'service_id': service['id'],
                                                       'starts_on': '2020-01-01'})
@@ -156,26 +164,29 @@ def test_earlier_publication_supplies_new_catalogue_to_later_rebuild(database, r
         'participants': [{'person_id': other, 'start': start, 'end': end}],
     }, revision=earlier['revision'])['workspace']
     h.publish(earlier)
-    for key, row, fields in (
-        ('assignment_types', assignment_type, ('definition',)),
-        ('locations', location, ('location_type_id',)),
-        ('services', service, ()),
-    ):
-        h.configure(key, {'name': 'Renamed ' + row['name'], 'starts_on': row['starts_on'],
-                          **{field: row[field] for field in fields}}, row['id'], row['revision'])
+    h.configure('assignment_types', {'name': 'Updated duty', 'starts_on': assignment_type['starts_on'],
+                                    'definition': assignment_type['definition']},
+                assignment_type['id'], assignment_type['revision'])
 
     with transaction(h.app.state.engine) as db:
         assert db.execute(baseline).all() == stored_baselines
         assert db.execute(publication).one() == stored_publication
         data = domain_snapshot(db, db.get(m.Workspace, later['id']))
-    for key, row in (('types', assignment_type), ('locations', location), ('services', service)):
-        assert data[key][row['id']]['name'] == row['name']
+        row = db.get(m.Workspace, untouched['id'])
+        assert (row.status, row.submitted_fingerprint) == ('submitted', submitted_fingerprint)
+        after = domain_snapshot(db, row)
+    assert data['types'][assignment_type['id']]['name'] == assignment_type['name']
+    assert any(shift['workspace_id'] == earlier['id'] and shift['location_id'] == location['id']
+               and service['id'] in shift['service_ids'] for shift in after['shifts'])
+    # Keep the new shift in both inputs. Only catalogue additions beyond the capture would cause a false fingerprint change.
+    assert after['fingerprint'] == manifest({**after, 'locations': before['locations'],
+                                             'services': before['services']})['token']
     assert (other, None, 'goal:' + policy['id'], date(2026, 10, 11), 1.0) in [
         row[:5] for row in ledger(h, publication_id=later_id)]
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
-def test_new_neighbour_location_ancestry_preserves_existing_ledger_rows(database, request):
+def test_new_neighbour_location_preserves_existing_ledger_rows(database, request):
     h = request.getfixturevalue(database)
     person = h.seed['people'][0]
     goal(h, period='rota')
@@ -200,7 +211,21 @@ def test_new_neighbour_location_ancestry_preserves_existing_ledger_rows(database
     assert Counter(ledger(h, publication_id=later_id)) == original
     with transaction(h.app.state.engine) as db:
         data = domain_snapshot(db, db.get(m.Workspace, later['id']))
-    assert ancestor_ids(data, child) == [child, parent]
+    assert any(shift['location_id'] == child for shift in data['shifts'])
+    assert child not in data['locations'] and parent not in data['locations']
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_snapshot_without_own_shifts_keeps_catalogue_for_stored_sessions(database, request):
+    h = request.getfixturevalue(database)
+    workspace = h.workspace()
+    assignment_type = h.configure('assignment_types', {'name': 'Added duty', 'starts_on': '2020-01-01',
+                                                        'definition': {}})['record']
+    h.shift(workspace, typ=assignment_type['id'])
+    with transaction(h.app.state.engine) as db:
+        data = domain_snapshot(db, db.get(m.Workspace, workspace['id']), own_shifts=[])
+    assert data['focus_ids'] == []
+    assert data['types'][assignment_type['id']]['name'] == assignment_type['name']
 
 
 @pytest.mark.parametrize('variable_limit', [None, 8000])
