@@ -61,8 +61,9 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
 
 def workspace_list_etag(db, actor, representation):
     """Revision validator for the paged workspace menu before health projections run."""
-    department = db.get(m.Department, actor.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    department, organisation = db.execute(select(m.Department, m.Organisation).join(
+        m.Organisation, m.Organisation.id == m.Department.organisation_id).where(
+        m.Department.id == actor.department_id)).one()
     from .job_reads import job_stamp
     workspace_stamp = db.execute(select(
         func.count(m.Workspace.id), func.coalesce(func.sum(m.Workspace.revision), 0),

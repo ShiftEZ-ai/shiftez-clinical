@@ -1,28 +1,51 @@
-"""AGENTS §3: exceptions and rota adjustments never relax any of the six protected safety kinds.
+"""AGENTS §3: exceptions and rota adjustments never relax protected safety kinds.
 
 Historical flags and exception records are deliberately inserted without new-input validation: old data must remain
 readable, but cannot authorize a safety violation. The normal Harness uses a migrated disposable SQLite database.
 """
+from copy import deepcopy
 from datetime import date, datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from apps.api import models as m
 from apps.api.db import transaction
+from packages.contracts import schemas as s
 from packages.contracts.schemas import PolicyDefinition
 from packages.domain.validation import evaluate, exception_for
 
 
-SAFETY_KINDS = ('restriction', 'min_rest', 'forbidden_transition', 'supervision_limit', 'minimum_cover', 'maximum_participants')
+SAFETY_KINDS = sorted(s.NEVER_OVERRIDDEN)
+
+
+def safety_settings(h):
+    return {'restriction': {}, 'min_rest': {'hours': 12},
+                'forbidden_transition': {'from_type_ids': [h.seed['type']], 'to_type_ids': [h.seed['type']]},
+                'supervision_limit': {'mode': 'capacity', 'maximum': 2},
+                'minimum_cover': {'minimum': 2}, 'maximum_participants': {'maximum': 2},
+                'team_lead_requirement': {'minimum': 1, 'maximum': 1},
+                'spread_evenly': {'holder': 'supervisors', 'within': 'session', 'mode': 'levelled', 'maximum_gap': 1}}
+
+
+def test_safety_fixture_set_matches_contract(h):
+    assert set(safety_settings(h)) == s.NEVER_OVERRIDDEN
 
 
 def safety_policy(h, kind, legacy_exception=False):
-    settings = {'restriction': {}, 'min_rest': {'hours': 12},
-                'forbidden_transition': {'from_type_ids': [h.seed['type']], 'to_type_ids': [h.seed['type']]},
-                'supervision_limit': {'mode': 'capacity', 'maximum': 2},
-                'minimum_cover': {'minimum': 2}, 'maximum_participants': {'maximum': 2}}
-    policy = h.policy({'kind': kind, **settings[kind]})
+    settings = safety_settings(h)
+    if kind == 'team_lead_requirement':
+        proposal = h.command('coordinator', 'rule.propose', {
+            'catalogue_id': 'team_leads', 'catalogue_version': 1,
+            'lines': [{'id': str(uuid4()), 'numbers': {
+                'min': {'value': settings[kind]['minimum'], 'level': 'mandatory'},
+                'max': {'value': settings[kind]['maximum'], 'level': 'mandatory'}}}],
+            'reason': 'Synthetic team lead safety fixture'})['record']
+        policy = h.command('approver', 'policy.activate', {'reason': 'Independent team lead safety review'},
+                           proposal['id'], proposal['revision'])['records'][0]
+    else:
+        policy = h.policy({'kind': kind, **settings[kind]})
     if legacy_exception:
         with transaction(h.app.state.engine, write=True) as db:
             row = db.get(m.Policy, policy['id'])
@@ -83,6 +106,58 @@ def test_validator_keeps_safety_errors_with_a_persisted_approved_exception(h, ki
     assert not any(f['code'] == 'RULE_EXCEPTION' for f in findings)
 
 
+@pytest.mark.parametrize('kind', ['team_lead_requirement', 'spread_evenly'])
+def test_validator_keeps_new_safety_errors_with_a_persisted_approved_exception(h, kind):
+    policy = safety_policy(h, kind, legacy_exception=True)
+    if kind == 'team_lead_requirement':
+        rota = h.workspace()
+        rota = h.shift(rota, people=[{'person_id': h.seed['people'][0], 'start': '2026-10-04T08:00:00+03:00',
+                                      'end': '2026-10-04T12:00:00+03:00', 'team_lead': False}])['workspace']
+        expected = 'LEAD_GAP'
+    else:
+        rota = h.shift(h.workspace(), people=[])['workspace']
+        historical_exception(h, policy, 'approved')
+        data = h.snapshot(rota)
+        shift = data['shifts'][0]
+        source, second_supervisor = h.seed['people'][2], str(uuid4())
+        copied = deepcopy(data['people'][source])
+        copied.update(id=second_supervisor)
+        data['people'][second_supervisor] = copied
+        for key in ('memberships', 'eligibilities', 'grants'):
+            for row in list(data[key]):
+                if row['person_id'] == source:
+                    clone = deepcopy(row)
+                    clone.update(id=str(uuid4()), person_id=second_supervisor)
+                    data[key].append(clone)
+        for person in h.seed['people'][:2]:
+            membership = deepcopy(next(row for row in data['memberships'] if row['person_id'] == person))
+            membership.update(id=str(uuid4()), category_id=h.seed['trainee_category'])
+            data['memberships'].append(membership)
+        shift['type_snapshot']['definition'].update(
+            requirements=[{'from_minute': 0, 'minimum': 4, 'maximum': 4, 'target': None,
+                           'capabilities': [], 'distinct_capability_seats': False}],
+            supervision={'trainee_category_ids': [h.seed['trainee_category']],
+                         'capability_id': h.seed['supervisor_capability'], 'trainees_per_supervisor': 10})
+        def participant(person, participation, supervisor=None):
+            row = {'id': str(uuid4()), 'shift_id': shift['id'], 'person_id': person,
+                   'start': shift['start'], 'end': shift['end'], 'participation': participation,
+                   'overtime': False, 'fixed': False, 'team_lead': False, 'segments': [], 'source': 'manual'}
+            if supervisor:
+                row['supervisor_person_id'] = supervisor
+            return row
+        shift['participants'] = [participant(h.seed['people'][0], 'trainee', source),
+                                 participant(h.seed['people'][1], 'trainee', source),
+                                 participant(source, 'supervisor'),
+                                 participant(second_supervisor, 'supervisor')]
+        expected = 'SUPERVISION_LEVEL'
+    if kind == 'team_lead_requirement':
+        historical_exception(h, policy, 'approved')
+        data = h.snapshot(rota)
+    findings = [f for f in evaluate(data)['findings'] if f.get('rule_id') == policy['id']]
+    assert any(f['code'] == expected and f['severity'] == 'error' for f in findings), findings
+    assert not any(f['code'] == 'RULE_EXCEPTION' for f in findings)
+
+
 @pytest.mark.parametrize('kind', SAFETY_KINDS)
 def test_rota_cannot_switch_off_a_safety_rule(h, kind):
     policy = safety_policy(h, kind)
@@ -91,7 +166,16 @@ def test_rota_cannot_switch_off_a_safety_rule(h, kind):
               'reason': 'A rota adjustment cannot remove safety'}, rota['id'], rota['revision'], status=409)
 
 
-@pytest.mark.parametrize('kind,amount', [('min_rest', 8), ('minimum_cover', 1), ('maximum_participants', 3)])
+@pytest.mark.parametrize('kind', SAFETY_KINDS)
+def test_rota_target_override_cannot_weaken_a_safety_rule(h, kind):
+    policy = safety_policy(h, kind)
+    rota = h.workspace()
+    h.command('coordinator', 'workspace.target_override', {'policy_id': policy['id'], 'person_id': h.seed['people'][0],
+              'amount': 0, 'reason': 'A target override cannot remove safety'}, rota['id'], rota['revision'], status=422)
+
+
+@pytest.mark.parametrize('kind,amount', [('min_rest', 8), ('minimum_cover', 1), ('maximum_participants', 3),
+                                         ('spread_evenly', 2)])
 def test_rota_cannot_weaken_a_safety_number(h, kind, amount):
     policy = safety_policy(h, kind)
     rota = h.workspace()
