@@ -7,6 +7,7 @@ small world does not have, and capture the D16 `workspace.rule_adjust` scope. FE
 screenshots at 1440/390, light/dark."""
 import copy
 import re
+import uuid
 import json
 import os
 from pathlib import Path
@@ -227,7 +228,7 @@ def test_changing_the_department_rule_from_relax_keeps_the_rule_on_or_off(browse
     w = h.shift(h.workspace('Relax rota'))['workspace']
     w = h.command('coordinator', 'workspace.validate', {'reason': 'Check'}, w['id'], w['revision'])['workspace']
     # The next week: the fixture's own person line already covers 4–10 Oct, and the same line twice is refused.
-    seed_line = {**copy.deepcopy(broad), 'id': 'seed-line', 'who': who, 'starts_on': '2026-10-11', 'ends_on': '2026-10-18'}
+    seed_line = {**copy.deepcopy(broad), 'id': str(uuid.uuid4()), 'who': who, 'starts_on': '2026-10-11', 'ends_on': '2026-10-18'}
     seed = {'catalogue_id': 'workload_limit', 'catalogue_version': 2, 'expected_policy_id': rule['id'], 'expected_revision': rule['revision'],
             'binding_line_id': broad['id'], 'binding_line_no': 1, 'line': seed_line,
             'lines': [*rule['definition']['rule']['lines'], seed_line], 'needs_approval': False, 'scope': 'rota',
