@@ -198,7 +198,6 @@ def render():
                          'integer': info.annotation is int}
         return out
     content += "export const WISH_PRIORITY_FIELDS = " + json.dumps(described(s.ScoringSettings, ('wish_priority_decay', 'wish_granted_credit', 'wish_history_periods'))) + " as const;\n"
-    content += "export const GENERATION_FILL_FIELDS = " + json.dumps(described(s.GenerationOptions, ('fill_tier_time_share',))) + " as const;\n"
     # A run's stop conditions (Stop when: Configuration › Timing and one run): words, defaults and bounds; the words for
     # each conflict choice and each reason a search stopped.
     content += "export const GENERATION_STOP_FIELDS = " + json.dumps(described(s.GenerationOptions, ('stop_without_improvement_seconds', 'target_gap_percent', 'target_score', 'stop_by', 'on_conflict'))) + " as const;\n"

@@ -351,25 +351,16 @@ def test_fill_priorities_and_pair_budget_save_reload_and_validate(browser, live_
         assert not budget.evaluate('x => x.checkValidity()')
         expect(page.get_by_role('dialog', name='Save auto-schedule defaults')).to_have_count(0)
         budget.fill('80000')
-        share = page.get_by_label('Fill-priority time share (0–1)', exact=True)
-        expect(share).to_have_value('0.5')
-        share.fill('1.1')
-        page.get_by_role('button', name='Save defaults', exact=True).click()
-        assert not share.evaluate('x => x.checkValidity()')
-        expect(page.get_by_role('dialog', name='Save auto-schedule defaults')).to_have_count(0)
-        share.fill('0.25')
         shot(page, f'auto-schedule-advanced-{theme}')
         page.get_by_role('button', name='Save defaults', exact=True).click()
         reason(page, 'Fill higher priorities first', 'Save defaults')
         expect(page.locator('#toast-tray')).to_contain_text('Auto-schedule defaults saved')
         saved = h.get('admin', '/api/me')['department']['generation_defaults']
         assert saved['allocation_order'] == 'tiered' and saved['pair_limit_max_opportunities'] == 80000, saved
-        assert saved['fill_tier_time_share'] == 0.25
         page.reload()
         expect(page.get_by_label('Fill priorities', exact=True)).to_have_value('tiered')
         page.get_by_role('tab', name='Advanced', exact=True).click()
         expect(page.get_by_label('Most pairs a pair limit may weigh', exact=True)).to_have_value('80000')
-        expect(page.get_by_label('Fill-priority time share (0–1)', exact=True)).to_have_value('0.25')
     finally:
         context.close()
 
