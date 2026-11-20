@@ -1254,18 +1254,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_contact_preview_perf.py::test_contact_preview_at_department_scale_and_checked_undo[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_contact_preview_perf.py::test_contact_preview_at_department_scale_and_checked_undo[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
