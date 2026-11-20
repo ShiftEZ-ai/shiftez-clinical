@@ -336,18 +336,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_audit_column_wrapping.py::test_catalogue_titles_obey_wrap_and_scroll_without_covering_adjacent_columns[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_audit_column_wrapping.py::test_catalogue_titles_obey_wrap_and_scroll_without_covering_adjacent_columns[case-jhoeiaogjbedkflkhehlpclcfdegbccbjmammgeoopgaenfbiglmjfoobagjanjl]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_audit_home_loading.py::test_home_retains_calendar_answer_before_mount[case-elnelmfojeihlhbkgdhlaibnghoamkbljmdonjbmanpcpopffpndibhgbchpbklp]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
