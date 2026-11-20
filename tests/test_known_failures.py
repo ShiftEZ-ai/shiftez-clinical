@@ -102,8 +102,17 @@ class PolicyClock(datetime):
         return cls.combine(TODAY, datetime.min.time(), tzinfo=tz)
 
 
+# The audited first pipeline change is reachable only through its pull-request ref, which no CI checkout fetches (the
+# live verdict fetches it by SHA first). Its two history facts are answered from the values verified at that commit.
+ROOT_RUN_SHA, ROOT_RUN_BASE = "39fb3153b4556209265f3c41801067642f682e8a", "e3aa8fab6863bcc8ded33727c5f536a884d5ed27"
+ROOT_RUN_FACTS = {("merge-base", ROOT_RUN_BASE, ROOT_RUN_SHA): ROOT_RUN_BASE.encode() + b"\n",
+                  ("rev-parse", ROOT_RUN_SHA + "^{tree}"): b"1067e0fe84d4d34bfca9215a64ac4a6d25030aff\n"}
+
+
 def historical_git(*args):
-    pinned = [PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
+    if args in ROOT_RUN_FACTS:
+        return ROOT_RUN_FACTS[args]
+    pinned =[PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
     return subprocess.check_output(["git", *pinned], cwd=ROOT)
 
 
