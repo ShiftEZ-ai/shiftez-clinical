@@ -3,7 +3,6 @@ history-aware balancing, and the dashboard API with its permissions."""
 from tests.legacy_lead import historical_type
 
 import json
-from collections import Counter
 from copy import deepcopy
 from datetime import date
 
@@ -398,13 +397,13 @@ def test_rebuild_equals_publish_time_rows_after_an_earlier_amendment_and_dashboa
     assert card['score'] == next(x for x in validation['goals'] if x['policy_id'] == g['id'])['score'] == card['trend'][-1]['score']
     amendment = session(h, h.detail(h.workspace(base=p1['publication_id']))['workspace'], 6, [b])  # b gains a duty in week 1
     h.publish(amendment)
-    published = Counter(ledger(h))
-    later_rows = Counter(ledger(h, publication_id=p2['publication_id']))
+    published = sorted(map(repr, ledger(h)))
+    later_rows = sorted(map(repr, ledger(h, publication_id=p2['publication_id'])))
     assert (b, None, 'goal:' + g['id'], date(2026, 10, 11), 2.0) in [r[:5] for r in ledger(h)]  # week 2 reads the amended history
     with transaction(h.app.state.engine, write=True) as db:
         backfill(db)
-    assert Counter(ledger(h)) == published
-    assert Counter(ledger(h, publication_id=p2['publication_id'])) == later_rows
+    assert sorted(map(repr, ledger(h))) == published
+    assert sorted(map(repr, ledger(h, publication_id=p2['publication_id']))) == later_rows
 
 
 def test_a_goal_scores_100_when_everyone_is_inside_their_band(h):
