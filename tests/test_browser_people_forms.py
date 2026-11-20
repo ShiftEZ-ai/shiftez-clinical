@@ -139,6 +139,30 @@ def test_the_tags_picker_says_the_servers_limits_under_the_field(browser, live_s
         context.close()
 
 
+def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, h):
+    """Ordinary person facts apply immediately, survive reload and offer Undo."""
+    p = person(h)
+    context, page = sign_in(browser, live_server, "coordinator")
+    try:
+        panel = open_person(page, p)
+        panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
+        form = page.get_by_role("dialog", name="Edit person", exact=True)
+        form.get_by_label("Office extension", exact=True).fill("4321")
+        form.get_by_label("Change reason", exact=True).fill("Add the office extension")
+        form.get_by_role("button", name="Save version", exact=True).click()
+        toast = page.locator("#toast-tray .toast").filter(has_text="saved and is live")
+        expect(toast).to_be_visible()
+        expect(toast.get_by_role("button", name="Undo", exact=True)).to_be_visible()
+        expect(form).to_have_count(0)
+
+        page.reload()
+        expect_loaded(page, "people")
+        panel = open_person(page, p)
+        expect(panel).to_contain_text("4321")
+    finally:
+        context.close()
+
+
 def test_ending_a_rank_says_so_with_undo(browser, live_server, h):
     """P-10: End rank saves with a message and Undo, which puts the earlier dates back."""
     p = person(h)

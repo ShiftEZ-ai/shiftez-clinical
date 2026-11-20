@@ -336,8 +336,9 @@ def test_rule_map_exposes_the_waiting_replacement_and_catalogue_proposal(h):
     assert proposal['at'] and proposal['self_approval_allowed'] is False
 
     from .test_rule_catalogue_api import approve as approve_catalogue, line, propose as propose_catalogue
+    from .test_rule_catalogue_v2_api import captured_snapshot
     catalogue = approve_catalogue(h, propose_catalogue(h, 'duties_per_week', [line(numbers={'max': {'value': 6}})])['record'])
-    assert catalogue['id'] not in {policy['id'] for policy in h.snapshot(w)['policies']}
+    assert catalogue['id'] not in {policy['id'] for policy in captured_snapshot(h, w)['policies']}
     w = h.refresh_draft_baseline(w)
     w = h.shift(w)['workspace']
     w = h.command('coordinator', 'workspace.rule_adjust', {

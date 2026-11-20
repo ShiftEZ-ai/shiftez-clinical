@@ -123,7 +123,7 @@ def test_invite_accept_and_sign_in(acc, monkeypatch):
     assert public.get(f"/api/account-links/{token}").status_code == 404
 
     with transaction(acc.app.state.engine) as db:
-        deadline = aware(db.get(m.RateLimit, digest("login-delay:" + login_keys("new.person", "testclient")[2])).expires_at)
+        deadline = aware(db.get(m.RateLimit, digest("login-delay:" + login_keys("new.person", "testclient", acc.settings)[2])).expires_at)
     freeze_clock(monkeypatch, deadline)
     monkeypatch.setattr('apps.api.auth.now', lambda: deadline)
     client, status = sign_in(acc, "new.person", PASSWORD)
@@ -177,7 +177,7 @@ def test_reset_link_sets_a_new_password_and_ends_sessions(acc, monkeypatch):
         assert revoked.actor_id == identity and revoked.reason == "Session revoked"
     assert sign_in(acc, "new.person", PASSWORD)[1] == 401
     with transaction(acc.app.state.engine) as db:
-        deadline = aware(db.get(m.RateLimit, digest("login-delay:" + login_keys("new.person", "testclient")[2])).expires_at)
+        deadline = aware(db.get(m.RateLimit, digest("login-delay:" + login_keys("new.person", "testclient", acc.settings)[2])).expires_at)
     freeze_clock(monkeypatch, deadline)
     monkeypatch.setattr('apps.api.auth.now', lambda: deadline)
     assert sign_in(acc, "new.person", "another passphrase 34")[1] == 200

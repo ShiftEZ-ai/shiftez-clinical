@@ -71,7 +71,7 @@ import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
-import {routingPage,reviewPanel,approvalDialog,decidesStep,SWAP_KIND_WORDS} from './governance.js';
+import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
@@ -113,7 +113,7 @@ import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effect
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
 import {tagsPage,tagEditor,tagLabel,tagRefs,tagsFor} from './tags.js';
-import {PAGE_TABS,parseRoute,routeHash,ruleNotice} from './routes.js';
+import {PAGE_TABS,parseRoute,routeHash,ruleNotice,withoutPrototype} from './routes.js';
 import {grantRefusal} from './role_grants.js';
 import {integrationsPage} from './integrations.js';
 import {signInConfigPage} from './sign_in_config.js';
@@ -414,7 +414,7 @@ const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.g
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
-  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>={
+  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>=withoutPrototype({
   // Every account lands on Home, so Home always fits a phone (its phone branch keeps only phone work): never a refusal.
   home:{title:'Home',roles:[],phone:()=>true,live:['workspace','publication','rules','catalogue','requests','swaps','availability','access','inbox']},
   schedule:{title:'Schedule',roles:[CAPABILITY.STAFF,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR],
@@ -448,7 +448,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   inbox:{title:TERMS.inbox,roles:[],phone:()=>true,live:['inbox']},
   // Everyone's own reports (feedback.ts); Developers triage all of them in System › Feedback.
   feedback:{title:'My feedback',roles:[],phone:()=>true,live:['feedback']},
-};
+});
 const permits=(...keys:string[])=>Boolean(me&&keys.some(key=>hasAccess(me!.roles,key)));
 const may=(p:Permission)=>Boolean(me&&grants(me.roles,p));
 const acts=(status:string)=>Boolean(me&&actsOn(status,me.roles));
@@ -1518,7 +1518,7 @@ async function refreshOnce(stale=()=>false){
     // error and keeps the stale banner.
     const related=routeParts.indexOf('related'),inPlace=related>=0?await refreshRelated(routeParts[related+1]):undefined;
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
-    foregroundRender=!quiet;await renderPage();}
+    foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
     // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
     if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
@@ -1628,12 +1628,16 @@ function keepFocus(old:Element,swap:()=>void){
 /** What a page kept on screen while the next one loads may not be used: a Configuration section's pane (its nav stays
  *  live), else everything kept. */
 const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pane')||kept;
-async function renderPage(){
+/** `live`: a background refresh's redraw (a live update); it gives way to someone who began using the page while it read
+ *  (at the swap, below), as refreshOnce does before it starts. */
+async function renderPage(live=false){
+  const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
+  const quiet=live&&!waited;
   // SW3-A-24: leaving the Schedule closes the auto-schedule panel; it no longer opens by itself on the next visit.
   if(changedPage&&renderedView==='schedule')schedulingSettings.open=schedulingSettings.editing=false;
   // D-139: a panel editing a rota (Add session) closes, or asks, once the page shows another rota or leaves the Schedule.
@@ -1681,6 +1685,10 @@ async function renderPage(){
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
   const previous=changedPage||!(view==='configuration'||view==='schedule'&&schedSubPage()||!waited)?[]:[...document.querySelector('#main')?.childNodes||[]];
+  // A live update's redraw reads while that page stays usable, so someone may open a filter or a dialog on it meanwhile.
+  // What the frame shows for it (title, actions, footer status) is kept, so the redraw can give way at the swap (below).
+  const frameShown=quiet&&!keep&&previous.length?{title:document.querySelector('.topbar .page-title'),actions:[...document.querySelector('.topbar .page-actions')?.childNodes||[]],
+    status:[...document.querySelector('.app-footer .page-status')?.childNodes||[]],leave:leaving}:null;
   // The same page already on screen: if this read fails at the server or the connection, it stays (with the stale banner).
   const shownBefore=!changedPage&&!keep&&document.querySelector('#main')?.getAttribute('data-loaded-view')===view&&document.querySelector('#main')?.getAttribute('data-loaded-tab')===(routeParts[0]||'')?[...document.querySelector('#main')!.childNodes]:[];
   const sk=keep||previous.length?null:pageSkeleton();
@@ -1745,6 +1753,11 @@ async function renderPage(){
   await (waited?track(building):building).finally(()=>{openingPage(false);window.removeEventListener('projection-updating',updating);});
   // A skeleton that showed stays its 400 ms, then the page fades in; one that never showed gives way at once.
   const shown=serial===renderSerial&&await settle(waiting);
+  // Someone began using the page while this live update read (refreshOnce's rule, checked again now): the page stays as
+  // it is, with its popover or dialog open, and the update is owed (onPulse replays it once they are done).
+  if(serial===renderSerial&&frameShown&&readerBusy()){if(frameShown.title)document.querySelector('.topbar .page-title')?.replaceWith(frameShown.title);
+    document.querySelector('.topbar .page-actions')?.replaceChildren(...frameShown.actions);document.querySelector('.app-footer .page-status')?.replaceChildren(...frameShown.status);
+    leaveCheck=frameShown.leave;main.setAttribute('data-loaded-view',view);main.setAttribute('data-loaded-tab',routeParts[0]||'');buildingPage(null);redrawOwed=refreshSkipped=true;return;}
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
@@ -1972,6 +1985,17 @@ const heldCheck=(id:string)=>{const row=checkRows.get(id);return row?{...row,res
 /** Terminal validation jobs whose compact delta was just applied; their paired
  * workspace pulse must not start a second refresh. */
 const checkSettled=new Map<string,number>();
+/** The rota checks this page saw end (their last status row, by job id; the latest 16, in memory). A job list read before
+ *  the end still lists such a check as queued: it is never joined again (autoCheck) nor offered Cancel, and every list the
+ *  Auto-schedule panel draws, the kept one included, shows it as it ended (withEnded). */
+const checksEnded=new Map<string,Row>();
+const withEnded=(list:Row):Row=>!(list.jobs as Row[]|undefined)?.some(j=>checksEnded.has(String(j.id)))?list
+  :{...list,jobs:(list.jobs as Row[]).map(j=>{const ended=checksEnded.get(String(j.id));return ended?{...j,...ended}:j;})};
+const checkEndedSeen=({delta:_,...job}:Row)=>{checksEnded.set(String(job.id),job);  // its row without the check's delta (kept by checkRows)
+  while(checksEnded.size>16)checksEnded.delete(checksEnded.keys().next().value!);
+  if(lastJobs)lastJobs={...lastJobs,jobs:withEnded(lastJobs.jobs)};};
+/** Cancel only for a check still going that has not been seen ending. */
+const checkCancelShown=()=>checkCancellable(checkJob)&&!checksEnded.has(String(checkJob?.id));
 // B7: when the running check started (the footer's clock), the check its Cancel set aside, and why a check stopped (the
 // line above the grid). Either leaves the previous results shown, marked "Not checked".
 // shortcut: Cancel stops waiting here; the server's check still finishes (a synchronous command). Make it a cancellable job with maintenance.
@@ -2023,6 +2047,7 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
 const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+  if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
   if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
@@ -2034,9 +2059,9 @@ const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
  *  until the check's job is known (job.create answered, or a check found running joined), never for the synchronous
  *  check run without workers, which the server cannot stop (UX-FIX-A). */
 const checkLine=()=>{const said=checkSaid(),line=elapsed(said,checkStarted,cancelCheck),b=line.querySelector('button');line.dataset.checkLine=said;
-  if(b){b.dataset.checkCancel='';b.hidden=!checkCancellable(checkJob);}return line;};
+  if(b){b.dataset.checkCancel='';b.hidden=!checkCancelShown();}return line;};
 /** Every check line drawn shows its Cancel only while the check can be stopped (checkCancellable). */
-const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancellable(checkJob);};
+const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancelShown();};
 /** The check is now a job the server can stop: every check line drawn before it shows its Cancel. */
 const checkStoppable=(job:Row,key:string,w:Row)=>{const id=String(job.id),since=Date.parse(job.created_at)||Date.now();checkJob={id,key,status:String(job.status),since,w};
   sayCancel();sayCheck();
@@ -2089,6 +2114,7 @@ const checkAgain=()=>{checkStop=null;checkCancelled='';checkUnstarted='';autoChe
  *  footer item, with its elapsed time and Cancel, instead of the Auto-schedule panel's. */
 function autoCheck(data:WorkspaceData,existing?:Row){
   const w=data.workspace,key=w.id+':'+data.current_fingerprint;
+  if(existing&&checksEnded.has(String(existing.id)))return;  // a list read before it ended: it is over, not joined again
   // A job the server already has is new proof about the workers; without one the remembered probe stands.
   if(existing)void reprobeWorkers(String(existing.id));else probeWorkers();
   if(existing?(autoChecking||checkJob?.id===existing.id):autoCheckKey===key)return;
@@ -2156,9 +2182,14 @@ const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>(
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
 const baselinePreview=(w:Row)=>background<BaselineRefreshPreview>(`/api/workspaces/${encodeURIComponent(String(w.id))}/baseline/refresh-preview`);
 /** The planner bar's drift control: one maker for the bar and for an answer that lands after the bar was drawn. */
-const baselineDriftButton=(w:Row,changes:number)=>iconButton(`${changes} department change${changes===1?'':'s'} · review`,
-  'history',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError),
-  {class:'bare baseline-drift','data-tip':'Department changes since this draft was created'});
+/** "N department changes": the one wording for the planner bar and the Rules page. */
+const departmentChanges=(n:number)=>plural(n,'department change');
+const driftName=(n:number)=>`${departmentChanges(n)} since this draft was created`;
+// Visible text, never icon-only: it changes what the draft is built on. A tight bar keeps icon + count (the count pills' step).
+const baselineDriftButton=(w:Row,changes:number)=>{
+  const b=el('button',{type:'button',class:'health-pill baseline-drift','aria-label':driftName(changes)},
+    icon('history'),el('span',{class:'num'},String(changes)),el('span',{class:'label'},`department change${changes===1?'':'s'}`));
+  b.addEventListener('click',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError));return b;};
 /** D-053: a failed drift check says so with Retry (never nothing on the bar, which reads as "no department changes"). */
 const baselineDriftFailed=(e:unknown,retry:()=>void)=>{const n=failedNote('Couldn’t check department changes.',e,retry);
   n.classList.add('baseline-drift');n.querySelector('button')?.setAttribute('aria-label','Retry checking department changes');return n;};
@@ -2470,12 +2501,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return;const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
+      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
     if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
-      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
+      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
@@ -5616,10 +5647,8 @@ function draftHealth(policy:Row):HTMLElement{
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
-    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(
-      `${drift.changes.length} department change${drift.changes.length===1?'':'s'}`,
-      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',
-      {'aria-label':`${drift.changes.length} department change${drift.changes.length===1?'':'s'} since this draft was created`}):'';
+    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
+      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
     if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
@@ -7699,7 +7728,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // A run shown live is read on its own (its progress) while it goes, not the rota's whole job list every second;
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
-    const response:Row=firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)));
+    const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
     if(gone()||mine!==loads)return;
     // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
     // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).

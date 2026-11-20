@@ -271,6 +271,28 @@ def test_reader_public_catalogue_safety_slot(database, catalogue_id, key, frozen
     assert projected["policies"][0]["definition"]["rule"]["lines"][0]["numbers"][key]["value"] == expected
 
 
+def test_mandatory_overlay_preserves_a_frozen_catalogue_restriction(h):
+    from packages.contracts.schemas import safety_rule
+
+    draft = h.workspace("Frozen catalogue restriction")
+    frozen = _catalogue_policy("workload_limit", "apply", None)
+    frozen["definition"]["rule"]["lines"][0]["settings"] = {"restriction": {}}
+    live = _catalogue_policy("workload_limit", "max", 2, 2)
+    live["definition"]["severity"] = "mandatory"
+    live["definition"]["rule"]["lines"][0]["settings"] = {"block_quota": {"metric": "duties"}}
+    assert safety_rule(frozen["definition"]) and not safety_rule(live["definition"])
+    with transaction(h.app.state.engine) as db:
+        workspace = db.get(m.Workspace, draft["id"])
+        inputs = verify(latest(db, workspace.id))
+        old_inputs = {**inputs, "policies": [frozen]}
+        live_inputs = {**inputs, "policies": [live]}
+        projected = live_safety_inputs(db, workspace, old_inputs, current=live_inputs, include_mandatory=True)
+    restriction, quota = projected["policies"]
+    assert restriction == frozen
+    assert quota["_source_policy_id"] == frozen["id"] and quota["id"] != frozen["id"]
+    assert quota["definition"] == live["definition"]
+
+
 def test_reader_strictest_team_lead_lines():
     frozen = {"id": "same-policy", "definition": {"rule": {"kind": "catalogue", "id": "team_leads",
         "lines": [{"id": "line", "numbers": {"min": {"value": 2}, "max": {"value": 3}}}]}}}

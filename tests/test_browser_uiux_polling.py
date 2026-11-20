@@ -43,9 +43,13 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
                 startup_reads.append(request);pending.add(request)
         page.on('request',started)
         page.on('requestfinished',lambda request: pending.discard(request))
+        # Every page read in flight (the stream aside): the idle window below starts once a refresh has finished.
+        reading=set()
+        page.on('request',lambda request: reading.add(request) if request.method=='GET' and urlsplit(request.url).path.startswith('/api/') and urlsplit(request.url).path!='/api/events' else None)
+        page.on('requestfinished',lambda request: reading.discard(request))
+        page.on('requestfailed',lambda request: reading.discard(request))
         navigate(page, 'inbox')
         expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
-        original_node = page.locator('.note-item').first.element_handle()
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=15000) as startup:
             # The pulse is the app's 10 s timer, on the page clock; with the stream live it reads once a minute. On a
             # loaded runner its first tick already ran in real time while signing in, so step past the next minute's check.
@@ -67,6 +71,14 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
             page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
         assert pinged, 'no ping from the live stream'
         cdp.detach()
+        # The idle window starts here. The start-up step above may refresh the page once (stepping past the minute's
+        # check outdates the stream until its next ping), so the inbox the idle checks must keep is the one shown now.
+        deadline = time.monotonic() + 30
+        while reading and time.monotonic() < deadline:
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        assert not reading, [r.url for r in reading]
+        expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
+        original_node = page.locator('.note-item').first.element_handle()
         reads = []
         page.on('request', lambda request: reads.append(urlsplit(request.url).path) if request.method == 'GET' else None)
         page.clock.run_for(20_000)
@@ -98,9 +110,11 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
         page.route('**/api/notifications', lambda route: held.append((route, route_fetch(route))))
         previous = page.locator('#main').element_handle()
         # The reconnect reads the inbox badge when the pulse moved (as the third reconnect below): a notice arrives first.
-        with transaction(h.app.state.engine, write=True) as db:
-            notification(db, h, recipient, 'Notice before the first badge refresh')
+        # The live stream's own re-check can see the new count before the reconnect does, so the badge read is awaited
+        # from the write on, whichever of the two asks first.
         with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications'):
+            with transaction(h.app.state.engine, write=True) as db:
+                notification(db, h, recipient, 'Notice before the first badge refresh')
             reconnect(page)
         page.wait_for_function('old => !old.isConnected', arg=previous)
         # Overview awaits the same non-notification reads as the badge loader.
@@ -121,10 +135,11 @@ def test_pending_badges_release_their_loading_slot_after_same_account_refresh(br
         delivered.value.finished()
         page.unroute('**/api/notifications')
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-        with transaction(h.app.state.engine, write=True) as db:
-            notification(db, h, recipient, 'Notice after overlapping badge refresh')
-        # A third reconnect must start a fresh badge read, rather than leave badgesLoading locked forever.
+        # A third reconnect must start a fresh badge read, rather than leave badgesLoading locked forever (awaited from the
+        # write on, as above).
         with page.expect_request(lambda request: urlsplit(request.url).path == '/api/notifications', timeout=5000):
+            with transaction(h.app.state.engine, write=True) as db:
+                notification(db, h, recipient, 'Notice after overlapping badge refresh')
             reconnect(page)
         expect(page.locator('.topbar .bell')).to_have_attribute('aria-label', 'Inbox · 2 unread')  # the unread count sits on the top-bar bell
     finally:

@@ -209,7 +209,8 @@ def compare(db, actor, workspace_id, other_id, limit=100, offset=0):
     result = difference(left["shifts"], right["shifts"])
     total = len(result["changes"])
     result.update({"before": record(before, exclude=("validation",)), "after": record(after, exclude=("validation",)),
-        "before_fingerprint": fingerprint(db, before), "after_fingerprint": fingerprint(db, after),
+        "before_fingerprint": fingerprint(db, before),
+        "after_fingerprint": fingerprint(db, after),
         "scope_matches": before.starts_on == after.starts_on and before.ends_on == after.ends_on,
         # Each rota's score from its last check (None when never checked); the dialog shows the deltas.
         "scores": {"before": score_summary(db, before), "after": score_summary(db, after), "detail": score_detail(db, before, after)},

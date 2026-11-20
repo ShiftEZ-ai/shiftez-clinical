@@ -579,7 +579,10 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
 
 def authorization_command(command):
     """Keep only the non-private context needed to reauthorize a historical command."""
-    return {"kind": command.kind, "payload": {key: command.payload[key] for key in ("catalogue", "decision")
+    keys = ("catalogue", "decision")
+    if command.kind == "job.create":
+        keys = (*keys, "kind")
+    return {"kind": command.kind, "payload": {key: command.payload[key] for key in keys
                                              if key in command.payload}}
 
 
@@ -604,6 +607,19 @@ def authorize_receipt(db, actor, receipt):
         # Legacy catalogue/decision receipts have no context to resolve a narrower capability.
         if manifest is None:
             require_role(actor, *receipt.required_roles)
+    elif kind == "job.create":
+        # Reauthorize with the command context captured at write time; old receipts use their compact job result.
+        context = next((value for value in manifest or ()
+                        if value.get("kind") == kind and isinstance(value.get("payload"), dict)
+                        and "kind" in value["payload"]), None)
+        if context is None:
+            job = receipt.result.get("job")
+            job_kind = job.get("kind") if isinstance(job, dict) else None
+            context = {"kind": kind, "payload": {"kind": job_kind}} if job_kind is not None else None
+        if context is None:
+            require_role(actor, *command_roles(s.Command(kind=kind)))
+        else:
+            authorize_command_context(actor, context, checked)
     else:
         require_role(actor, *command_roles(s.Command(kind=kind)))
     if manifest is not None:
@@ -829,7 +845,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 if command.kind != 'workspace.publish':
                     captured = []
                     checked = planning.revalidate(db, workspace, store=False, data_out=captured,
-                        reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True)
+                        reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True,
+                        mandatory_rules=command.kind != 'workspace.submit')
                     context = (actor.identity_id, actor.department_id, workspace.content_revision,
                                workspace.status, workspace.archived_at, captured[0]['fingerprint'])
                     workspace_check = (context, checked, captured[0], input_changes.watermark(db, actor.department_id),
@@ -926,7 +943,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 ok, expiry = github_integrations.check_repository(repo, credential_token)
                 github_check = github_integrations.RepositoryCheck(**context, ok=ok, expiry=expiry)
 
-    from .services import planning_preparation
+    from .services import generation_reconciliation, planning_preparation
     planning_plan = None
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
@@ -957,8 +974,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     actor = authenticate(db, token, csrf, write=True, settings=settings)
                     require_role(actor, *command_roles(command))
                     if not existing_receipt(db, actor):
-                        planner_tools.assert_precondition(db, actor, command)
                         planning_preparation.bind(db, planning_plan)
+                        planner_tools.assert_precondition(db, actor, command)
                         if command.kind == 'workspace.approve':
                             planning.lifecycle(db, actor, command, validation=(workspace_check[1], workspace_check[2]))
                         else:
@@ -967,9 +984,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     raise planning_preparation.RollbackPreparation()
             except planning_preparation.ComputePreparation as pending:
                 # Rollback released row locks too: a check of this same rota cannot convoy other writers.
-                database._remaining(preparation_deadline)
-                planning_plan['checks'].append((pending.key, pending.compute()))
-                database._remaining(preparation_deadline)
+                for key, compute in [*pending.pending, (pending.key, pending.compute)]:
+                    database._remaining(preparation_deadline)
+                    planning_plan['checks'].append((key, compute()))
+                    database._remaining(preparation_deadline)
                 if pending.final:
                     break
             except planning_preparation.RollbackPreparation:
@@ -1043,7 +1061,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         result = {**json_value(compact_reply(reply), copy_containers=False)}
         from .services.workspace_access import audit_envelope, private_operation
         private_operation(db, command, result)
-        if command.kind.startswith("catalogue.") or command.kind == "request.decide":
+        if command.kind.startswith("catalogue.") or command.kind == "request.decide" or command.kind == "job.create":
             result["authorization_commands"] = [authorization_command(command)]
         authorization_kinds = [value["kind"] for value in result.get("authorization_commands", [])]
         if any(kind.startswith(('identity.', 'role.')) or kind == 'person.anonymise'
@@ -1179,6 +1197,14 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                      context={"correlation_id": correlation_id, "command_kind": logged_command_kind(command.kind)},
                                      serialize=command.kind not in NON_SERIALIZED_COMMANDS)
                 break
+            except generation_reconciliation.GenerationInputsChanged:
+                with transaction(reader) as db:
+                    if engine.dialect.name == 'sqlite':
+                        db.execute(text('BEGIN'))
+                    actor = authenticate(db, token, csrf, write=True, settings=settings)
+                    require_role(actor, *command_roles(command))
+                    generation_plan = generation_reconciliation.refresh_inputs(db, actor, command, generation_plan)
+                    generation_plan['writer_current_inputs'] = attempt >= 1
             except CheckInputsChanged:
                 # An unrelated revision may leave the canonical fingerprint unchanged. Resolve
                 # that (or build the stale-input explanation) without holding up user writes.
@@ -1191,7 +1217,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
-                    current_data = planning.domain_snapshot(db, workspace)
+                    current_data = planning.domain_snapshot(db, workspace,
+                        mandatory_rules=command.kind != 'workspace.submit')
                     check_context(db, actor, workspace, current_data)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})
