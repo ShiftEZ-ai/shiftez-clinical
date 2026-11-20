@@ -100,6 +100,10 @@ type Span={starts_on?:string;ends_on?:string};
  *  screen; a window that starts inside the rota and runs past its end stays unmarked: "partly outside this rota" (RUL-E01). */
 // A double booking names the person, both sessions and when (the server's structured clash), not only "already working".
 const overlap=(f:Finding)=>f.code==='TIME_OVERLAP'?((f as Row).detail as Row|undefined)?.overlap as Clash|undefined:undefined;
+/** Keys whose values never hold a finding, in any reply: a session's people, its type and template snapshots, and a
+ *  check's cover rows and Fix-list context, most of a checked rota's bytes. The walk leaves them out
+ *  (tests/test_client_findings_walk.py: the same result as walking them). Never `baseline`: a rule check's findings. */
+export const NO_FINDINGS=new Set(['participants','type_snapshot','series_snapshot','coverage','fix_list_context']);
 export function plainFindings<T>(value:T):T{
   const seen=new Set<object>();
   const walk=(node:unknown,rota?:Span)=>{
@@ -112,7 +116,7 @@ export function plainFindings<T>(value:T):T{
     // Rota and window ends are exclusive days.
     if(f.outside_rota&&f.window&&rota?.starts_on&&!f.reach){const a=localDay(f.window.start);
       f.reach=a<rota.starts_on?'before':typeof rota.ends_on==='string'&&a>=rota.ends_on?'after':undefined;}
-    for(const child of Object.values(node))walk(child,rota);
+    for(const key of Object.keys(node))if(!NO_FINDINGS.has(key))walk((node as Row)[key],rota);
   };
   walk(value);
   return value;
