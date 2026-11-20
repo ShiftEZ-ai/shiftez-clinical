@@ -201,7 +201,7 @@ def test_replacement_and_best_plan_keep_association_hidden_roster_and_attendance
 def test_dated_grant_change_rejects_preview_and_old_client_never_bypasses_check(h):
     # D65 (docs/user-guide.md:49-55): a new or worsened blocker refuses the edit, even with a reason.
     w, data, shift, trainee, supervisor, _ = world(h)
-    original = h.detail(w)
+    original_shifts = h.detail(w)['shifts']
     proposal = checked(data, shift, trainee)['supervision']['proposal']
     command = command_for(w, shift, proposal)
     preview = h.client('coordinator').post('/api/planner/preview', json=command)
@@ -211,6 +211,8 @@ def test_dated_grant_change_rejects_preview_and_old_client_never_bypasses_check(
             m.CapabilityGrant.capability_id == h.seed['supervisor_capability']))
         grant.revoked = True
         db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    original = h.detail(w)
+    assert original['shifts'] == original_shifts
     stale = h.client('coordinator').post('/api/commands', headers={'idempotency-key': str(uuid.uuid4())},
         json={**command, 'expected_fingerprint': preview.json()['source_fingerprint']})
     assert stale.status_code == 409 and stale.json()['error']['code'] == 'STALE_PREVIEW'
