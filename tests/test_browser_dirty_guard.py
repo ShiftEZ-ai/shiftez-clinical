@@ -114,8 +114,13 @@ def test_back_or_an_address_keeps_an_approve_note_and_asks_first(browser, live_s
     try:
         navigate(page, route)
         # A quick press of the page's Approve while the address's own review opens (behind a modal: a script's press).
-        pressed = page.evaluate("""() => {const b = [...document.querySelectorAll('button')]
-            .filter(x => !x.closest('dialog') && x.textContent.trim() === 'Approve rota'); b.forEach(x => x.click()); return b.length;}""")
+        # The page's button is drawn after the address opens the review; while that review loads it is held and reads
+        # "Approving rota…" (one opening per rota), and a press joins it. Wait for the button in either state.
+        page_approve = """labels => [...document.querySelectorAll('button')]
+            .filter(x => !x.closest('dialog') && labels.includes(x.textContent.trim()))"""
+        labels = ['Approve rota', 'Approving rota…']
+        page.wait_for_function(f"labels => ({page_approve})(labels).length > 0", arg=labels)
+        pressed = page.evaluate(f"labels => {{const b = ({page_approve})(labels); b.forEach(x => x.click()); return b.length;}}", labels)
         assert pressed >= 1
         approve = page.get_by_role('dialog', name='Approve rota', exact=True)
         expect(approve).to_be_visible()
