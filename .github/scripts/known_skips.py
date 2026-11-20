@@ -68,7 +68,7 @@ def build_list(runs, root_evidence, reviews, valid_node):
     return decode_list(json.dumps(data), root_evidence, valid_node)
 
 
-def comparison_runs(runs, allowed, *, release, allowed_errors=frozenset()):
+def comparison_runs(runs, allowed, *, release, allowed_errors=frozenset(), quarantined=frozenset()):
     if not runs or any(not run for run in runs):
         raise ValueError("Complete selected execution is missing")
     result, observed = [], set()
@@ -77,7 +77,8 @@ def comparison_runs(runs, allowed, *, release, allowed_errors=frozenset()):
         for node, outcome in run.items():
             if outcome not in {"passed", "failed", "error", "skipped"}:
                 raise ValueError("Unknown execution outcome")
-            if outcome in {"failed", "error"} and (release or node in allowed or outcome == "error" and node not in allowed_errors):
+            if outcome in {"failed", "error"} and (release or node not in quarantined and (
+                    node in allowed or outcome == "error" and node not in allowed_errors)):
                 raise ValueError("Release/known-skip execution contains a failure or error")
             if outcome == "skipped":
                 if node not in allowed:

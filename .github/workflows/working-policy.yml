@@ -46,9 +46,14 @@ jobs:
         lfs: false
     - name: Install the trusted pinned Python before parsing candidate syntax
       run: python3 .github/scripts/hosted_ci.py runtime --tool python
+    - name: Install the trusted workflow parser
+      run: |
+        python -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
+        printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Enforce target policy without executing PR code
       env:
         POLICY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: python -I .github/scripts/working_policy.py guard
     - name: Retain policy findings for publisher label custody
       if: always()
