@@ -393,7 +393,7 @@ def test_production_oidc_cookies_are_host_bound(h, institutional, monkeypatch, u
     users = tmp_path / "users.json"
     users.write_text('{"users": {}}', encoding="utf-8")
     # Cookie policy probe only: no production database or provider is accessed.
-    settings = replace(settings, environment="production", public_origin=origin,
+    settings = replace(settings, environment="production", public_origin=origin, oidc_issuer=origin + "/authelia",
                        oidc_redirect_uri=origin + "/auth/callback", database_url="postgresql+psycopg://fixture@localhost/fixture",
                        forwarded_allow_ips="192.0.2.18", identity_users_file=str(users), fmuc_data_key="01" * 32)
     from apps.api import live
