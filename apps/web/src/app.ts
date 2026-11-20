@@ -120,7 +120,7 @@ import {signInConfigPage} from './sign_in_config.js';
 import {readinessRegion,requirementEvidence,currency,notCompared,SUPERSEDED,type Currency} from './planning_context.js';
 import {openAmendment} from './published_amendment.js';
 import {publishedSession,changesChip,markChanges,loadChanges,forgetChanges,changeable,replaceNext,stagedCoverage,changedSessions,markDiff,type ChangeDiff,type PublishedHooks} from './published_changes.js';
-import {ruleCataloguePage,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
+import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
@@ -293,6 +293,11 @@ function readAhead(boot=false){
 }
 /** The reads started ahead for this rota, taken once by the render that uses them. */
 function takeAhead(id:string){const a=ahead;if(!a||a.id!==id||a.epoch!==scheduleEpoch)return null;ahead=null;return a;}
+/** FE-PERF (scale): a Rules list address starts the page's own reads at boot beside the lists (rule_catalogue.ts
+ *  readRulesAhead), not after them. Only where the first draw is that list (allowed, not desktop-only, the rule catalogue
+ *  on, no ?source= that may open a rule instead); taken by the next draw, whichever page it is, so never kept for later. */
+let rulesAhead:ReturnType<typeof readRulesAhead>|null=null;
+const rulesListFirst=()=>view==='rules'&&!routeParts.length&&!routeQuery.has('source')&&ruleCatalogueOn()&&allowed(view)&&(!phoneLite()||fitsPhone(view,routeParts,routeQuery));
 /** A rota's days in view: compact detail, then every page of its sessions and findings there. A rota that changes while
  *  the pages are read is read whole instead. */
 async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[]):Promise<WorkspaceData|null>{
@@ -1559,7 +1564,7 @@ async function boot(card?:HTMLElement|null){
     // in the page's own read. Without it the first pulse cannot tell and would redraw the page for nothing.
     // Pages that need deferred lists load them in one read (not the lean set and then the rest, maintenance):
     // the page and the sidebar counts then start their reads together.
-    readAhead(true);
+    readAhead(true);rulesAhead=rulesListFirst()?readRulesAhead(ctx()):null;
     await Promise.all([loadCatalogues(needsDeferredCatalogues(),leave),background<Row>('/api/pulse').then(p=>{seenActivity=p.activity;noticeNewVersion(p.build);},()=>{})]);
     // Live updates from the pulse just read, not from the first 10 s fallback tick: a change committed meanwhile that only
     // the stream announces (a worker's check completing) was missed, the stream's baseline being taken after it.
@@ -1633,7 +1638,7 @@ const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pa
 async function renderPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
-  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
+  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
@@ -1730,7 +1735,7 @@ async function renderPage(live=false){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
