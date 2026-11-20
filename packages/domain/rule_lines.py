@@ -1296,6 +1296,13 @@ def expand(policy, outrank=True, *, stored_goal=True):
     return out
 
 
+def prepare_catalogue_rule(policy):
+    # Cross-tier overlap can be quadratic. Prime its primitive definitions without computing precedence.
+    lines = policy['definition']['rule'].get('lines') or []
+    outrank = len({tier(line) for line in lines}) <= 1
+    _expanded(json.dumps(policy, sort_keys=True, default=str), outrank, True)
+
+
 @lru_cache(maxsize=64)
 def _expanded(text, outrank=True, stored_goal=True):
     return tuple(_expand(json.loads(text), outrank, stored_goal))
