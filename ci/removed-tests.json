@@ -103,6 +103,26 @@
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
     },
     {
+      "node": "tests/test_policy_v33.py::V33Tests::test_expiry_only_renewal_is_ci_eligible_but_remains_tier1",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_only_edit_is_refused_and_remains_tier1, which keeps the Tier 1 assertion and asserts that only a removal is accepted."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_real_verdict_accepts_reviewed_renewal_without_lifting_ci",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_edit_is_refused_while_the_reader_honors_a_valid_existing_entry, which asserts the refusal and that the verdict still honours a valid existing entry."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_renewal_cannot_add_or_change_metadata",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_allowance_edit_cannot_add_or_change_metadata, which keeps every metadata case."
+    },
+    {
+      "node": "tests/test_policy_v34.py::ImporterV34Tests::test_expiry_extension_changes_nothing_except_existing_date",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
+    },
+    {
       "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
       "owner": "maintainer",
       "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
