@@ -35,9 +35,11 @@ const familyOrder=(id:string,name:string)=>{const e=RULE_CATALOGUE_V2.find(x=>x.
 // The simplifications and each one's record, kept across rebuilds of the Rules page (api.ts keptRead; maintenance): the
 // header button, its panel and a retired rule's source share one read until a rule, list, setting or access change.
 const CONVERSIONS:KeptReadOptions={scopes:['rules','catalogue','settings','access'],cap:8};
-const keptGet=<T>(url:string)=>keptRead(url,()=>get<T>(url),CONVERSIONS).p;
+const keptGet=<T>(url:string,read:typeof get=get)=>keptRead(url,()=>read<T>(url),CONVERSIONS).p;
 /** The department's simplifications (`history`: withdrawn and undone ones too). */
-export const conversions=(history=true)=>keptGet<{records:Row[]}>('/api/rules/catalogue/conversions'+(history?'?include_history=true':''));
+export const conversions=(history=true,read:typeof get=get)=>keptGet<{records:Row[]}>('/api/rules/catalogue/conversions'+(history?'?include_history=true':''),read);
+/** Who reads them: the header button's readers. */
+export const readsSimplify=(ctx:Context)=>READ.some(key=>ctx.permits(key));
 /** One simplification with its plan and proof. */
 export const conversion=(id:string)=>keptGet<{record:Row}>('/api/rules/catalogue/conversions/'+encodeURIComponent(id));
 
@@ -46,7 +48,7 @@ export const conversion=(id:string)=>keptGet<{record:Row}>('/api/rules/catalogue
  *  propose or discard them first (and a phone header keeps room for Propose). */
 export function simplifyButton(ctx:Context,refresh:()=>Promise<void>,o:Partial<Options>={}):(HTMLElement&{drafting:(on:boolean)=>void})|null{
   go=o;
-  if(!READ.some(key=>ctx.permits(key)))return null;
+  if(!readsSimplify(ctx))return null;
   let shown=catalogueVersion(ctx)===1&&PREVIEW.some(key=>ctx.permits(key)),drafting=false;
   const b=compact(button('Simplify rules',()=>simplifyPanel(ctx,refresh),'secondary'),'sparkle'),sync=()=>{b.hidden=!shown||drafting;};sync();
   void conversions().then(r=>{
