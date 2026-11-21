@@ -20,7 +20,7 @@ from packages.domain.quotas import applicable_policies, evaluate_quotas, period_
 from packages.domain.reports import workload
 from packages.domain.time import aware, local_midnight, now, overlaps, union_hours
 from packages.domain.validation import (
-    ancestor_ids, exception_for, index_person_rows, person_scope_ids, policy_applies, policy_scope_key,
+    ancestor_ids, exception_for, index_person_rows, person_scope_ids, policy_applies, _policy_scope_key,
     within_dates, workload_windows,
 )
 from .common import scoped
@@ -141,7 +141,7 @@ def _limits(data, person_id, first, last):
         people = person_scope_ids(policy['definition']['scope'])
         if people and person_id not in people:
             continue
-        key = (policy_scope_key(policy), rule['kind'], rule.get('window'), rule.get('window_days'),
+        key = (_policy_scope_key(policy), rule['kind'], rule.get('window'), rule.get('window_days'),
                rule.get('group_by', 'all'), rule.get('include_overtime', True))
         if key not in usage:
             usage[key] = list(_limit_usage(data, policy, person_id, entries, a, b))

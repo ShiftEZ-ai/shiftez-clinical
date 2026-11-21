@@ -399,11 +399,12 @@ def test_rule_review_polls_reuse_each_drafts_feasibility_inputs(backend, monkeyp
         return original(db, workspace, *args, **kwargs)
     monkeypatch.setattr(snapshots, 'domain_snapshot', counted)
     assert h.get('approver', path) == first and built == []
-    # A real input change of one draft rebuilds that draft's token only.
     h.shift(drafts[0], '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00')
     built.clear()
-    h.get('approver', path)
-    assert drafts[0]['id'] in built and drafts[1]['id'] not in built
+    review = h.get('approver', path)
+    assert built == []
+    assert {effect['workspace_id']: effect['status'] for effect in review['effect']} == {
+        draft['id']: 'not_checked' for draft in drafts}
 
 
 def test_department_workspace_list_batches_stored_check_stamps(backend):
@@ -431,3 +432,36 @@ def test_department_workspace_list_batches_stored_check_stamps(backend):
         event.remove(engine, 'before_cursor_execute', count)
     assert (after.status_code, after.content) == (first.status_code, first.content)
     assert stamp_reads <= 2, stamp_reads
+
+
+def test_department_amendment_reads_its_shift_links_once(backend):
+    h = backend
+    original, *_ = scale_department(h)
+    issued = h.publish(h.detail(original)['workspace'])['published_view']['publication_id']
+    amendment = h.workspace('Synthetic amendment', start=original['starts_on'], end=original['ends_on'], base=issued)
+    engine = h.app.state.engine
+    with transaction(engine, write=True) as db:
+        shift = db.scalar(select(m.Shift).where(m.Shift.workspace_id == amendment['id'])
+                          .order_by(m.Shift.start, m.Shift.id).limit(1))
+        shift.locked = True
+        changed_id = shift.id
+    h.command('coordinator', 'workspace.validate', {'reason': 'Check amended rota'},
+              amendment['id'], amendment['revision'])
+    assert h.detail(amendment)['workspace']['validation_current']
+    links = []
+
+    def count_links(_conn, _cursor, sql, _args, _context, _many):
+        if 'FROM shift_services' in sql and 'UNION ALL' in sql:
+            links.append(sql)
+
+    event.listen(engine, 'before_cursor_execute', count_links)
+    try:
+        detail = h.detail(amendment)
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_links)
+
+    assert len(detail['shifts']) >= 500
+    [change] = detail['change_diff']['sessions']
+    assert change['after']['id'] == changed_id and change['after']['locked'] and not change['before']['locked']
+    assert all('wish_effects' not in participant for participant in change['after']['participants'])
+    assert len(links) == 1, 'The review and full rota share the current session links'

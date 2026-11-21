@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
 from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
-from packages.contracts.schemas import TypeDefinition, requirement_key, safety_rule, validate_attributes
+from packages.contracts.schemas import INTERNAL_CHECK_KEYS, TypeDefinition, requirement_key, safety_rule, validate_attributes
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
@@ -31,8 +31,6 @@ from .generation_scope import pooled_anchor, selected_session_ids
 ENGINE_VERSION = "manual-core-52"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
-
-INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 
 
 # Rule kinds the per-person rule loop of `evaluate` leaves to other checks (restrictions, quotas, cover, shapes...).
@@ -331,7 +329,8 @@ def effective_type_definition(data, shift):
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
-        effective = deepcopy((current if operational else issued) or {})
+        definition = (current if operational else issued) or {}
+        effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain both sources so their identities cannot be reused during this run.
@@ -443,14 +442,29 @@ def department_memberships(data, person_id, department_id, a, b):
             and m["category_id"] in categories_for(data, person_id, a, b)]
 
 
+def person_active_for_interval(data, person_id, a, b):
+    """Admit duties ending before the person's local inactive date begins."""
+    person = data.get('people', {}).get(person_id)
+    if not person or person.get('active', True):
+        return bool(person)
+    zone = data['organisation']['timezone']
+    inactive_from = person.get('inactive_from')
+    if inactive_from is None:
+        return False
+    elif isinstance(inactive_from, datetime):
+        inactive_from = inactive_from.date()
+    elif isinstance(inactive_from, str):
+        inactive_from = date.fromisoformat(inactive_from)
+    return aware(b) <= local_midnight(inactive_from, zone)
+
+
 def qualification_failures(data, person_id, shift, definition, a, b):
     """Canonical eligibility decisions, with references suitable for explanations.
 
     These are eligibility findings only, not a claim about availability or rest.
     No private person or absence fields are included.
     """
-    person = data["people"].get(person_id)
-    if not person or not person["active"]:
+    if not person_active_for_interval(data, person_id, a, b):
         return [{"code": "PERSON_INACTIVE", "person_id": person_id}]
     typ = data.get("types", {}).get(shift.get("assignment_type_id"))
     if typ is None:
@@ -526,9 +540,8 @@ def person_free(scope):
     return not any(scope.get(k) for k in PERSON_SCOPE_KEYS) and not has_person_lines(scope_tree(scope))
 
 
-def policy_scope_key(policy):
-    """Policy inputs to applicability; the caller supplies the person, date and rule context."""
-    return ('policy_scope', policy['status'], policy.get('active', True), policy['department_id'],
+def _policy_scope_key(policy):
+    return (policy['status'], policy.get('active', True), policy['department_id'],
             policy.get('starts_on'), policy.get('ends_on'),
             json.dumps(policy['definition']['scope'], sort_keys=True, default=str))
 
@@ -544,7 +557,7 @@ def policy_applies(data, policy, person_id, shift, a, b):
         scope = policy['definition']['scope']
         # Matching ignores names, strength and rule numbers. Equal immutable matching inputs share one answer
         # while every policy retains its own identity entry and the canonical predicate below remains authoritative.
-        signature = policy_scope_key(policy)
+        signature = ('policy_scope', *_policy_scope_key(policy))
         entry = cache[id(policy)] = (policy, person_free(scope), cache.setdefault(signature, {}))
     # A scheduling run (generation.py) also keeps answers per person: it asks about the same people on the same sessions
     # at every trial. The solver asks about everyone everywhere once, where keeping them would only cost memory.
@@ -960,6 +973,12 @@ def workload_matches(data, policy, person_id, shift, a, b):
 def workload_windows(a, b, rule, zone, week_start):
     """Canonical limit windows contributed by one reserved duty."""
     return _workload_windows(aware(a), aware(b), rule['window'], rule.get('window_days'), zone, week_start)
+
+
+def _focal_workload_windows(data, rule, selected, focal, zone):
+    windows = {window for _, _, a, b in selected
+               for window in workload_windows(a, b, rule, zone, data['organisation']['week_start'])}
+    return ((a, b) for a, b in sorted(windows) if any(overlaps(a, b, c, d) for _, _, c, d in focal))
 
 
 @lru_cache(maxsize=8192)
@@ -2184,6 +2203,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     retained_people = (partial['previous'].get('_person_parts') if complete_partial else None)
     signatures = {pid: (frozenset(focus), tuple((id(s), repr(p)) for s, p, _, _ in entries))
                   for pid, entries in commitments.items()} if person_cache is not None else {}
+    maximum_hours = {}
     for policy_index, policy in enumerate(counted_policies):
         check()
         rule = policy["definition"]["rule"]
@@ -2195,14 +2215,26 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
             continue
         only = data.get("person_rule_subjects") if partial is None or complete_partial else partial["people"]
         named = named_people(policy["definition"]["scope"])  # a rule naming people never applies to anyone else
+        hours_by_person = None
+        if kind == 'max_hours':
+            # One evaluation has fixed duties and focus. Equal counting inputs share observations,
+            # while each policy still applies its own threshold, exceptions and finding identity.
+            counting = json.dumps({key: value for key, value in rule.items() if key != 'hours'}, sort_keys=True,
+                                  default=str)
+            hours_by_person = maximum_hours.setdefault((_policy_scope_key(policy), counting), {})
+
         def check_person(pid, entries, add):
             # Applicability is anchored in the policy's department, but a person's
             # unscoped total/rest limit counts all their institutional commitments.
             # Moving a duty to another department cannot erase its hours or rest.
-            focal = [(s, p, a, b) for s, p, a, b in entries if s["id"] in focus
-                     and policy_applies(data, policy, pid, s, a, b)
-                     and (rule.get("include_overtime", True) or not p["overtime"])]
+            observed = hours_by_person.get(pid) if hours_by_person is not None else None
+            focal = observed[0] if observed is not None else [
+                (s, p, a, b) for s, p, a, b in entries if s["id"] in focus
+                and policy_applies(data, policy, pid, s, a, b)
+                and (rule.get("include_overtime", True) or not p["overtime"])]
             if not focal:
+                if hours_by_person is not None and observed is None:
+                    hours_by_person[pid] = (focal, (), ())
                 return
             if kind == 'forbidden_transition':
                 # Compare start dates, not elapsed rest or adjacent list entries.
@@ -2238,11 +2270,17 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                             add('EXTERNAL_CLASSIFICATION_UNKNOWN', 'External duty type is required to check the next-day combination',
                                 s['id'], pid, a, b, severity, policy)
                 return
-            scope = policy["definition"]["scope"]
             # Scope selects the duty that needs rest, not the work that can consume it.
             # The preceding/following duty can be a different type, day or programme,
             # or end immediately before this policy becomes effective.
-            selected, unknown_external = workload_selected(data, policy, pid, entries)
+            if observed is None:
+                selected, unknown_external = workload_selected(data, policy, pid, entries)
+                if hours_by_person is not None:
+                    hour_windows = [(a, b, workload_actual(rule, selected, a, b, zone)[0][1])
+                                    for a, b in _focal_workload_windows(data, rule, selected, focal, zone)]
+                    hours_by_person[pid] = focal, unknown_external, hour_windows
+            else:
+                _, unknown_external, hour_windows = observed
             for r in unknown_external:
                 # External commitments represent known work, not leave/attendance.
                 # Their precise service/location/OT classification is not supplied.
@@ -2271,40 +2309,37 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                     if gap['actual_hours'] < gap['required_hours']:
                         violation("MIN_REST" if kind == "min_rest" else "TRAVEL_BUFFER", policy["name"], gap['start'], gap['end'],
                                   t if t["id"] in focus else s, detail)
-            elif kind in {"max_hours", "max_duties"}:
-                per_supervisor = kind == 'max_duties' and rule.get('group_by') == 'supervisor'
-                windows = set()
-                for _, _, a, b in selected:
-                    windows.update(workload_windows(a, b, rule, zone, data['organisation']['week_start']))
-                for a, b in sorted(windows):
-                    if not any(overlaps(a, b, c, d) for _, _, c, d in focal):
-                        continue
-                    if kind == "max_hours":
-                        actual = workload_actual(rule, selected, a, b, zone)[0][1]
-                        limit = rule["hours"]
-                    else:
-                        if rule.get('group_by') == 'weekday':
-                            for weekday, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
-                                        and c.astimezone(ZoneInfo(zone)).weekday() == weekday for s, _, c, _ in selected):
-                                    violation('MAX_DUTIES', policy['name'], a, b,
-                                        detail={'actual': actual, 'maximum': rule['maximum'],
-                                                'weekday': weekday, 'group_by': 'weekday'})
-                            continue
-                        if per_supervisor:
-                            if any(a <= c < b and not p.get('supervisor_person_id') for _, p, c, d in selected):
-                                violation('SUPERVISOR_REQUIRED', 'Select a supervisor for matching duties to check this limit', a, b)
-                            for supervisor, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
-                                        and p.get('supervisor_person_id') == supervisor for s, p, c, _ in selected):
-                                    violation('MAX_DUTIES', policy['name'], a, b,
-                                        detail={'actual': actual, 'maximum': rule['maximum'],
-                                                'supervisor_person_id': supervisor, 'group_by': 'supervisor'})
-                            continue
-                        actual = workload_actual(rule, selected, a, b, zone)[0][1]
-                        limit = rule["maximum"]
+            elif kind == "max_hours":
+                limit = rule["hours"]
+                for a, b, actual in hour_windows:
                     if actual > limit + 1e-9:
-                        violation("MAX_HOURS" if kind == "max_hours" else "MAX_DUTIES", policy["name"], a, b,
+                        violation("MAX_HOURS", policy["name"], a, b,
+                                  detail={"actual": round(actual, 4), "maximum": limit})
+            elif kind == "max_duties":
+                per_supervisor = rule.get('group_by') == 'supervisor'
+                for a, b in _focal_workload_windows(data, rule, selected, focal, zone):
+                    if rule.get('group_by') == 'weekday':
+                        for weekday, actual in workload_actual(rule, selected, a, b, zone):
+                            if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                    and c.astimezone(ZoneInfo(zone)).weekday() == weekday for s, _, c, _ in selected):
+                                violation('MAX_DUTIES', policy['name'], a, b,
+                                    detail={'actual': actual, 'maximum': rule['maximum'],
+                                            'weekday': weekday, 'group_by': 'weekday'})
+                        continue
+                    if per_supervisor:
+                        if any(a <= c < b and not p.get('supervisor_person_id') for _, p, c, _ in selected):
+                            violation('SUPERVISOR_REQUIRED', 'Select a supervisor for matching duties to check this limit', a, b)
+                        for supervisor, actual in workload_actual(rule, selected, a, b, zone):
+                            if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                    and p.get('supervisor_person_id') == supervisor for s, p, c, _ in selected):
+                                violation('MAX_DUTIES', policy['name'], a, b,
+                                    detail={'actual': actual, 'maximum': rule['maximum'],
+                                            'supervisor_person_id': supervisor, 'group_by': 'supervisor'})
+                        continue
+                    actual = workload_actual(rule, selected, a, b, zone)[0][1]
+                    limit = rule["maximum"]
+                    if actual > limit + 1e-9:
+                        violation("MAX_DUTIES", policy["name"], a, b,
                                   detail={"actual": round(actual, 4), "maximum": limit})
             elif kind == 'max_consecutive_weekends':
                 for a, b, count in workload_weekend_violations(data, policy, pid, selected, focus):

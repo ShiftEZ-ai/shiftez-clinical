@@ -138,6 +138,7 @@ import {moreWords} from './dom.js';  // the one "+N" and its words (UX › contr
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
 import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
+import {rotaOutdated} from './dom.js';  // one rota verdict
 
 applyTheme();
 const root=document.querySelector('#app')!;
@@ -2506,7 +2507,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Whoever created or last edited the rota cannot approve it; say so instead of offering a button that fails.
     const ownWork=!mayDecide(me!,'rota.approve',data?.reviewer_involved??[w.created_by,w.last_edited_by].includes(me!.identity_id));  // the server's contributor test
     // Submitted, but rules, people or availability changed since: approving or publishing would be refused.
-    const outdated=['submitted','approved'].includes(w.status)&&(data?!!data.review_progress?.stale_inputs:!!w.outdated);
+    // the window carries the compact detail's review_progress, so Week reads the same server field as the whole rota.
+    const outdated=rotaOutdated(w,draftData);
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // #1041: one opening of the review per rota; a second press, or a redraw's button, joins it (held, busy) until it opens.
     const approveLabel=w.base_publication_id?'Approve changes':'Approve rota',approveWords=busyLabel(approveLabel);
@@ -2538,10 +2540,14 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
-    if(['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR))workflow.append(outdated
+    // One predicate for Reopen: the note below shows exactly when the button does not.
+    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
+    // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
+    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
@@ -2765,7 +2771,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A published-only schedule's checks are the live check of what is published (publishedLive), current when read.
       const stored=!draftData?(shown.workspace.validation as unknown as Row|undefined):null;
       const live=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive.evaluation as unknown as Row:null;
-      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?w!.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,person});
+      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?draftData.workspace.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,kept:reading,person});
       const pub=String(s.publication_id||source?.publication.id||'');
       const published=!acts&&(s.context||!draftData)&&!!pub&&changeable(s);
       if(pubHooks&&published)publishedSession(dock,s,pub,pubHooks,summary);else body.append(summary());
@@ -4056,7 +4062,8 @@ function rotaStatusPill(w:Row,outdated=false){
   // resubmitting", never also "Waiting for approval".
   const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
-  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'');
+  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
+    +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
 }
 /** The Fix list's top bar (A1): the rota switcher (another rota's Fix list, or this rota's schedule), its stage, and the
@@ -7886,7 +7893,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}
@@ -8668,7 +8675,7 @@ async function onPulse(given?:Row){
     const editing=editingNow();
     // F-L2: roles compared as sets, and never from a pulse without them (a restarting server): an unchanged account must
     // not rebuild the app and drop an open form. A real change waits while a form is being edited (the server refuses
-    // whatever the new roles no longer permit), then rebuilds.
+    // whatever the new roles no longer permit), then rebuilds and says why.
     const rolesChanged=Array.isArray(pulse.roles)&&JSON.stringify([...me.roles].sort())!==JSON.stringify([...pulse.roles].sort());
     const stale=!!changes?.length||key!==loadedKey||moved||!connected||redrawOwed||opsWatch;
     // Revision-keyed caches (schedule windows, academic time) see the new revisions without reading the account.
@@ -8681,8 +8688,11 @@ async function onPulse(given?:Row){
       else{adopt();seenActivity=pulse.activity;const scopes=new Set(changes.map(c=>c.scope));
         // The Schedule's own edit: its check, once it lands, reads the counts (autoCheck settle), as the redraw did before.
         if(!(ownPulse&&view==='schedule'&&plannerMemo)&&Object.values(BADGE_SOURCES).some(b=>b.live.some(s=>scopes.has(s))))void loadNavBadges(true,[],scopes);}}
-    if(rolesChanged&&readerBusy())hold(pulse);
-    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};document.querySelectorAll('dialog').forEach(d=>d.remove());await boot();}
+    // Any dialog holds it, open or not: the browser closes a dialog with unsaved changes by itself (a repeated Escape)
+    // and showDialog opens it again a task later, so a restart in that instant would drop it unsaid. Every app dialog
+    // is removed when it closes (showDialog, palette, the sign-in shade on resuming), so none holds it for ever.
+    if(rolesChanged&&(readerBusy()||document.querySelector('dialog')))hold(pulse);
+    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};const was=me;await boot();if(me&&me!==was)notify('Your access changed.','info');}
     // Swaps and review routes redraw only when something moved (the activity counter covers swaps): an unconditional
     // redraw every 10 s took keyboard focus away. Operations follows the worker only while it has work (opsBusy);
     // imports run inside their command, so Imports redraws on a change like every other page.
