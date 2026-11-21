@@ -76,7 +76,8 @@ def rota_strip(db, actor, start, end, limit, offset):
                 check_status=check_job['status'] if check_job else None,
                 check_queued_at=check_job['queued_at'] if check_job else None)
             value = {**value, 'summary': {key: summary[key] for key in (
-                'places_needed', 'places_filled', 'places_open', 'sessions_with_gaps', 'other_gaps', 'issues', 'repair_counts', 'fix_list')}}
+                'session_count', 'places_needed', 'places_filled', 'places_open', 'sessions_with_gaps', 'other_gaps', 'issues',
+                'repair_counts', 'fix_list')}}
         value['fresh'] = bool(checks[row.id]['checked'] and checks[row.id]['fingerprint'] == current_inputs.get(row.id))
         workspaces.append({**{key: getattr(row, key) for key in ('id', 'status', 'starts_on', 'ends_on', 'base_publication_id')},
                            'name': names[row.id],

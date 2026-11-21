@@ -46,7 +46,8 @@ def test_review_ready_receipt_remains_activatable_after_unrelated_changes(approv
         current = db.get(m.Workspace, workspace['id'])
         receipt = db.get(m.Job, job['id'])
         hint = receipt.read_metadata['input_snapshot']['currency_hint']
-        assert currency_match(hint, currency_hint(db, current)) is (change == 'none')
+        # Unrelated changes leave the fingerprint unchanged, so the hint stays current (17 Nov oracle).
+        assert currency_match(hint, currency_hint(db, current)) is True
         assert receipt.input_fingerprint == feasibility_fingerprints(db, [current])[current.id]
     review = h.get('approver', f"/api/policies/{policy['id']}/review")
     effect, = review['effect']

@@ -152,9 +152,12 @@ def test_settings_undo_does_not_pin_an_inherited_assignment_mode(h, defaults):
 def test_explicit_default_mode_choice_still_invalidates_generation_inputs(h):
     before = h.get('admin', '/api/me')['organisation']['input_revision']
     saved = settings(h, {'mode': 'fill_gaps'})
-    assert saved['organisation']['input_revision'] == before + 1
+    # The 17 Nov oracle keeps the revision unchanged when the effective option and fingerprint are unchanged.
+    assert saved['organisation']['input_revision'] == before
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Department, h.seed['department_id']).generation_defaults['mode'] == 'fill_gaps'
+    changed = settings(h, {'mode': 'rebalance'})
+    assert changed['organisation']['input_revision'] == before + 1
 
 
 @pytest.mark.parametrize('defaults', [{}, {'mode': 'rebalance'}, {'mode': 'fill_gaps'}, {

@@ -186,12 +186,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_autoschedule_animation.py::test_animation_defaults_save_reload_audit_and_undo_without_invalidating_rotas",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_autoschedule_backend_audit.py::test_december_requirements_conflict_cannot_be_applied_or_change_the_draft",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -199,12 +193,6 @@
     {
       "class": "baseline",
       "node": "tests/test_autoschedule_budget_api.py::test_generation_queue_uses_the_draft_baseline_after_department_defaults_change",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autoschedule_budget_api.py::test_increasing_runtime_limit_preserves_preparation_fingerprint_and_continue_uses_new_limit",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },

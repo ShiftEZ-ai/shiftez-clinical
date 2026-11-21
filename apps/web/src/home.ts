@@ -414,7 +414,7 @@ function rotaStrip(ctx:Context,today:string,say:(text:string)=>void){
     const noPercent=(w:Row)=>{const s=w.health?.fresh&&w.health.summary;if(!s)return w.health?.checked?'needs a check':'not checked';
       const places=Number(s.places_open||0),sessions=Number(s.sessions_with_gaps||0);
       // No minimum configured anywhere is not "complete": the draft says no minimum is set (CA-04, HOME-02).
-      return places?`${places} open`:sessions?`${plural(sessions,'session')} with open places`:NO_MINIMUM;};
+      return places?`${places} open`:sessions?`${plural(sessions,'session')} with open places`:s.session_count===0?'':NO_MINIMUM;};
     // No rota at all yet (a new department): one line instead of four empty months (H-25).
     if(!rotas.length)return [emptyLine('No rota yet.',null,'home-none')];
     let footerDraft='',amendment='';
