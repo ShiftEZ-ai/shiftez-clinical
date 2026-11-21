@@ -247,7 +247,7 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
             'basis': 'Planned departmental work only. Hours split at local boundaries; duties count at their start. '
                      'Current publications only; a selected draft replaces its acknowledged publication. '
                      'Rota adjustments and target overrides apply only to the rota comparison. '
-                     'Limit windows use reserved duty envelopes. External work, attendance and payroll are excluded.',
+                     'Limit windows count reserved duty time and classified external commitments.',
             'rule_basis': 'current_rules', 'unsupported_metrics': ['nights'],
             'workspace': ({'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                            'starts_on': workspace.starts_on.isoformat(), 'ends_on': (hi if chosen else until(rota)).isoformat()}

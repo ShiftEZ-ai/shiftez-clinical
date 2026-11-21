@@ -2361,7 +2361,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                         violation("MAX_DUTIES", policy["name"], a, b,
                                   detail={"actual": round(actual, 4), "maximum": limit})
             elif kind == 'max_consecutive_weekends':
-                for a, b, count in workload_weekend_violations(data, policy, pid, selected, focus):
+                for a, b, count in workload_weekend_violations(data, policy, pid, selected, targets):
                     violation('CONSECUTIVE_WEEKENDS', policy['name'], a, b,
                               detail={'weekends': count, 'maximum': rule['maximum']})
             elif kind == "max_consecutive_days":

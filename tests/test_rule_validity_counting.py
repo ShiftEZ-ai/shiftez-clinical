@@ -9,6 +9,7 @@ from packages.contracts.rule_catalogue import CATALOGUE_MAPPING, V2_CATALOGUE_BY
 from packages.contracts.schemas import SHAPE_KINDS, WORKLOAD_COUNT_KINDS
 from packages.domain.cp_sat import generate
 from packages.domain.cp_sat_patterns import add_patterns
+from packages.domain.rule_map import reach
 from packages.domain.time import aware
 from packages.domain.validation import VALIDITY_FOCAL_ONLY_KINDS, evaluate
 from tests.test_autoscheduler_audit_safety import _assignment
@@ -95,6 +96,32 @@ def test_full_counts_and_solver_agree_at_validity_boundary(counting_world, name,
     allowed = generate(data, 3, workers=1, feasibility_only=True)
     assert allowed['status'] == 'candidate_feasible' and len(allowed['additions']) == 1, allowed
     assert not [f for f in allowed['validation']['findings'] if f.get('rule_id') == data['policies'][0]['id']]
+
+
+@pytest.mark.parametrize('dates,starts_on,weekends', [
+    pytest.param(['2026-11-27', '2026-12-04', '2026-12-16'], '2026-12-10', 0, id='weekday-only-in-validity'),
+    pytest.param(['2026-11-27', '2026-12-04'], '2026-12-10', 0, id='no-duty-in-validity'),
+    pytest.param(['2026-11-27', '2026-12-04', '2026-12-16'], '2026-11-27', 2, id='weekends-in-validity'),
+])
+def test_consecutive_weekends_require_an_applicable_weekend_duty(counting_world, dates, starts_on, weekends):
+    rule = {'kind': 'max_consecutive_weekends', 'maximum': 1, 'weekend_start': 4, 'weekend_days': 2}
+    data = mirror(counting_world, dates, dates, rule, starts_on)
+    [policy] = data['policies']
+    rows = [row for row in evaluate(data)['findings'] if row['code'] == 'CONSECUTIVE_WEEKENDS']
+    assert [(row['severity'], row['detail']['weekends']) for row in rows] == ([('error', weekends)] if weekends else [])
+
+    a, b = aware(dates[0] + 'T00:00:00+03:00'), aware('2027-01-01T00:00:00+03:00')
+    result = reach(data, [policy], a, b, details=True)
+    [line] = result['details'][policy['id']]['lines']
+    [person] = line['people']
+    assert max(row['actual'] for row in person['counts']) == weekends
+
+    for shift in data['shifts']:
+        shift['participants'] = []
+    data['generation_options'] = {'mode': 'rebalance', 'shortlist_width': 0}
+    solved = generate(data, 5, workers=1, feasibility_only=True)
+    assert solved['status'] == ('requirements_conflict' if weekends else 'candidate_feasible'), solved
+    assert len(solved['additions']) == (0 if weekends else len(dates)), solved
 
 
 @pytest.mark.parametrize('name,rule,dates,code,metric,actual', CASES[:4], ids=[c[0] for c in CASES[:4]])
