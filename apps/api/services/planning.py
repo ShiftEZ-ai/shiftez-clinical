@@ -373,7 +373,8 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
-    result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
+    if amendment_scope or not preparation or preparation.get('kind') != 'shift.update':
+        result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
     remember_fix_list(workspace.validation, result, accepted_issues=workspace.accepted_issues or [],
                       summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     if reviewed_candidate and (workspace.validation or {}).get('review_item_decisions'):
@@ -772,7 +773,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
     from packages.domain.rota_summary import rota_summary
-    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [],
+    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [], compact=True,
                            cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result, summary=summary),
             "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
