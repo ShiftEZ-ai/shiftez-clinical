@@ -244,6 +244,28 @@ def test_random_rule_sets_move_unchanged_or_are_reported(seed):
 
 # Through the API: preview, propose, approve, the same checks, undo ------------------------------------------------------
 
+def test_catalogue_solve_proof_keeps_each_greedy_run_within_ninety_seconds(h, monkeypatch):
+    from apps.api.auth import Actor
+    from apps.api.services.rule_catalogue import _solve_proof
+    from packages.domain import cp_sat, generation
+
+    workspace = h.workspace()
+    calls = []
+    def greedy(snapshot, time_budget_seconds=None, *, deterministic=False):
+        calls.append(time_budget_seconds)
+        assert time_budget_seconds == 90
+        assert deterministic is True
+        return {'status': 'candidate_feasible', 'not_applied': GREEDY_NOT_APPLIED}
+    monkeypatch.setattr(generation, 'generate', greedy)
+    monkeypatch.setattr(cp_sat, 'generate', lambda *args, **kwargs: {'status': 'candidate_feasible'})
+    actor = Actor(h.seed['identities']['coordinator'], h.seed['department_id'], h.seed['organisation_id'],
+                  'coordinator', frozenset(['coordinator']), None, 'test')
+    proof = {'identical': True, 'rotas': [{'workspace_id': workspace['id']}]}
+    with transaction(h.app.state.engine) as db:
+        _solve_proof(db, actor, [], proof)
+    assert calls == [90] * 4 and proof['identical']
+
+
 def test_migration_through_governance_checks_the_same_and_undoes(h):
     import json
     from apps.api.services.rule_catalogue import migration_plan, migration_proof
