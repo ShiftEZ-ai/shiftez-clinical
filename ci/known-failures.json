@@ -23,12 +23,6 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
-      "node": "tests/test_assignment_source.py::test_migration_adds_null_columns_without_rewriting_existing_rows",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
       "class": "baseline-error",
       "node": "tests/test_autosched_reuse_p0.py::test_followup_bounds_predecessor_evidence_before_semantic_comparison[case-aeiaccljmbigpjjnegkidoochdfjfcbldfkioijanljaoefalfoonlhlmnhfkacp]",
       "owner": "maintainer",
@@ -1338,12 +1332,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_open_ended_attachments.py::test_sqlite_attachment_upgrade_preserves_rows_and_guards",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_overtime_extra_cover.py::test_empty_extra_cover_type_floors_follow_unfilled_choice[case-ipgfjmnehhofjfdlbhmdeociimefipmcglpalaboifkbakmojeagjnkpchoeohci]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1525,12 +1513,6 @@
     {
       "class": "baseline",
       "node": "tests/test_rota_summary.py::test_list_fingerprints_hold_shared_rows_across_workspaces",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_rotation_attachment_migration.py::test_upgrade_from_current_dev_head_converts_existing_rotation_mentors",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
