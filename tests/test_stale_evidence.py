@@ -126,9 +126,13 @@ def run_pr_verdict(tmp_path, monkeypatch, current, runs, options):
     return json.loads((tmp_path / "verdict.json").read_bytes())
 
 
-def evaluate(tmp_path, monkeypatch, outcome="passed", event="pull_request", branch="dev", scope=None, other_stale=None):
+def evaluate(tmp_path, monkeypatch, outcome="passed", event="pull_request", branch="dev", scope=None, other_stale=None,
+             default="dev"):
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
-    options = verdict.stale_options(event, branch, {"repository": {"full_name": REPOSITORY}}, BASE, PR, scope)
+    if default != "dev":
+        monkeypatch.setattr(policy, "fetch", lambda ref: DEV if ref == "refs/heads/" + default else pytest.fail(ref))
+    data = {"repository": {"full_name": REPOSITORY, "default_branch": default}}
+    options = verdict.stale_options(event, branch, data, BASE, PR, scope)
     outcomes = {NODE: outcome}
     if other_stale is not None:
         outcomes[other_stale] = "passed"
@@ -266,6 +270,25 @@ def test_non_dev_run_is_refused(tmp_path, monkeypatch, evidence, event, branch):
     evidence["run"].update(event=event, head_branch=branch)
     refused(tmp_path, monkeypatch)
     assert not evidence["downloads"]
+
+
+def test_default_main_reads_main_queue_evidence(tmp_path, monkeypatch, evidence):
+    evidence["run"]["head_branch"] = "gh-readonly-queue/main/pr-1"
+    assert evaluate(tmp_path, monkeypatch, branch="main", default="main")
+
+
+@pytest.mark.parametrize(("event", "branch"), [
+    ("merge_group", "gh-readonly-queue/dev/pr-1"), ("schedule", "dev"),
+])
+def test_default_main_refuses_runs_of_the_old_default(tmp_path, monkeypatch, evidence, event, branch):
+    evidence["run"].update(event=event, head_branch=branch)
+    refused(tmp_path, monkeypatch, branch="main", default="main")
+    assert not evidence["downloads"]
+
+
+def test_stale_lookup_needs_the_default_branch():
+    with pytest.raises(ValueError, match="Unexpected repository or default branch"):
+        verdict.stale_options("pull_request", "dev", {"repository": {"full_name": REPOSITORY}}, BASE, PR, None)
 
 
 def test_missing_gh_token_is_refused(tmp_path, monkeypatch, evidence):

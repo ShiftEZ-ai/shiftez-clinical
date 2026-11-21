@@ -280,14 +280,20 @@ class TwoObservationGateTests(unittest.TestCase):
             events = [("pull_request", *case) for case in cases]
             events += [(event, owned, [], "dev", False, False)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
-            events.append(("pull_request", owned, [], "dev", False, False))
+            events = [(*case, "dev") for case in events]
+            # After the rename the default branch main selects, and a dev target runs in full.
+            events += [("pull_request", owned, [], "main", False, True, "main"),
+                       ("pull_request", shared, [], "main", False, True, "main"),
+                       ("pull_request", owned, [], "dev", False, False, "main")]
+            events.append(("pull_request", owned, [], "dev", False, False, "dev"))
             events = [case for case in events if case[0] != "merge_group"]
-            for index, (event, path, labels, branch, deleted, partial) in enumerate(events):
+            for index, (event, path, labels, branch, deleted, partial, default) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
                     (self.folder / "tests/test_unreadable.py").mkdir()
                 payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": branch},
-                                            "labels": [{"name": label} for label in labels]}}
+                                            "labels": [{"name": label} for label in labels]},
+                           "repository": {"default_branch": default}}
                 def event_git(*args):
                     if args[0] == "rev-list":
                         return f"{candidate} {base} {head}".encode()
@@ -307,7 +313,8 @@ class TwoObservationGateTests(unittest.TestCase):
                     if name == "tests/test_legacy_encoding.py":
                         return b"# coding: latin-1\nvalue = '\xe9'\n"
                     return b"x = 1\n"
-                with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index), \
+                with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index,
+                                  default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false"}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
@@ -358,15 +365,19 @@ class TwoObservationGateTests(unittest.TestCase):
             trusted_ci.select()
             self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
         with patch.dict(os.environ, nightly), \
-             patch.object(trusted_ci.policy, "event", return_value={}), \
+             patch.object(trusted_ci.policy, "event", return_value={"repository": {"default_branch": "dev"}}), \
              patch.object(trusted_ci.policy, "git", return_value=pin.encode()):
             trusted_ci.policy.ci_context()
             self.assertIn("base_sha=" + pin, Path(nightly["GITHUB_OUTPUT"]).read_text())
             self.assertIn("release=false", Path(nightly["GITHUB_OUTPUT"]).read_text())
         with patch.object(trusted_verdict, "git", return_value=pin.encode()):
-            self.assertEqual(trusted_verdict.policy_context({}, "schedule", pin), ("dev", pin))
-            with self.assertRaisesRegex(ValueError, "pinned dev"):
-                trusted_verdict.policy_context({}, "schedule", default_sha)
+            for default in ("dev", "main"):
+                data = {"repository": {"default_branch": default}}
+                self.assertEqual(trusted_verdict.policy_context(data, "schedule", pin), (default, pin))
+                with self.assertRaisesRegex(ValueError, "pinned dev"):
+                    trusted_verdict.policy_context(data, "schedule", default_sha)
+            with self.assertRaisesRegex(ValueError, "Unexpected repository or default branch"):
+                trusted_verdict.policy_context({}, "schedule", pin)
 
     def test_dispatch_and_push_fetch_the_measured_pr_before_reader(self):
         import test_working_policy as fixtures

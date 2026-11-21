@@ -68,8 +68,12 @@ def snapshot(sha, ref, run_id, workflow, scanned):
 
 def main():
     env = os.environ
-    if env.get("GITHUB_EVENT_NAME") != "push" or env.get("GITHUB_REF") != "refs/heads/dev":
-        raise SystemExit("Dependency snapshots are submitted for pushes to dev only")
+    try:
+        default = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_bytes())["repository"]["default_branch"]
+    except (KeyError, OSError, TypeError, ValueError):
+        default = None
+    if not isinstance(default, str) or env.get("GITHUB_EVENT_NAME") != "push" or env.get("GITHUB_REF") != "refs/heads/" + default:
+        raise SystemExit("Dependency snapshots are submitted for pushes to the default branch only")
     body = snapshot(env["GITHUB_SHA"], env["GITHUB_REF"], env["GITHUB_RUN_ID"], env["GITHUB_WORKFLOW"],
                     datetime.now(timezone.utc).isoformat(timespec="seconds"))
     request = urllib.request.Request(

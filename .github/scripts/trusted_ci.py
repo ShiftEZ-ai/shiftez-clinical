@@ -71,7 +71,7 @@ def select():
     trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
     if measurement:
-        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
+        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/" + policy.default_branch(data):
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
     elif kind == "schedule":
@@ -93,7 +93,7 @@ def pr_changed_files(base, candidate, git):
 
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
-    if pr["base"]["ref"] != "dev" or any(label["name"] == "full-ci" for label in pr["labels"]):
+    if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
     base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
