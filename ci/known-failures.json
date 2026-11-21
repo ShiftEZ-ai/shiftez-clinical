@@ -630,12 +630,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_legends.py::test_planner_legend_follows_filters_colour_by_names_and_layouts[case-bebaejngncfbocbofoojkefkilechkkimkmmnbpjfjgppfgpimcddkhapgpebjge]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_loading.py::test_schedule_forward_action_applies_in_place_with_two_requests[case-kjikidfnckdbaocffgpkkajibcfedbkmkipgbjdabafmmajfckdjkiikbgiicfgp]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
