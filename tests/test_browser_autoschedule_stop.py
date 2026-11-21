@@ -147,7 +147,8 @@ def test_why_a_search_stopped_is_said_in_the_contract_words(browser, cp_server, 
     w = h.shift(h.workspace(f"Stop reasons {view['width']} {scheme}"), people=[])['workspace']
     context, page, panel = _open(browser, cp_server, h, w, view, scheme)
     try:
-        for reason in sorted(set(GENERATION_STOP_REASONS) - {'optimal', 'cancelled', 'conflict'}):
+        # A proven model cannot improve with more search, so it offers no best-so-far card (#34).
+        for reason in sorted(set(GENERATION_STOP_REASONS) - {'optimal', 'model_proven', 'cancelled', 'conflict'}):
             _stored(h, w, _stopped(reason), checkpoint=True)
             page.reload()
             open_scheduling(page)

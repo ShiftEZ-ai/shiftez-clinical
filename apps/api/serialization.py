@@ -3,7 +3,7 @@ from copy import deepcopy
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.inspection import inspect
-from packages.contracts.schemas import AutoscheduleAnimationSettings, WishSettings
+from packages.contracts.schemas import AutoscheduleAnimationSettings, SCHEDULE_DETAIL_FIELDS, WishSettings
 from packages.domain.time import aware
 from packages.domain.rota_summary import normalized_check, normalized_score
 from packages.domain.serialization import PLAIN, json_default, json_value
@@ -462,14 +462,28 @@ def job_run_context(snapshot):
             'basis': 'frozen_workspace_and_selected_duties'}
 
 
+def schedule_projection(data):
+    session, participant, coverage, check = (SCHEDULE_DETAIL_FIELDS[key]
+                                            for key in ('session', 'participant', 'coverage', 'check'))
+    shifts = [{**{key: value for key, value in row.items() if key not in session},
+               'participants': [{key: value for key, value in p.items() if key not in participant}
+                                for p in row['participants']]} for row in data['shifts']]
+    workspace = data['workspace']
+    if isinstance(workspace.get('validation'), dict):
+        validation = {key: value for key, value in workspace['validation'].items() if key not in check}
+        if isinstance(validation.get('coverage'), list):
+            validation['coverage'] = [{key: value for key, value in row.items() if key not in coverage}
+                                      for row in validation['coverage']]
+        workspace = {**workspace, 'validation': validation}
+    return {**data, 'workspace': workspace, 'shifts': shifts}
+
+
 def job_detail_result(kind, result):
     value = job_result_summary(result)
     def visible_check(check):
-        from packages.domain.validation import INTERNAL_CHECK_KEYS
+        from packages.contracts.schemas import JOB_PRIVATE_CHECK_FIELDS
         # Reuse inputs belong to the retained job, not its findings/coverage UI.
-        private = INTERNAL_CHECK_KEYS | {'fix_list_context', 'fix_list_state', 'fix_list_delta',
-                                        'input_manifest', 'score_dependencies', 'diagnostic_version'}
-        return {key: part for key, part in check.items() if key not in private}
+        return {key: part for key, part in check.items() if key not in JOB_PRIVATE_CHECK_FIELDS}
     if value is not None:
         if kind == 'validation':
             value = visible_check(value)

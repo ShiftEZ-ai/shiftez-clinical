@@ -65,7 +65,7 @@ def test_a_delta_patches_the_held_draft_and_anything_else_reads_it_whole(browser
             coverage={'shift_ids': ['a', 'b'], 'person_ids': ['p2'],
                       'items': [{'shift_id': 'a', 'required': 1, 'scheduled': 1}]})])
         assert [s['id'] for s in new['shifts']] == ['c', 'a']  # the server's order: start, then id
-        assert new['shifts'][1]['participants'] == [{'id': 'pn', 'shift_id': 'a', 'person_id': 'p9'}]
+        assert new['shifts'][1]['participants'] == [{'id': 'pn', 'person_id': 'p9'}]
         assert sorted(f['code'] for f in new['workspace']['validation']['findings']) == ['KEEP', 'NEW']
         assert new['workspace']['validation']['coverage'] == [{'shift_id': 'a', 'required': 1, 'scheduled': 1}]
         assert new['workspace']['revision'] == 5 and new['workspace']['validation']['error_count'] == 0
