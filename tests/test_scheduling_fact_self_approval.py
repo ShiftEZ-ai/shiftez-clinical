@@ -34,7 +34,7 @@ def assert_eligibility(h, fact, role, allowed):
 
 @pytest.mark.parametrize("permission_state", ["absent", "wrong_action", "upcoming", "expired", "revoked", "other_identity"])
 def test_own_fact_stays_undecidable_without_matching_active_permission(h, permission_state):
-    identity(h, "both", ["coordinator", "approver"])
+    identity(h, "both", ["coordinator", "approver"], person=h.seed["people"][0])
     fact = h.command("both", "person.workload.propose", workload(h))["fact"]
     if permission_state != "absent":
         changes = {"wrong_action": {"actions": ["exception.approve"]},
@@ -57,13 +57,13 @@ def test_own_fact_stays_undecidable_without_matching_active_permission(h, permis
 
 @pytest.mark.parametrize("permission_subject", ["identity", "role", "same_person"])
 def test_permitted_self_approval_is_offered_but_requires_real_reason_and_records_use(h, permission_subject):
-    person = h.seed["people"][1] if permission_subject == "same_person" else None
+    person = h.seed["people"][1] if permission_subject == "same_person" else h.seed["people"][0]
     identity(h, "both", ["coordinator", "approver"], person=person)
     reviewer = "both"
     if permission_subject == "same_person":
         identity(h, "alternate", ["approver"], person=person)
         reviewer = "alternate"
-    fact = h.command("both", "person.workload.propose", workload(h))["fact"]
+    fact = h.command("both", "person.workload.propose", workload(h, person_id=person))["fact"]
     changes = {"identity_id": None, "role": "approver"} if permission_subject == "role" else {
         "identity_id": h.seed["identities"][reviewer]}
     permission = grant(h, **changes)
@@ -113,11 +113,17 @@ def test_self_approval_permission_does_not_grant_approver_authority(h):
 
 
 def test_fact_subject_can_independently_approve_someone_elses_proposal_without_permission(h):
-    identity(h, "subject_approver", ["approver"], person=h.seed["people"][0])
+    reviewer = identity(h, "subject_approver", ["coordinator", "approver"], person=h.seed["people"][0])
     fact = h.command("coordinator", "person.workload.propose", workload(h))["fact"]
+    assert_eligibility(h, fact, "subject_approver", False)
+    refused = h.command("subject_approver", "person.workload.activate", {"reason": "Reviewed the proposal"},
+                        fact["id"], fact["revision"], status=403)
+    assert refused["error"]["code"] == "SELF_APPROVAL"
+    permission = h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["rule.activate"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit personal fact permission"})["permission"]
     assert_eligibility(h, fact, "subject_approver", True)
-    activated = h.command("subject_approver", "person.workload.activate", {"reason": "Routine update"},
+    activated = h.command("subject_approver", "person.workload.activate", {"reason": "Reviewed with independent cover"},
                           fact["id"], fact["revision"])["fact"]
     assert activated["status"] == "active"
     event = next(e for e in h.get("auditor", "/api/audit")["events"] if e["action"] == "person.workload.activate")
-    assert "self_approved" not in event["detail"]
+    assert event["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]

@@ -4,6 +4,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from apps.api import models as m
+from apps.api.db import transaction
 from packages.contracts.schemas import EXPLICIT_ROLES, ROLE_NAMES
 from .governance_support import identity
 from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
@@ -35,23 +37,24 @@ def test_additional_rules_are_counted_context_with_complete_readable_effects(bro
     context, page = sign_in(browser, live_server, role, viewport={'width': width, 'height': 900})
     try:
         page.emulate_media(color_scheme=scheme)
+        if role == 'credentialer':  # no rules read permission: the Rules page is restricted and the rule lookup refused
+            page.evaluate("location.hash='rules'")
+            expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'restricted')
+            assert h.client(role).get('/api/policies/applies', params={'person_id': h.seed['people'][0], 'day': '2026-10-05'}).status_code == 403
+            return
         navigate(page, 'rules')
         expect(page.locator('#main .rc-kept')).to_have_count(0)
         page.get_by_role('button', name=re.compile('^More rule actions')).click()
         lookup = page.get_by_role('menuitem', name='Which rule applies?', exact=True)
-        if role == 'credentialer':
-            expect(lookup).to_have_count(0)
-            assert h.client(role).get('/api/policies/applies', params={'person_id': h.seed['people'][0], 'day': '2026-10-05'}).status_code == 403
-        else:
-            expect(lookup).to_be_visible()
-            lookup.click()
-            dialog = page.get_by_role('dialog', name='Which rule applies?', exact=True)
-            with page.expect_response(lambda response: '/api/policies/applies?' in response.url) as applies:
-                dialog.get_by_label('Person', exact=True).select_option(h.seed['people'][0])
-            assert applies.value.status == 200
-            expect(dialog).to_contain_text(current['name'])
-            page.keyboard.press('Escape')
-            expect(dialog).to_have_count(0)
+        expect(lookup).to_be_visible()
+        lookup.click()
+        dialog = page.get_by_role('dialog', name='Which rule applies?', exact=True)
+        with page.expect_response(lambda response: '/api/policies/applies?' in response.url) as applies:
+            dialog.get_by_label('Person', exact=True).select_option(h.seed['people'][0])
+        assert applies.value.status == 200
+        expect(dialog).to_contain_text(current['name'])
+        page.keyboard.press('Escape')
+        expect(dialog).to_have_count(0)
         expect(page.get_by_role('heading', name='Not in the catalogue yet', exact=True)).to_have_count(0)
         page.keyboard.press('Escape')
         opener = page.get_by_role('button', name=re.compile('^More rule actions'))
@@ -206,8 +209,10 @@ def test_completed_rule_history_keeps_dates_whole_and_native_scroll_reachable(br
 
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_catalogue_exception_count_independent_approval_reload_and_person_source(browser, live_server, h, width, scheme):
-    flag(h)
     person_id = h.seed['people'][0]
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Identity, h.seed['identities']['admin']).person_id = person_id
+    flag(h)
     person_name = next(p for p in h.get('admin', '/api/catalogues')['people'] if p['id'] == person_id)['display_name']
     policy = h.policy({'kind': 'max_duties', 'maximum': 2, 'window': 'week'}, exception=True)
     payload = {'policy_id': policy['id'], 'person_id': person_id, 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}
@@ -215,7 +220,7 @@ def test_catalogue_exception_count_independent_approval_reload_and_person_source
     h.command('approver', 'exception.approve', {'reason': 'Independent earlier review'}, earlier['id'], earlier['revision'])
     proposed = h.command('admin', 'exception.create', {**payload, 'reason': 'Pending bounded exception for catalogue journey'})['record']
     before_policy = next(p for p in h.get('admin', '/api/catalogues')['policies'] if p['id'] == policy['id'])
-    # Admin has the approver role, but this request is their own work and has no self-approval permission.
+    # Admin has the approver role and is the subject of this exception.
     assert 'exception.approve' not in h.get('admin', '/api/me')['self_approval']
     refusal = h.command('admin', 'exception.approve', {'reason': 'Own request must remain pending'}, proposed['id'], proposed['revision'], status=403)
     assert refusal['error']['code'] == 'SELF_APPROVAL'

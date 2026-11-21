@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, delete, func, literal, select, union_all
+from sqlalchemy import and_, case, delete, func, literal, select, true, union_all
 from sqlalchemy.orm import defer
 from sqlalchemy.exc import DBAPIError
 
@@ -48,34 +48,51 @@ def viewer(actor):
     require(sees_everyone(actor) or bool(actor.person_id), "FORBIDDEN", "Your account is not linked to a person", 403)
 
 
-def _dashboard_etag(db, actor, kind, *values, workspace_id=None):
-    """Cheap validator for a fairness dashboard read before its domain projection."""
+def _dashboard_inputs(db, actor, workspace_id):
     viewer(actor)
-    from .conditional_reads import revision_etag
-    department = db.get(m.Department, actor.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
     P, W, L = m.Publication, m.Workspace, m.FairnessLedger
+    ledger = select(func.count(L.id), func.coalesce(func.sum(L.id), 0),
+                    func.max(L.id), func.max(L.bucket)).where(L.department_id == actor.department_id).subquery()
+    D, O = m.Department, m.Organisation
+    query = (select(*ledger.c, D.revision, O.revision, O.input_revision, O.availability_revision)
+             .select_from(D).join(O, O.id == D.organisation_id).join(ledger, true())
+             .where(D.id == actor.department_id))
     if workspace_id:
-        workspace = scoped(db, W, workspace_id, actor, options=(defer(W.validation), defer(W.review_snapshot)))
+        options = (defer(W.validation), defer(W.review_snapshot))
+        # Keep the fetched workspace alive for scoped() to run its usual visibility checks.
+        revisions = db.execute(query.add_columns(W).outerjoin(
+            W, and_(W.id == workspace_id, W.department_id == D.id)).options(*options)).one()
+        workspace = scoped(db, W, workspace_id, actor, options=options)
         target = (workspace.id, workspace.revision, workspace.content_revision)
     else:
+        workspace = None
         target = db.execute(select(
             func.count(P.id), func.coalesce(func.sum(P.revision), 0),
             func.max(P.revision), func.max(P.created_at)
         ).where(P.department_id == actor.department_id, P.current.is_(True))).one()
-    ledger = db.execute(select(func.count(L.id), func.coalesce(func.sum(L.id), 0),
-                               func.max(L.id), func.max(L.bucket)).where(
-        L.department_id == actor.department_id)).one()
+        revisions = db.execute(query).one()
+    return (tuple(target), revisions[:4], *revisions[4:8]), workspace
+
+
+def _dashboard_tag(kind, actor, values, inputs):
+    from .conditional_reads import revision_etag
     return revision_etag(kind, actor.department_id, actor.identity_id, actor.person_id,
-                         sorted(actor.roles), *values,
-                         tuple(target), tuple(ledger), department.revision,
-                         organisation.revision, organisation.input_revision,
-                         organisation.availability_revision)
+                         sorted(actor.roles), *values, *inputs)
+
+
+def _dashboard_etag(db, actor, kind, *values, workspace_id=None):
+    """Cheap validator for a fairness dashboard read before its domain projection."""
+    inputs, _ = _dashboard_inputs(db, actor, workspace_id)
+    return _dashboard_tag(kind, actor, values, inputs)
 
 
 def goals_etag(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-    return _dashboard_etag(db, actor, "fairness-goals-v2", workspace_id, who, starts_on, ends_on,
-                           workspace_id=workspace_id)
+    inputs, _ = _dashboard_inputs(db, actor, workspace_id)
+    return _goals_tag(actor, workspace_id, who, starts_on, ends_on, inputs), inputs
+
+
+def _goals_tag(actor, workspace_id, who, starts_on, ends_on, inputs):
+    return _dashboard_tag("fairness-goals-v2", actor, (workspace_id, who, starts_on, ends_on), inputs)
 
 
 def exposure_etag(db, actor, rows=None, cols=None, pairing='present', type_ids=None, service_ids=None,
@@ -780,12 +797,8 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
             'score_trend': score_trend(db, actor.department_id, first, last) if planner else []}
 
 
-def _goal_workspace(db, actor, workspace_id=None):
-    """Resolve the workspace anchoring the goals projection without loading its snapshot."""
-    if workspace_id:
-        require(sees_everyone(actor), 'FORBIDDEN', 'Drafts are visible to planners only', 403)
-        return scoped(db, m.Workspace, workspace_id, actor, options=(defer(m.Workspace.validation),
-                                                                       defer(m.Workspace.review_snapshot)))
+def _published_goal_workspace(db, actor):
+    """Resolve the published workspace anchoring the goals projection."""
     department = db.get(m.Department, actor.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
     today = clock_now().astimezone(ZoneInfo(organisation.timezone)).date()
@@ -800,14 +813,21 @@ def _goal_workspace(db, actor, workspace_id=None):
     return db.get(m.Workspace, latest, options=(defer(m.Workspace.validation), defer(m.Workspace.review_snapshot))) if latest else None
 
 
-def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
+def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None, *, validator=None):
     """Read goals through the durable scoped projection; a miss uses the canonical full calculation once."""
     viewer(actor)
-    workspace = _goal_workspace(db, actor, workspace_id)
-    if workspace is None:
-        return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
+    if workspace_id:
+        require(sees_everyone(actor), 'FORBIDDEN', 'Drafts are visible to planners only', 403)
+        inputs, workspace = _dashboard_inputs(db, actor, workspace_id)
+    else:
+        workspace = _published_goal_workspace(db, actor)
+        if workspace is None:
+            return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
+        inputs, _ = _dashboard_inputs(db, actor, None)
     from .read_projections import cached
-    stamp = goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+    # A concurrent commit can change the projection inputs after the HTTP check.
+    stamp = validator[0] if validator is not None and validator[1] == inputs else _goals_tag(
+        actor, workspace_id, who, starts_on, ends_on, inputs)
     return cached(db, [workspace.id], 'fairness_goals', {workspace.id: stamp},
                   lambda _: _goals_uncached(db, actor, workspace_id, who, starts_on, ends_on))[workspace.id]
 

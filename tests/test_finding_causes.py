@@ -147,7 +147,7 @@ def test_sessions_without_clinic_eligibility_offer_eligibility_fix(cause_data):
 
 
 @pytest.mark.parametrize('blocker', ['leave', 'away'])
-def test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero(cause_data, blocker):
+def test_leave_and_full_away_rotation_prorate_commitment_to_zero(cause_data, blocker):
     data, pid = cause_data
     quota(data, pid)
     if blocker == 'leave':
@@ -155,13 +155,21 @@ def test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero(caus
             'start': '2026-10-04T00:00:00+03:00', 'end': '2026-10-11T00:00:00+03:00'}]
     else:
         away(data, pid, '2026-10-04', '2026-10-11')
-        checked = evaluate(data)
-        [row] = checked['quota_report']['rows']
-        assert (row['amount'], row['actual'], row['status']) == (0, 0, 'met')
-        assert row['proration']['working_days'] == 0
-        assert not any(f['code'] == 'QUOTA_BELOW_MINIMUM' for f in checked['findings'])
-        return
+    checked = evaluate(data)
+    [row] = checked['quota_report']['rows']
+    assert (row['amount'], row['actual'], row['status']) == (0, 0, 'met')
+    assert row['proration']['working_days'] == 0
+    assert not any(f['code'] == 'QUOTA_BELOW_MINIMUM' for f in checked['findings'])
+
+
+def test_partial_leave_keeps_unreachable_minimum_cause_and_privacy(cause_data):
+    data, pid = cause_data
+    quota(data, pid, amount=1)
+    data['availability'] = [{'id': uid('partial-leave'), 'person_id': pid, 'kind': 'approved_leave',
+        'start': '2026-10-04T00:00:00+03:00', 'end': '2026-10-08T00:00:00+03:00'}]
+
     result = finding(data)
+
     assert result['cause']['code'] == 'person_unavailable'
     assert result['cause']['sessions_found'] == 1 and result['cause']['eligible_people'] == 0
     assert result['cause']['possible'] == 0
