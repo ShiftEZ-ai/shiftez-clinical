@@ -968,7 +968,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False) -> dict:
+                    rule_map_bindings: bool = False, fairness_goals_out: list[dict] | None = None) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1348,6 +1348,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result["fairness_strengths"] = scoring.strengths.model_dump()
     result['generation_options'] = json_value(department_settings.get('generation_defaults') or {})
     goals = balance_goals(result) if include_fairness else []
+    if fairness_goals_out is not None:
+        fairness_goals_out.extend(goals)
     if goals and include_fairness_history:
         from .services.fairness import history
         if any(g['definition']['rule']['metric'] in ('overtime_duties', 'overtime_hours') for g in goals):
