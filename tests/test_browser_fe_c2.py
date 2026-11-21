@@ -267,7 +267,7 @@ def test_the_approver_sees_what_an_amendment_changes(browser, live_server, h):
             data['change_diff'] = {'base_publication_id': 'p1', 'sessions': [{'before': shift, 'after': after}],
                                    'first_changed_date': '2026-10-04', 'review_week_start': '2026-10-04'}
             route.fulfill(response=reply, body=json.dumps(data))
-        page.route(f'**/api/workspaces/{w["id"]}', detail)
+        page.route(f'**/api/workspaces/{w["id"]}?view=schedule', detail)
         open_rota(page, w['id'])
         page.get_by_role('button', name='Approve rota').click()
         changes = page.get_by_role('dialog').get_by_role('region', name='What changes')

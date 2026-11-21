@@ -74,7 +74,9 @@ def test_own_save_is_not_refreshed_twice_by_the_live_pulse(browser, live_server,
         assert lists == [], lists  # its own pulse reads nothing
         # Undo applies in place: from the reply's delta (edit_delta.ts; the draft read again only when the reply has none),
         # never the session, the lists in memory or the rota list.
-        assert sent.count('workspaces/' + w['id']) <= 1 and not [u for u in sent if u == 'me' or u.startswith(('catalogues', 'workspaces?'))], sent
+        detail = 'workspaces/' + w['id']
+        reads = sum(u in (detail, detail + '?view=schedule') for u in sent)
+        assert reads <= 1 and not [u for u in sent if u == 'me' or u.startswith(('catalogues', 'workspaces?'))], sent
     finally:
         context.close()
 
