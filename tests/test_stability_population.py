@@ -217,6 +217,8 @@ def test_department_scale_population_apply_preserves_authorised_cover_gap_budget
     job = create(h, w, population, generation_options={'mode': 'rebalance'})
     with transaction(h.app.state.engine, write=True) as db:
         row = db.get(m.Job, job['id'])
+        row.input_snapshot = {**row.input_snapshot, **baseline}
+        row.input_fingerprint = baseline['fingerprint']
         target = added[0]
         removed = next(p for p in full['participants'] if p['person_id'] == selected[-1])
         row.status = 'succeeded'

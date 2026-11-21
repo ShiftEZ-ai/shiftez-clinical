@@ -252,7 +252,7 @@ def test_december_requirements_conflict_cannot_be_applied_or_change_the_draft(h)
     with transaction(h.app.state.engine, write=True) as db:
         row = m.Job(department_id=workspace['department_id'], workspace_id=workspace['id'],
                     requested_by=h.seed['identities']['coordinator'], kind='generation', status='succeeded',
-                    input_fingerprint=source['fingerprint'], input_snapshot={},
+                    input_fingerprint=source['fingerprint'], input_snapshot=source,
                     result={'status': 'requirements_conflict', 'additions': [], 'removals': []})
         db.add(row)
         db.flush()

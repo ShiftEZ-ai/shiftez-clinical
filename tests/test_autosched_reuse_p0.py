@@ -19,6 +19,7 @@ from packages.domain.solver_rules import COMPILER_VERSION
 @pytest.fixture
 def followup():
     engine = create_engine('sqlite://')
+    m.ReadProjectionWarmCursor.__table__.create(engine)
     m.Job.__table__.create(engine)
     now = datetime(2026, 10, 3, 6, tzinfo=timezone.utc)
     snapshot = {'fingerprint': 'frozen-inputs', 'workspace': {'id': 'workspace'},

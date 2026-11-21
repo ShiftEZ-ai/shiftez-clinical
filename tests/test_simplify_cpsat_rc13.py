@@ -139,11 +139,10 @@ def test_activated_simplify_catalogue_runs_real_cp_sat_feasibility_without_defin
         'catalogue_id': 'duties_per_week', 'catalogue_version': 1, 'lines': catalogue_rule(38)['lines'],
         'reason': 'Synthetic legacy catalogue fixture'})['record']
     h.command('approver', 'policy.activate', {'reason': 'Independent fixture review'}, original['id'], original['revision'])
-    workspace = h.workspace()
-    h.shift(workspace)
     conversion = proposed(h)
     h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent CP-SAT regression review'},
               conversion['id'], conversion['revision'])
+    workspace = h.shift(h.workspace())['workspace']
     snapshot = h.snapshot(workspace)
     assert any('_source_index' in line for policy in snapshot['policies']
                for line in policy['definition']['rule'].get('lines', []))
