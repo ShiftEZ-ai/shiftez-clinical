@@ -490,16 +490,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_audit_rule_context.py::test_additional_rules_are_counted_context_with_complete_readable_effects[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-05",
-    "issue": 92,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_browser_audit_schedule_resize.py::test_panel_replacement_keeps_or_discards_the_rule_form[case-chchkifohodpdgebfapjdbaophflgjpgjbodchojjegmibboonibbjdboacmdnlh]",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -2266,26 +2256,6 @@
     "added": "2026-11-19",
     "expires": "2026-12-16",
     "issue": 703,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_deployment_preflight.py::test_production_keyless_password_preflight_refusal_does_not_depend_on_legacy_flag[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-11",
-    "issue": 23,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_deployment_preflight.py::test_production_keyless_password_preflight_refusal_does_not_depend_on_legacy_flag[case-mojafnmhhgpnfnkfdhbmeaefjfnmiemgolelnabcinibmdcjppdhkkchkgdgcbjp]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-11",
-    "issue": 23,
     "milestone": "v0.1.0",
     "blocker": false
   },
