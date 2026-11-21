@@ -223,7 +223,7 @@ def test_selected_success_keeps_whole_rota_blockers_and_comparison_requires_fres
             after = job['result']['fix_list_after']
             # One must-fix cause per whole-rota problem: the selection's success does not hide any of them.
             assert job['result']['fix_list_before']['summary']['must'] == 1 and after['summary']['must'] == 3
-            page.route('**/api/workspaces/' + w['id'], lambda route: route.fulfill(json=drawn))
+            page.route('**/api/workspaces/' + w['id'] + '?view=schedule', lambda route: route.fulfill(json=drawn))
             page.route('**/api/jobs/' + latest['id'], lambda route: route.fulfill(json=result))
             page.reload()
             open_rota(page, w['id'])

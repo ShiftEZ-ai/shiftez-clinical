@@ -1,7 +1,8 @@
 import {el,button,badge,plural,notify,icon,popover,formatDate,formatTime,formatDay,dateUnits,toLocal,footerStatus,note,reportError,spanLabel,type Child} from './dom.js';
 import {dataTable,type Column} from './table_view.js';
 import {selectionBar,type SelectionAction} from './selection_bar.js';
-import {command,request,get,undoInPlace,takeUndo,ApiError} from './api.js';
+import {command,request,get,undoInPlace,takeUndo,ApiError,rotaWhole} from './api.js';
+import {scheduleSession} from './edit_delta.js';
 import {savingMark,savedMark,failedMark,conflict} from './loading.js';
 import {leaveDates,leavePill,issueKind,findingNumbers,alsoShort,causeText,causeHead,issueKey} from './findings.js';
 import type {FillIssue} from './planner_week.js';
@@ -44,7 +45,7 @@ type Preview={plan:Row[];plan_hash:string;replaceable:number;open:number;keys:Se
 
 export async function issuesPage(target:HTMLElement,workspaceId:string,h:IssuesHooks){
   if(!workspaceId){target.append(note('Open a draft rota first: the issues belong to one draft.','warning'));return;}
-  const data=await get<WorkspaceData>('/api/workspaces/'+workspaceId);
+  const data=await rotaWhole(workspaceId);
   let w=data.workspace;const zone=h.zone(),canEdit=h.editable(w);
   let fresh=!!w.validation&&w.validation.fingerprint===data.current_fingerprint;
   const checkNotice=note(w.validation?'The rota inputs changed. Check the rota again before resolving its issues.':'Check the rota to list its issues.','warning');
@@ -242,7 +243,7 @@ export async function issuesPage(target:HTMLElement,workspaceId:string,h:IssuesH
     // Successful batches and Undo revalidate; compact command replies carry that check at the top level.
     const checked=result.validation||result.workspace?.validation;
     if(checked){w.validation=checked;fresh=!!checked.fingerprint;checkNotice.hidden=fresh;}
-    for(const s of result.shifts as Row[])shifts.set(s.id,s);
+    for(const s of result.shifts as Row[])shifts.set(s.id,scheduleSession(s));
     for(const id of result.removed_shift_ids as string[])shifts.delete(id);
     for(const r of rows)if(r.shift)r.shift=shifts.get(r.shift.id)||r.shift;
   }
