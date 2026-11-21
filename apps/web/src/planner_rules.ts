@@ -22,10 +22,10 @@ export type Num={field:string;value:number;maximum?:number|null;unit:string;stri
 /** The rota's workload targets dock (app.ts): rules for this rota are this panel's, the server's rule map. */
 export const ROTA_TARGETS='Workload targets for this rota';
 export type MapRule={id:string;name:string;kind:string;severity:string;strength?:string;safety:boolean;exception_allowed:boolean;adjustable:boolean;overridable?:boolean;
-  number:Num|null;department_value:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
+  number:Num|null;department_value:number|null;binding_value?:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
   overrides:string[];overridden_by:string[];person_side?:boolean;session_side?:boolean;starts_on?:string;ends_on?:string|null;block?:[string,string]|null;
   named:{people:string[];services:string[];locations:string[];types:string[];weekdays:number[]|null;dated:boolean};
-  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:Row[];
+  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:(Row & {binding_value?:number|null})[];
   /** Who follows a line that names no person (a programme's or ranks' line): [first day, end day, index into lines]. */
   line_people?:Record<string,[number,number,number][]>;
   /** Sessions where a person's days say the rule holds but that session does not (a skill held at other clinics only). */
@@ -280,7 +280,17 @@ function markersAt(t:Target):Marker[]{
 const unitWord=(n:Num)=>n.unit==='hours'?'h':n.unit==='minutes'?'min':n.value===1&&n.maximum==null?n.unit==='people'?'person':n.unit.replace(/ies$/,'y').replace(/s$/,''):n.unit;
 export const ruleNumber=(n:Num|null)=>numText(n);
 const numOne=(v:number)=>Number.isInteger(v)?String(v):v.toFixed(1);
-const numText=(n:Num|null)=>n?`${numOne(n.value)}${n.maximum!=null?`–${numOne(n.maximum)}`:""} ${unitWord(n)}`.trim():"";
+const numRange=(n:Num)=>`${numOne(n.value)}${n.maximum!=null?`–${numOne(n.maximum)}`:""}`;
+const numText=(n:Num|null)=>n?`${numRange(n)} ${unitWord(n)}`.trim():"";
+/** The live value when it differs from the number shown (a safety rule's map may already show the live value). */
+const bindsNow=(n:Num|null,binds?:number|null)=>n&&binds!=null&&binds!==n.value?binds:null;
+const both=(n:Num,binds:number)=>`${numRange(n)}, now binds ${numText({...n,value:binds,maximum:null})}`;
+/** A number a revised mandatory rule now binds stricter than the draft captured (the rule map's binding_value): both. */
+export const numBoth=(n:Num|null,binds?:number|null)=>{const v=bindsNow(n,binds);return v!=null?'captured '+both(n!,v):numText(n);};
+/** The same as a sentence for secondary text; nothing when the captured number still binds. */
+export const bindsNote=(n:Num|null,binds?:number|null)=>{const v=bindsNow(n,binds);return v!=null?`Captured ${both(n!,v)}.`:'';};
+/** The binding value for the number shown: a person's own line's, else the rule's. */
+const bindsOf=(r:MapRule,own?:Row)=>(own?own.binding_value:r.binding_value)??null;
 const STATE:Record<string,[string,string,string]>={breach:['err','!','Broken'],warning:['warn','!','Warning'],met:['ok','✓','Met'],unchecked:['na','–','Not checked yet'],off:['na','–','Switched off for this rota'],replaced:['na','↷','Replaced here']};
 const markerWhat:Record<string,string>={template_line:'Own number',override:'Replaced here',exception:'Person exception',rota_adjustment:'Changed for this rota',target_override:'Target changed for this rota'};
 /** Who made a change: "You", the server's name for them, or nothing (an identity id is never shown). */
@@ -303,7 +313,7 @@ export function ruleSummary(t:Target):Node[]{
     named&&t.kind!=='rota'?el('span',{class:'muted'},` · ${named} specific to ${targetWords(t)}`):'');
   const lines=items.slice(0,4).map(i=>{const [tone,glyph]=STATE[i.state];
     return el('li',{class:'rk-hc-line '+tone},stateMark(i),el('span',{class:'rk-hc-name truncate'},i.rule.name),
-      i.number?el('span',{class:'rk-num'},numText(i.number)):'',i.binding?el('span',{class:'rk-win'},'strictest'):'');});
+      i.number?el('span',{class:'rk-num'},numBoth(i.number,bindsOf(i.rule,i.own))):'',i.binding?el('span',{class:'rk-win'},'strictest'):'');});
   const more=items.length>4?[el('li',{class:'hc-more'},overflowMore(items.length-4,['rule','rules'],{as:'span',cls:''}))]:[];
   const ex=marks.slice(0,2).map(m=>el('li',{class:'rk-hc-line mark'},el('span',{class:'rk-dot','aria-hidden':'true'},icon('fork')),el('span',{class:'rk-hc-name'},m.text,m.by?el('small',{},markerWho(m)):'')));
   return [head,el('ul',{class:'rk-hc-lines'},...lines,...more,...ex),...(marks.length>2?[overflowMore(marks.length-2,['exception','exceptions'],{as:'span',cls:'rk-hc-more'})]:[]),
@@ -735,7 +745,7 @@ function wordsOf(i:Item,marked=false):Words{
   const text=stop(own||s?.text||told?.summary_sentence||(p?hooksNow!.sentence(p.definition.rule,p.definition):r.name));
   const state=i.state==='breach'?counted(i.errors,'Not met.','Not met # times.'):i.state==='warning'?counted(i.warnings,'Could be better.','Could be better in # places.')
     :i.state==='off'?'Switched off for this rota.':i.state==='replaced'?'A more specific rule decides here.':i.state==='unchecked'?'Not checked yet.':'Met.';
-  const notes=[r.adjusted&&i.state!=='off'&&r.adjusted.applied!==false?'Changed for this rota.':'',marked?'An exception applies here.':'',
+  const notes=[bindsNote(i.number,bindsOf(r,i.own)),r.adjusted&&i.state!=='off'&&r.adjusted.applied!==false?'Changed for this rota.':'',marked?'An exception applies here.':'',
     r.proposal?'A change is waiting for approval.':'',i.of?`Applies to ${i.hits} of ${i.of}.`:''];
   return {text,status:[state,...notes].filter(Boolean).join(' '),changed:changed(r)||marked||!!r.proposal,unexplained:!!told?.unexplained};
 }
@@ -799,7 +809,7 @@ function ruleDetail(i:Item,t:Target,redraw:()=>void):HTMLElement{
 function detailWords(i:Item,t:Target):string[]{
   const r=i.rule,line=String(i.own?.id||''),list=said?.get(r.id)?.sentences;
   const byLine=list?.find(x=>!!line&&!!x.source_line_ids?.includes(line)),s=byLine||(!i.own&&list?.length===1?list[0]:undefined);
-  const dept=r.adjusted?.mode==='set'&&r.department_value!=null&&r.number?`: ${numText({...r.number,value:r.department_value,maximum:null})}`:'';
+  const dept=r.adjusted?.mode==='set'&&r.department_value!=null&&r.number?`: ${numBoth({...r.number,value:r.department_value,maximum:null},r.binding_value)}`:'';
   const source=r.workspace_only?'From a rule added for this rota only.'
     :`From the department rule${s&&s.who&&s.who!=='Everyone'?' for '+s.who:''}${s&&s.where&&s.where!=='All clinics and duties'?' at '+s.where:''}${!byLine&&i.own?` (${lineWords(i.own)})`:''}${dept}`;
   const adjustments=adjustmentsOf(r).map(a=>{const who=byWho(a.by,a.by_name),person=a.person_id?fullNameOf(ctxNow?.catalogues.people.find(p=>p.id===a.person_id)):'';
@@ -862,11 +872,12 @@ function rotaOnly(r:MapRule):HTMLElement{
   const title=el('span',{class:'rk-act-title'},label);
   box.append(title);
   if(r.adjustable&&r.number&&!(r.adjusted&&r.adjusted.applied===false)){
-    const n=el('input',{type:'number',class:'rk-num-input',min:r.safety&&r.number.stricter==='higher'?(r.department_value??r.number.value):0,...(r.safety&&r.number.stricter==='lower'?{max:r.department_value??r.number.value}:{}),step:'any',value:String(r.number.value),'aria-label':`New number for “${r.name}” in this rota`,required:true}) as HTMLInputElement;
+    const now=bindsNow(r.number,r.binding_value);
+    const n=el('input',{type:'number',class:'rk-num-input',min:r.safety&&r.number.stricter==='higher'?(r.department_value??r.number.value):0,...(r.safety&&r.number.stricter==='lower'?{max:r.department_value??r.number.value}:{}),step:'any',value:String(r.number.value),'aria-label':`New number for “${r.name}” in this rota${now!=null?`, ${numBoth(r.number,now)}`:''}`,required:true}) as HTMLInputElement;
     const use=el('button',{type:'submit',class:'button primary small'},'Use for this rota');
     box.addEventListener('submit',e=>{e.preventDefault();if(!n.reportValidity()||!why.reportValidity())return;const v=Number(n.value);if(!n.value||v===r.number!.value){n.focus();return;}
       use.disabled=true;apply('set',v).catch(err=>{use.disabled=false;notify((err as Error).message,'error',undefined,err);});});
-    box.append(el('span',{class:'rk-inline-row'},n,el('span',{class:'muted'},r.number.unit),use));
+    box.append(el('span',{class:'rk-inline-row'},n,el('span',{class:'muted'},r.number.unit+(now!=null?`, now binds ${numOne(now)}`:'')),use));
   }
   box.append(why);
   const back=r.adjusted?button('Back to the department rule',act('clear'),'secondary small'):null;

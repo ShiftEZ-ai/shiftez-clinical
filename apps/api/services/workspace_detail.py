@@ -15,6 +15,15 @@ from .workspace_access import access_record
 from .workspace_reads import stored_checks
 
 
+def full_shifts(db, workspace_id):
+    shift = m.Shift
+    # Mapped columns retain workspace visibility criteria without creating Shift instances.
+    columns = [getattr(shift, key) for key in shift.__mapper__.column_attrs.keys()]
+    rows = db.execute(select(*columns).where(shift.workspace_id == workspace_id)
+                      .order_by(shift.start, shift.id)).mappings()
+    return shift_records(db, rows)
+
+
 def compact(db, actor, workspace):
     from apps.api.workspace_baselines import attach as attach_baseline
     check = stored_checks(db, [workspace])[workspace.id]
