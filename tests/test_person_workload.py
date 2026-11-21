@@ -102,7 +102,7 @@ def test_workload_compares_exact_quota_bounds_and_dated_person_line_limits(h):
         '2026-10-01', '2026-11-01', 2, 3, 'below_target')
     limits = [r for r in result['limits'] if r['policy_id'] == cap['id']]
     week_start = local_midnight(date(2026, 10, 4), 'Asia/Riyadh')
-    assert {(r['maximum'], r['actual']) for r in limits if aware(r['start']) == week_start} == {(5, 1), (2, 1)}
+    assert {(r['maximum'], r['actual']) for r in limits if aware(r['start']) == week_start} == {(5, 1), (2, 2)}
     assert not [r for r in result['limits'] if r['kind'] == 'max_hours']
 
 

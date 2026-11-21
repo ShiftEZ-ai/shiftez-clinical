@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
 from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
-from packages.contracts.schemas import TypeDefinition, requirement_key, safety_rule, validate_attributes
+from packages.contracts.schemas import TypeDefinition, WORKLOAD_COUNT_KINDS, requirement_key, safety_rule, validate_attributes
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
@@ -39,6 +39,8 @@ INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 NOT_PERSON_RULES = frozenset({"restriction", "block_quota", "minimum_cover", "maximum_participants", "supervision_limit", "spread_evenly",
                               "allocation_preference", "allocation_overtime", "balance_goal", "team_lead_requirement"}) | SHAPE_KINDS
 PERSON_ROWS = ("memberships", "grants", "eligibilities", "availability", "rotations", "programme_memberships", "mentorships")
+# Quotas and balance own their periods; minimum rest already selects every neighbouring commitment.
+VALIDITY_FOCAL_ONLY_KINDS = WORKLOAD_COUNT_KINDS - {'block_quota', 'balance_goal', 'min_rest'}
 
 
 class PersonRowsIndex(dict):
@@ -930,6 +932,13 @@ def matching_size(seats: list[str], capabilities: dict[str, set[str]]) -> int:
     return sum(assign(i, set()) for i in range(len(seats)))
 
 
+def counting_policy(policy):
+    """Validity selects focal duties, never the work in a run or an independent counting window."""
+    if policy['definition'].get('rule', {}).get('kind') in VALIDITY_FOCAL_ONLY_KINDS:
+        return {**policy, 'starts_on': None, 'ends_on': None}
+    return policy  # A block_quota's dates still define its counting block.
+
+
 def workload_matches(data, policy, person_id, shift, a, b):
     """Known person scope selects institutional work without filtering out other departments."""
     # Greedy trials change participants, while these dated scope facts stay fixed for the run.
@@ -943,10 +952,11 @@ def workload_matches(data, policy, person_id, shift, a, b):
         cached = entry[2].get(key)
         if cached is not None and cached[0] is shift:
             return cached[1]
+    counted = counting_policy(policy)
     zone = data['organisation']['timezone']
-    lo = max(a, _midnight(policy['starts_on'], zone)) if policy.get('starts_on') else a
-    hi = min(b, _midnight(policy['ends_on'], zone)) if policy.get('ends_on') else b
-    matched = within_dates(policy, a, b, zone) and lo < hi and scope_applies(data, scope, person_id, shift, lo, hi)
+    lo = max(a, _midnight(counted['starts_on'], zone)) if counted.get('starts_on') else a
+    hi = min(b, _midnight(counted['ends_on'], zone)) if counted.get('ends_on') else b
+    matched = within_dates(counted, a, b, zone) and lo < hi and scope_applies(data, scope, person_id, shift, lo, hi)
     if cache is not None:
         entry[2][key] = (shift, matched)
     return matched
@@ -1266,11 +1276,12 @@ def workload_day_runs(selected, zone):
     yield from (run for run, _ in workload_day_observations(selected, zone))
 
 
-def workload_weekend_runs(data, policy, pid, selected, focus):
-    """Every weekly prefix as (weekend date, overtime, focused) observations."""
+def workload_weekend_groups(data, policy, pid, selected):
+    """One bucket per actual worked weekend, shared by validation and CP-SAT."""
     rule, scope, zone = policy['definition']['rule'], policy['definition']['scope'], data['organisation']['timezone']
-    weekends = {}
-    for shift, participant, a, b in selected:
+    weekends = defaultdict(list)
+    for row in selected:
+        _, _, a, b, *_ = row
         for lo, hi in scope_intervals(data, scope, pid, a, b):
             day = lo.astimezone(ZoneInfo(zone)).date()
             last = (hi - timedelta(microseconds=1)).astimezone(ZoneInfo(zone)).date()
@@ -1278,12 +1289,18 @@ def workload_weekend_runs(data, policy, pid, selected, focus):
                 offset = (day.weekday() - rule['weekend_start']) % 7
                 if offset < rule['weekend_days']:
                     first = day - timedelta(days=offset)
-                    overtime, focused = weekends.get(first, (False, False))
-                    weekends[first] = (overtime or participant['overtime'], focused or shift['id'] in focus)
+                    weekends[first].append(row)
                 day += timedelta(days=1)
+    return weekends
+
+
+def workload_weekend_runs(data, policy, pid, selected, focus):
+    """Every weekly prefix as (weekend date, overtime, focused) observations."""
+    weekends = workload_weekend_groups(data, policy, pid, selected)
     run = []
     for first in sorted(weekends):
-        observation = (first, *weekends[first])
+        rows = weekends[first]
+        observation = (first, any(row[1]['overtime'] for row in rows), any(row[0]['id'] in focus for row in rows))
         run = run + [observation] if run and (first - run[-1][0]).days == 7 else [observation]
         yield tuple(run)
 
@@ -2199,10 +2216,10 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                      and (rule.get("include_overtime", True) or not p["overtime"])]
             if not focal:
                 return
+            targets = {s['id'] for s, _, _, _ in focal}
             if kind == 'forbidden_transition':
                 # Compare start dates, not elapsed rest or adjacent list entries.
                 # An intervening duty cannot erase a prohibited next-day pair.
-                targets = {s['id'] for s, _, _, _ in focal}
                 following = defaultdict(list)
                 for t, tp, c, d in entries:
                     if t['assignment_type_id'] in rule['to_type_ids']:
@@ -2280,7 +2297,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                     else:
                         if rule.get('group_by') == 'weekday':
                             for weekday, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                if actual > rule['maximum'] and any(s['id'] in targets and a <= c < b
                                         and c.astimezone(ZoneInfo(zone)).weekday() == weekday for s, _, c, _ in selected):
                                     violation('MAX_DUTIES', policy['name'], a, b,
                                         detail={'actual': actual, 'maximum': rule['maximum'],
@@ -2290,7 +2307,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                             if any(a <= c < b and not p.get('supervisor_person_id') for _, p, c, d in selected):
                                 violation('SUPERVISOR_REQUIRED', 'Select a supervisor for matching duties to check this limit', a, b)
                             for supervisor, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                if actual > rule['maximum'] and any(s['id'] in targets and a <= c < b
                                         and p.get('supervisor_person_id') == supervisor for s, p, c, _ in selected):
                                     violation('MAX_DUTIES', policy['name'], a, b,
                                         detail={'actual': actual, 'maximum': rule['maximum'],

@@ -39,6 +39,7 @@ FIELDS = {
     'location_types': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'types': ('id', 'department_id', 'definition', 'tags', 'active', 'starts_on', 'ends_on'),
     'operating_calendars': ('id', 'department_id', 'definition', 'active', 'starts_on', 'ends_on'),
+    'date_sets': ('id', 'department_id', 'name', 'entries', 'active'),
     'resource_pools': ('id', 'department_id', 'capacity', 'location_id', 'calendar_id', 'active', 'starts_on', 'ends_on'),
     'programmes': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'rotation_types': ('id', 'department_id', 'leave_policy', 'tags', 'active', 'starts_on', 'ends_on'),
