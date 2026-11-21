@@ -2205,7 +2205,8 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         if kind == 'max_hours':
             # One evaluation has fixed duties and focus. Equal counting inputs share observations,
             # while each policy still applies its own threshold, exceptions and finding identity.
-            counting = json.dumps({key: value for key, value in rule.items() if key != 'hours'}, sort_keys=True)
+            counting = json.dumps({key: value for key, value in rule.items() if key != 'hours'}, sort_keys=True,
+                                  default=str)
             hours_by_person = maximum_hours.setdefault((_policy_scope_key(policy), counting), {})
 
         def check_person(pid, entries, add):
