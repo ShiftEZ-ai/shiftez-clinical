@@ -302,9 +302,11 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     from packages.domain.score import schedule_score
     defaults = department.generation_defaults
     preparing = preparation is not None and not preparation['replay']
-    previous_check = copy.deepcopy(preparation['validation_baselines'].get(
-        workspace.id, workspace.validation)) if preparing else None
-    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparing else []
+    # These inputs are read-only in the detached calculation; the writer recomputes
+    # the Fix list receipt from its own current validation and accepted issues.
+    previous_check = (preparation['validation_baselines'].get(workspace.id, workspace.validation)
+                      if preparing else None)
+    accepted_issues = (workspace.accepted_issues or []) if preparing else []
     evaluated_at = command_time(db).isoformat()
     def compute():
         checked['_supervision_commitments'] = supervision_commitments(data)
