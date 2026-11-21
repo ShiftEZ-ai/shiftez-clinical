@@ -235,6 +235,9 @@ def main():
             output.write(str(binary) + "\n")
         return
     if args.mode == "result":
+        sys.path.insert(0, str(Path.cwd() / "ci"))
+        from make_known_failures import write_summary
+        write_summary()
         require_results(json.loads(os.environ["NEEDS_JSON"]))
         verdict = json.loads(Path(".run/ratchet/verdict.json").read_text(encoding="utf-8"))
         if verdict.get("passed") is not True:

@@ -192,39 +192,21 @@ def test_unsupported_person_predicates_keep_the_whole_session(browser, live_serv
 def test_rules_real_columns_and_schedule_widths_survive_save_reload_and_undo(browser, live_server, h):
     flag(h)
     weekly(h)
+    h.command('coordinator', 'table_view.create', {'table_key': 'rule-tree', 'name': 'Legacy rule columns',
+                                                    'definition': {'wrap': ['where'], 'hidden': ['days'],
+                                                                   'order': ['where'], 'widths': {'where': 240}}})
     w = h.shift(h.workspace('Fictional widths'))['workspace']
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
-        head = page.locator('.rt-table thead')
-        expect(head.get_by_role('columnheader', name='Where', exact=True)).to_be_visible()
-        expect(head.get_by_role('columnheader', name='Rule / who', exact=True)).to_be_visible()
-        grip = head.get_by_role('separator', name='Resize Where column', exact=True)
-        expect(grip).to_be_visible()
-        expect(head.get_by_role('button', name='Where', exact=True)).to_be_visible()
-        drag(page, grip, 60)
-        kept = grip.get_attribute('aria-valuenow')
-        drag(page, grip, 80, release=False)
-        page.keyboard.press('Escape'); page.mouse.up()
-        expect(grip).to_have_attribute('aria-valuenow', kept)
-        grip.focus(); grip.press('ArrowRight')
-        width = int(grip.get_attribute('aria-valuenow'))
-        head.get_by_role('button', name='Where', exact=True).click()
-        page.get_by_role('menuitem', name='Move right', exact=True).click()
-        order = head.locator('th[data-col]').evaluate_all('ns=>ns.map(n=>n.dataset.col)')
-        save_view(page, page.locator('#main .dt-toolbar').first, 'Fictional rule widths')
-        original = h.get('coordinator', '/api/table-views?table=rule-tree')['views'][0]
-        assert original['definition']['widths']['where'] == width
+        page.locator('#main button.dt-saved').click()
+        page.get_by_role('menuitemradio', name='Legacy rule columns', exact=True).click()
+        expect(page.locator('#main .rt-scroll')).to_be_visible()
+        expect(page.locator('#main .rt-scroll thead')).to_have_count(0)
+        expect(page.locator('#main [role=alert]')).to_have_count(0)
         page.reload()
-        expect(grip).to_have_attribute('aria-valuenow', str(width))
-        assert head.locator('th[data-col]').evaluate_all('ns=>ns.map(n=>n.dataset.col)') == order
-        grip.focus(); grip.press('ArrowRight')
-        toolbar(page.locator('#main .dt-toolbar').first, 'Saved views').get_by_role('menuitem', name='Update “Fictional rule widths”', exact=True).click()
-        page.locator('.toast').filter(has_text='View updated.').get_by_role('button', name='Undo', exact=True).click()
-        expect(grip).to_have_attribute('aria-valuenow', str(width))
-        assert h.get('coordinator', '/api/table-views?table=rule-tree')['views'][0]['definition'] == original['definition']
-        view_settings(page.locator('#main .dt-toolbar').first).get_by_role('button', name='Reset column widths', exact=True).click()
-        expect(head.locator('th[data-col="where"]')).not_to_have_class(re.compile(r'\bdt-sized\b'))
+        expect(page.locator('#main .rt-scroll')).to_be_visible()
+        expect(page.locator('#main [role=alert]')).to_have_count(0)
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         bar = page.locator('.planner-toolbar')
         save_view(page, bar, 'Fictional schedule widths')

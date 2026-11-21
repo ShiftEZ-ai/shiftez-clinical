@@ -1,5 +1,6 @@
 """Resume the real complete check queued by an assignment edit, through the existing UI."""
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -89,12 +90,24 @@ def test_a_queued_check_nobody_starts_is_taken_over_by_the_page_once(h, browser,
     try:
         page.clock.install()
         sent = watch_takeover(page, held.append)  # the page's own check is held: its words can be read while it runs
-        navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
-        footer = page.locator('.app-footer')
-        progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
-        expect(progress).to_contain_text('Waiting to check')  # DL-018: queued, unchanged
-        assert not sent
-        page.clock.run_for(BOUND)  # the page's clock, never real time
+        with holding(page) as reads:
+            summary_url = live_server + '/api/workspaces/' + w['id'] + '/summary'
+            reads.hold(summary_url)
+            navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
+            footer = page.locator('.app-footer')
+            progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
+            expect(progress).to_contain_text('Waiting to check')  # DL-018: queued, unchanged
+            wait_held(page, reads[summary_url])
+            remaining = min(10_000, BOUND // 2)
+            # Change the job's age without firing timers while the summary is held.
+            page.clock.set_system_time(datetime.fromisoformat(job['created_at']) + timedelta(milliseconds=BOUND - remaining))
+            with page.expect_response(lambda response: response.url == summary_url) as summary:
+                reads.release(summary_url)
+            assert summary.value.ok
+            summary.value.finished()
+            expect(progress).to_contain_text('Waiting to check')
+            assert not sent
+        page.clock.run_for(remaining + 1_000)
         wait_held(page, held)
         expect(progress).to_contain_text('Checking the rota')  # DL-018: without a click
         expect(footer.get_by_role('button', name=re.compile('^Cancel: '))).to_have_count(0)  # the server cannot stop this one

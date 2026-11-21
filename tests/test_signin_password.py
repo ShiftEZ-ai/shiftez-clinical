@@ -168,15 +168,17 @@ def test_identify_known_and_unknown_names_share_query_and_store_work(h, tmp_path
             queries.append(statement)
 
     monkeypatch.setattr(identity_store.AutheliaUsersFile, "has_credential", has_credential)
-    event.listen(h.app.state.engine, "before_cursor_execute", query)
     try:
         with client_for(h, settings) as client:
+            # Listen after startup: the API's warm-up reads belong to no request.
+            event.listen(h.app.state.engine, "before_cursor_execute", query)
             known = client.post("/auth/identify", json={"identifier": "managed@example.test" if has_account
                                                      else "Hospital.User@example.test"})
             known_queries, queries[:] = queries[:], []
             unknown = client.post("/auth/identify", json={"identifier": "unknown@example.test"})
     finally:
-        event.remove(h.app.state.engine, "before_cursor_execute", query)
+        if event.contains(h.app.state.engine, "before_cursor_execute", query):
+            event.remove(h.app.state.engine, "before_cursor_execute", query)
     assert known.json() == {"method": "institutional"} and unknown.json() == {"method": "password"}
     assert known.status_code == unknown.status_code == 200
     assert set(known.json()) == set(unknown.json()) == {"method"}
@@ -370,8 +372,10 @@ def test_password_api_key_requirement_depends_on_environment_and_progressive_mod
     if environment == "production":
         settings = replace(production(replace(settings, database_url="postgresql+psycopg://synthetic@localhost/disposable"),
                                       monkeypatch), fmuc_data_key="")
-    if environment == "production" and progressive:
-        with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required for progressive password sign-in"):
+    if environment == "production":
+        # Fixed mode also needs the key in production: sign-in hashes are keyed (#930).
+        refusal = "for progressive password sign-in" if progressive else "for sign-in in production"
+        with pytest.raises(RuntimeError, match="FMUC_DATA_KEY is required " + refusal):
             main.create_app(settings, h.app.state.engine)
         return
     app = main.create_app(settings, h.app.state.engine)

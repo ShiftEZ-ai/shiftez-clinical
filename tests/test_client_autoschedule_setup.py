@@ -3,6 +3,9 @@ a bad field is dropped, never guessed, and nothing but the setup choices is kept
 import json
 import subprocess
 
+from .test_client_menu_keep import SELECTORS
+from .test_client_toast_save import FAKE_DOM
+
 
 def parse(client_modules, value):
     script = (f"const m=await import({json.dumps((client_modules/'autoschedule_setup.js').as_uri())});"
@@ -59,6 +62,42 @@ def test_a_kept_people_choice_reads_back_whole_or_not_at_all(client_modules):
     # Only the fields the server accepts: one foreign line drops the whole choice (never a wider group).
     assert run_module(client_modules, "m.parseGroup(v,['category_ids'])", kept) is None
     assert run_module(client_modules, "m.parseGroup(v,['category_ids','tags','person_ids'])", kept) == expected
+
+
+def test_open_group_builder_follows_a_replacement_prepared_before_it_opens(client_modules):
+    script = FAKE_DOM + SELECTORS + f"""
+// The condition builder needs the form controls that the fake DOM does not provide.
+for(const k of ['HTMLInputElement','HTMLSelectElement','HTMLTextAreaElement','HTMLFormElement','HTMLFieldSetElement'])globalThis[k]??=class{{checkValidity(){{return true;}}}};
+const assert=(await import('node:assert/strict')).default;
+const {{peoplePopoverKey,peopleToSchedule}}=await import({json.dumps((client_modules/'schedule_group.js').as_uri())});
+const {{closeOrphanPopover}}=await import({json.dumps((client_modules/'dom.js').as_uri())});
+document.getElementById=id=>document.querySelector('#'+id);
+globalThis.fetch=async()=>new Response('{{"tokens":[]}}',{{headers:{{'Content-Type':'application/json'}}}});
+const host=document.createElement('div');body.append(host);
+const changes=[],key=peoplePopoverKey('rota-a');
+const picker=(owner,key)=>peopleToSchedule({{key,fields:[{{key:'person_ids',label:'Person',choices:[]}}],
+  value:null,required:false,words:()=>'',onChange:(value,required)=>changes.push([owner,value,required])}});
+const old=picker('old',key),replacement=picker('current',key);
+host.append(old.wrap);
+await Promise.resolve();
+old.open();
+const dialog=body.querySelector('.popover');
+assert.ok(dialog.querySelector('.cond-add'));
+host.replaceChildren(replacement.wrap);
+closeOrphanPopover();
+assert.equal(body.querySelector('.popover'),dialog);
+assert.equal(document.getElementById(key).getAttribute('aria-expanded'),'true');
+[...dialog.querySelectorAll('button')].find(b=>b.textContent==='Apply').click();
+assert.deepEqual(changes,[['current',null,true]]);
+assert.equal(document.getElementById(key).getAttribute('aria-label'),'People to schedule: Choose people…');
+replacement.open();
+host.replaceChildren(picker('other',peoplePopoverKey('rota-b')).wrap);
+closeOrphanPopover();
+assert.equal(body.querySelector('.popover'),null);
+process.exit(0);
+"""
+    result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 
 def test_group_runs_are_offered_only_as_the_server_advertises_them(client_modules):

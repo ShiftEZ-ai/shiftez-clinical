@@ -52,20 +52,22 @@ def test_custom_eligibility_undo_explains_refused_save_and_preserves_confirmed_s
         expect(ended.first).to_be_visible()
         for toggle in ended.all():
             toggle.click()
-        panel.get_by_role("button", name=f"Extend {clinic}").click()
-        form = page.get_by_role("dialog", name=f"Extend {clinic}", exact=True)
+        panel.get_by_role("button", name=f"More for {clinic}", exact=True).click()
+        page.get_by_role("menu", name=f"More for {clinic}", exact=True).get_by_role("menuitem", name="Change dates", exact=True).click()
+        form = page.get_by_role("dialog", name=f"Change dates · {clinic}", exact=True)
+        form.get_by_label("Last day (included, optional)", exact=True).fill("")
         form.get_by_label("Reason", exact=True).fill("Fictional continuation")
         # A slow server (CI saw 2 s): the refresh after the save outlasts the 1.2 s "nobody reported it" timer, and the
         # save's own message must still carry the Undo (it is shown before the refresh is awaited, app.ts).
         slow, held = "**/api/catalogues?*", []
         page.route(slow, lambda route: held.append(route))
-        form.get_by_role("button", name="Extend", exact=True).click()
+        form.get_by_role("button", name="Save", exact=True).click()
         wait_held(page, held)
         page.clock.run_for(2000)
         for route in held:  # the refresh's read (and any other read held meanwhile) answers now
             route.continue_()
         page.unroute(slow)  # after: unroute continues the reads it still holds, so a later continue_ would be a second
-        undo = page.locator(".toast").filter(has_text="now runs until changed").get_by_role("button", name="Undo", exact=True)
+        undo = page.locator(".toast").filter(has_text="dates changed").get_by_role("button", name="Undo", exact=True)
         expect(undo).to_be_visible()
         expect(page.locator(".toast").get_by_role("button", name="Undo", exact=True)).to_have_count(1)
 
@@ -85,7 +87,7 @@ def test_custom_eligibility_undo_explains_refused_save_and_preserves_confirmed_s
         expect(page.locator(".toast").filter(has_text="Fictional Undo refused")).to_have_count(0)
         current = next(r for r in h.get("credentialer", "/api/catalogues")["eligibilities"] if r["id"] == row["id"])
         assert current["ends_on"] is None
-        expect(page.get_by_text("Undone. The earlier end is back.", exact=True)).to_have_count(0)
+        expect(page.get_by_text("Undone. The earlier dates are back.", exact=True)).to_have_count(0)
         assert not errors
     finally:
         context.close()

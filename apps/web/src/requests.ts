@@ -7,7 +7,7 @@ import {readFailed,alive} from './dom.js';  // a failed read: refused (403) or a
 import {skeleton} from './loading.js';
 import {statusLabel,footerStatus,el,icon,button,armed,badge,note,notify,plural,field,area,select,multi,check,withIcon,iconButton,sectionHead,formDialog,confirmAction,
   dateUnits,formatDate,formatTime,formatDay,toLocal,statusBadge,weekdayOptions,labelOf,phoneQuery,showDialog,grants,type IconName,emptyLine} from './dom.js';
-import {get,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta} from './api.js';
+import {get,background,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta} from './api.js';
 import {dateRange,dateList,lastDayIncluded} from './date_picker.js';
 import {dataTable,openFiltered,tableFilters,tableFiltered,tableAsOf,tableSearch,tableSearchOptions,tableSort,tableServerConditions,type RowAction} from './table_view.js';
 import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -174,8 +174,9 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
   const end=page.offset+page.limit;
   if(page.has_more&&end<state.shown){const rest=await load(state.shown-end,firstQuery,end);page={...rest,items:[...page.items,...rest.items]};}
   let kinds=person?[]:creatable(ctx,page,false);
-  if(!person)void offered.then(yes=>{if(yes)kinds=creatable(ctx,page,true);});
-  const open=(preset?:string,duty?:string)=>newRequest(ctx,kinds,preset,duty);
+  // A New request opened before that answer is handed the kinds it leads to (newRequest adds them in place).
+  const landed=person?null:offered.then(yes=>yes?kinds=creatable(ctx,page,true):kinds);
+  const open=(preset?:string,duty?:string)=>newRequest(ctx,kinds,preset,duty,landed);
   // A phone: the primary is one icon in the title row (as on Home), not a row of its own.
   if(!person)target.append(sectionHead('Requests','',!kinds.length?null:phoneQuery.matches?iconButton(TERMS.newRequest,'plus',()=>open(),{class:'primary phone-primary'})
     :withIcon(button(TERMS.newRequest,()=>open(),'primary'),'plus')));
@@ -289,6 +290,8 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
       {key:'status',label:'Status',server:{field:'stage',value:l=>keyOf(STAGES,l)||l},facet:r=>stageWord(r.stage),options:ORDER.map(stageWord),ordered:ORDER.map(stageWord),
         // A swap says who it waits on in the row (it moves between two people); other kinds keep the reason in the tip.
         cell:r=>{const word=requestStageWord(r,ctx),b=statusBadge(r.stage,word),why=stageDetail(r,ctx);
+          // A decision the person made on their own request under a self-approval permission says so (as the audit does).
+          if(r.self_approved)return el('span',{class:'request-stage'},b,selfApprovedBadge());
           // One line: a long name ends in an ellipsis and the whole status is the tooltip.
           if(!why){b.setAttribute('data-tip',word);return b;}if(r.source==='swap'){b.setAttribute('data-tip',word);return el('div',{class:'request-stage'},b,el('small',{class:'muted'},why));}
           b.setAttribute('data-tip',`${word}: ${why}`);return b;}},
@@ -346,7 +349,7 @@ function creatable(ctx:Context,page:Page,overtime:boolean):KindChoice[]{
 }
 
 /** New request: choose the kind first; its own fields (the same forms used everywhere) appear below. */
-function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string){
+function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string,landed?:Promise<KindChoice[]>|null){
   // A send waits for its command only: the dialog closes, then the page refreshes (never inside the save).
   const ctx:Context=Object.assign(Object.create(base),{refresh:()=>{window.setTimeout(()=>void base.refresh());return Promise.resolve();}});
   const coordinator=ctx.permits(CAPABILITY.COORDINATOR);
@@ -357,9 +360,12 @@ function newRequest(base:Context,kinds:KindChoice[],preset?:string,duty?:string)
     // Once a kind is chosen, a phone keeps only it (and Change) above the fields, so they start at the top. The other
     // kinds are hidden then, so arrow keys reach them only after Change (acceptable on a phone).
     const change=button('Change',()=>{group.classList.add('choosing');group.querySelector<HTMLInputElement>('input:checked')?.focus();},'link-button request-kind-change',{'aria-label':'Change kind'});
-    const group=el('fieldset',{class:'request-kinds'},el('legend',{},'What do you need?'),...kinds.map(([k,label,glyph])=>
-      el('label',{class:'request-kind'},el('input',{type:'radio',name:'request-kind',value:k,required:true}),el('span',{class:'request-icon','aria-hidden':'true'},icon(glyph)),
-        el('span',{class:'request-kind-text'},el('strong',{},label)))),change);
+    const option=([k,label,glyph]:KindChoice)=>el('label',{class:'request-kind'},el('input',{type:'radio',name:'request-kind',value:k,required:true}),
+      el('span',{class:'request-icon','aria-hidden':'true'},icon(glyph)),el('span',{class:'request-kind-text'},el('strong',{},label)));
+    const group=el('fieldset',{class:'request-kinds'},el('legend',{},'What do you need?'),...kinds.map(option),change);
+    // A kind whose answer lands after the dialog opened (overtime eligibility) joins in its place; a choice made stays.
+    const shown=(k:Kind)=>group.querySelector(`input[value="${k}"]`)?.closest('.request-kind');
+    void landed?.then(all=>all.forEach((choice,i)=>{if(!shown(choice[0]))(all.slice(i+1).map(c=>shown(c[0])).find(Boolean)||change).before(option(choice));}),()=>{});
     void swaps?.then(o=>{if(o.assignments.length)return;
       const input=group.querySelector<HTMLInputElement>('input[value=swap]'),why=el('small',{class:'muted',id:'request-kind-swap-why'},'No upcoming published duty to offer');
       if(!input||input.checked)return;input.disabled=true;input.setAttribute('aria-describedby',why.id);input.closest('.request-kind')!.classList.add('disabled');input.closest('.request-kind')!.querySelector('.request-kind-text')!.append(why);},()=>{});
@@ -443,7 +449,8 @@ function overtimeEligibility(ctx:Context,fresh=false){
   if(!ctx.me.person_id||!ctx.permits(CAPABILITY.STAFF))return Promise.resolve(null);
   if(!fresh&&eligibility?.key===sessionKey())return eligibility.value;
   const today=toLocal(new Date().toISOString(),ctx.me.organisation.timezone).slice(0,10);
-  const mine:{key:number;value:Promise<Eligibility|null>}={key:sessionKey(),value:get<Eligibility>(
+  // A background read: never a kept page reply from the last visit (api.ts keptReads), which may predate a new line.
+  const mine:{key:number;value:Promise<Eligibility|null>}={key:sessionKey(),value:background<Eligibility>(
     `/api/requests/overtime-eligibility?starts_on=${today}&ends_on=${addDays(today,92)}`).then(e=>{
       for(const r of [...e.choices?.services||[],...e.choices?.assignment_types||[]])choiceNames.set(r.id,r.name);return e;})
     .catch(()=>{if(eligibility===mine)eligibility=null;return null;})};
@@ -508,6 +515,8 @@ function overtimeWords(ctx:Context,r:Row){
 /** The kind without its leave type ("Approve leave", not "Approve annual"). */
 const kindTitle=(r:Row)=>title({...r,leave_type_id:null});
 const panelSub=(r:Row,own=false)=>[kindWord(r),own?'':r.person_name||r.calendar_entry_name].filter(x=>x&&x!==title(r)).join(' · ');
+/** The mark a self-approved decision wears, the same as a rota's (governance.ts) and the audit log's. */
+const selfApprovedBadge=()=>badge('Self-approved','warn','audit-self');
 /** The reader's own request (not a swap, which always has two people). */
 const ownRequest=(ctx:Context,r:Row)=>r.source!=='swap'&&!!ctx.me.person_id&&r.person_id===ctx.me.person_id;
 function title(r:Row){
@@ -683,8 +692,8 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
     // A decision's dialog closes once it is saved; the list reloads behind it (LIVE-57), never under a "Saving…" dialog.
     const words=r.source==='pattern'?'counts as unavailable at these times in every rota check':isOvertime(r)?'may be offered overtime on these days, within the department’s limits':impactWords(r)||'is told';
     buttons.push(button('Approve',()=>confirmAction(`Approve ${kindTitle(r).toLowerCase()}`,`${who} · ${when(r,ctx.me.organisation.timezone)}. ${words[0].toUpperCase()+words.slice(1)}.${r.source==='request'&&r.impact_count?' Approving records the absence; the coordinator arranges cover for its published duties.':''}${r.source==='request'&&draftDuties(r)?' On rotas being planned, each overlapping duty shows as a conflict to replace.':''}`,
-      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',undefined,!mine(ctx,r),false,'Reason',true),'secondary small'),
-      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline'),'ghost small'));
+      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',mine(ctx,r)?selfApprovedBadge():undefined,!mine(ctx,r),false,'Reason',true),'secondary small'),
+      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline',mine(ctx,r)?selfApprovedBadge():undefined),'ghost small'));
   }
   // An approved (or later retired) calendar protection is managed (Retire, Undo, Restore) in its own panel, reached from its
   // request in the Decided history: an approver needs no Programmes access for it (JC-01). The panel offers only what this role may do.
@@ -822,7 +831,7 @@ function fillPanel(ctx:Context,id:string,hooks:RequestHooks,setQuery:(change:(q:
           button('Show in Schedule',()=>{d.close();hooks.showDay(i.day,r.person_id);},'ghost small',{'aria-label':`Show ${shortDay(i.day)} in Schedule`})))):null,
         impact>duties.length?el('p',{class:'muted'},`and ${impact-duties.length} more`):null)]:[]),
       el('section',{class:'request-section'},el('h3',{},'History'),el('ol',{class:'request-history'},...data.history.filter(e=>!(e.action==='created'&&data.history.some(x=>x!==e&&eventWord(r,x.action)===eventWord(r,'created')))).map(e=>el('li',{},
-        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:''),
+        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:'',e.self_approved?selfApprovedBadge():''),
         // An undo's reason is the generic "Undo": "Decision undone" says it all.
         el('small',{class:'muted'},`${formatDate(e.at,zone)} ${formatTime(e.at,zone)}`),e.reason&&!(e.action.endsWith('.undo')&&/^Undo\b/.test(e.reason))?el('p',{class:'request-history-why'},e.reason):null)))),
       ...(buttons.length||menu.length?[el('div',{class:'request-actions request-foot'},...buttons,...menu.filter(a=>a.label!=='Show in Schedule').map(a=>{
