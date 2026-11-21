@@ -2766,7 +2766,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A published-only schedule's checks are the live check of what is published (publishedLive), current when read.
       const stored=!draftData?(shown.workspace.validation as unknown as Row|undefined):null;
       const live=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive.evaluation as unknown as Row:null;
-      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?w!.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,person});
+      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?draftData.workspace.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,kept:reading,person});
       const pub=String(s.publication_id||source?.publication.id||'');
       const published=!acts&&(s.context||!draftData)&&!!pub&&changeable(s);
       if(pubHooks&&published)publishedSession(dock,s,pub,pubHooks,summary);else body.append(summary());
@@ -7888,7 +7888,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}

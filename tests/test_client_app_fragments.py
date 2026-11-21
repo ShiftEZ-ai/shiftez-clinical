@@ -18,6 +18,19 @@ def node(script):
     return json.loads(out.stdout)
 
 
+def test_model_proven_stop_hides_continue_search(client_modules):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    resumable = cut(source, r'const resumable\s*=\s*(.*?);')
+    got = node(r"""
+const check=reason=>{
+  const editable=true,cpSat=true,currentDraft=true,stale=false,discarded=false,canContinue=false;
+  const latest={currency:'',status:'succeeded'},result={resume_available:true,status:'candidate_feasible',search_stop:{reason}};
+  return (""" + resumable + r""");
+};
+console.log(JSON.stringify({optimal:check('optimal'),model:check('model_proven'),plateau:check('plateau')}));""")
+    assert got == {'optimal': False, 'model': False, 'plateau': True}
+
+
 def test_your_own_stop_or_add_time_on_a_queued_run_is_read_back_within_3_s(client_modules):
     """Restore ee3c5da9f (schedulingPanel): a queued run is read back 3 → 10 → 30 s apart. Your own Stop and keep best
     or Add time restarts that back-off, so its outcome is read 3 s later, not after a 30 s wait. The poll step (the
