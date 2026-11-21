@@ -322,9 +322,10 @@ def test_bulk_future_date_is_preserved_and_stale_active_date_is_ignored(h):
     from apps.api.auth import _local_today
     with transaction(h.app.state.engine) as db:
         today = _local_today(db, h.seed['department_id'])
-    h.command('admin', 'catalogue.bulk_update', {'catalogue': 'people',
-              'items': [{'id': person['id'], 'revision': person['revision']}],
-              'active': False, 'reason': 'Deactivate with no explicit date'})
+    reply = h.command('admin', 'catalogue.bulk_update', {'catalogue': 'people',
+                  'items': [{'id': person['id'], 'revision': person['revision']}],
+                  'active': False, 'reason': 'Deactivate with no explicit date'})
+    assert reply['records'][0]['effective_active'] is False
     inactive = rows(h, 'people', [person['id']])[0]
     assert inactive['inactive_from'] == today.isoformat()
     future = (today + timedelta(days=10)).isoformat()
@@ -334,9 +335,12 @@ def test_bulk_future_date_is_preserved_and_stale_active_date_is_ignored(h):
     dated = rows(h, 'people', [person['id']])[0]
     assert dated['configured_active'] is False and dated['inactive_from'] == future
     assert dated['active'] is True
-    h.command('admin', 'catalogue.bulk_update', {'catalogue': 'people',
-              'items': [{'id': dated['id'], 'revision': dated['revision']}],
-              'set': {'title': 'Staff'}, 'reason': 'Keep the effective date'})
+    reply = h.command('admin', 'catalogue.bulk_update', {'catalogue': 'people',
+                  'items': [{'id': dated['id'], 'revision': dated['revision']}],
+                  'set': {'short_code': 'DATE'}, 'reason': 'Keep the effective date'})
+    saved = reply['records'][0]
+    assert saved['active'] is False and saved['effective_active'] is True
+    assert saved['short_code'] == 'DATE' and saved['revision'] > dated['revision']
     assert rows(h, 'people', [person['id']])[0]['inactive_from'] == future
 
 

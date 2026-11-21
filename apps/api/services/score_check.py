@@ -73,7 +73,7 @@ def validate_extraction(db, actor, source, value, inventory=None):
             except ProviderError as error:
                 if error.code != 'SCORE_ISOLATION_UNAVAILABLE':
                     raise
-                raise Problem(503, error.code, str(error)) from None
+                raise Problem(503, 'SCORE_ISOLATION_UNAVAILABLE', str(error)) from None
     refs = inventory.cell_refs
     require(inventory.sha256 == source.sha256, 'EXTRACTION_FILE', 'The uploaded file changed')
     require(len(value['files']) == 1 and value['files'][0]['file_ref'] == source.file_ref,

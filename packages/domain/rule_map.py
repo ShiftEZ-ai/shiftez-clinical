@@ -844,13 +844,13 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
     view = {**data, '_person_rows': index_person_rows(data), '_staffing_selection_cache': {}, '_scope_interval_cache': {}}
     active_ends = {pid: end for pid, person in data['people'].items()
                    if (end := person_active_end(person, b, zone)) is not None and a < end}
-    people = sorted(active_ends)
-    if loaded:
-        department = data['workspace']['department_id']
-        members = {m['person_id'] for m in data['memberships'] if m['department_id'] == department and within_dates(m, a, b, zone)}
-        people = [pid for pid in people if pid in members]
-    dates = {pid: change_points(view, pid, a, active_ends[pid]) + [active_ends[pid]] for pid in people}
-    duties, signatures, dated_signatures = {}, {}, None
+    memberships = {}
+    for member in data.get('memberships', ()):
+        pid = member['person_id']
+        if pid in active_ends and within_dates(member, a, active_ends[pid], zone):
+            memberships.setdefault(member['department_id'], {}).setdefault(pid, []).append(member)
+    workspace_members = memberships.get(data['workspace']['department_id'], {}) if loaded else None
+    dates, duties, signatures, dated_signatures = {}, {}, {}, None
     for shift in data.get('shifts') or []:
         if inactive(shift):
             continue
@@ -866,7 +866,7 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
                                  ancestor_ids, exception_for, policy_ids={c['id'] for c in copies}, line_id=line_id)
     scope_people, session_cache, path_cache, count_cache, goal_cache, out = {}, {}, {}, {}, {}, {}
     clinic_grants = {department_id: _clinic_grants(view, department_id) for department_id in {copy['department_id'] for copy in counted}}
-    comparison_groups = None
+    comparison_groups, area_cache = None, {}
     for copy in counted:
         if not within_dates(copy, a, b, zone):
             continue
@@ -887,19 +887,28 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
             listed = _listed(scope)
             clinic_people, _ = _skill_context(view, scope, copies, clinic_grants[copy['department_id']])
             found = {}
-            for pid in people if listed is None else (pid for pid in people if pid in listed):
+            first = max(a, local_midnight(date.fromisoformat(str(copy['starts_on'])), zone)) if copy.get('starts_on') else a
+            last = min(b, local_midnight(date.fromisoformat(str(copy['ends_on'])), zone)) if copy.get('ends_on') else b
+            present = memberships.get(copy['department_id'], {})
+            candidates = present.keys() if listed is None else present.keys() & listed
+            for pid in candidates:
+                if workspace_members is not None and pid not in workspace_members:
+                    continue
+                end = min(last, active_ends[pid])
+                if first >= end:
+                    continue
+                if pid not in dates:
+                    dates[pid] = change_points(view, pid, a, active_ends[pid])
                 paths = set()
-                cuts = sorted(set(dates[pid]) | {point for field in ('starts_on', 'ends_on') if copy.get(field)
-                    and a < (point := local_midnight(date.fromisoformat(str(copy[field])), zone)) < active_ends[pid]})
+                cuts = [first, *(point for point in dates[pid] if first < point < end), end]
                 for lo, hi in zip(cuts, cuts[1:]):
-                    present = any(member['department_id'] == copy['department_id'] and within_dates(member, lo, hi, zone)
-                                  for member in view['_person_rows']['memberships'].get(pid, ()))
-                    if present and within_dates(copy, lo, hi, zone):
+                    if any(within_dates(member, lo, hi, zone) for member in present[pid]):
                         contexts = (_scope_duty_contexts(view, [scope], pid, lo, hi, copy['department_id'])
                                     if pid in clinic_people else [(lo, hi, None)])
                         for start, end, duty in contexts:
                             if scope_matches_throughout(view, scope, pid, duty, start, end):
-                                paths.update(matched_paths(display_tree, rule_holds(view, pid, duty, start, end), display_bucket))
+                                if display_tree:
+                                    paths.update(matched_paths(display_tree, rule_holds(view, pid, duty, start, end), display_bucket))
                                 found.setdefault(pid, set()).update(paths)
             scope_people[key] = found
         row = {'line_id': line.get('id'), 'line': line.get('line'), 'slot': line.get('slot'), 'kind': rule['kind'],
@@ -907,10 +916,11 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
         if source:
             from .rule_lines import tier
             row['specificity'] = tier(source)
+        unobserved = _reach_unobserved(rule, a, b) if not loaded else []
         for pid, paths in sorted(scope_people[key].items()):
             counts = []
             if not loaded:
-                counts = _reach_unobserved(rule, a, b)
+                counts = [count.copy() for count in unobserved]
             elif rule['kind'] in {'max_duties', 'max_hours'}:
                 metric_key = (key, pid, copy['department_id'], json.dumps(rule, sort_keys=True))
                 if metric_key not in count_cache:
@@ -1008,28 +1018,33 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
                 selected_places = bucket_atoms(bucket, 'location_ids')
                 for place in selected_places or [shift['location_id']]:
                     locations.setdefault(place, set()).update(paths)
+        area_key = (json.dumps(projected_tree, sort_keys=True), bucket, display_key, display_bucket) if not loaded else None
         for field, records, identifier, target in (('service_ids', data.get('services') or {}, 'service_id', clinics),
                                                   ('location_ids', data.get('locations') or {}, 'location_id', locations)):
             if not loaded:
-                unfiltered = not next(_lines(projected_tree, {field}), None) and not next(_lines(display_tree, {field}), None)
-                if unfiltered:
-                    def unknown(field, values=()):
-                        return None
-                    unknown.locations = data.get('locations', {})
-                    matches = bucket in bucket_keys(projected_tree, unknown)
-                    paths = set(matched_paths(display_tree, unknown, display_bucket)) if matches else set()
-                for rid in sorted(records):
-                    selected_places = bucket_atoms(bucket, 'location_ids')
-                    if field == 'location_ids' and selected_places and rid not in selected_places:
-                        continue
-                    held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}
-                    holds = lambda f, values=(), held=held, field=field: held if f == field else None
-                    holds.locations = data.get('locations', {})
+                key = (area_key, field)
+                if key not in area_cache:
+                    areas = area_cache[key] = {}
+                    unfiltered = not next(_lines(projected_tree, {field}), None) and not next(_lines(display_tree, {field}), None)
                     if unfiltered:
-                        if matches:
-                            target[rid] = paths
-                    elif bucket in bucket_keys(projected_tree, holds):
-                        target[rid] = set(matched_paths(display_tree, holds, display_bucket))
+                        def unknown(field, values=()):
+                            return None
+                        unknown.locations = data.get('locations', {})
+                        matches = bucket in bucket_keys(projected_tree, unknown)
+                        paths = set(matched_paths(display_tree, unknown, display_bucket)) if matches else set()
+                    for rid in sorted(records):
+                        selected_places = bucket_atoms(bucket, 'location_ids')
+                        if field == 'location_ids' and selected_places and rid not in selected_places:
+                            continue
+                        held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}
+                        holds = lambda f, values=(), held=held, field=field: held if f == field else None
+                        holds.locations = data.get('locations', {})
+                        if unfiltered:
+                            if matches:
+                                areas[rid] = paths
+                        elif bucket in bucket_keys(projected_tree, holds):
+                            areas[rid] = set(matched_paths(display_tree, holds, display_bucket))
+                target.update(area_cache[key])
             destination = row['clinics'] if field == 'service_ids' else row['places']
             for rid, paths in sorted(target.items()):
                 held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}

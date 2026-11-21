@@ -5050,14 +5050,17 @@ function inlineField(kind:string,fieldName:string,edit:Omit<EditSpec<Row>,'save'
   // The reply's records patch the list and the lists in memory in place (C-34); switching one on or off recounts the nav.
   return {...edit,value:edit.value||(r=>r[fieldName]),...(fieldName==='active'?{afterSave:recount}:{}),save:async(list,value)=>{
     const result=await command('catalogue.bulk_update',{catalogue:kind,items:list.map(r=>({id:r.id,revision:r.revision})),set:{[fieldName]:fieldName==='short_code'?String(value).toUpperCase():value},reason:'Inline edit'});
-    if(kind==='people'){
-      await loadLists();
-      const people=new Map(rows('people').map(r=>[r.id,r]));
-      return list.map(r=>people.get(r.id)||r);
-    }
-    // The write reply is the bare record: its fields go onto the row in memory, which keeps what the read added
-    // (a person's current rank, programme, aliases) for the list and the next visit.
-    const byId=new Map((result.records as Row[]).map(r=>[r.id,r])),merge=(r:Row)=>byId.has(r.id)?{...r,...byId.get(r.id)}:r;
+    // Patch the saved fields while retaining the derived facts from the list read.
+    const byId=new Map((result.records as Row[]).map(r=>[r.id,r]));
+    const merge=(r:Row)=>{
+      const saved=byId.get(r.id);
+      if(!saved)return r;
+      if(kind!=='people')return {...r,...saved};
+      const {effective_active,...person}=saved;
+      // Older receipts carry only the configured flag. Preserve the list status when that flag did not change.
+      const active=effective_active??(person.active===(r.configured_active??r.active)?r.active:person.active);
+      return {...r,...person,configured_active:person.active,active};
+    };
     catalogues={...catalogues,[kind]:rows(kind).map(merge)};setTypeColours(rows('assignment_types'));setRankColours(rows('categories'));return list.map(merge);}};
 }
 const revisionsOf=(kind:string,ids:string[])=>rows(kind).filter(r=>ids.includes(r.id)).map(r=>({id:r.id,revision:r.revision}));

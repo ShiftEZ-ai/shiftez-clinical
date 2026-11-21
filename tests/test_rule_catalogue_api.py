@@ -263,8 +263,8 @@ def catalogue_check_measurement(scale_harness):
     from apps.api.services.rule_catalogue import check
     real = policies.people_data
 
-    def department(db, actor, day):  # the department at scale: 150 people
-        data, a, b = real(db, actor, day)
+    def department(db, actor, day, *, last=None):  # the department at scale: 150 people
+        data, a, b = real(db, actor, day, last=last)
         return {**data, 'people': {**data['people'], **{str(uuid.uuid4()): {'active': True} for _ in range(147)}}}, a, b
     from datetime import date, timedelta
     people = h.seed['people']
