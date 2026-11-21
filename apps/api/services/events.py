@@ -113,12 +113,19 @@ def window_times(value, timezone, horizon, type_end=None, *, starts_on=None):
     return times
 
 
+def blocking_input_sources(department_ids):
+    """Sources that can make attendance part of scheduling inputs, without a rota window."""
+    return {'event_occurrences': (m.EventOccurrence, m.EventOccurrence.department_id.in_(department_ids)
+        & m.EventOccurrence.cancelled.is_(False) & m.EventOccurrence.data['type']['blocks_duties'].as_boolean().is_(True)),
+        'events': (m.Event, m.Event.department_id.in_(department_ids) & m.Event.cancelled.is_(False)
+            & m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True))}
+
+
 def blocking_sources(department_ids, lo, hi):
     return {'event_occurrences': (m.EventOccurrence, m.EventOccurrence.department_id.in_(department_ids) &
         or_((m.EventOccurrence.start < hi) & (m.EventOccurrence.end > lo),
             (m.EventOccurrence.original_start >= lo - timedelta(days=2)) & (m.EventOccurrence.original_start < hi))),
-        'events': (m.Event, m.Event.department_id.in_(department_ids) & m.Event.cancelled.is_(False) &
-            (m.Event.start < hi) & m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True))}
+        'events': (m.Event, blocking_input_sources(department_ids)['events'][1] & (m.Event.start < hi))}
 
 
 def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
@@ -585,6 +592,13 @@ def receipt_list(db, actor, occurrence_id, page, page_size):
         'page': page, 'page_size': page_size, 'total': total}
 
 
+def attendance_receipts(occurrence_ids):
+    from apps.api.snapshots import snapshot_input_row_predicate
+    receipt = m.AnnouncementReceipt
+    return select(receipt.event_occurrence_id, receipt.person_id).where(
+        receipt.event_occurrence_id.in_(occurrence_ids), snapshot_input_row_predicate(receipt))
+
+
 def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None):
     """Derive protected-time facts, resolved by the same catalogue path as approved academic time."""
     from . import audiences
@@ -592,8 +606,7 @@ def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None):
     if not rows or not people:
         return []
     going = {}
-    for occurrence_id, person_id in db.execute(select(m.AnnouncementReceipt.event_occurrence_id, m.AnnouncementReceipt.person_id).where(
-            m.AnnouncementReceipt.event_occurrence_id.in_([r.id for r in rows]), m.AnnouncementReceipt.response == "going")):
+    for occurrence_id, person_id in db.execute(attendance_receipts([row.id for row in rows])):
         if person_id:
             going.setdefault(occurrence_id, set()).add(person_id)
     contexts, dates, result = {}, {}, []

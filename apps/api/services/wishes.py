@@ -26,6 +26,11 @@ from apps.api.services.common import neutral_rota_name
 
 LEAVE = ("recorded_leave", "approved_leave", "actual_absence")
 SETTLED = ("submitted", "approved", "published", "superseded")  # a rota in these states closes wishes on its days
+
+
+def reservation_input(row):
+    """Only retained settled wishes participate in other rotas' budget reservations."""
+    return row.validation if row.archived_at is None and row.status in SETTLED and row.validation and 'wishes' in row.validation else None
 MAX_POINTS = s.MAX_WISH_POINTS
 
 
@@ -463,9 +468,10 @@ def snapshot_wishes(db, department_ids, workspace, until=None, *, wish_debt_cap=
             m.Workspace.department_id.in_(department_ids), m.Workspace.archived_at.is_(None),
             m.Workspace.status.in_(SETTLED), m.Publication.id.is_(None),
             m.Workspace.starts_on < hi, m.Workspace.ends_on > lo)):
-        if settled.validation is None or 'wishes' not in settled.validation:
+        reservation = reservation_input(settled)
+        if reservation is None:
             continue  # shortcut: older checks expand live until revalidation records their allocation.
-        reservations.append(SimpleNamespace(id=None, snapshot=settled.validation,
+        reservations.append(SimpleNamespace(id=None, snapshot=reservation,
             starts_on=settled.starts_on, ends_on=settled.ends_on, effective_until=None,
             created_at=settled.submitted_at or settled.created_at))
     for publication in reservations:

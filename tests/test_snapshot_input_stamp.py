@@ -213,8 +213,9 @@ def test_only_declared_exclusions_suppress_modified_rows(backend):
         department.revision += 1
         db.flush()
         assert org.input_revision == before
-        # This column was silently omitted by the previous hard-coded inclusion list.
-        department.event_horizon_days += 1
+        # Switching from the selected calendar to the weekend fallback changes scheduling currency.
+        assert department.operating_calendar_id is not None
+        department.operating_calendar_id = None
         db.flush()
         assert org.input_revision == before + 1
 

@@ -3,7 +3,8 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from operator import itemgetter
@@ -19,6 +20,7 @@ from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.serialization import json_default
 from packages.domain.validation import ENGINE_VERSION
+from packages.domain.input_manifest import DEPARTMENT_INPUT_FIELDS, department_input
 from .settings import Settings, quota_policy_limit
 
 
@@ -27,6 +29,30 @@ class DomainSnapshot(dict):
     def __init__(self, *args, read_quality=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.read_quality = read_quality if read_quality is not None else {}
+
+
+@dataclass(frozen=True)
+class SnapshotInputRead:
+    """Columns and conditions consumed by a snapshot reader."""
+    columns: frozenset[str]
+    where: tuple[str, str] | None = None
+    requires_blocking_events: bool = False
+    projection: Callable | None = None
+    insert_filter: Callable | None = None
+
+
+def _input_read(name, cls, category, scope, columns, *, exclude=(), **conditions):
+    shape = SnapshotInputRead(frozenset(columns), **conditions)
+    return name, cls, category, scope, shape, (frozenset(cls.__table__.columns.keys()) - shape.columns) | frozenset(exclude)
+
+
+def _workspace_reserves_wishes(row):
+    from .services.wishes import reservation_input
+
+    return reservation_input(row) is not None
+
+
+PERSON_SNAPSHOT_OMISSIONS = frozenset({'pager'})
 
 
 # One registry owns the tables that can change a prepared snapshot's inputs.
@@ -65,14 +91,15 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('date_sets', m.DateSet, 'general', 'department', 'date_set', frozenset()),
     ('tags', m.Tag, 'general', 'department', 'tag', frozenset()),
     ('tag_members', m.TagMember, 'general', 'department', 'tag_member', frozenset()),
-    ('people', m.Person, 'general', 'organisation', 'people', frozenset()),
-    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on',
-        *(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)})),
+    ('people', m.Person, 'general', 'organisation', 'people', PERSON_SNAPSHOT_OMISSIONS),
+    _input_read('departments', m.Department, 'general', 'organisation', DEPARTMENT_INPUT_FIELDS,
+        projection=department_input, exclude=(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)),
     ('programme_calendar_entries', m.ProgrammeCalendarEntry, 'general', 'department', None, frozenset()),
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
-    ('workspaces', m.Workspace, 'general', 'department', None, frozenset({
+    ('workspaces', m.Workspace, 'general', 'department',
+        SnapshotInputRead(frozenset({'status', 'validation', 'archived_at'}), insert_filter=_workspace_reserves_wishes), frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
         'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
         'urgency_reason', 'target_overrides', 'rule_adjustments', 'accepted_issues', 'archived_by',
@@ -91,21 +118,47 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     # Leave/absence and protected-time inputs use the separate availability
     # revision so consumers can invalidate the narrower availability layer.
     ('availability', m.Availability, 'availability', 'department', None, frozenset()),
-    ('requests', m.RequestRecord, 'availability', 'department', None, frozenset()),
     ('publication_changes', m.PublicationChangeList, 'availability', 'department', None, frozenset()),
-    ('role_bindings', m.RoleBinding, 'availability', 'department', None, frozenset()),
-    ('identities', m.Identity, 'availability', 'person', None, frozenset({
-        'revision', 'created_at', 'issuer', 'subject', 'subject_normalized', 'display_name', 'password_hash', 'last_sign_in_at'})),
-    ('availability_patterns', m.AvailabilityPattern, 'availability', 'department', None, frozenset()),
+    _input_read('role_bindings', m.RoleBinding, 'availability', 'department',
+        {'identity_id', 'department_id', 'role', 'revoked', 'starts_on', 'ends_on'}, requires_blocking_events=True),
+    _input_read('identities', m.Identity, 'availability', 'person',
+        {'id', 'person_id', 'disabled'}, requires_blocking_events=True),
+    _input_read('availability_patterns', m.AvailabilityPattern, 'availability', 'department',
+        {'id', 'department_id', 'person_id', 'status', 'weekdays', 'start_time', 'end_time', 'starts_on', 'ends_on'},
+        where=('status', 'active')),
     ('events', m.Event, 'availability', 'department', None, frozenset()),
     ('event_occurrences', m.EventOccurrence, 'availability', 'department', None, frozenset()),
-    ('announcement_receipts', m.AnnouncementReceipt, 'availability', None, None, frozenset({'revision', 'delivered_at', 'read_at', 'acknowledged_at'})),
+    _input_read('announcement_receipts', m.AnnouncementReceipt, 'availability', None,
+        {'event_occurrence_id', 'person_id', 'response'}, where=('response', 'going')),
 )
 
 
 def snapshot_input_specs():
     """Return the canonical snapshot-input registry for guards and writers."""
     return SNAPSHOT_INPUT_SOURCE_SPECS
+
+
+def snapshot_input_row_predicate(cls):
+    shape = next(spec[4] for spec in snapshot_input_specs() if spec[1] is cls)
+    column, value = shape.where
+    return getattr(cls, column) == value
+
+
+def snapshot_input_organisations(db, shape, organisation_ids, memo):
+    if not isinstance(shape, SnapshotInputRead) or not shape.requires_blocking_events:
+        return organisation_ids
+    from .services.events import blocking_input_sources
+
+    affected = set()
+    for organisation_id in organisation_ids:
+        key = 'blocking_events', organisation_id
+        if key not in memo:
+            department_ids = select(m.Department.id).where(m.Department.organisation_id == organisation_id)
+            memo[key] = any(db.scalar(select(select(cls.id).where(where).exists()))
+                            for cls, where in blocking_input_sources(department_ids).values())
+        if memo[key]:
+            affected.add(organisation_id)
+    return affected
 
 
 def snapshot_input_classes():
@@ -932,7 +985,7 @@ def _snapshot_inputs(db, org):
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
-    acquired = records_many(db, sources, exclude={'people': ('pager',)}, order_by=SCHEDULING_ORDER)
+    acquired = records_many(db, sources, exclude={'people': PERSON_SNAPSHOT_OMISSIONS}, order_by=SCHEDULING_ORDER)
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.

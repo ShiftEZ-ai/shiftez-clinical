@@ -184,6 +184,7 @@ def test_swap_settings_validate_persist_audit_and_undo_without_invalidating_rota
     payload['department_revision'] = dept['revision']
     w = h.shift(h.workspace())['workspace']
     w = h.lifecycle(h.lifecycle(w, 'submit')['workspace'], 'approve', 'approver')['workspace']
+    org = h.get('admin', '/api/me')['organisation']
     for field in ('swap_offer_window_days', 'swap_open_offer_cap'):
         for bad in (0, -1, True, 1.5, '7', 2_147_483_648):
             h.command('admin', 'department.settings', {**payload, field: bad}, dept['id'], org['revision'], status=422)
@@ -266,6 +267,7 @@ def test_weekend_days_are_one_audited_department_setting_that_leaves_rotas_alone
     w = h.shift(h.workspace('Weekend check', start='2026-10-11', end='2026-10-18'),
         start='2026-10-11T08:00:00+03:00', end='2026-10-11T12:00:00+03:00')['workspace']
     w = h.lifecycle(h.lifecycle(w, 'submit')['workspace'], 'approve', 'approver')['workspace']
+    org = h.get('admin', '/api/me')['organisation']
     payload = {'department_name': dept['name'], 'department_revision': dept['revision'], 'organisation_name': org['name'],
                'timezone': org['timezone'], 'week_start': org['week_start'], 'reason': 'Weekend is Saturday and Sunday'}
     for bad in ([5, 5], [7], [-1]):
@@ -363,6 +365,7 @@ def test_swap_approval_settings_validate_boolean_values_and_scoped_active_routes
                                    definition=active['definition'], status='active', created_by=h.seed['identities']['admin'])
         db.add(other_route); db.flush()
         foreign_route_id = other_route.id
+    org = h.get('admin', '/api/me')['organisation']
     h.command('admin', 'department.settings', {**payload, 'swap_review_route_id': foreign_route_id},
               dept['id'], org['revision'], status=404)
     refused = h.command('admin', 'department.settings', {**payload, 'swap_review_route_id': routine['id']},
