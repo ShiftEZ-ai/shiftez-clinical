@@ -331,11 +331,13 @@ def effective_type_definition(data, shift):
         effective = effective_issued_definition(issued, current)
     else:
         definition = (current if operational else issued) or {}
-        effective = deepcopy(definition)
+        effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain both sources so their identities cannot be reused during this run.
-        definitions[key] = issued, current, pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
+        encoded = pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
+        definitions[key] = issued, current, encoded
+        return pickle.loads(encoded)
     return effective
 
 
