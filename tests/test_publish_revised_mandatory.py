@@ -74,3 +74,18 @@ def test_publish_refuses_a_cap_revised_after_approve(captured):
     assert_revised_refusal(refused, cap, h.seed['people'][0])
     assert review_evidence(h, approved) == stored
     assert h.get('coordinator', '/api/publications')['publications'] == []
+
+
+def test_a_cap_revised_to_advisory_does_not_refuse_review(captured):
+    h, draft, cap = captured
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, cap['id'])
+        row.definition = {**row.definition, 'severity': 'advisory', 'rule': {**row.definition['rule'], 'amount': 1}}
+        row.revision += 1
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+
+    check = h.lifecycle(draft, 'validate')['validation']
+    assert not any(f['rule_id'] == cap['id'] and f['severity'] == 'error' for f in check['findings'])
+    submitted = h.lifecycle(draft, 'submit')['workspace']
+    approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
+    assert h.lifecycle(approved, 'publish')['publication_id']
