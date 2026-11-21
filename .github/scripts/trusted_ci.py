@@ -341,6 +341,11 @@ def registry_at_revision(revision):
 
 
 def quarantine_policy(base, candidate, known_before, known_after):
+    base_raw, base_retired = policy.retired_at_revision(base)
+    retired = set(base_retired)
+    if candidate != base:
+        _, candidate_retired = policy.retired_at_revision(candidate, allow_legacy=base_raw is None)
+        retired.update(candidate_retired)
     entries = registry_at_revision(candidate)
     current = policy.known_failure_classes(known_after)
     overlap = current.keys() & entries.keys()
@@ -349,9 +354,9 @@ def quarantine_policy(base, candidate, known_before, known_after):
     before = entries if base == candidate else registry_at_revision(base)
     moved = policy.moved_failure_classes(known_before, current)
     honoured = {node: row for node, (row, source) in entries.items()
-                if (node in before and source == before[node][1])
-                or moved.get(node) == row["reason"].split(":", 1)[0].strip()}
-    return entries.keys(), honoured
+                if node not in retired and ((node in before and source == before[node][1])
+                                            or moved.get(node) == row["reason"].split(":", 1)[0].strip())}
+    return {node: row for node, (row, _) in entries.items()}, honoured
 
 
 def main():
@@ -395,9 +400,13 @@ def main():
         workers = "4"
     listed = frozenset()
     if maker.retry_run(candidate):
+        event = policy.event()
+        branch = (event["pull_request"]["base"]["ref"] if os.environ["GITHUB_EVENT_NAME"] == "pull_request"
+                  else event["merge_group"]["base_ref"].removeprefix("refs/heads/"))
+        base = candidate["base_sha"]
         current = policy.read_file(candidate["sha"], policy.KNOWN)
-        old = policy.read_file(candidate["base_sha"], policy.KNOWN)
-        _, quarantine = quarantine_policy(candidate["base_sha"], candidate["sha"], old, current)
+        old = policy.read_file(base, policy.KNOWN)
+        _, quarantine = quarantine_policy(base, base if branch == "main" else candidate["sha"], old, current)
         listed = maker.listed_nodes(maker.decode_list(current) if current is not None else None) | quarantine.keys()
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
