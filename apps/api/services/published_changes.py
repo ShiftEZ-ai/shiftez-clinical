@@ -570,8 +570,9 @@ def submit(db, actor, row, workspace, command):
     row.revision += 1
     workspace.revision += 1
     history(db, actor, 'publication_change_lists', row, value.reason)
-    # lifecycle already returned this candidate's review payload; nothing it reads changed since.
-    return {**result, 'changes': public_changes(row, result['validation'], db=db, actor=actor)}
+    planning.refresh_review_check_currency(db, candidate, candidate.submitted_fingerprint)
+    return {**result, 'validation': candidate.validation,
+            'changes': public_changes(row, candidate.validation, db=db, actor=actor)}
 
 
 def on_reviewed(db, actor, workspace, reason):

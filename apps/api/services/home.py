@@ -28,13 +28,13 @@ _HOME_CACHE_LOCK = Lock()
 _HOME_CACHE_LIMIT = 128
 
 
-def _home_stamp(db, actor, now):
+def _home_stamp(db, actor, now, max_days):
     """Return a bounded invalidation stamp without aggregating every history row."""
     latest_audit = db.scalar(select(func.max(m.AuditEvent.created_at)).where(
         m.AuditEvent.department_id == actor.department_id))
     row = db.execute(select(m.Department.revision, m.Department.catalogue_revision,
                             m.Organisation.revision, m.Organisation.input_revision,
-                            m.Organisation.availability_revision)
+                            m.Organisation.availability_revision, m.Organisation.timezone)
                     .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
                     .where(m.Department.id == actor.department_id)
                     ).one()
@@ -42,7 +42,20 @@ def _home_stamp(db, actor, now):
     # stamp process-independent so the durable Home projection is shared by
     # every API worker after a deploy.
     from .rota_summary import validation_job_stamp
-    return (*row, latest_audit, now.date(), validation_job_stamp(db, department_id=actor.department_id))
+    # Dated grants start and expire at the department's midnight.
+    today = now.astimezone(ZoneInfo(row.timezone)).date()
+    # A worker can confirm a submitted rota without an audit or validation job change.
+    review_stamps = ()
+    if actor.permits("coordinator", "approver", "programme_lead"):
+        from .read_projections import CANONICAL_AUDIENCE
+        W, C = m.Workspace, m.WorkspaceReadProjection
+        horizon = timedelta(days=max_days)
+        review_stamps = tuple((wid, stamp) for wid, stamp in db.execute(
+            select(W.id, C.stamp).join(C, C.workspace_id == W.id)
+            .where(W.department_id == actor.department_id, W.status == 'submitted', W.archived_at.is_(None),
+                   W.ends_on > today - horizon, W.starts_on < today + horizon,
+                   C.kind == 'fingerprint', C.audience == CANONICAL_AUDIENCE).order_by(W.id)))
+    return (*row, latest_audit, today, review_stamps, validation_job_stamp(db, department_id=actor.department_id))
 
 
 def rota_strip(db, actor, start, end, limit, offset):
@@ -117,11 +130,16 @@ def _home_uncached(db, actor, *, max_days):
         checking = checking_workspaces(db, [w.id for w in live])
         from .workspace_reads import stored_checks
         checks = stored_checks(db, live)
-        # A landing read must not rebuild every live rota. Unknown currency is shown
-        # conservatively and the planner resolves it on open.
+        # Home reads saved currency. Unknown submitted rotas get no review offer.
         current_inputs = cheap_fingerprints(db, live, checks=checks)
+        if can("coordinator", "approver", "programme_lead"):
+            unconfirmed = [w for w in live if w.status == 'submitted' and w.id not in current_inputs]
+            if unconfirmed:
+                from apps.api.snapshots import fingerprints
+                current_inputs.update(fingerprints(db, unconfirmed, checks=checks, reload=False,
+                                                   rebuild=lambda _w: False))
         outdated = {w.id for w in live if w.status != "draft" and (
-            w.id not in current_inputs or w.submitted_fingerprint != current_inputs[w.id])}
+            not current_inputs.get(w.id) or w.submitted_fingerprint != current_inputs[w.id])}
         fresh = {w.id for w in drafts if checks[w.id]['checked'] and checks[w.id]['fingerprint'] == current_inputs.get(w.id)}
 
         summaries = {}
@@ -370,7 +388,7 @@ def home(db, actor, *, settings=None):
     settings = settings or Settings()
     max_days = settings.workspace_read_max_days
     from .notification_audience import is_test_identity
-    stamp = (_home_stamp(db, actor, now), settings.publish_test_people_only, is_test_identity(actor))
+    stamp = (_home_stamp(db, actor, now, max_days), settings.publish_test_people_only, is_test_identity(actor))
     from .read_projections import cached_department
     if db is not None:
         return cached_department(db, actor, 'home', digest([stamp, max_days]),

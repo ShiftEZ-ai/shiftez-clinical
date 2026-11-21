@@ -2612,6 +2612,25 @@ def review_gate_check(db, workspace, *, reuse=False):
     return checked, frozen[0], (result, current[0])
 
 
+def refresh_review_check_currency(db, workspace, fingerprint):
+    check = workspace.validation or {}
+    manifest = check.get('input_manifest') or {}
+    hint = manifest.get('dirty_hint')
+    if not hint or not fingerprint or fingerprint != check.get('fingerprint') or fingerprint != manifest.get('token'):
+        return
+    # Review bookkeeping stamps revisions after the gate verifies the scheduling inputs.
+    department = db.get(m.Department, workspace.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    dirty = {**hint, 'input_revision': organisation.input_revision,
+             'availability_revision': organisation.availability_revision}
+    if workspace.base_publication_id and 'department_revisions' in dirty:
+        dirty['department_revisions'] = [
+            [ident, revision, department.catalogue_revision if ident == department.id else catalogue]
+            for ident, revision, catalogue in dirty['department_revisions']]
+    if dirty != hint:
+        workspace.validation = {**check, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2823,19 +2842,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .generation_resume import clear_generation_resume
         clear_generation_resume(db, workspace_id=workspace.id)
     db.flush()
-    if (action in {'submit', 'approve'} and (manifest := workspace.validation.get('input_manifest'))
-            and (hint := manifest.get('dirty_hint'))):
-        # The status write stamps currency. Amendment history also advances its department's catalogue revision.
-        organisation = db.get(m.Organisation, actor.organisation_id)
-        dirty = {**hint, 'input_revision': organisation.input_revision,
-                 'availability_revision': organisation.availability_revision}
-        if workspace.base_publication_id and 'department_revisions' in dirty:
-            department = db.get(m.Department, workspace.department_id)
-            dirty['department_revisions'] = [
-                [ident, revision, department.catalogue_revision if ident == department.id else catalogue]
-                for ident, revision, catalogue in dirty['department_revisions']]
-        if dirty != hint:
-            workspace.validation = {**workspace.validation, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
+    if action in {'submit', 'approve'}:
+        refresh_review_check_currency(db, workspace, workspace.submitted_fingerprint if action == 'submit' else fp)
     if action == "approve" and workspace.status == "approved" and db.get(m.Department, workspace.department_id).swap_auto_publish:
         swap = db.scalar(select(m.SwapRequest).where(m.SwapRequest.workspace_id == workspace.id))
         if swap:
