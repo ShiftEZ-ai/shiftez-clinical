@@ -5,14 +5,16 @@ stamps the drawn element with `data-lg="<key id>:<entry>"` and adds that entry; 
 `assert_legend_matches` renders nothing itself: a view's browser test draws the view with data that produces its marks,
 then calls it. It checks, for the view's root:
 
-1. every stamped mark on screen has its entry in a key on screen, and every entry has a mark on screen (a key lists
-   nothing that is not drawn);
+1. every stamped mark on screen has its entry in the visible key or its overflow popover, and every entry has a mark
+   on screen (a key lists nothing that is not drawn);
 2. no unstamped mark: an element of the shared mark vocabulary (`MARKS`) outside any stamped mark is a mark drawn
    without its key, so a new view or mark that skips the key fails here.
 
 `scrollers`: virtualised containers (the timeline) are scrolled through so every laid-out row is seen once.
 """
-from playwright.sync_api import Page
+from contextlib import contextmanager
+
+from playwright.sync_api import Page, expect
 
 # The shared mark vocabulary: every element drawn in a meaning-carrying hue, pattern or glyph. A drawn element of one of
 # these, or inside a stamped mark, is covered; one that is neither is a mark without its key. `data-lg-self` (rare,
@@ -56,19 +58,19 @@ _COLLECT = """([root, marks]) => {
   // A key's own swatches, and cards or popovers opened over the view, are not the view's marks (the view may be a panel).
   const away = n => { const a = n.closest('.view-legend, [role=tooltip], .hovercard, [popover], dialog, .tl-card'); return !!a && a !== r && r.contains(a); };
   const stamped = [...r.querySelectorAll('[data-lg]')].filter(n => shown(n) && !away(n)).flatMap(n => n.getAttribute('data-lg').split(' ').filter(Boolean));
-  const keys = [...r.querySelectorAll('.view-legend:not([hidden])')];
+  const keys = [...r.querySelectorAll('.view-legend:not([hidden])')].filter(shown);
   const entries = keys.flatMap(k => [...k.querySelectorAll('li[data-lg-entry]')].map(n => n.getAttribute('data-lg-entry')));
   const bare = [...r.querySelectorAll(marks)].filter(n => shown(n) && !away(n) && !n.closest('[data-lg], [data-lg-self]'))
     .map(n => n.outerHTML.slice(0, 160));
-  // A key never hides an entry: it wraps, never scrolls sideways or clips (UIUX-AUDIT L1).
+  // The key stays on one line without scrolling; hidden entries must be usable through its overflow popover.
   const clipped = keys.filter(k => k.scrollWidth > k.clientWidth + 1 || k.scrollHeight > k.clientHeight + 1).map(k => k.getAttribute('data-lg-key'));
-  // Nor is any entry's own text cut (an entry wider than its box, or words ending in an ellipsis).
-  const cut = keys.flatMap(k => [...k.querySelectorAll('li[data-lg-entry]')].filter(li => li.getBoundingClientRect().right > k.getBoundingClientRect().right + 1
-    || [...li.querySelectorAll('.lg-words, .lg-act, .truncate')].some(n => n.scrollWidth > n.clientWidth + 1))
+  // Only an overlong first label may be ellipsised; the popover below must expose its full words and swatch.
+  const cut = keys.flatMap(k => [...k.querySelectorAll('li[data-lg-entry]')].filter(shown).filter(li => li.getBoundingClientRect().right > k.getBoundingClientRect().right + 1
+    || [...li.querySelectorAll('.lg-words, .lg-act, .truncate')].some(n => n.scrollWidth > n.clientWidth + 1) && !(li === k.firstElementChild && k.querySelector('.lg-more')))
     .map(li => li.getAttribute('data-lg-entry') + ' ' + JSON.stringify(li.textContent.trim().slice(0, 60))));
   // A swatch never overlaps its entry's words: its painted extent (its box and everything in it, which may overflow a
   // collapsed box) ends before the words start on the same line (live 12dc48a22: the team swatch over "Supervision").
-  const overlaps = keys.flatMap(k => [...k.querySelectorAll('li[data-lg-entry]')].filter(li => {
+  const overlaps = keys.flatMap(k => [...k.querySelectorAll('li[data-lg-entry]')].filter(shown).filter(li => {
     const words = li.querySelector('.lg-words'), entry = li.querySelector(':scope > .lg-act') || li, sw = entry.firstElementChild;
     if (!words || !sw || sw === words) return false;
     const w = words.getBoundingClientRect(), parts = [sw, ...sw.querySelectorAll('*')].map(n => n.getBoundingClientRect()).filter(r => r.width || r.height);
@@ -82,13 +84,65 @@ _COLLECT = """([root, marks]) => {
 _FRAME = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
 
 
+@contextmanager
+def legend_entries(page: Page, key):
+    """Entries a reader can use: the visible row plus every item in its +N popover, with the same words and symbols."""
+    expect(key).to_be_visible()
+    page.evaluate(_FRAME)
+    assert key.evaluate("k => getComputedStyle(k).flexWrap === 'nowrap' && k.scrollWidth <= k.clientWidth + 1 && k.scrollHeight <= k.clientHeight + 1")
+    assert key.locator(':scope > li:visible').evaluate_all("ns => new Set(ns.map(n => {const r=n.getBoundingClientRect();return Math.round((r.top+r.bottom)/2)})).size === 1")
+    assert key.locator(':scope > li:visible').evaluate_all("""ns => ns.every(n => {
+        const r=n.getBoundingClientRect(), k=n.parentElement.getBoundingClientRect();
+        return r.left>=k.left-1 && r.right<=k.right+1 && r.top>=k.top-1 && r.bottom<=k.bottom+1 && r.right<=innerWidth+1;
+    })""")
+    entries = key.locator(':scope > li[data-lg-entry]')
+    visible = key.locator(':scope > li[data-lg-entry]:visible')
+    expected = entries.evaluate_all('ns => ns.map(n => n.innerHTML)')
+    shown = visible.evaluate_all('ns => ns.map(n => n.innerHTML)')
+    more = key.locator('.lg-more > button')
+    if not more.count():
+        assert shown == expected
+        yield visible
+        return
+    hidden = len(expected) - len(shown)
+    expect(more).to_have_text(f'+{hidden}')
+    noun = 'legend item' if hidden == 1 else 'legend items'
+    expect(more).to_have_attribute('aria-label', f'{hidden} more {noun}: show all {len(expected)}')
+    label = key.get_attribute('aria-label')
+    more.click()
+    panel = page.get_by_role('dialog', name=f'All {label}', exact=True)
+    expect(panel).to_be_visible()
+    overflow = panel.locator('ol > li > .lg-pop')
+    try:
+        expect(overflow).to_have_count(len(expected))
+        listed = overflow.evaluate_all('ns => ns.map(n => n.innerHTML)')
+        assert listed == expected, 'Overflow must preserve every entry, its order, words and symbol'
+        assert set(shown) | set(listed) == set(expected)
+        assert overflow.locator('.lg-words').evaluate_all('ns => ns.every(n => n.scrollWidth <= n.clientWidth + 1 && n.scrollHeight <= n.clientHeight + 1)')
+        assert overflow.evaluate_all("""ns => ns.every(n => {
+            const words=n.querySelector('.lg-words'), sw=(n.querySelector('.lg-act') || n).firstElementChild;
+            if (!words || !sw || sw===words) return false;
+            const w=words.getBoundingClientRect();
+            return [sw, ...sw.querySelectorAll('*')].every(s => {const r=s.getBoundingClientRect();
+                return !(r.right>w.left+.5 && r.left<w.right && r.top<w.bottom && r.bottom>w.top);});
+        })""")
+        yield overflow
+    finally:
+        page.keyboard.press('Escape')
+        expect(panel).not_to_be_visible()
+
+
 def legend_state(page: Page, root="#main", scrollers=()):
     """The stamped marks, key entries and unstamped marks under `root`, scrolling each virtualised container through."""
     seen = {"stamped": set(), "entries": set(), "bare": [], "keys": set(), "clipped": set(), "cut": set(), "overlaps": set(), "mute": []}
 
     def take():
+        # Overflow can replace the containing popover; retain the marks and entries it was explaining.
         got = page.evaluate(_COLLECT, [root, MARKS])
         assert got is not None, f"{root} is not on the page"
+        for key in page.locator(root).locator(".view-legend:visible").all():
+            with legend_entries(page, key):
+                pass
         seen["stamped"] |= set(got["stamped"]); seen["entries"] |= set(got["entries"])
         seen["bare"] += [b for b in got["bare"] if b not in seen["bare"]]; seen["keys"] |= set(got["keys"])
         seen["clipped"] |= set(got["clipped"]); seen["mute"] += [m for m in got["mute"] if m not in seen["mute"]]
@@ -109,8 +163,8 @@ def assert_legend_matches(page: Page, root="#main", scrollers=(), expect_marks=N
     page.evaluate(_FRAME)  # keys fill on a microtask after drawing
     seen = legend_state(page, root, scrollers)
     assert not seen["bare"], f"Marks drawn without a legend entry (use legend().mark): {seen['bare'][:5]}"
-    assert not seen["clipped"], f"A key scrolls or clips its entries (it must wrap): {sorted(seen['clipped'])}"
-    assert not seen["cut"], f"Key entries whose words are cut (an entry is never cut): {sorted(seen['cut'])[:5]}"
+    assert not seen["clipped"], f"A key scrolls or clips its row: {sorted(seen['clipped'])}"
+    assert not seen["cut"], f"Key entries whose full words are unavailable: {sorted(seen['cut'])[:5]}"
     assert not seen["overlaps"], f"Key entries whose swatch overlaps their words: {sorted(seen['overlaps'])[:5]}"
     assert not seen["mute"], f"data-lg-self on an element with no words of its own: {seen['mute'][:5]}"
     missing = seen["stamped"] - seen["entries"]

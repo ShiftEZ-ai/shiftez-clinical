@@ -1215,15 +1215,16 @@ BULK_REVERSE_FUNCTIONS = {kind: partial(_registered_reverse, kind) for kind in s
 
 
 def _run_item(db, actor, item, value, settings, batch_id):
-    had_self_approval = "self_approved" in db.info
-    previous = deepcopy(db.info.get("self_approved"))
+    audit_keys = ("self_approved", "entered_on_behalf_by")
+    previous = {key: deepcopy(db.info[key]) for key in audit_keys if key in db.info}
     try:
         return _dispatch_item(db, actor, item, value, settings, batch_id)
     except Exception:
-        if had_self_approval:
-            db.info["self_approved"] = previous
-        else:
-            db.info.pop("self_approved", None)
+        for key in audit_keys:
+            if key in previous:
+                db.info[key] = previous[key]
+            else:
+                db.info.pop(key, None)
         raise
 
 
@@ -1367,7 +1368,9 @@ def _dispatch_item(db, actor, item, value, settings, batch_id):
             **subject_detail(db, command.kind, reply, department_id=actor.department_id),
                     **({"context_check_evidence": reply["context_check_evidence"]} if reply.get("context_check_evidence") else {}),
                     **({"resolved_finding": item["resolved_issue"]} if item.get("resolved_issue") else {}),
-                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {})},
+                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                    **({"entered_on_behalf_by": sorted(enterers)}
+                       if (enterers := db.info.pop("entered_on_behalf_by", None)) else {})},
             correlation_id=db.info.get("correlation_id") or "bulk-preview")))
         if not before or after.get("id") == before.get("id"):
             current = after or current

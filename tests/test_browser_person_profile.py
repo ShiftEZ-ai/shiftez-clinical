@@ -285,7 +285,7 @@ def test_person_exception_approval_respects_aliases_self_and_explicit_permission
     reviewer = identity(h, 'profile_exception_alias', ['approver'], person=actor['id'])
     policy = h.policy({'kind': 'max_duties', 'maximum': 2, 'window': 'week'}, exception=True)
     payload = {'policy_id': policy['id'], 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}
-    alias = h.command('profile_exception_creator', 'exception.create', {**payload, 'person_id': beneficiary['id'],
+    alias = h.command('profile_exception_creator', 'exception.create', {**payload, 'person_id': actor['id'],
                       'reason': 'Same person alternate sign-in'})['record']
     own = h.command('coordinator', 'exception.create', {**payload, 'person_id': actor['id'],
                     'reason': 'Exception for the reviewer'})['record']
@@ -296,15 +296,15 @@ def test_person_exception_approval_respects_aliases_self_and_explicit_permission
         panel = open_person(page, beneficiary)
         panel.get_by_role('tab', name='Rules', exact=True).click()
         table = panel.locator('[data-table="person-exceptions"]')
-        alias_row = table.locator(f'[data-row="{alias["id"]}"]')
         independent_row = table.locator(f'[data-row="{independent["id"]}"]')
-        expect(alias_row).to_be_visible()
-        expect(alias_row.get_by_role('button', name='Approve exception', exact=True)).to_have_count(0)
         expect(independent_row.get_by_role('button', name='Approve exception', exact=True)).to_be_visible()
 
         panel = open_person(page, actor)
         panel.get_by_role('tab', name='Rules', exact=True).click()
+        alias_row = panel.locator(f'[data-table="person-exceptions"] [data-row="{alias["id"]}"]')
         own_row = panel.locator(f'[data-table="person-exceptions"] [data-row="{own["id"]}"]')
+        expect(alias_row).to_be_visible()
+        expect(alias_row.get_by_role('button', name='Approve exception', exact=True)).to_have_count(0)
         expect(own_row).to_be_visible()
         expect(own_row.get_by_role('button', name='Approve exception', exact=True)).to_have_count(0)
         # A deliberate waiver changes the authority after reload, including identity aliases and the subject.
@@ -313,19 +313,19 @@ def test_person_exception_approval_respects_aliases_self_and_explicit_permission
         page.reload()
         panel.get_by_role('tab', name='Rules', exact=True).click()
         expect(own_row.get_by_role('button', name='Approve exception', exact=True)).to_be_visible()
-        panel = open_person(page, beneficiary)
-        panel.get_by_role('tab', name='Rules', exact=True).click()
         alias_row.get_by_role('button', name='Approve exception', exact=True).click()
         dialog = page.get_by_role('dialog', name='Approve bounded exception', exact=True)
         dialog.get_by_label('Reason', exact=True).fill('Reviewed using the explicit exception permission')
         dialog.get_by_role('button', name='Confirm', exact=True).click()
         expect(dialog).to_have_count(0)
         expect(alias_row).to_contain_text('Approved')
-        expect(independent_row).to_contain_text('Waiting for approval')
         page.reload()
         panel.get_by_role('tab', name='Rules', exact=True).click()
         expect(alias_row).to_contain_text('Approved')
         expect(alias_row.get_by_role('button', name='Approve exception', exact=True)).to_have_count(0)
+        panel = open_person(page, beneficiary)
+        panel.get_by_role('tab', name='Rules', exact=True).click()
+        expect(independent_row).to_contain_text('Waiting for approval')
     finally:
         context.close()
     saved = {r['id']: r for r in h.get('coordinator', '/api/catalogues')['exceptions']}

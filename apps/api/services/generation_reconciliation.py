@@ -31,10 +31,10 @@ def prepare(db, actor, command):
             'JOB_STATE', 'Select a completed proposal for this rota', 409)
     result = job.result or {}
     from .jobs import require_application_toolchain, require_latest_run
-    require_application_toolchain(job)
-    require_latest_run(db, job)
     require(result.get('status') in {'candidate_feasible', 'candidate_with_gaps', 'unknown_time_limit'},
             'NO_CANDIDATE', 'This job did not produce an applicable proposal')
+    require_application_toolchain(job)
+    require_latest_run(db, job)
     def indexes(kind, requested):
         rows = result.get(kind, [])
         selected = list(range(len(rows))) if requested is None else sorted(set(requested))

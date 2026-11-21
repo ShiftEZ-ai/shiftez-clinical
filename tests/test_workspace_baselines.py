@@ -550,14 +550,16 @@ def test_baseline_freezes_settings_but_keeps_department_row_live(h):
     assert snapshot["department"]["weekend_days"] == [0, 1]
     assert snapshot["department"]["operating_calendar_id"] == calendar_id
     assert snapshot["department"]["name"] == "Live department name"
-    # Captured generation defaults are exposed with the otherwise current department record.
+    # Captured generation defaults are exposed alongside the captured display settings.
     assert snapshot["department"]["generation_defaults"] == frozen
+    assert snapshot["department"]["generation_defaults"]["scoring"]["wish_debt_cap"] == 2
     with transaction(h.app.state.engine) as db:
         from apps.api.serialization import record
         from apps.api.services.jobs import baseline_generation_context
         workspace = db.get(m.Workspace, draft["id"])
         assert snapshot["department"] == {**record(db.get(m.Department, workspace.department_id)),
-                                          "generation_defaults": frozen}
+            "generation_defaults": before["department"]["generation_defaults"],
+            "display_settings": before["department"]["display_settings"]}
         defaults, _ = baseline_generation_context(db, workspace)
         assert defaults.scoring.wish_debt_cap == frozen["scoring"]["wish_debt_cap"]
         assert domain_snapshot(db, workspace, operational=True)["generation_options"] == frozen
