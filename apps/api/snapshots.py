@@ -411,6 +411,16 @@ def _baseline_hint(db, workspace):
     return hint
 
 
+def _seed_baseline_hints(db, workspaces):
+    from .workspace_baselines import latest_many
+
+    baselines = latest_many(db, [workspace.id for workspace in workspaces])
+    memo = db.info.setdefault('_baseline_hints', {})
+    for workspace in workspaces:
+        row = baselines.get(workspace.id)
+        memo[workspace.id, workspace.revision] = [row.id, row.payload_hash] if row else [None, None]
+
+
 def _verified_baseline(db, workspace):
     """Load and integrity-check one draft baseline once in this request/session."""
     from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
@@ -510,22 +520,37 @@ def _fingerprint_shared_inputs(db, workspace):
     return prepared_snapshot_inputs(db, organisation)
 
 
-def cheap_fingerprints(db, workspaces, *, checks):
+def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
     """Return currencies proven by stored dirty hints without rebuilding snapshots.
 
     Collection and landing reads must never rebuild a department snapshot merely
     to label a row as fresh. Missing or stale hints are omitted so callers can
     conservatively show unknown/outdated and let an authoritative read resolve it.
     """
-    from packages.domain.input_manifest import digest, toolchain
+    from packages.domain.input_manifest import digest, feasibility_token, toolchain
 
     current_toolchain = digest(toolchain(quota_policy_limit()))
     departments = {}
     revision_stamps = {}
     result = {}
+    if feasibility and workspaces:
+        _seed_baseline_hints(db, workspaces)
+        if checks:
+            from .services.read_projections import CANONICAL_AUDIENCE, input_stamp
+            C = m.WorkspaceReadProjection
+            by_id = {workspace.id: workspace for workspace in workspaces if workspace.id in checks}
+            result.update({wid: value for wid, stamp, value in db.execute(
+                select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(by_id),
+                    C.audience == CANONICAL_AUDIENCE, C.kind == 'feasibility_fingerprint'))
+                if value is not None and stamp == input_stamp(db, by_id[wid])})
     for workspace in workspaces:
+        if workspace.id in result:
+            continue
         check = (checks or {}).get(workspace.id) or {}
         manifest = check.get('input_manifest') or {}
+        if feasibility and ('format' not in manifest or not {'content', 'mandatory_inputs', 'toolchain'} <=
+                            (manifest.get('components') or {}).keys()):
+            continue
         hint = manifest.get('dirty_hint') or {}
         department = departments.get(workspace.department_id)
         if department is None:
@@ -544,12 +569,13 @@ def cheap_fingerprints(db, workspaces, *, checks):
                       'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
-            result[workspace.id] = manifest['token']
+            result[workspace.id] = (feasibility_token({'input_manifest': manifest})
+                                    if feasibility else manifest['token'])
     return result
 
 
 def feasibility_fingerprint(db, workspace):
-    """Reads (e.g. every rule-review poll) reuse the stored token for unchanged inputs; writers always rebuild."""
+    """Reuse the stored feasibility token for unchanged inputs."""
     return feasibility_fingerprints(db, [workspace])[workspace.id]
 
 
