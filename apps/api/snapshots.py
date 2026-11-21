@@ -841,7 +841,7 @@ def event_local_date_for_hint(db, workspace, organisation, *, now=None):
     """Return the local date only when recurring blocking-event facts depend on today.
 
     ``blocking_occurrences`` clamps recurring projections to ``m.now()``'s local
-    date and drops starts before that instant.  Stored occurrences do not use the
+    date and drops occurrences that ended before that instant.  Stored occurrences do not use the
     clock, so an unaffected draft keeps the same compact hint across midnight.
     """
     timezone = (organisation.get('timezone') if isinstance(organisation, Mapping)
@@ -1097,6 +1097,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         from .workspace_baselines import frozen_department_settings
         department_settings = {**department_settings, **frozen_department_settings(
             result, workspace.department_id, baseline.included_sources)}
+        result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
@@ -1439,7 +1440,7 @@ def domain_snapshot(db, workspace, *args, **kwargs):
                                          'include_fairness', 'include_objectives', 'include_fairness_history',
                                          'include_manifest'} or value is None
                                  for key, value in kwargs.items())
-    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
+    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo', 'job.create'}:
         db.flush()
         index = state['next_snapshot']
         state['next_snapshot'] += 1
@@ -1447,8 +1448,13 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
                              'stamp': stamp})
         cached = state['prepared_snapshots'].get(index)
-        if cached and cached[0] == key and currency_match(stamp, stamp):
+        resolved = currency_match(stamp, stamp)
+        if state['kind'] == 'job.create':
+            state['generation_snapshot_key'] = key if resolved or not state['replay'] else 'unresolved'
+        if cached and cached[0] == key and resolved:
             return pickle.loads(cached[1])
+        if state['replay'] and state['kind'] == 'job.create':
+            return _domain_snapshot(db, workspace, *args, **kwargs)
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
