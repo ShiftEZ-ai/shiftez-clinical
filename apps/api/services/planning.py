@@ -283,18 +283,27 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         checked['_overlap_witness'] = _overlap_witness
     if check := db.info.get('_check_budget'):
         checked['_check_budget'] = check
+    preparation = db.info.get('_planning_preparation')
     if _incremental is not None and not amendment_scope:
         before, previous = _incremental
-        partial = assignment_validation_scope(data, before, previous)
+        # Rule reach is reusable only for the same complete before and after inputs.
+        scopes = preparation['validation_scopes'] if preparation and preparation['kind'] == 'shift.update' else None
+        held = scopes.get(workspace.id) if scopes is not None else None
+        if held is not None and held[0] is previous and held[1] == before and held[2] == data:
+            partial = held[3]
+        else:
+            partial = assignment_validation_scope(data, before, previous)
+            if scopes is not None and not preparation['replay']:
+                scopes[workspace.id] = (previous, before, data, partial)
         if partial is not None:
             checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
     defaults = department.generation_defaults
-    preparation = db.info.get('_planning_preparation')
+    preparing = preparation is not None and not preparation['replay']
     previous_check = copy.deepcopy(preparation['validation_baselines'].get(
-        workspace.id, workspace.validation)) if preparation else None
-    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparation else []
+        workspace.id, workspace.validation)) if preparing else None
+    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparing else []
     evaluated_at = command_time(db).isoformat()
     def compute():
         checked['_supervision_commitments'] = supervision_commitments(data)
