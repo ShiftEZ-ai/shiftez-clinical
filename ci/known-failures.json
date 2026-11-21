@@ -996,18 +996,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_team_lead.py::test_legacy_leads_convert_from_exact_preview_and_require_independent_activation[case-aaghjoejnmeelohiadmfachkbojnfieloojphlimdgdcomganijhimnilbepinpa]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_browser_team_lead.py::test_legacy_leads_convert_from_exact_preview_and_require_independent_activation[case-jaljclpdbjmbcjopbhagnmifdckmhkbnhhjcpcdjjnkbbcdococciomihdjegpjc]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_terms.py::test_coordinator_follows_the_setup_guide_without_admin_actions",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."

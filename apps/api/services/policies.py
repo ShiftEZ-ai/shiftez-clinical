@@ -18,7 +18,7 @@ from packages.domain.rule_serialization import stored_definition
 from apps.api import models as m
 from apps.api.auth import require_catalogue_read, require_permission, require_role, person_access, current_roles
 from apps.api.errors import require
-from apps.api.serialization import CHECK_SUMMARY, record, json_value
+from apps.api.serialization import CHECK_SUMMARY, record, records_many, json_value
 from apps.api.snapshots import (DomainSnapshot, domain_snapshot, fingerprint, feasibility_fingerprints,
                                 snapshot_hash, snapshot_inputs, tag_data)
 from .common import scoped, expected, bump_inputs, history, history_many, history_version
@@ -352,13 +352,17 @@ def people_data(db, actor, day):
     from packages.domain.time import local_midnight
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
-    rows = lambda cls: [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))]
-    data = DomainSnapshot({"organisation": {"timezone": zone}, "memberships": rows(m.Membership), "grants": rows(m.CapabilityGrant),
-            "programme_memberships": rows(m.ProgrammeMembership), "rotations": rows(m.Rotation), "eligibilities": rows(m.Eligibility)})
-    for name, cls in {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
-                      "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
-                      "services": m.Service, "locations": m.Location}.items():
-        data[name] = {r["id"]: r for r in rows(cls)}
+    keyed = {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
+             "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
+             "services": m.Service, "locations": m.Location}
+    sources = {"memberships": m.Membership, "grants": m.CapabilityGrant,
+               "programme_memberships": m.ProgrammeMembership, "eligibilities": m.Eligibility, **keyed}
+    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in sources.items()})
+    data = DomainSnapshot({"organisation": {"timezone": zone}, **rows})
+    for name in keyed:
+        data[name] = {r["id"]: r for r in rows[name]}
+    # Rotation records resolve their current mentor through the ORM attachment.
+    data["rotations"] = [record(r) for r in db.scalars(select(m.Rotation).where(m.Rotation.department_id == actor.department_id))]
     members = {r["person_id"] for r in data["memberships"] if r["starts_on"] <= day.isoformat() and (not r.get("ends_on") or day.isoformat() < r["ends_on"])}
     data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(m.Person.id.in_(list(members) or [""]), m.Person.active.is_(True)))}
     data["tags"] = tag_data(db, [actor.department_id])
