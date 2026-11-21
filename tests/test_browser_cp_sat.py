@@ -99,7 +99,8 @@ def test_planner_configures_generates_and_applies_cp_sat(browser, cp_server, h):
     expect(page.locator('#auto-panel').get_by_role('progressbar')).to_be_visible()
     wait_run_created(page)
     expect(page.locator('#auto-panel .auto-stage strong')).to_have_text(re.compile(r'^(Waiting for the scheduler to start|\d/5 .+)$'))
-    assert not any(url.endswith('/api/catalogues') or url.endswith('/api/workspaces/' + workspace['id']) for url in queued_requests)
+    detail = '/api/workspaces/' + workspace['id']
+    assert not any(url.endswith(('/api/catalogues', detail, detail + '?view=schedule')) for url in queued_requests)
     job = h.get('coordinator', '/api/jobs')['jobs'][0]
     assert job['generation_engine'] == 'cp_sat'
     assert job['effective_options']['mode'] == 'fill_gaps'
