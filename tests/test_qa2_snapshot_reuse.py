@@ -1,6 +1,6 @@
 """Operation-local external rows preserve fresh snapshots, checks and transactional rollback."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -119,8 +119,13 @@ def test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_ro
     h.command('coordinator', 'availability.record', {'person_id': absent, 'kind': 'recorded_leave',
         'start': '2026-11-03T00:00:00+03:00', 'end': '2026-11-04T00:00:00+03:00',
         'private_reason': 'Synthetic leave'})
+    eligibility_ids = sorted((m.uid(), m.uid()), reverse=True)
     with transaction(h.app.state.engine, write=True) as db:
         workspace = db.get(m.Workspace, w['id'])
+        created = datetime.fromisoformat('2026-10-01T00:00:00+00:00')
+        db.add_all(m.Eligibility(id=ident, department_id=workspace.department_id, person_id=absent,
+            service_id=service, starts_on=date(2020, 1, 1), ends_on=date(2021, 1, 1), created_at=created)
+            for ident, service in zip(eligibility_ids, h.seed['services']))
         add_own(db, h, workspace, 1)
         inputs = snapshots.snapshot_inputs(db, db.get(m.Organisation, h.seed['organisation_id']))
         source = snapshots.domain_snapshot(db, workspace, shared_inputs=inputs)
@@ -143,6 +148,7 @@ def test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_ro
             assert reused['tags'][tag['id']]['members'] == {'people': [h.seed['people'][0]]}
             assert any(row['id'] == cap['id'] for row in reused['policies'])
             assert any(row['person_id'] == absent for row in reused['availability'])
+            assert [row['id'] for row in reused['eligibilities'] if row['id'] in eligibility_ids] == eligibility_ids
             assert any(r.get('event_occurrence_id') == occurrence['id'] for r in reused['scheduling_facts']) == blocked
             assert any(f['code'] == 'RESTRICTION' and f.get('person_id') == h.seed['people'][0]
                        for f in evaluate(reused)['findings']) == blocked

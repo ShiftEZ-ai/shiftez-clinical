@@ -800,7 +800,9 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])
     for key in LIVE_QUALIFICATION_KEYS:
-        result[key] = sorted_rows(current.get(key, result.get(key, [])))
+        value = current.get(key, result.get(key, []))
+        # The shared projection already orders clinic eligibility by creation.
+        result[key] = value if key == "eligibilities" else sorted_rows(value)
     for key in LIVE_QUALIFICATION_DEFINITIONS:
         value = current.get(key)
         if value is not None:

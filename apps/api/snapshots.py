@@ -932,7 +932,8 @@ def _snapshot_inputs(db, org):
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
-    acquired = records_many(db, sources, exclude={'people': ('pager',)}, order_by=SCHEDULING_ORDER)
+    acquired = records_many(db, sources, exclude={'people': ('pager',)},
+        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id)})
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
