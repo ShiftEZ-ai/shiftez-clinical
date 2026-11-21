@@ -237,7 +237,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "da02d2c0-630e-560e-b1b8-d834dcf7faf4",
+          "id": "5d361448-eb8e-5df0-984f-171c0426a777",
           "numbers": {
             "max": {
               "level": "mandatory",
@@ -252,7 +252,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "86369e56-52eb-51e3-a1f7-399aacd23ebc",
+          "id": "ede20801-fb77-5b18-97e5-30bb71c8e1c3",
           "numbers": {
             "max": {
               "level": "mandatory",
@@ -267,7 +267,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "0b56bd9c-0bc8-54fd-a891-1877044a9643",
+          "id": "875cf158-dfc8-503e-8ca0-f377f47d1e5c",
           "numbers": {
             "min": {
               "level": "mandatory",
@@ -282,7 +282,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "2a9d9cf1-d16c-53ff-b5d6-bb1af75c3f1b",
+          "id": "f4d889ea-7f6d-5ced-bdc5-9cde4dee9a0e",
           "numbers": {
             "max": {
               "level": "mandatory",
@@ -297,7 +297,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "e0fa6b2c-c2b5-5799-a53d-f36e71bda978",
+          "id": "0c737c88-3de7-50eb-9f4a-e00b674354da",
           "numbers": {
             "min": {
               "level": "mandatory",
@@ -312,7 +312,7 @@
       "reason": "Review this synthetic rule example",
       "lines": [
         {
-          "id": "1063dd5b-685a-5937-a209-ad99b9f89e6a",
+          "id": "35ffa4a7-c46c-5dba-9ea2-5a7fefc27678",
           "numbers": {
             "apply": {
               "level": "medium"
