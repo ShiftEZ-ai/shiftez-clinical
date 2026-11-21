@@ -6,15 +6,18 @@ from collections import defaultdict
 from collections.abc import Mapping
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
+from operator import itemgetter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import defer, object_session
 from . import models as m
-from .serialization import json_value, record, records_many, rows_many
+from .serialization import json_value, record, records_many, rows_many, shift_link_rows
 from packages.domain.conditions import with_tags
 from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
+from packages.domain.serialization import json_default
 from packages.domain.validation import ENGINE_VERSION
 from .settings import Settings, quota_policy_limit
 
@@ -180,18 +183,32 @@ def shift_records(db, rows, *, include_participants=True) -> list[dict]:
     """Attach clinics and optionally people in batches to ORM sessions or selected session fields."""
     rows = list(rows)
     ids = [row['id'] if isinstance(row, Mapping) else row.id for row in rows]
+    workspaces = {row.get('workspace_id') if isinstance(row, Mapping) else row.workspace_id for row in rows}
+    # Link visibility is evaluated again in SQL, within the scope of the selected rows.
+    options = {'shift_workspace_id': next(iter(workspaces))} if len(workspaces) == 1 else None
     services, people = {i: [] for i in ids}, {i: [] for i in ids}
     for chunk in (ids[k:k + 1000] for k in range(0, len(ids), 1000)):
-        sources = {'services': (m.ShiftService, m.ShiftService.shift_id.in_(chunk))}
-        if include_participants:
-            sources['assignments'] = (m.Assignment, m.Assignment.shift_id.in_(chunk))
-        acquired = records_many(db, sources)
-        for link in acquired['services']:
-            services[link['shift_id']].append(link['service_id'])
-        for assignment in sorted(acquired.get('assignments', []), key=lambda row: row['person_id']):
-            people[assignment['shift_id']].append(assignment)
-    return [{**(json_value(dict(row)) if isinstance(row, Mapping) else record(row)),
-             "service_ids": sorted(services[sid]), "participants": people[sid]} for row, sid in zip(rows, ids)]
+        for shift_id, service_id, assignment in shift_link_rows(db, chunk, include_participants=include_participants,
+                                                               execution_options=options):
+            if assignment is None:
+                services[shift_id].append(service_id)
+            else:
+                people[shift_id].append(assignment)
+    by_person = itemgetter('person_id')
+    for assignments in people.values():
+        assignments.sort(key=by_person)
+    result = []
+    for row, sid in zip(rows, ids):
+        if isinstance(row, RowMapping):
+            # Selected columns already own their decoded JSON. Format only the typed dates.
+            shift = {key: json_default(value) if isinstance(value, date) else value for key, value in row.items()}
+        elif isinstance(row, Mapping):
+            shift = json_value(dict(row))
+        else:
+            shift = record(row)
+        shift.update(service_ids=sorted(services[sid]), participants=people[sid])
+        result.append(shift)
+    return result
 
 
 def shift_record(db, row) -> dict:
@@ -386,7 +403,7 @@ def _baseline_hint(db, workspace):
     if key in memo:
         return memo[key]
     from .workspace_baselines import latest
-    row = latest(db, workspace.id)
+    row = latest(db, workspace.id, include_payload=False)
     if row is None:
         return [None, None]
     hint = [row.id, row.payload_hash]
@@ -950,7 +967,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
-                    include_objectives: bool = True, include_fairness_history: bool = True) -> dict:
+                    include_objectives: bool = True, include_fairness_history: bool = True,
+                    rule_map_bindings: bool = False) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1002,6 +1020,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                                               include_mandatory=bool(draft_rules) or current_mandatory,
                                               validity_baseline=validity_baseline)
             mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
+            if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
+                from packages.domain.rule_lines import seeded_policies
+
+                captured = seeded_policies(saved_inputs.get("policies") or [], saved_inputs.get("policy_seed_lines") or [])
+                effective = live_safety_inputs(db, workspace, saved_inputs, current=live_inputs,
+                                              include_mandatory=True, validity_baseline=validity_baseline)["policies"]
+                if captured != effective:
+                    shared_inputs['_rule_map_policies'] = (captured, effective)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
@@ -1181,15 +1207,21 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["scheduling_facts"] = [({**r, "status": "retired"} if r["id"] in replaced else r)
             for r in result["scheduling_facts"] if r["id"] not in overrides] + list(overrides.values())
     from packages.domain.rule_lines import bound_policies
-    result["policies"] = bound_policies(result["policies"], result, read_quality=read_quality)
-    result["_catalogue_v2_materialized"] = True
     # This rota's adjustments over the department rules (switch off, or another number).
     adjustments = [r for r in (workspace.rule_adjustments or []) if r['policy_id'] not in overridden_ids]
-    if adjustments:
-        from .services.planning import adjusted_rules
-        result["policies"] = [q for q in (adjusted_rules(p, adjustments) for p in result["policies"]) if q is not None]
-    # Rules added for one rota apply to that rota only.
-    result["policies"] = [p for p in result["policies"] if (p.get("definition") or {}).get("workspace_id") in (None, workspace.id)]
+
+    def resolve(policies, quality):
+        policies = bound_policies(policies, result, read_quality=quality)
+        if adjustments:
+            from .services.planning import adjusted_rules
+            policies = [q for p in policies if (q := adjusted_rules(p, adjustments)) is not None]
+        # Rules added for one rota apply to that rota only.
+        return [p for p in policies if (p.get("definition") or {}).get("workspace_id") in (None, workspace.id)]
+
+    if '_rule_map_policies' in result:
+        result['_rule_map_policies'] = [resolve(policies, {}) for policies in result['_rule_map_policies']]
+    result["policies"] = resolve(result["policies"], read_quality)
+    result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
     lo, hi = snapshot_window(workspace, org.timezone)
@@ -1278,6 +1310,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if baseline is not None:
+        # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
+        for shift in external:
+            type_id = shift['assignment_type_id']
+            if type_id not in result['types']:
+                issued = shift.get('type_snapshot') or {}
+                source = issued if issued.get('department_id') else live_inputs['types'][type_id]
+                result['types'][type_id] = json_value(source)
     from .services.published_changes import staged_availability
     result['availability'] += staged_availability(db, workspace)
     # All snapshot consumers below are evaluation entry points (fairness, rule-map,

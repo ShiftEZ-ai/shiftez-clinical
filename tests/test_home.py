@@ -446,6 +446,26 @@ def test_department_scale_is_fast_and_right(department_home_scale):
     assert_department_home(department_home_scale)
 
 
+def test_department_scale_home_rank_count_avoids_full_people_projection(department_home_scale, monkeypatch):
+    from apps.api.services import people, read_projections
+
+    h, *_ = department_home_scale
+    materialized = []
+    project = people.current_people
+
+    def count_people(*args, **kwargs):
+        result = project(*args, **kwargs)
+        materialized.append(len(result['people']))
+        return result
+
+    monkeypatch.setattr(people, 'current_people', count_people)
+    monkeypatch.setattr(read_projections, 'cached_department',
+                        lambda db, actor, kind, stamp, build, **kwargs: build())
+
+    assert counts(h.get('coordinator', '/api/home'))['no_rank'] == 5
+    assert sum(materialized) <= 5, materialized
+
+
 @pytest.mark.cpu_budget
 def test_department_scale_is_fast_and_right_cpu_budget(department_home_scale):
     _, _, elapsed, _ = department_home_scale

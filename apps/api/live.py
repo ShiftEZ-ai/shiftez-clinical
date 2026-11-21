@@ -163,6 +163,10 @@ def command_changes(kind, payload=None, result=None, *, target_id=None):
         return _attach_workspace_edit(_deduplicate(changes), result) if changes else None
     if kind in {'bulk.stage', 'bulk.staged.drop'}:
         scopes = ('settings',)
+    elif kind == 'department_content.seen':
+        # One person's read receipt changes no page anyone has open: announced as the catalogue, it made every open
+        # Home re-read the account and lists and draw again (its own reads started over). The periodic pulse remains.
+        return None
     else:
         scopes = COMMAND_SCOPES.get(kind.partition('.')[0])
     if scopes is None:

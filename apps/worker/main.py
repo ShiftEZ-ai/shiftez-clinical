@@ -1130,16 +1130,16 @@ def prune_generation_state(engine, *, settings=None):
 
 
 def prepare_deferred_generation(engine, claim, settings):
-    """Freeze inputs on lease and refresh preparation if the draft rules changed."""
+    """Recheck generation authority on lease, then freeze or refresh the solver inputs."""
+    if claim['kind'] != 'generation':
+        return
     prior = claim['input']
     deferred = prior.get('_deferred_generation')
-    if claim['kind'] != 'generation' or not (deferred or prior.get('baseline') and 'policies' in prior):
-        return
     from apps.api.errors import require
     from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
-    from apps.api.services.planning_groups import guard_generation
+    from apps.api.services.planning_groups import guard_frozen_generation, guard_generation
     from apps.api.snapshots import domain_snapshot, draft_policy_hint
     from packages.contracts import schemas as s
     from packages.domain.generation_scope import has_population
@@ -1154,18 +1154,21 @@ def prepare_deferred_generation(engine, claim, settings):
                 and workspace.archived_at is None, 'STALE_INPUTS',
                 'The rota changed before auto-scheduling started', 409)
         department = db.get(m.Department, workspace.department_id)
-        organisation = db.get(m.Organisation, department.organisation_id)
-        if not deferred:
-            hint = (prior.get('input_manifest') or {}).get('dirty_hint') or {}
-            if hint.get('input_revision') == organisation.input_revision and all(
-                    hint.get(key) == value for key, value in draft_policy_hint(workspace).items()):
-                return
         identity = db.get(m.Identity, job.requested_by)
         require(identity is not None and not identity.disabled, 'ACCESS_REVOKED', 'The requester no longer has access', 403)
         actor = Actor(identity.id, workspace.department_id, department.organisation_id,
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
+        if not deferred:
+            guard_frozen_generation(db, actor, workspace, prior)
+            if not (prior.get('baseline') and 'policies' in prior):
+                return
+            organisation = db.get(m.Organisation, department.organisation_id)
+            hint = (prior.get('input_manifest') or {}).get('dirty_hint') or {}
+            if hint.get('input_revision') == organisation.input_revision and all(
+                    hint.get(key) == value for key, value in draft_policy_hint(workspace).items()):
+                return
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
         options = s.GenerationOptions.model_validate(claim['input'].get('generation_options') or {})
@@ -1461,7 +1464,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         monitor = threading.Thread(target=maintain_lease, daemon=True)
         monitor.start()
         try:
-            if claim["kind"] == "generation":
+            if error is not None:
+                pass  # A preparation refusal must reach the job receipt without running the solver.
+            elif claim["kind"] == "generation":
                 if claim['input'].get('generation_scope') is not None:
                     identity = proof_identity.identity()
                     if identity is None or identity['source_digest'] != claim['input'].get('generation_scope_source'):
@@ -1489,7 +1494,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                         'checkpoint': checkpoint, 'search_control': search_control,
                                         '_diagnostic_continuation': diagnostic_continuation,
                                         '_candidate_evidence': candidate_evidence} if native_cp_sat else {}), **diagnostic)
-                          if scheduler else generate(claim["input"]))
+                          if scheduler else generate(claim["input"], cancelled=stopped.is_set))
                 continuation = claim['input'].get('continuation')
                 if isinstance(result, dict) and isinstance(continuation, dict):
                     previous_seconds = continuation.get('previous_search_seconds', 0)
