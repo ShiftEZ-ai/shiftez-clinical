@@ -964,6 +964,7 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    current_goals: bool = False, current_generation_defaults: bool = False,
                     own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
@@ -971,6 +972,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     rule_map_bindings: bool = False) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
+    current_scheduling = current_scheduling or current_goals
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
     mandatory_overlay_changed = False
     baseline = None
@@ -1042,12 +1044,19 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result.update({"workspace": record(workspace, exclude=("validation",)), "department": record(department),
                    "operational": operational,
                    "quota_policy_limit": quota_policy_limit()})
+    from .workspace_baselines import frozen_department_settings, workspace_generation_defaults
     department_settings = result['department']
     if baseline is not None:
-        from .workspace_baselines import frozen_department_settings
-        department_settings = {**department_settings, **frozen_department_settings(
-            result, workspace.department_id, baseline.included_sources)}
+        frozen = frozen_department_settings(result, workspace.department_id, baseline.included_sources)
+        department_settings = {**department_settings, **frozen}
+        if workspace.status in ('draft', 'submitted', 'approved'):
+            defaults = workspace_generation_defaults(db, workspace, department, frozen_settings=frozen)
+            result['department']['generation_defaults'] = department_settings['generation_defaults'] = defaults
+        elif current_generation_defaults:
+            department_settings['generation_defaults'] = result['department']['generation_defaults']
         result["baseline"] = baseline_projection(baseline)
+    elif current_goals:
+        department_settings['generation_defaults'] = workspace_generation_defaults(db, workspace, department)
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
     # A published rota keeps the rules it was approved under: rules activated, changed or retired later

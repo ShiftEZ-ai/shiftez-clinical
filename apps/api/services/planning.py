@@ -248,14 +248,13 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
-    # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
-    department = db.get(m.Department, workspace.department_id)
     data = acquired_data if acquired_data is not None else domain_snapshot(
         db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules,
         current_mandatory=current_mandatory)
+    defaults = data['department'].get('generation_defaults')
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
-                  complete_check(workspace.validation, data, department.generation_defaults)):
+                  complete_check(workspace.validation, data, defaults)):
         result = copy.deepcopy(workspace.validation)
         if own is not None:
             focus = set(data['focus_ids'])
@@ -286,7 +285,6 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
             checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
-    defaults = department.generation_defaults
     preparation = db.info.get('_planning_preparation')
     previous_check = copy.deepcopy(preparation['validation_baselines'].get(
         workspace.id, workspace.validation)) if preparation else None
@@ -356,7 +354,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.finding_causes import DIAGNOSTIC_VERSION
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
-        result['score_dependencies'] = score_dependencies(department.generation_defaults)
+        result['score_dependencies'] = score_dependencies(defaults)
     result['input_manifest'] = {k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')}
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list

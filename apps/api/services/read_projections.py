@@ -6,6 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError, TimeoutError as PoolTimeout
 from apps.api import models as m
 from apps.api.settings import Settings, quota_policy_limit
+from apps.api.workspace_baselines import workspace_generation_defaults
 from packages.domain.input_manifest import digest, toolchain
 
 
@@ -41,7 +42,7 @@ def input_stamp(db, workspace):
     # changes, so revision-keyed read work survives an API deploy safely.
     policy_basis = draft_policy_hint(workspace)
     return digest([org.input_revision, org.availability_revision,
-        workspace.revision, workspace.content_revision, workspace.status, department.generation_defaults,
+        workspace.revision, workspace.content_revision, workspace.status, workspace_generation_defaults(db, workspace, department),
         digest(toolchain(quota_policy_limit())), *policy_basis.values()])
 
 

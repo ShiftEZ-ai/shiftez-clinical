@@ -181,3 +181,32 @@ def test_department_search_maximum_saves_validates_and_undoes(browser, cp_server
             minutes_words(AUTO_SCHEDULE_LIMITS['default_minutes']))
     finally:
         context.close()
+
+
+def test_draft_panel_shows_the_search_time_captured_with_the_draft(browser, cp_server, h):
+    """A draft runs with the auto-schedule settings captured when it started: after the department's default moves on,
+    its set-up panel still shows the captured search time, and the department keeps its new value."""
+    captured, current = 4, 6
+
+    def department_minutes(minutes):
+        h.command('admin', 'department.settings', {**department_settings(h),
+                  'generation_defaults': {'search_minutes': minutes}}, h.seed['department_id'],
+                  h.get('admin', '/api/me')['organisation']['revision'])
+
+    department_minutes(captured)
+    workspace = h.shift(h.workspace('Captured search time'), people=[])['workspace']
+    department_minutes(current)
+    assert h.get('coordinator', '/api/jobs?workspace_id=' + workspace['id'])['generation_defaults']['search_minutes'] == captured
+    assert h.get('admin', '/api/me')['department']['generation_defaults']['search_minutes'] == current
+    context, page = sign_in(browser, cp_server, 'coordinator')
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        open_rota(page, workspace['id'])
+        open_scheduling(page)
+        panel = page.locator('#auto-panel')
+        auto_setup(panel, fields=False)
+        expect(panel.get_by_role('textbox', name='Search time', exact=True)).to_have_value(minutes_words(captured))
+        assert errors == []
+    finally:
+        context.close()
