@@ -341,6 +341,45 @@ def test_apply_checks_live_mandatory_rules_independently_of_rule_drift(request, 
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+@pytest.mark.parametrize('engine', ['legacy', 'cp_sat'])
+def test_stricter_safety_rule_reaches_check_solver_apply_and_approval(request, backend, engine):
+    from packages.domain.validation import evaluate
+
+    h = request.getfixturevalue('cp_sat_engine' if engine == 'cp_sat' else backend)
+    policy = h.policy({'kind': 'min_rest', 'hours': 8})
+    person = h.seed['people'][0]
+    draft = h.shift(h.workspace('Synthetic strict safety source'), people=[person])['workspace']
+    draft = h.shift(draft, start='2026-10-04T22:00:00+03:00', end='2026-10-05T02:00:00+03:00', people=[])['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, policy['id'])
+        row.definition = {**row.definition, 'rule': {**row.definition['rule'], 'hours': 12}}
+        row.revision += 1
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    checked = h.snapshot(draft)
+    assert next(row for row in checked['policies'] if row['id'] == policy['id'])['definition']['rule']['hours'] == 12
+    first, second = sorted(checked['shifts'], key=lambda row: row['start'])
+    second['participants'] = [{**first['participants'][0], 'start': second['start'], 'end': second['end']}]
+    assert any(f['code'] == 'MIN_REST' and f['severity'] == 'error' for f in evaluate(checked)['findings'])
+    job_id = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
+                       revision=draft['revision'])['job']['id']
+    h.process_jobs()
+    job = h.get('coordinator', '/api/jobs/' + job_id)['job']
+    assert job['status'] == 'succeeded'
+    with transaction(h.app.state.engine) as db:
+        job_input = db.get(m.Job, job['id']).input_snapshot
+        assert job_input['generation_engine'] == engine
+        job_rule = next(row for row in job_input['policies'] if row['id'] == policy['id'])
+    assert job_rule['definition']['rule']['hours'] == 12
+    assigned, = [row['participant']['person_id'] for row in job['result']['additions']
+                 if row['shift_id'] == second['id']]
+    assert assigned != person
+    applied = apply(h, draft, job)
+    assert applied['reconciliation']['status'] == 'applied'
+    published = h.publish(applied['workspace'])
+    assert published['workspace']['status'] == 'published'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_apply_rechecks_currency_even_when_semantic_fingerprint_is_unchanged(request, backend, monkeypatch):
     from apps.api.services import generation_reconciliation
     from packages.contracts.schemas import Command
