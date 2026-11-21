@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "institution": {
+    "department_name": "Synthetic planning unit",
+    "department_revision": 1,
+    "organisation_name": "Synthetic fictional initial template",
+    "timezone": "Asia/Riyadh",
+    "week_start": 6,
+    "weekend_days": [
+      4,
+      5
+    ],
+    "reason": "Review this wholly synthetic planning configuration"
+  },
+  "starts_on": "2025-02-03",
+  "catalogues": [
+    {
+      "key": "category-A",
+      "catalogue": "categories",
+      "value": {
+        "name": "Synthetic category A"
+      }
+    },
+    {
+      "key": "category-B",
+      "catalogue": "categories",
+      "value": {
+        "name": "Synthetic category B"
+      }
+    },
+    {
+      "key": "category-C",
+      "catalogue": "categories",
+      "value": {
+        "name": "Synthetic category C"
+      }
+    },
+    {
+      "key": "programme-A",
+      "catalogue": "programmes",
+      "value": {
+        "name": "Synthetic programme A"
+      }
+    },
+    {
+      "key": "programme-B",
+      "catalogue": "programmes",
+      "value": {
+        "name": "Synthetic programme B"
+      }
+    },
+    {
+      "key": "calendar-A",
+      "catalogue": "operating_calendars",
+      "value": {
+        "name": "Synthetic calendar A",
+        "definition": {
+          "timezone": "Asia/Riyadh",
+          "week": [
+            {
+              "weekday": 0,
+              "windows": [
+                {
+                  "start_time": "09:00",
+                  "end_time": "11:00"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "key": "calendar-B",
+      "catalogue": "operating_calendars",
+      "value": {
+        "name": "Synthetic calendar B",
+        "definition": {
+          "timezone": "Asia/Riyadh",
+          "week": [
+            {
+              "weekday": 1,
+              "windows": [
+                {
+                  "start_time": "09:00",
+                  "end_time": "11:00"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "key": "unit-kind",
+      "catalogue": "location_types",
+      "value": {
+        "name": "Generic unit"
+      }
+    },
+    {
+      "key": "unit-root",
+      "catalogue": "locations",
+      "value": {
+        "name": "Synthetic unit root",
+        "location_type_id": {
+          "$ref": "unit-kind"
+        }
+      }
+    },
+    {
+      "key": "unit-A",
+      "catalogue": "locations",
+      "value": {
+        "name": "Synthetic unit A",
+        "location_type_id": {
+          "$ref": "unit-kind"
+        },
+        "parent_id": {
+          "$ref": "unit-root"
+        }
+      }
+    },
+    {
+      "key": "unit-B",
+      "catalogue": "locations",
+      "value": {
+        "name": "Synthetic unit B",
+        "location_type_id": {
+          "$ref": "unit-kind"
+        },
+        "parent_id": {
+          "$ref": "unit-root"
+        }
+      }
+    },
+    {
+      "key": "service-A",
+      "catalogue": "services",
+      "value": {
+        "name": "Synthetic service A",
+        "calendar_id": {
+          "$ref": "calendar-A"
+        }
+      }
+    },
+    {
+      "key": "service-B",
+      "catalogue": "services",
+      "value": {
+        "name": "Synthetic service B",
+        "calendar_id": {
+          "$ref": "calendar-B"
+        }
+      }
+    },
+    {
+      "key": "service-C",
+      "catalogue": "services",
+      "value": {
+        "name": "Synthetic service C",
+        "calendar_id": {
+          "$ref": "calendar-A"
+        }
+      }
+    },
+    {
+      "key": "service-D",
+      "catalogue": "services",
+      "value": {
+        "name": "Synthetic service D",
+        "calendar_id": {
+          "$ref": "calendar-B"
+        }
+      }
+    },
+    {
+      "key": "type-A",
+      "catalogue": "assignment_types",
+      "value": {
+        "name": "Synthetic duty A",
+        "definition": {
+          "colour": "teal",
+          "default_timing": {
+            "start_time": "09:00",
+            "end_time": "11:00"
+          }
+        }
+      }
+    },
+    {
+      "key": "type-B",
+      "catalogue": "assignment_types",
+      "value": {
+        "name": "Synthetic duty B",
+        "definition": {
+          "colour": "blue",
+          "default_timing": {
+            "start_time": "09:00",
+            "end_time": "11:00"
+          }
+        }
+      }
+    },
+    {
+      "key": "type-C",
+      "catalogue": "assignment_types",
+      "value": {
+        "name": "Synthetic duty C",
+        "definition": {
+          "colour": "indigo",
+          "default_timing": {
+            "start_time": "09:00",
+            "end_time": "11:00"
+          }
+        }
+      }
+    },
+    {
+      "key": "type-D",
+      "catalogue": "assignment_types",
+      "value": {
+        "name": "Synthetic duty D",
+        "definition": {
+          "colour": "pink",
+          "default_timing": {
+            "start_time": "09:00",
+            "end_time": "11:00"
+          }
+        }
+      }
+    }
+  ],
+  "rules": [
+    {
+      "catalogue_id": "duties_per_week",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "5d361448-eb8e-5df0-984f-171c0426a777",
+          "numbers": {
+            "max": {
+              "level": "mandatory",
+              "value": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "catalogue_id": "hours_per_week",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "ede20801-fb77-5b18-97e5-30bb71c8e1c3",
+          "numbers": {
+            "max": {
+              "level": "mandatory",
+              "value": 32
+            }
+          }
+        }
+      ]
+    },
+    {
+      "catalogue_id": "people_per_session",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "875cf158-dfc8-503e-8ca0-f377f47d1e5c",
+          "numbers": {
+            "min": {
+              "level": "mandatory",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "catalogue_id": "days_in_a_row",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "f4d889ea-7f6d-5ced-bdc5-9cde4dee9a0e",
+          "numbers": {
+            "max": {
+              "level": "mandatory",
+              "value": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "catalogue_id": "rest_between_duties",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "0c737c88-3de7-50eb-9f4a-e00b674354da",
+          "numbers": {
+            "min": {
+              "level": "mandatory",
+              "value": 9
+            }
+          }
+        }
+      ]
+    },
+    {
+      "catalogue_id": "fair_share",
+      "reason": "Review this synthetic rule example",
+      "lines": [
+        {
+          "id": "35ffa4a7-c46c-5dba-9ea2-5a7fefc27678",
+          "numbers": {
+            "apply": {
+              "level": "medium"
+            }
+          }
+        }
+      ],
+      "settings": {
+        "balance_goal": {
+          "metric": "duties"
+        }
+      }
+    }
+  ]
+}
