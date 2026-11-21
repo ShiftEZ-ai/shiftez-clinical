@@ -20,6 +20,7 @@ from scripts import initial_seed, manage, system_command
 
 ROOT = Path(__file__).resolve().parents[1]
 REASON = "Owner explicitly chose the fictional initial configuration"
+pytestmark = pytest.mark.usefixtures("synthetic_initial_seed")
 
 
 @pytest.fixture(scope="session")
@@ -48,6 +49,7 @@ def test_mounted_seed_bundle_retains_a_predecessor_runtimes_defaults(installatio
     monkeypatch.delattr(initial_seed.deployment_settings, "new_department_session_limits")
     # Execute the mounted script anew: an unconditional import would fail before load can run.
     bundle = runpy.run_path(str(ROOT / "scripts/initial_seed.py"))
+    monkeypatch.setitem(bundle["load"].__globals__, "SEEDS", initial_seed.SEEDS)
     result = bundle["load"](engine, settings, 1, REASON)
     with transaction(engine) as db:
         department = db.get(m.Department, result["department_id"])
@@ -87,7 +89,7 @@ def test_seed_creates_reviewable_configuration_and_linked_audit_only(installatio
         locations = list(db.scalars(select(m.Location)))
         assert len(locations) == 3 and sum(bool(r.parent_id) for r in locations) == 2
         types = list(db.scalars(select(m.AssignmentType)))
-        assert {r.definition["colour"] for r in types} == {"teal", "blue", "amber", "violet"}
+        assert {r.definition["colour"] for r in types} == {"teal", "blue", "indigo", "pink"}
         policies = list(db.scalars(select(m.Policy)))
         assert len(policies) == 7
         [default] = [p for p in policies if p.source == SCORING_DEFAULT_SOURCE]
@@ -260,6 +262,7 @@ def test_missing_current_module_or_transitive_dependency_fails_atomically(instal
     assert (schema.MIGRATIONS / "versions/0109_fair_share_dials.py").is_file()
     # Load as a kit script after establishing the image's supported head, including any direct imports.
     load = runpy.run_path(str(ROOT / "scripts/initial_seed.py"))["load"]
+    monkeypatch.setitem(load.__globals__, "SEEDS", initial_seed.SEEDS)
     monkeypatch.setattr(builtins, "__import__", missing_scoring_module)
     with pytest.raises(ModuleNotFoundError) as error:
         load(engine, settings, 1, REASON)
