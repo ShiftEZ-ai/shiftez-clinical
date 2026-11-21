@@ -153,10 +153,11 @@ def test_rule_review_verifies_each_draft_baseline_once(h, monkeypatch, count):
     finally:
         event.remove(h.app.state.engine, "before_cursor_execute", listener)
     assert response.status_code == 200, response.text
-    assert len(calls) == count and len(set(calls)) == count
-    assert len(statements) == count
-    assert sizes and max(sizes) <= 4 and sizes[-1] <= 4
-    assert hashes
+    assert calls == []
+    assert len(statements) == 1
+    assert "canonical_payload" not in statements[0].lower()
+    assert sizes == []
+    assert hashes == []
 
 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
