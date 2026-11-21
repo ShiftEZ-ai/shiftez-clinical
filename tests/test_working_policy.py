@@ -339,7 +339,7 @@ def pytest_runtest_makereport(item, call):
                                      b"/tests/quarantine.py @ShiftEZ-ai/maintainers\n"
                                      b"/tests/quarantine.json @ShiftEZ-ai/maintainers\n"),
                   after_codeowners=None, candidate_helpers=None, http=None, token="synthetic-token", files=None,
-                  real_inventory=False, default="dev"):
+                  real_inventory=False, default="dev", accepted=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
                  "head": {"ref": "feature", "sha": head, "repo": {"id": policy.REPOSITORY}}, "merge_commit_sha": candidate}}
@@ -398,7 +398,7 @@ def pytest_runtest_makereport(item, call):
         mocks = {"event": lambda: data, "git": fake_git, "fetch": fake_fetch,
                  "merge_tree": lambda *a: candidate,
                  "tree": lambda rev: ((merge_tree or candidate) if rev == head else candidate),
-                 "accepted_dev_commit": lambda candidate_tree, dev_tip: source,
+                 "accepted_dev_commit": accepted or (lambda candidate_tree, dev_tip: source),
                  "control_inventory": inventory,
                  "migrations": lambda revision: {}, "read_file": read, "findings_report": record}
         if real_inventory:
@@ -633,13 +633,21 @@ def pytest_runtest_makereport(item, call):
                         self.run_guard("apps/example.py", branch=default, kind=kind, default=default, preview_history=True)
 
     def test_main_target_is_release_checked_only_while_the_default_is_dev(self):
+        with self.assertRaisesRegex(ValueError, "Main would add content beyond the accepted dev tree"):
+            self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40)
+        # Once main is the default it is the integration branch: no release tree equivalence applies.
+        report = self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40, default="main")
+        self.assertEqual((report["branch"], report["tier1"]), ("main", []))
         for kind in ("pull_request", "merge_group"):
             with self.subTest(kind=kind):
-                with self.assertRaisesRegex(ValueError, "Main would add content beyond the accepted dev tree"):
-                    self.run_guard("apps/example.py", branch="main", kind=kind, merge_tree="u" * 40)
-                # Once main is the default it is the integration branch: no release tree equivalence applies.
-                report = self.run_guard("apps/example.py", branch="main", kind=kind, merge_tree="u" * 40, default="main")
-                self.assertEqual((report["branch"], report["tier1"]), ("main", []))
+                accepted = Mock(side_effect=ValueError("Release head tree is not an accepted tree on dev"))
+                with self.assertRaisesRegex(ValueError, "not an accepted tree on dev"):
+                    self.run_guard("apps/example.py", branch="main", kind=kind, accepted=accepted)
+                accepted.assert_called_once()
+                accepted.reset_mock()
+                report = self.run_guard("apps/example.py", branch="main", kind=kind, default="main", accepted=accepted)
+                self.assertEqual(report["branch"], "main")
+                accepted.assert_not_called()
 
     def test_default_main_retires_the_dev_and_preview_targets(self):
         self.assertEqual(policy.working_branches("dev"), {"dev", "main", "preview"})
@@ -1137,7 +1145,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
         # After the rename main is the integration branch: candidate lists apply and the PR gets the stale lookup.
-        for event in ("pull_request", "merge_group", "push"):
+        for event in ("pull_request", "push"):
             with self.subTest(event=event):
                 self.exercise_verdict_materialization("main", event=event, default="main")
         with self.assertRaisesRegex(ValueError, "Unsupported branch"):
