@@ -9,6 +9,7 @@ from copy import deepcopy
 from functools import lru_cache
 from math import ceil
 import json
+import pickle
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from .participation import presence_intervals
@@ -313,7 +314,7 @@ def effective_issued_definition(issued, current):
 
 def effective_type_definition(data, shift):
     """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values.
-    Run-cached definitions are read-only.
+    Each caller owns its definition, including nested requirements and supervision.
     """
     issued = shift['type_snapshot']['definition']
     operational = bool(data.get('operational'))
@@ -325,16 +326,16 @@ def effective_type_definition(data, shift):
         key = id(issued), id(current), operational, published
         entry = definitions.get(key)
         if entry is not None and entry[0] is issued and entry[1] is current:
-            return entry[2]
+            return pickle.loads(entry[2])
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
         definition = (current if operational else issued) or {}
-        effective = dict(definition) if cache is not None else deepcopy(definition)
+        effective = deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain both sources so their identities cannot be reused during this run.
-        definitions[key] = issued, current, effective
+        definitions[key] = issued, current, pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
     return effective
 
 

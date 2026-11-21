@@ -303,9 +303,13 @@ def test_operational_type_source_preserves_draft_preview_and_published_context(s
     assert 'effective_type_definitions' not in cache
     cached = effective_type_definition(data, shift)
     assert cached == effective
-    assert effective_type_definition(data, shift) is cached
+    assert effective_type_definition(data, shift) == cached
+    assert effective_type_definition(data, shift) is not cached
     assert any(entry[0] is issued and entry[1] is latest
                for entry in cache['effective_type_definitions'].values())
+    cached['requirements'][0]['minimum'] += 9
+    assert effective_type_definition(data, shift) == effective
+    assert (issued['requirements'][0]['minimum'], latest['requirements'][0]['minimum']) == (1, 3)
     for source in (shift['type_snapshot'], data['types']['type']):
         source['definition'] = deepcopy(source['definition'])
         source['definition']['requirements'][0]['minimum'] += 4
@@ -324,8 +328,11 @@ def test_effective_definition_cache_normalizes_empty_sources_without_aliasing(so
     shift = {'type_snapshot': {'definition': source}}
     cached = effective_type_definition(data, shift)
     assert cached == effective_type_definition({**data, '_line_index_cache': None}, shift) == {'requirements': []}
-    assert effective_type_definition(data, shift) is cached
+    assert effective_type_definition(data, shift) == cached
+    assert effective_type_definition(data, shift) is not cached
     assert cached is not source
+    cached['requirements'].append({'minimum': 1})
+    assert effective_type_definition(data, shift) == {'requirements': []}
 
 
 
