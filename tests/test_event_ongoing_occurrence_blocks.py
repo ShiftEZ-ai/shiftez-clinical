@@ -115,3 +115,25 @@ def test_manual_placement_refuses_ongoing_occurrence(h, monkeypatch, case):
 
     assert refusal['error']['code'] == 'EDIT_INVALID'
     assert event_findings(refusal['error']['details']['findings'], person)
+
+
+@pytest.mark.parametrize('h', BACKENDS, indirect=True)
+@pytest.mark.parametrize('engine', ['cp_sat', 'greedy'])
+def test_auto_schedule_avoids_ongoing_occurrence_without_a_stored_row(h, monkeypatch, engine):
+    from packages.domain import cp_sat, generation
+
+    freeze_clock(monkeypatch, aware(local('2026-10-03', '09:00')))
+    blocked, available = h.seed['people'][:2]
+    workspace = rota(h, '2026-10-05', '11:00', '12:00', [])
+    prepare_series(h, monkeypatch, 'edited', blocked)
+    data = h.snapshot(workspace)
+    protected = [fact for fact in data['scheduling_facts'] if fact['kind'] == 'protected_time'
+                 and blocked in fact['data']['line']['who']['conditions'][0]['values']]
+    ongoing = {'start': aware(local('2026-10-05', '09:00')).isoformat(), 'end': aware(local('2026-10-05', '14:00')).isoformat()}
+    assert ongoing in [fact['data']['interval'] for fact in protected]
+    data['people'] = {pid: data['people'][pid] for pid in (blocked, available)}
+
+    result = (cp_sat.generate(data, 5, deterministic=True) if engine == 'cp_sat' else generation.generate(data, 5))
+
+    assert result['status'] == 'candidate_feasible' and result['validation']['valid'], result
+    assert {row['participant']['person_id'] for row in result['additions']} == {available}
