@@ -190,7 +190,7 @@ export const workspaceRevision=(id:string)=>get<{workspace:{revision:number}}>(`
 export type ActiveChoices={services?:{id:string}[];locations?:{id:string}[];assignment_types?:{id:string}[];
   inactive_count?:{services?:number;locations?:number;assignment_types?:number}};
 let active:Promise<ActiveChoices>|null=null;
-export const activeChoices=()=>active??=get<ActiveChoices>('/api/catalogues?active_only=true&include=services&include=locations&include=assignment_types').catch(err=>{active=null;throw err;});
+export const activeChoices=(read:typeof get=get)=>active??=read<ActiveChoices>('/api/catalogues?active_only=true&include=services&include=locations&include=assignment_types').catch(err=>{active=null;throw err;});
 export const forgetActiveChoices=()=>{active=null;};
 
 // ---- The approver's decision (B5) ----
