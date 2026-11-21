@@ -106,6 +106,7 @@ def test_rule_sheet_sections_range_bar_exceptions_and_draft_days(browser, live_s
         expect(sheet.get_by_role('button', name='New line')).to_be_visible()
         # The draft: a bar per day; a's three long days are short.
         section = sheet.locator('.rl-sec').filter(has_text='In November draft')
+        section.get_by_role('button', name='Show effect in November draft', exact=True).click()
         expect(section.locator('.rl-day')).to_have_count(7)
         expect(section.locator('.rl-day.short')).to_have_count(3)
         expect(section.locator('.rl-health-count')).to_have_text('4 of 7 days met')

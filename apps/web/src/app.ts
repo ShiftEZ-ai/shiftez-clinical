@@ -5641,10 +5641,10 @@ const ruleDatesNode=(p:Row)=>dateUnits(ruleDateParts(p).map((part,i)=>(i?'– ':
 let draftMaps=new Map<string,Promise<RuleMap>>();
 const draftMap=(id:string)=>{let m=draftMaps.get(id);if(!m){m=get<RuleMap>(`/api/workspaces/${id}/rule-map`);draftMaps.set(id,m);}return m;};
 /** The drafts the Rules page reports on (newest first) and the one shown: the first covering today, else the draft open
- *  in Schedule, else the most recent, that has sessions. Once per visit; a rule sheet may
+ *  in Schedule, else the most recent. Once per visit; a rule sheet may
  *  switch it for the rest of the visit. Null: no draft, or a role that does not read rotas. */
 let draftChoice:Promise<{drafts:Row[];chosen:string}|null>|null=null;
-const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(async r=>{
+const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(r=>{
   const today=toLocal(new Date().toISOString(),zone()).slice(0,10);
   const drafts=r.workspaces.filter(w=>w.status==='draft').sort((a,b)=>String(b.starts_on).localeCompare(String(a.starts_on)));
   if(!drafts.length)return null;
@@ -5652,8 +5652,7 @@ const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY
   // draft open on the Schedule; then the others. An old amendment covering today says nothing about the lines planned.
   const planned=(w:Row)=>!w.base_publication_id&&today<w.ends_on,open=(w:Row)=>w.id===workspaceId;
   const order=[...drafts.filter(planned).reverse(),...drafts.filter(w=>!planned(w)&&open(w)),...drafts.filter(w=>!planned(w)&&!open(w))];
-  // shortcut: reads at most 3 drafts' rule maps to find one with sessions; past that, the first in order.
-  for(const w of order.slice(0,3))if((await draftMap(w.id).catch(()=>null))?.shifts.length)return {drafts,chosen:w.id};
+  // Chosen by order alone; no draft's rule map is read to choose (a rule page reads none until asked).
   return {drafts,chosen:order[0].id};}).catch(()=>null):Promise.resolve(null));
 /** People each rule reaches today (GET /api/policies/reach), kept between draws of the Rules page. */
 let reachNow:Record<string,number>={};
@@ -5665,24 +5664,39 @@ const sheetSection=(title:string,action:Child,...content:Child[])=>el('section',
  *  drafts the section's head switches between them. One section for the rule sheet and the catalogue rule page. */
 function draftHealth(policy:Row):HTMLElement{
   let health:HTMLElement=el('div',{class:'rl-health-slot',hidden:true});
-  const inDraft=(found:{drafts:Row[];chosen:string})=>void draftMap(found.chosen).then(map=>{
-    const entry=map.rules.find(r=>r.id===policy.id),draft=found.drafts.find(w=>w.id===found.chosen)!;
+  // A swap that removes the focused control (the pressed button) keeps the keyboard in place: on the new section's heading.
+  const swap=(next:HTMLElement)=>{const had=health.contains(document.activeElement);health.replaceWith(next);health=next;
+    const h=next.querySelector<HTMLElement>('h3');if(had&&h){h.tabIndex=-1;focusQuietly(h);}};
+  const draftOf=(found:{drafts:Row[];chosen:string})=>found.drafts.find(w=>w.id===found.chosen)!;
+  // On demand. The page shows which draft and one button; the draft's rule map and drift are read only when asked
+  // (they cost ~30 s at department scale, and a rule page must not read a draft by itself).
+  const offer=(found:{drafts:Row[];chosen:string})=>swap(sheetSection('In '+labelOf(draftOf(found)),
+    button('Show effect',()=>inDraft(found),'secondary small',{'aria-label':`Show effect in ${labelOf(draftOf(found))}`})));
+  const inDraft=(found:{drafts:Row[];chosen:string})=>{
+    swap(sheetSection('In '+labelOf(draftOf(found)),'',skeleton('lines',`Loading ${labelOf(draftOf(found))} effect…`)));
+    void draftMap(found.chosen).then(map=>{
+    const entry=map.rules.find(r=>r.id===policy.id),draft=draftOf(found);
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
     const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
       ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
-    if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
+    // Asked for: the loading section is always replaced by a result (never left loading), so only a closed page stops here.
+    if(!health.isConnected)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
     pick?.input.addEventListener('change',()=>{found.chosen=pick.input.value;inDraft(found);});
     const next=sheetSection('In '+labelOf(draft),el('div',{class:'rl-sec-actions'},driftAction,pick?.wrap||'',showOnPlanner([policy],true)||''),
       !map.shifts.length?el('p',{class:'hint'},'No duties yet.'):entry?healthStrip(entry,map.days,map.fresh,reachNow[policy.id]??null):el('p',{class:'hint'},'This rule is not checked in this draft.'));
-    health.replaceWith(next);health=next;}).catch(()=>{});
-  // Read once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
+    swap(next);}).catch(e=>{
+      // A failure stays in this section with the shared failure note and its Retry (the failed read is not kept).
+      draftMaps.delete(found.chosen);
+      if(alive(health))swap(sheetSection('In '+labelOf(draftOf(found)),'',readFailed(`${labelOf(draftOf(found))} effect`,e,()=>inDraft(found))));});};
+  // Offered once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
   // so the slot is awaited frame by frame. shortcut: gives up after ~10 s unattached (a page replaced before it showed).
-  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?inDraft(found):frames>0&&attached(found,frames-1));
-  void currentDrafts().then(found=>{if(found)attached(found);});
+  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?offer(found):frames>0&&attached(found,frames-1));
+  // Only an active rule is in a draft's map: a rule waiting for approval, retired or switched off keeps the hidden slot.
+  if(policy.status==='active'&&policy.active!==false)void currentDrafts().then(found=>{if(found)attached(found);});
   return health;
 }
 function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),review?:()=>unknown,position?:PanelPosition){
