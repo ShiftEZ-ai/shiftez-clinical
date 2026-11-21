@@ -55,7 +55,8 @@ def ensure_subject(db, actor, action, subjects, entered_by, message, reason=None
     permission = ensure(db, actor, action, subject_independent(db, actor, subjects, entered_by),
                         message, reason, target_id, context=context)
     enterer = person_key(db, entered_by)
-    if any(enterer != "person:" + person for person in subjects if person is not None):
+    subject_keys = {"person:" + person for person in subjects if person is not None}
+    if subject_keys and enterer not in subject_keys:
         db.info.setdefault("entered_on_behalf_by", set()).add(entered_by)
     return permission
 
