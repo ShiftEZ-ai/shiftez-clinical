@@ -11,6 +11,7 @@ from apps.api.workspace_baselines import latest, live_safety_inputs, verify
 from packages.domain.candidate_evidence import candidate_evidence
 from packages.domain.time import now
 from packages.domain.validation import evaluate, qualification_failures
+from tests.clock_support import freeze_clock
 from tests.test_schedule_score import data, shift
 from tests.test_bulk_catalogue import rows
 
@@ -493,13 +494,14 @@ def test_people_reads_and_counts_change_at_department_midnight(h, dated_people, 
         for row in db.scalars(select(m.Membership).where(m.Membership.person_id == future)):
             row.ends_on = date(2026, 10, 5)
     cutoff = local_midnight(date(2026, 10, 6), zone)
-    client = h.client('coordinator')
     workspace = h.workspace()
     summary_path = f'/api/workspaces/{workspace["id"]}/summary'
     path = '/api/catalogues?include=people'
     previous, summary_etag = None, None
     for instant, active in ((cutoff - timedelta(seconds=1), True), (cutoff, False)):
-        monkeypatch.setattr(m, 'now', lambda: instant)
+        freeze_clock(monkeypatch, instant)
+        h.clients.clear()  # sign in again at the frozen time: the session clock moves with it
+        client = h.client('coordinator')
         reply = client.get(path, headers={'If-None-Match': previous} if previous else {})
         assert reply.status_code == 200
         previous = reply.headers['etag']
