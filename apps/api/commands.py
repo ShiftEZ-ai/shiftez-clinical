@@ -826,6 +826,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
 
     workspace_check = None
     submission_check = None
+    checked_decisions = None
     if command.kind in {'workspace.validate', 'workspace.submit', 'workspace.approve', 'workspace.publish'}:
         # Freeze a coherent read snapshot without taking the application writer lock.
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
@@ -861,6 +862,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                workspace.status, workspace.archived_at, data['fingerprint'])
                     workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
                                        planning.validation_stamp(db, workspace))
+                    checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
     if command.kind == 'generation.apply':
@@ -1076,6 +1078,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             # revision is still identical under the writer; never rebuild history here.
             expected(workspace, command.expected_revision)
             check_context(db, actor, workspace, workspace_check[2])
+            # Recorded approval evidence: a step that recorded decisions during the check is never overwritten.
+            require((workspace.validation or {}).get('review_item_decisions') == checked_decisions, 'STALE_INPUTS',
+                    'Review decisions were recorded during the check; the completed check is retained here.', 409,
+                    {'current_revision': workspace.revision, 'validation': workspace_check[1], 'recoverable': True})
             reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
                 if command.kind == 'workspace.validate' else submission_check or (workspace_check[1], workspace_check[2])))
         else:
