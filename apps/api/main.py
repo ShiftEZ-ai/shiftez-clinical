@@ -2544,12 +2544,13 @@ def create_app(settings: Settings | None = None, engine=None):
                 response.headers.update(cached)
                 return conditional_json(request, s.WorkspaceCompactDetail.model_validate(workspace_detail.compact(db, actor, workspace)), actor,
                                         tag=tag)
-            from .services.conditional_reads import conditional_response
+            from .services.conditional_reads import conditional_response, revision_etag
             from .services.workspace_reads import fast_etag
             workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
                 defer(m.Workspace.validation), defer(m.Workspace.review_snapshot)))
             fast_tag = fast_etag(db, actor, workspace, include_job_state=True)
-            cached = conditional_response(request, fast_tag)
+            tag = revision_etag("workspace-schedule", fast_tag) if view == "schedule" else fast_tag
+            cached = conditional_response(request, tag)
             if isinstance(cached, Response):
                 return cached
             # The validator above reads only scalar metadata. Hydrate the large JSON
@@ -2641,6 +2642,9 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
+        if view == "schedule":
+            from .serialization import schedule_projection
+            data = schedule_projection(data)
         result = JSONResponse(projection_json_value(data))
         result.headers.update(cached)
         return result
