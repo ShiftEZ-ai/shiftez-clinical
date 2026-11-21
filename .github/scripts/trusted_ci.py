@@ -26,6 +26,7 @@ TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
 # A dev PR never runs the whole suite (the merge queue does). Each former full-run trigger adds its class's unit
 # tests, found by what the test text names: pipeline/policy tests, contract tests, migration tests.
+# The same pattern as the static step's merge-group pipeline-test grep in ci.yml (a test keeps them equal).
 PIPELINE_TESTS = re.compile(r"make_known_failures|trusted_ci|trusted_verdict|canary_evidence|latest_reports"
                             r"|node_census|hosted_ci|working_policy")
 CONTRACT_TESTS = re.compile(r"generated\.ts|generate_contracts")
@@ -140,10 +141,12 @@ def affected_files(changed, files, extra=frozenset()):
         selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
         # A path with no mapped owner runs the selector's fixed smoke files; the queue's full suite is the gate.
         smoke = {target.split("::")[0] for targets in selector["SMOKE"].values() for target in targets} & files
-        owners = set()
-        for path in sorted(changed):
-            found = selector["direct_test_owners"]([path], files)
-            owners |= smoke if found is None else found
+        owners = selector["direct_test_owners"](sorted(changed), files)
+        if owners is None:  # one unmapped path voids a batch, so map path by path
+            owners = set()
+            for path in sorted(changed):
+                found = selector["direct_test_owners"]([path], files)
+                owners |= smoke if found is None else found
     except Exception as error:
         print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
         return None

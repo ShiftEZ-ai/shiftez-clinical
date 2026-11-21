@@ -271,6 +271,11 @@ class TwoObservationGateTests(unittest.TestCase):
             with patch.object(trusted_ci, "TRUSTED", self.folder):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
                                  trusted_ci.PR_SMOKE | {shared_owner, added})
+                # A path with no mapped owner runs the selector's smoke files, even next to a mapped one.
+                smoke_file = "tests/test_security.py"
+                (self.folder / smoke_file).write_text("def test_a(): pass" + chr(10), encoding="utf-8")
+                self.assertEqual(trusted_ci.affected_files({unknown, shared}, files | {smoke_file}),
+                                 trusted_ci.PR_SMOKE | {smoke_file, shared_owner})
             # A dev PR never runs the whole suite: each former full-run trigger maps to its owners (or the smoke
             # files when none is mapped) plus its class tests. Only another base or full-ci runs the full suite.
             pipeline, contract, migration = {pipeline_test}, {contract_test}, {migration_test}
@@ -369,6 +374,14 @@ class TwoObservationGateTests(unittest.TestCase):
         source = Path(trusted_ci.__file__).read_text(encoding="utf-8")
         self.assertIn('quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"])', source)
         self.assertNotIn('base if branch == "main" else candidate', source)
+
+    def test_pipeline_test_pattern_matches_the_static_merge_group_step(self):
+        import re
+        import trusted_ci
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        static = re.search(r"grep -lE '([^']+)' tests/test_\*\.py", workflow)
+        self.assertIsNotNone(static)
+        self.assertEqual(static.group(1), trusted_ci.PIPELINE_TESTS.pattern)
 
     def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):
         import trusted_ci
