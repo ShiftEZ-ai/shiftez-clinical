@@ -1710,18 +1710,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_qa2_validation.py::test_fairness_line_issues_keep_all_goal_reports_and_scores",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
