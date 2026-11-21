@@ -9,6 +9,7 @@ from packages.contracts.rule_catalogue import CATALOGUE_MAPPING, V2_CATALOGUE_BY
 from packages.contracts.schemas import SHAPE_KINDS, WORKLOAD_COUNT_KINDS
 from packages.domain.cp_sat import generate
 from packages.domain.cp_sat_patterns import add_patterns
+from packages.domain.time import aware
 from packages.domain.validation import VALIDITY_FOCAL_ONLY_KINDS, evaluate
 from tests.test_autoscheduler_audit_safety import _assignment
 from tests.test_engine_workload_review import one_person, policy
