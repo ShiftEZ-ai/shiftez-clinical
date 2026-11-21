@@ -659,7 +659,7 @@ def test_auto_schedule_steps_review_issues_show_apply_and_undo(browser, cp_serve
         assert 'objective_order' not in factory
         assert job['effective_options'].get('weight_preset') == 'fairness_first'
         assert 'objective_order' not in job['effective_options']
-        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'weighted']
+        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'desired_coverage', 'weighted']
         # What is still to fix: each must-fix cause the run leaves is ONE Fix list row, in the server's words, with its
         # one action (the shortage of ten in both clinics is one cause, not a card per clinic).
         must = [c for c in result['fix_list_after']['causes'] if c['level'] == 'must']
@@ -804,7 +804,7 @@ def _change_tile(review, result):
     (where no score is fair to show), the number of changes, which Apply names too."""
     tiles = review.get_by_role('group', name='Result').locator('.auto-stat')
     conflict = result.get('conflict') or next((d for d in result.get('diagnostics') or [] if d.get('strict_status') == 'INFEASIBLE'), None)
-    if (conflict or {}).get('strict_status') == 'INFEASIBLE':
+    if (conflict or {}).get('strict_status') == 'INFEASIBLE' and result['generation_outcome']['candidate'] != 'valid':
         expect(tiles.filter(has_text='Score')).to_have_count(0)
         changes = review.page.locator('#auto-panel').get_by_role('button', name=re.compile(r'^Apply (\d+) changes?$')).inner_text().split(' ')[1]
         expect(tiles.filter(has_text='Changes')).to_have_text(re.compile(rf'^Changes\s*{changes}$'))

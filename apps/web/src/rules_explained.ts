@@ -27,9 +27,9 @@ export function rotaSentences(workspace:string,key:string):Promise<RulesExplaine
   return keptRead(`${workspace}|${key}`,()=>get<RulesExplainedResponse>(url),ROTA_EXPLAINED).p;
 }
 /** The department's rules by question for a day (no rota, so no statuses), with its conflicts and people table. */
-export function departmentRules(at:string):Promise<DepartmentRules>{
+export function departmentRules(at:string,read:typeof get=get):Promise<DepartmentRules>{
   const url=`/api/rules-explained?group_by=question&at=${encodeURIComponent(at)}`;
-  return keptRead(url,()=>get<DepartmentRules>(url),EXPLAINED).p;
+  return keptRead(url,()=>read<DepartmentRules>(url),EXPLAINED).p;
 }
 /** Rules page Retry drops only this day's held question read; unrelated kept answers continue to share their requests. */
 export function forgetDepartmentRules(at:string){

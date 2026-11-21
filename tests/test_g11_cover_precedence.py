@@ -7,7 +7,7 @@ import pytest
 
 from packages.domain.cp_sat import generate as cp_sat_generate
 from packages.domain.generation import generate as greedy_generate
-from packages.domain.fill_priority import STAGE_ORDER, stage_progress
+from packages.domain.fill_priority import STAGE_LABELS, STAGE_ORDER, stage_progress
 from tests.scheduler_departments import assert_no_mandatory_single_addition
 
 
@@ -16,7 +16,7 @@ def test_required_cover_precedes_high_priority_desired_seat(h, engine):
     desired = h.configure(
         "assignment_types",
         {
-            "name": "G11 desired seat",
+            "name": "desired seat",
             "starts_on": "2020-01-01",
             "definition": {"requirements": [{"minimum": 1, "target": 2, "maximum": 2}]},
         },
@@ -24,7 +24,7 @@ def test_required_cover_precedes_high_priority_desired_seat(h, engine):
     required = h.configure(
         "assignment_types",
         {
-            "name": "G11 required seat",
+            "name": "required seat",
             "starts_on": "2020-01-01",
             "definition": {"requirements": []},
         },
@@ -79,6 +79,11 @@ def test_required_cover_precedes_high_priority_desired_seat(h, engine):
 
 def test_engines_share_fill_stage_order():
     assert STAGE_ORDER == ("mandatory_cover", "mandatory_quota", "desired")
+    assert STAGE_LABELS == {
+        'mandatory_cover': 'required cover',
+        'mandatory_quota': 'minimum quotas',
+        'desired': 'desired cover',
+    }
 
 
 def test_stage_progress_keeps_strict_and_later_stage_rules_distinct():
@@ -94,7 +99,7 @@ def test_cross_shift_required_cover_precedes_earlier_desired_shift(h, engine):
     desired = h.configure(
         "assignment_types",
         {
-            "name": "G11 earlier desired only",
+            "name": "earlier desired only",
             "starts_on": "2020-01-01",
             "definition": {"requirements": [{"minimum": 0, "target": 2, "maximum": 2}]},
         },
@@ -102,7 +107,7 @@ def test_cross_shift_required_cover_precedes_earlier_desired_shift(h, engine):
     required = h.configure(
         "assignment_types",
         {
-            "name": "G11 later required cover",
+            "name": "later required cover",
             "starts_on": "2020-01-01",
             "definition": {"requirements": []},
         },
@@ -147,7 +152,7 @@ def test_skipping_empty_strict_sweep_preserves_greedy_additions(h, fixture, monk
     definition = {"requirements": []} if fixture == "quota" else {
         "requirements": [{"minimum": 0, "target": 1, "maximum": 1}],
     }
-    duty = h.configure("assignment_types", {"name": f"G11 {fixture} sweep", "starts_on": "2020-01-01",
+    duty = h.configure("assignment_types", {"name": f"{fixture} sweep", "starts_on": "2020-01-01",
                                                "definition": definition})["record"]["id"]
     if fixture == "quota":
         h.policy({"kind": "block_quota", "starts_on": "2026-10-04", "ends_on": "2026-10-11",
@@ -187,7 +192,7 @@ def test_unfillable_mandatory_gap_does_not_stall_later_fill(h, engine):
     desired = h.configure(
         "assignment_types",
         {
-            "name": "G11 desired after gap",
+            "name": "desired after gap",
             "starts_on": "2020-01-01",
             "definition": {"requirements": [{"minimum": 0, "target": 1, "maximum": 1}]},
         },
@@ -195,7 +200,7 @@ def test_unfillable_mandatory_gap_does_not_stall_later_fill(h, engine):
     quota_duty = h.configure(
         "assignment_types",
         {
-            "name": "G11 quota after gap",
+            "name": "quota after gap",
             "starts_on": "2020-01-01",
             "definition": {"requirements": []},
         },
@@ -203,7 +208,7 @@ def test_unfillable_mandatory_gap_does_not_stall_later_fill(h, engine):
     required = h.configure(
         "assignment_types",
         {
-            "name": "G11 nobody eligible",
+            "name": "nobody eligible",
             "starts_on": "2020-01-01",
             "definition": {"requirements": []},
         },
@@ -231,7 +236,7 @@ def test_unfillable_mandatory_gap_does_not_stall_later_fill(h, engine):
     data["people"] = {pid: data["people"][pid] for pid in h.seed["people"][:2]}
     data["generation_options"] = {"allocation_order": "tiered"}
     for pid in data["people"]:
-        data["availability"].append({"id": f"g11-required-leave-{pid}", "person_id": pid,
+        data["availability"].append({"id": f"required-leave-{pid}", "person_id": pid,
                                        "kind": "recorded_leave", "start": required_start, "end": required_end})
     if engine is cp_sat_generate:
         result = engine(data, time_budget_seconds=5, deterministic=True, diagnostic_proposal=True)
