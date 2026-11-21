@@ -1780,13 +1780,10 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
-    contexts = None
     if actor is not None:
         # Dependency and authority checks must reject before this D65 comparison can expose findings.
-        from .planning_groups import guard_changes
+        from .planning_groups import guard_changes, retain_assignment_authority
         authority = guard_changes(db, actor, workspace, before)
-        contexts = db.info['_planning_group_authority_contexts']
-        contexts.pop(workspace.id, None)
     from packages.domain.validation_scope import assignment_scope, evaluate_assignments
     from packages.domain.proposal_reconciliation import comparison as compare_checks
     from packages.domain.input_manifest import shift_input
@@ -1839,8 +1836,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
         defer=bool(preparation and preparation['kind'] == 'shift.update'))
     if computed is None:
         # Only rollback preparation speculates; the writer enforces the captured admission before saving.
-        if contexts is not None:
-            contexts[workspace.id] = (before, actor.identity_id, workspace.content_revision, snapshots.snapshot_hash(before), authority)
+        if actor is not None:
+            retain_assignment_authority(db, workspace, before, actor, authority)
         return None
     comparison, checked = computed
     findings = comparison['new_or_worse_findings']
@@ -1869,8 +1866,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     # A preview refuses exactly as its save will (F14; Master ruling 10 Nov).
     require(not findings, refusal_code, refusal_message or (findings[0]['message'] if findings else 'The edit introduces a blocking issue'),
             422, refusal_details(findings))
-    if contexts is not None:
-        contexts[workspace.id] = (before, actor.identity_id, workspace.content_revision, snapshots.snapshot_hash(before), authority)
+    if actor is not None:
+        retain_assignment_authority(db, workspace, before, actor, authority)
     return checked, data
 
 
