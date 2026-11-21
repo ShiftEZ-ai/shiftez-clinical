@@ -1007,14 +1007,17 @@ def _rotation_names(db, rows):
                 ("services", m.Service, {p.get("service_id") for p in proposals} - {None}))}
 
 
-def _decidable(db, actor, rows):
+def _decidable(db, actor, rows, pending=()):
     """Read decision eligibility once per source, including same-person sign-ins and current self-approval grants."""
     result = set()
+    scopes = {source: query.whereclause for source, query, _ in pending if source in ("request", "pattern")}
     for source, cls, waiting in (("request", m.RequestRecord, "submitted"), ("pattern", m.AvailabilityPattern, "proposed")):
         ids = [row.id for kind, row in rows if kind == source]
         if ids:
-            result.update(db.scalars(select(cls.id).where(cls.id.in_(ids), cls.department_id == actor.department_id,
-                                                         cls.status == waiting, decision_scope(db, actor, cls))))
+            scope = scopes.get(source)
+            if scope is None:
+                scope = and_(cls.department_id == actor.department_id, cls.status == waiting, decision_scope(db, actor, cls))
+            result.update(db.scalars(select(cls.id).where(cls.id.in_(ids), scope)))
     return result
 
 
@@ -1233,10 +1236,10 @@ def _pending_queries(db, actor, open_swap_ids=None):
     return pending
 
 
-def _for_me_sources(db, actor, sources, open_swap_ids=None):
+def _for_me_sources(sources, pending_queries):
     """Apply the single-table predicates used by ``_counts`` to the existing list rows."""
     by_source = {}
-    for source, query, _ in _pending_queries(db, actor, open_swap_ids):
+    for source, query, _ in pending_queries:
         by_source.setdefault(source, []).append(query.whereclause)
     result = {}
     for source, (query, at, waiting, key) in sources.items():
@@ -1246,25 +1249,25 @@ def _for_me_sources(db, actor, sources, open_swap_ids=None):
     return result
 
 
-def _counts(db, actor, open_swap_ids=None):
+def _counts(db, actor, *, pending=None):
     """What waits on this person to act (the Requests dot and Home read it)."""
-    pending = [query.with_only_columns(key, maintain_column_froms=True)
-               for _, query, key in _pending_queries(db, actor, open_swap_ids)]
-    pending_union = pending[0].union_all(*pending[1:]).subquery("pending_requests")
+    queries = _pending_queries(db, actor) if pending is None else pending
+    ids = [query.with_only_columns(key, maintain_column_froms=True) for _, query, key in queries]
+    pending_union = ids[0].union_all(*ids[1:]).subquery("pending_requests")
     n = db.scalar(select(func.count()).select_from(pending_union)) or 0
     return {"to_decide": n}
 
 
 def _stage_counts(db, actor, team, person_id, types, q=None, person_ids=(), open_swap_ids=(), collection_filter=None,
-                  decided=False, personal=False, for_me=False):
+                  decided=False, personal=False, pending=()):
     """How many requests are in each stage (the Requests views picker): one grouped count per kind, under the same
     scope, search and type filter as the list, whatever stage is shown."""
     from . import swaps
     out, now = dict.fromkeys(STAGES, 0), m.now()
     sources = _sources(db, actor, team, person_id, set(types), set(), q, person_ids, open_swap_ids, collection_filter,
                        decided, personal)
-    if for_me:
-        sources = _for_me_sources(db, actor, sources, open_swap_ids)
+    if pending:
+        sources = _for_me_sources(sources, pending)
     projected = []
     for source, (query, *_) in (_decided_sources(sources) if decided else sources).items():
         if source == "request":
@@ -1428,8 +1431,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
         F = m.SchedulingFact
         sources["scheduling_fact"] = (scheduling_facts.scoped_query(db, actor).add_columns(F.created_at.label("at")),
                                       F.created_at, F.status == "proposed", F.id)
+    pending = _pending_queries(db, actor, open_swap_ids) if for_me or (include_details and not item_id) else ()
     if for_me:
-        sources = _for_me_sources(db, actor, sources, open_swap_ids)
+        sources = _for_me_sources(sources, pending)
     aliases = {"start": "when", "decided_at": "decided"}
     sorting = [(aliases.get(key, key), direction) for key, direction in collection_filters.sort_keys(
         collection_filter, {"type", "person", "when", "proposed_at", "start", "decided", "decided_at"})]
@@ -1443,7 +1447,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
             row = db.execute(query.where(key == lookup_id)).first()
             if row:
                 rotation_names = _rotation_names(db, [row[0]]) if source == "request" else None
-                decidable = _decidable(db, actor, [(source, row[0])])
+                decidable = _decidable(db, actor, [(source, row[0])], pending)
                 assignment_types = {}
                 if source == "wish" and row[0].assignment_type_id:
                     assignment_types[row[0].assignment_type_id] = getattr(
@@ -1510,7 +1514,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     assignment_types = dict(db.execute(select(m.AssignmentType.id, m.AssignmentType.name).where(
         m.AssignmentType.id.in_(type_ids))).all()) if type_ids else {}
     rotation_names = _rotation_names(db, [row for source, row, _ in shown if source == "request"])
-    decidable = _decidable(db, actor, [(source, row) for source, row, _ in shown])
+    decidable = _decidable(db, actor, [(source, row) for source, row, _ in shown], pending)
     items = [_project(db, actor, team, source, row, names, recorded_details, swap_cache,
                       rotation_names, decidable, duty_cache, assignment_types) for source, row, _ in shown]
     decisions = _decision_times(db, [(source, row) for source, row, _ in shown])
@@ -1530,9 +1534,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     _links(db, team, items)
     del held
     return {"items": items, "total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total,
-            "counts": {**_counts(db, actor, open_swap_ids),
+            "counts": {**_counts(db, actor, pending=pending),
                        "stages": _stage_counts(db, actor, team, person_id, types, q, person_ids, open_swap_ids,
-                                               collection_filter, decided, personal, for_me)},
+                                               collection_filter, decided, personal, pending if for_me else ())},
             "wishes": _wish_points(db, actor)}
 
 

@@ -34,6 +34,7 @@ def test_home_and_requests_share_independent_programme_decisions(audit_h):
         for person in (trainee, leader):
             db.add(m.ProgrammeMembership(department_id=p.department_id, person_id=person, programme_id=p.id,
                                          starts_on=date(2026, 1, 1), ends_on=date(2027, 1, 1)))
+        pending_for_lead = []
         for person, creator, kind, status in (
             (trainee, h.seed['identities']['staff'], 'leave', 'submitted'),
             (trainee, h.seed['identities']['staff'], 'leave', 'submitted'),
@@ -43,14 +44,21 @@ def test_home_and_requests_share_independent_programme_decisions(audit_h):
             (trainee, alternate, 'leave', 'submitted'),
             (trainee, h.seed['identities']['staff'], 'overtime_availability', 'submitted'),
             (trainee, h.seed['identities']['staff'], 'leave', 'rejected')):
-            db.add(m.RequestRecord(department_id=p.department_id, person_id=person, created_by=creator, kind=kind,
+            row = m.RequestRecord(department_id=p.department_id, person_id=person, created_by=creator, kind=kind,
                 start=datetime.fromisoformat('2026-10-06T09:00:00+03:00'),
                 end=datetime.fromisoformat('2026-10-06T12:00:00+03:00'), status=status,
-                private_reason='Fictional private reason never on Home'))
+                private_reason='Fictional private reason never on Home')
+            db.add(row)
+            if (person, kind, status) == (trainee, 'leave', 'submitted'):
+                pending_for_lead.append(row)
+        db.flush()
+        expected_ids = {row.id for row in pending_for_lead}
     for role in ('workflow-lead', 'workflow-mixed-reader'):
         attention = {r['key']: r for r in h.get(role, '/api/home')['attention']}
         requests = h.get(role, '/api/requests/all')['counts']
-        assert attention['requests']['count'] == requests['to_decide'] == 2
+        assert attention['requests']['count'] == requests['to_decide'] == 4
+        mine = h.get(role, '/api/requests/all?for_me=true')
+        assert {row['id'] for row in mine['items']} == expected_ids
         assert {r['person'] for r in attention['requests']['sample']} == {'Alex Morgan'}
         assert 'private' not in json.dumps(attention['requests']).lower()
     # Approvers cannot decide overtime offers; coordinators can. The shared count unions roles only once.
