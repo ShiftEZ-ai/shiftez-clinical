@@ -238,8 +238,14 @@ def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_
     assert issue["code"] == "RULE_CHECK_UNRESOLVED" and issue["details"]["severity"] == "advisory"
     assert issue["details"]["findings"][0]["rule_id"] == policy["id"]
     payload = activation_payload(policy, checked)
+    with transaction(h.app.state.engine) as db:
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        revisions = (organisation.input_revision, organisation.availability_revision)
     check = preview(h, "approver", payload)
     assert [r["id"] for r in check["items"][0]["issues"][0]["resolutions"]] == ["apply_anyway", "skip"]
+    with transaction(h.app.state.engine) as db:
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        assert (organisation.input_revision, organisation.availability_revision) == revisions
     reply = h.command("approver", "bulk.apply", {**payload, "resolutions": {"0": "apply_anyway"}})
     assert reply["count"] == 1
     with transaction(h.app.state.engine) as db:
@@ -280,6 +286,11 @@ def test_mandatory_or_unknown_findings_never_offer_apply_anyway(h, case):
 
 
 FACT_FAMILIES = ("person.workload", "person.overtime", "calendar.protection")
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_advisory_receipt_acknowledgement_on_postgresql(h):
+    test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references(h)
 
 
 def fact_payload(h, family):
