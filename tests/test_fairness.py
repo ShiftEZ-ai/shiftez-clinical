@@ -398,10 +398,12 @@ def test_rebuild_equals_publish_time_rows_after_an_earlier_amendment_and_dashboa
     amendment = session(h, h.detail(h.workspace(base=p1['publication_id']))['workspace'], 6, [b])  # b gains a duty in week 1
     h.publish(amendment)
     published = sorted(map(repr, ledger(h)))
+    later_rows = sorted(map(repr, ledger(h, publication_id=p2['publication_id'])))
     assert (b, None, 'goal:' + g['id'], date(2026, 10, 11), 2.0) in [r[:5] for r in ledger(h)]  # week 2 reads the amended history
     with transaction(h.app.state.engine, write=True) as db:
         backfill(db)
     assert sorted(map(repr, ledger(h))) == published
+    assert sorted(map(repr, ledger(h, publication_id=p2['publication_id']))) == later_rows
 
 
 def test_a_goal_scores_100_when_everyone_is_inside_their_band(h):
