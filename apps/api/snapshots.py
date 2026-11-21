@@ -179,6 +179,15 @@ def workspace_shifts(db, workspace_id: str) -> list[dict]:
     return shift_records(db, db.scalars(select(m.Shift).where(m.Shift.workspace_id == workspace_id).order_by(m.Shift.start, m.Shift.id)))
 
 
+def full_shifts(db, workspace_id):
+    shift = m.Shift
+    # Mapped columns retain workspace visibility criteria without creating Shift instances.
+    columns = [getattr(shift, key) for key in shift.__mapper__.column_attrs.keys()]
+    rows = db.execute(select(*columns).where(shift.workspace_id == workspace_id)
+                      .order_by(shift.start, shift.id)).mappings()
+    return shift_records(db, rows)
+
+
 def shift_records(db, rows, *, include_participants=True) -> list[dict]:
     """Attach clinics and optionally people in batches to ORM sessions or selected session fields."""
     rows = list(rows)
@@ -362,7 +371,7 @@ def inactive_series_shift_ids(db, selected_ids):
 
 def workspace_content(db, workspace) -> dict:
     return {"workspace": record(workspace, exclude=("validation", "submitted_fingerprint")),
-            "shifts": workspace_shifts(db, workspace.id)}
+            "shifts": full_shifts(db, workspace.id)}
 
 
 def precondition_snapshot(db, workspace):
