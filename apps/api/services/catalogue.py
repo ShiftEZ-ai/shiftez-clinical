@@ -39,7 +39,7 @@ def exception_identity_stamp(identities):
 
 def exception_actions(db, actor, exceptions, policies, *, identities=None):
     """Add this reader's lifecycle eligibility to copies after the shared catalogue cache is read."""
-    from .policies import effective_sources, exception_is_independent
+    from .policies import effective_sources
 
     if not exceptions:
         return []
@@ -62,7 +62,7 @@ def exception_actions(db, actor, exceptions, policies, *, identities=None):
         return bool(approver and row['status'] == status and policy.get('status') == 'active'
                     and policy.get('revision') == row['policy_revision'] and definition.get('exception_allowed')
                     and not s.safety_rule(definition)
-                    and (waived or exception_is_independent(db, actor, row['created_by'], row['person_id'])))
+                    and (waived or independence.subject_independent(db, actor, (row['person_id'],), row['created_by'])))
 
     def proposer(row):
         return coordinator and independence.person_key(db, row['created_by']) == independence.person_key(db, actor.identity_id)

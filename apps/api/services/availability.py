@@ -191,7 +191,7 @@ def record_availability(db, actor, command):
     value = s.AvailabilityInput.model_validate(command.payload)
     person_access(db, actor, value.person_id)
     lead_protects(db, actor, value.kind, value.person_id, value.start, value.end)
-    independence.ensure(db, actor, "request.decide", value.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
                         "A different coordinator must record your own absence", value.private_reason)
     values = {**value.model_dump(), **_availability_values(db, actor, value)}
     findings = rotation_leave_conflicts(db, actor, absence=value)
@@ -220,7 +220,7 @@ def update_availability(db, actor, command):
     expected(row, command.expected_revision)
     require(not row.retracted, "WORKFLOW_STATE", "Entry is already retracted", 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, "request.decide", row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, "request.decide", (row.person_id,), row.recorded_by,
                         "A different coordinator must record your own absence", patch.reason, row.id)
     changes = patch.model_dump(include=set(UPDATE_FIELDS), exclude_unset=True)
     require(bool(changes), 'NOTHING_TO_CHANGE', 'Choose a change to apply')
@@ -274,7 +274,7 @@ def undo_update_availability(db, actor, command):
             'STALE_REVISION', f'{row.id}: Another session changed this record; reload and reconcile', 409)
     require(not row.retracted, 'WORKFLOW_STATE', 'Entry is already retracted', 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, 'request.decide', row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, 'request.decide', (row.person_id,), row.recorded_by,
                         'A different coordinator must record your own absence', value.reason, row.id)
     before = _update_snapshot(row)
     findings = rotation_leave_conflicts(db, actor, absence={**previous, 'id': row.id, 'person_id': row.person_id})
@@ -358,7 +358,7 @@ def restore_availability(db, actor, command):
             'CREATION_UNDONE', 'This creation was undone; record a new entry', 409)
     require(row.retracted, 'WORKFLOW_STATE', 'Entry is not retracted', 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, 'request.decide', row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, 'request.decide', (row.person_id,), row.recorded_by,
                         'A different coordinator must record your own absence', value.reason, row.id)
     findings = rotation_leave_conflicts(db, actor, absence={**record(row), 'retracted': False})
     require_rotation_leave(findings, record_kind=row.kind)
@@ -446,14 +446,12 @@ def decision_scope(db, actor, cls, *, include_independence=True, approval_contex
             scope = false()
         if actor.permits("coordinator"):
             scope = or_(scope, cls.kind == "overtime_availability")
-        own = not_own(cls, actor)
     else:
         if not actor.permits("coordinator"):
             return false()
-        own = (cls.created_by != actor.identity_id, *([cls.person_id != actor.person_id] if actor.person_id else []))
         scope = true()
     if include_independence and independence.permission_for(db, actor, "request.decide", context=approval_context) is None:
-        scope = and_(scope, *own)
+        scope = and_(scope, *not_own(db, cls, actor))
     return scope
 
 
@@ -549,10 +547,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     else:
         require(decision_allowed(db, actor, row, approval_context=approval_context),
                 "SELF_APPROVAL", "A different authorised person must decide this request", 403)
-        from .training import change_people
-        independence.ensure(db, actor, "request.decide",
-                            independence.person_key(db, row.created_by) != independence.person_key(db, actor.identity_id)
-                            and actor.person_id not in change_people(db, row),
+        independence.ensure_subject(db, actor, "request.decide", decision_subjects(row), row.created_by,
                             "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
         row.status = "approved" if value.decision == "approve" else "rejected"
         row.decided_by = actor.identity_id
@@ -1193,23 +1188,26 @@ def _impact(db, actor, items):
                        for a, b, name, pub, aid, wid, rota, status in hits[:10]]}
 
 
-def not_own(cls, actor):
-    """Independent decisions (SSOT for the Requests dot and Home): a request or weekly availability this person neither
-    made nor is about. Deciding one's own takes a self-approval permission, which these counts do not offer."""
-    peer_scope = ()
-    if cls is m.RequestRecord and actor.person_id:
-        peer = cls.details["swap"]["person_id"].as_string()
-        peer_scope = (or_(peer.is_(None), peer != actor.person_id),)
-    return (cls.created_by != actor.identity_id, *peer_scope,
-            *([cls.person_id != actor.person_id, cls.created_by.not_in(select(m.Identity.id).where(
-                m.Identity.person_id == actor.person_id))] if actor.person_id else []))
+def decision_subjects(cls):
+    """Both people in an exchange own the matter, including a peer stored in optional JSON."""
+    subjects = (cls.person_id,)
+    if cls is m.RequestRecord or isinstance(cls, m.RequestRecord):
+        peer = (cls.details["swap"]["person_id"].as_string() if cls is m.RequestRecord else
+                ((cls.details or {}).get("swap") or {}).get("person_id"))
+        subjects += (peer,)
+    return subjects
+
+
+def not_own(db, cls, actor):
+    return (independence.subject_independent(db, actor, decision_subjects(cls), cls.created_by,
+                                           sql=isinstance(cls, type)),)
 
 
 def pending_request_decisions(db, actor):
-    """Independent request decisions for both Home and Requests; self-approval stays an explicit command."""
+    """Requests this actor may decide, shared by Home and the Requests queue."""
     R = m.RequestRecord
     return select(R).where(R.department_id == actor.department_id, R.status == "submitted",
-        decision_scope(db, actor, R, include_independence=False), *not_own(R, actor))
+        decision_scope(db, actor, R))
 
 
 def _pending_queries(db, actor, open_swap_ids=None):
@@ -1222,7 +1220,7 @@ def _pending_queries(db, actor, open_swap_ids=None):
     ]
     if actor.permits("coordinator"):
         pending.extend((
-            ("pattern", select(P).where(P.department_id == actor.department_id, P.status == "proposed", *not_own(P, actor)), P.id),
+            ("pattern", select(P).where(P.department_id == actor.department_id, P.status == "proposed", decision_scope(db, actor, P)), P.id),
             ("swap", select(S).where(S.department_id == actor.department_id, S.status == "accepted", S.expires_at > m.now()), S.id),
         ))
     if actor.person_id and "staff" in actor.roles:

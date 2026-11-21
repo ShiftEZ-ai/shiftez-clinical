@@ -1018,6 +1018,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         require_current_schema(db)
         changed_department.clear()
         db.info.pop("self_approved", None)  # a retried attempt starts clean
+        db.info.pop("entered_on_behalf_by", None)
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
@@ -1186,6 +1187,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                                                        **({"entered_on_behalf_by": sorted(enterers)}
+                                                           if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),
                                                        **({'assignment_override_blockers': override_blockers}
                                                           if override_blockers else {})},
                                 correlation_id=correlation_id)))
