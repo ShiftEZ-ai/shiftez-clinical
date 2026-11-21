@@ -330,7 +330,7 @@ def test_solution_checkpoint_survives_crash_and_stop_after_restart(h, monkeypatc
     assert result['status'] == 'candidate_feasible', result
     assert result['validation']['valid'] and result['additions']
     assert searched == []  # Stop completes the saved decisions without restarting search.
-    assert result['score_completion_seconds'] > 0
+    assert result['score_completed'] is True
 
 
 def test_stopped_resume_reports_valid_incumbent_without_completed_score(h, monkeypatch):
