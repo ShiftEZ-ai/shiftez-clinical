@@ -29,18 +29,6 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline",
-      "node": "tests/test_autosched_completion_p0.py::test_completion_allowance_is_cumulative_and_separate_from_stopped_search",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autosched_completion_p0.py::test_completion_watcher_enforces_cap_without_solution_callbacks",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
       "class": "baseline-error",
       "node": "tests/test_autosched_reuse_p0.py::test_followup_bounds_predecessor_evidence_before_semantic_comparison[case-aeiaccljmbigpjjnegkidoochdfjfcbldfkioijanljaoefalfoonlhlmnhfkacp]",
       "owner": "maintainer",
