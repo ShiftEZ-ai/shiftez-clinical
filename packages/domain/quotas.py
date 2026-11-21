@@ -34,7 +34,7 @@ MAX_SUBJECT_CONTEXTS = SCOPE_CONTEXT_BUDGET  # one report-wide ceiling, not mult
 BASIS = ("Minimums and maximums include current department publications over the complete block; targets count the effective rota overlap. "
          "other drafts, other departments, external work and attendance are excluded. "
          "Partial minimums and targets use department weekend days or the selected operating calendar override and round up; maxima are unchanged. "
-         "Leave does not reduce commitments. Credits are planned, not completed training or pay.")
+         "Approved leave, recorded leave and actual absence reduce the in-scope working days for minimums and targets; maxima are unchanged. Credits are planned, not completed training or pay.")
 
 
 def window_blocks(start, stop, alignment, window_days=None, week_start=0, anchor_on=None):
@@ -199,8 +199,12 @@ def duty_witness(data, scope, person_id, a, b, department_id, *, budget=None):
 
 
 def departmental_dates(data, person_id, scope, first, last, *, budget=None):
-    """Return each present department day, evaluating dated absences at day precision."""
+    """Return present department days, excluding every validator-away kind covering local noon.
+
+    Approved leave, recorded leave, and actual absence use the same away-day meaning as UNAVAILABLE.
+    """
     from .conditions import rule_holds, _condition_points
+    from .fairness import AWAY
     from .validation import category_scope_ids, person_rows
     ranks = category_scope_ids(scope)
     programme_id = scope.get('programme_id')
@@ -250,6 +254,10 @@ def departmental_dates(data, person_id, scope, first, last, *, budget=None):
                 continue
             if any(r.get('kind') == 'off_duty' and r.get('counts_as_unavailable', True)
                    and aware(r['start']) < day_end and day_start < aware(r['end'])
+                   for r in availability):
+                continue
+            noon = local_stamp(day, '12:00', zone)
+            if any(r.get('kind') in AWAY and aware(r['start']) <= noon < aware(r['end'])
                    for r in availability):
                 continue
             days.append(day)

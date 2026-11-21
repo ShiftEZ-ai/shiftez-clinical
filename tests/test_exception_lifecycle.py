@@ -75,7 +75,7 @@ def test_approved_exception_end_restores_constraint_and_undo_keeps_independent_a
     assert h.lifecycle(current, 'validate')['validation']['valid'] is False
     with transaction(h.app.state.engine, write=True) as db:
         for role in ('coordinator', 'admin'):
-            db.get(m.Identity, h.seed['identities'][role]).person_id = h.seed['people'][1]
+            db.get(m.Identity, h.seed['identities'][role]).person_id = exc['person_id']
     assert row(h, 'admin', ended)['can_undo'] is False
     refused = h.command('admin', 'exception.undo', {'reason': REASON}, exc['id'], ended['revision'], status=403)
     assert refused['error']['code'] == 'SELF_APPROVAL'

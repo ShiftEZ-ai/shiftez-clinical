@@ -158,6 +158,8 @@ def test_selected_calendar_overrides_different_department_weekends(working_data)
 def test_maximum_is_never_scaled_for_partial_windows(working_data, legacy_partial_flag):
     data, pid = working_data
     data['department']['operating_calendar_id'] = None
+    data['availability'] = [{'id': uid('maximum-leave'), 'person_id': pid, 'kind': 'approved_leave',
+        'start': '2026-09-27T00:00:00+03:00', 'end': '2026-09-29T00:00:00+03:00'}]
     add_quota(data, pid, starts_on='2026-10-01', comparison='maximum', window_alignment='fixed',
               window_days=7, window_anchor_on='2026-09-27', prorate_partial_windows=legacy_partial_flag)
     _, row = checked_row(data)
@@ -183,13 +185,17 @@ def test_only_configured_holiday_closures_change_working_days(working_data, sour
     assert_proration(data, row, days=2, full=full, configured=5, amount=amount)
 
 
-def test_leave_does_not_reduce_partial_window_commitment(working_data):
+@pytest.mark.parametrize('kind', ['approved_leave', 'recorded_leave', 'actual_absence'])
+def test_validator_away_kinds_prorate_partial_window_minimum_and_finding(working_data, kind):
     data, pid = working_data
-    data['availability'] = [{'id': uid('working-leave'), 'person_id': pid, 'kind': 'approved_leave',
-        'start': '2026-09-27T00:00:00+03:00', 'end': '2026-10-04T00:00:00+03:00'}]
-    add_quota(data, pid, starts_on='2026-10-01')
-    _, row = checked_row(data)
-    assert_proration(data, row, days=1)
+    data['availability'] = [{'id': uid('working-' + kind), 'person_id': pid, 'kind': kind,
+        'start': '2026-09-27T00:00:00+03:00', 'end': '2026-09-29T00:00:00+03:00'}]
+    add_quota(data, pid, starts_on='2026-09-27')
+    checked, row = checked_row(data)
+    assert_proration(data, row, days=3, amount=4)
+    assert row['display'] == '0 of 4 (prorated: 3 of 5 days)'
+    finding = next(f for f in checked['findings'] if f['code'] == 'QUOTA_BELOW_MINIMUM')
+    assert finding['detail']['display'] == row['display']
 
 
 def test_full_window_off_duty_prorates_mandatory_minimum_to_zero_for_schedulers(working_data):
@@ -462,16 +468,23 @@ def test_both_schedulers_use_the_shared_prorated_row_amount(working_data, engine
     data, pid = working_data
     if not selected_calendar:
         data['department']['operating_calendar_id'] = None
-    data['workspace']['starts_on'] = '2026-10-01'
+    data['availability'] = [{'id': uid('scheduler-leave'), 'person_id': pid, 'kind': 'approved_leave',
+        'start': '2026-09-27T00:00:00+03:00', 'end': '2026-09-29T00:00:00+03:00'}]
     type_definition(data, requirements=[])
     first = data['shifts'][0]
     second = copy.deepcopy(first)
     second.update(id=uid('afternoon-proration-duty'), start='2026-10-01T13:00:00+03:00', end='2026-10-01T17:00:00+03:00')
     data['shifts'].append(second)
     data['focus_ids'].append(second['id'])
+    for index, (start, end) in enumerate((('17:00', '19:00'), ('19:00', '21:00'))):
+        extra = copy.deepcopy(first)
+        extra.update(id=uid(f'extra-proration-duty-{index}'), start=f'2026-10-01T{start}:00+03:00',
+                     end=f'2026-10-01T{end}:00+03:00')
+        data['shifts'].append(extra)
+        data['focus_ids'].append(extra['id'])
     add_quota(data, pid)
     result = (generation if engine == 'greedy' else cp_sat).generate(data, time_budget_seconds=10)
     assert result['status'] == 'candidate_feasible', result
     [row] = result['validation']['quota_report']['rows']
-    assert row['amount'] == 2 and row['actual'] == 2 and row['status'] == 'met'
-    assert len(result['additions']) == 2
+    assert row['amount'] == 4 and row['actual'] == 4 and row['status'] == 'met'
+    assert len(result['additions']) == 4
