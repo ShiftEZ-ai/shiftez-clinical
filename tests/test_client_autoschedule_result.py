@@ -31,6 +31,17 @@ def run(client_modules, body, data):
     return json.loads(out.stdout)
 
 
+def test_solver_receipt_distinguishes_unfinished_score_from_no_candidate(client_modules):
+    candidate = {'kind': 'generation', 'result': {'status': 'candidate_feasible',
+        'solver_status': 'FEASIBLE', 'score': None, 'score_completed': False, 'change_count': 1}}
+    empty = {'kind': 'generation', 'result': {'status': 'needs_more_time',
+        'solver_status': 'UNKNOWN', 'score': None, 'score_completed': False, 'change_count': 0}}
+    text = run(client_modules, "console.log(JSON.stringify(a.map(j=>m.solverReceipt(j).textContent)));",
+               [candidate, empty])
+    assert text[0].endswith(' · score unfinished')
+    assert text[1].endswith(' · no score: nothing placed')
+
+
 # The outcome box (nodes[0]) says readiness; the proof words are the head's own line after the numbers ( "keep
 # the optimality line in the A3 review", D76 run card ), so `text` reads the box and that line: never the tiles.
 HEAD = ("const said=h.nodes.filter(n=>!n.className.split(' ').includes('auto-stats'));"

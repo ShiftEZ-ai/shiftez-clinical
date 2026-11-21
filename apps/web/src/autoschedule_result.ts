@@ -55,7 +55,9 @@ export function solverReceipt(job:Row):HTMLElement|null{
   const stop=stopWords(r,code)||(code==='optimal'?'':code);
   const saved=r.score??job.score??r.summary?.score_saved??r.summary?.score;
   const value=typeof saved==='number'?saved:saved&&typeof saved==='object'?(saved.score??saved.uncapped_score):null;
-  const score=value==null?'no score: nothing placed':`score: ${value}`;
+  const score=value==null
+    ?(r.score_completed===false&&String(r.status).startsWith('candidate_')?'score unfinished':'no score: nothing placed')
+    :`score: ${value}`;
   return el('p',{class:'solver-receipt',role:'status'},[`Solver status: ${status}`,stop&&`Stop reason: ${stop}`,score].filter(Boolean).join(' · '),
     ...(model&&model!==status?[' ',helpButton('About Solver status',`The solver's own model ended ${model}, but the final proposal after checks is ${status}${status==='OPTIMAL'?'':', so it is not proven best'}.`)]:[]));
 }

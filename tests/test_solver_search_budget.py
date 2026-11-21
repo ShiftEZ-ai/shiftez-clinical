@@ -319,7 +319,8 @@ def test_solution_checkpoint_survives_crash_and_stop_after_restart(h, monkeypatc
     searched = []
 
     def resumed_solve(control, solver, model, tier):
-        searched.append(tier)
+        if tier is not None:
+            searched.append(tier)
         assert tier is None, 'A stopped continuation must only complete score arithmetic'
         return original(control, solver, model, tier)
 
@@ -328,17 +329,19 @@ def test_solution_checkpoint_survives_crash_and_stop_after_restart(h, monkeypatc
     result = cp_sat.generate(data, 3, resume_state=saved[0], search_control=lambda: {'stop': True})
     assert result['status'] == 'candidate_feasible', result
     assert result['validation']['valid'] and result['additions']
-    assert searched == []  # Stop validates the saved decisions without another derived-score solve.
+    assert searched == []  # Stop completes the saved decisions without restarting search.
+    assert result['score_completion_seconds'] > 0
 
 
-def test_stopped_resume_checks_incumbent_without_relabelling_unknown_solver_status(h, monkeypatch):
+def test_stopped_resume_reports_valid_incumbent_without_completed_score(h, monkeypatch):
     data, saved = snapshot(h), []
     first = cp_sat.generate(data, 3, checkpoint=store_checkpoints(saved))
     assert first['status'] == 'candidate_feasible' and saved[0]['has_solution']
     monkeypatch.setattr(SolverControl, 'solve', lambda *args: cp_model.UNKNOWN)
     result = cp_sat.generate(data, 3, resume_state=saved[0], search_control=lambda: {'stop': True})
     assert result['status'] == 'candidate_feasible' and result['validation']['valid']
-    assert result['solver_status'] == 'UNKNOWN' and not result['optimality_proven']
+    assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
+    assert result['score_completed'] is False and result['score'] is None
 
 
 def test_resumed_full_candidate_is_never_narrowed_or_made_worse(h, monkeypatch):
