@@ -71,6 +71,14 @@ def command(h, workspace, kind, role='coordinator'):
 
 @pytest.mark.postgres
 def test_supervision_fairness_goals_at_department_scale(pg, monkeypatch, request):
+    return supervision_fairness_goals_at_department_scale(pg, monkeypatch, request)
+
+
+def test_supervision_fairness_goals_at_department_scale_on_sqlite(h, monkeypatch, request):
+    supervision_fairness_goals_at_department_scale(h, monkeypatch, request)
+
+
+def supervision_fairness_goals_at_department_scale(pg, monkeypatch, request):
     workspace = lifecycle_case(pg, supervision=True)
     original, acquired = snapshots._domain_snapshot, []
     def once(*args, **kwargs):
