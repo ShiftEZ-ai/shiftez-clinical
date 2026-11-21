@@ -151,10 +151,10 @@ class ImporterV34Tests(unittest.TestCase):
         source_runs = json.loads(durations.read_text(encoding='utf-8'))['source_run_ids']
         self.assertCountEqual(source_runs, [44114266718, 44131154009])
 
-        # One merge group runs the full suite on ~97 shards balanced from these durations; dev PRs run only
-        # affected selections, so their caps are smaller.
+        # One merge group runs the full suite on 73 shards balanced from these durations (more browser shards
+        # cannot shorten the one longest file); dev PRs size affected selections from duration up to the full-run counts.
         config = json.loads(durations.with_name('bootstrap-settings.json').read_text(encoding='utf-8'))
-        self.assertEqual(config['merge_group_shards'], {'unit_shards': 34, 'browser_shards': 38})
+        self.assertEqual(config['merge_group_shards'], {'unit_shards': 34, 'browser_shards': 39})
         self.assertEqual((config['unit_shards'], config['browser_shards']), (25, 18))
 
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.

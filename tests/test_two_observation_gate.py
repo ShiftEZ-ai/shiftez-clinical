@@ -276,6 +276,9 @@ class TwoObservationGateTests(unittest.TestCase):
                 (self.folder / smoke_file).write_text("def test_a(): pass" + chr(10), encoding="utf-8")
                 self.assertEqual(trusted_ci.affected_files({unknown, shared}, files | {smoke_file}),
                                  trusted_ci.PR_SMOKE | {smoke_file, shared_owner})
+                # A change whose every path has an owner never adds the smoke files.
+                self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added, smoke_file}),
+                                 trusted_ci.PR_SMOKE | {shared_owner, added})
             # A dev PR never runs the whole suite: each former full-run trigger maps to its owners (or the smoke
             # files when none is mapped) plus its class tests. Only another base or full-ci runs the full suite.
             pipeline, contract, migration = {pipeline_test}, {contract_test}, {migration_test}
