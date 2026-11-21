@@ -37,7 +37,7 @@ def test_twenty_fairness_goals_use_one_trend_read_and_keep_values(backend, monke
         db.add_all(m.FairnessLedger(department_id=h.seed['department_id'], publication_id=pub.id,
             metric_key='goal:g'+str(i), bucket=date(2026, 10, 4), value=i, person_id=None) for i in range(20))
     reports = [{'goal_id': 'g'+str(i), 'people': [], 'pairs': []} for i in range(20)]
-    monkeypatch.setattr(domain_fairness, 'goal_reports', lambda data: reports)
+    monkeypatch.setattr(domain_fairness, 'goal_reports', lambda data, groups=None: reports)
     monkeypatch.setattr(domain_fairness, 'quota_goal_reports', lambda data: [])
     selects = []
     def counted(conn, cursor, statement, parameters, context, many):
