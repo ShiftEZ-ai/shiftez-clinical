@@ -216,6 +216,14 @@ const VERBS:Record<string,string>={Apply:'Applying',Save:'Saving',Publish:'Publi
   Archive:'Archiving',Restore:'Restoring',Duplicate:'Duplicating',Reopen:'Reopening',Withdraw:'Withdrawing',Accept:'Accepting',
   Decline:'Declining',Discard:'Discarding',Undo:'Undoing',Reset:'Resetting',Generate:'Generating',Invite:'Inviting',Copy:'Copying',Retry:'Retrying'};
 export function busyLabel(label:string){const [first,...rest]=label.trim().replace(/…$/,'').split(' ');const ing=VERBS[first];return ing?[ing,...rest].join(' ')+'…':label;}
+/** One run per key (Approve rota's review, #1041): a start while one is pending joins it (no second run); the entry is
+ *  gone once it ends, so the next start runs again. `run` starts in a microtask, after the caller's draw (which reads
+ *  `runs` to hold its button). Past SLOW_AFTER `slow` runs once. */
+export function joinRun<K>(runs:Map<K,Promise<unknown>>,key:K,run:()=>unknown,slow?:()=>void):Promise<unknown>{
+  const was=runs.get(key);if(was)return was;
+  const t=slow&&setTimeout(slow,SLOW_AFTER),p=Promise.resolve().then(run).finally(()=>{clearTimeout(t||undefined);runs.delete(key);});
+  runs.set(key,p);return p;
+}
 /** A button doing its work: at once aria-busy and disabled (no double press); after 300 ms a spinner replaces its icon
  *  and its label reads "Applying…". The returned function restores it (after the 400 ms minimum). The label is read
  *  when the spinner shows, not at the press: one rewritten meanwhile (settings arriving) is kept, never put back.

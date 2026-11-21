@@ -315,9 +315,12 @@ def reopen(db, actor, staged_id, settings):
         from .bulk_selection import resolve
         try:
             body["selection_resolution"] = resolve(db, actor, row.payload["source_selection"])
-        except (Problem, ValueError) as exc:
+        except Problem as exc:
             # A reviewer may not hold the owner's token; staged items stay revision-bound.
-            body["selection_resolution"] = {"unavailable": True, "message": str(exc)}
+            body["selection_resolution"] = {"unavailable": True, "message": exc.message}
+        except ValueError:
+            body["selection_resolution"] = {"unavailable": True,
+                "message": "This selection can no longer be resolved; refresh or select again."}
     return _project(db, actor, row, body)
 
 

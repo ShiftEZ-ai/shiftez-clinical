@@ -8,9 +8,11 @@ from playwright.sync_api import expect
 from .governance_support import identity
 from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
 from .test_browser_rule_catalogue import flag, shot, weekly
+from packages.contracts.schemas import PERMISSIONS
 from .test_browser_rule_filter_builder import compound, entry
 
 pytestmark = pytest.mark.browser
+RULES_READ_ONLY = tuple(role for role in PERMISSIONS['rules.read'] if role not in PERMISSIONS['rule.propose'])
 
 
 def settings(page):
@@ -72,7 +74,7 @@ def test_balance_off_is_proposed_approved_and_in_force(browser, live_server, h):
         approver.close()
 
 
-@pytest.mark.parametrize('role', ['approver', 'auditor', 'credentialer', 'programme_lead'])
+@pytest.mark.parametrize('role', RULES_READ_ONLY)
 def test_read_only_roles_read_balance_as_a_fact(browser, live_server, h, role):
     if role == 'programme_lead':
         identity(h, role, [role])

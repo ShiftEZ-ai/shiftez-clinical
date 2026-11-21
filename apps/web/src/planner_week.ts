@@ -741,8 +741,10 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
   const inPeriod=(list:Row[])=>list.filter(s=>period.days.includes(dayOf(s))).length;
   const filtered=weekView.onlyOpen||weekView.onlyIssues||!!hooks.unfiltered&&inPeriod(hooks.unfiltered)!==inPeriod(visible);
   const time=(s:Row)=>dutyTime(s,zone);
-  const dayName=(day:string,style:'short'|'long'='short')=>new Intl.DateTimeFormat('en-GB',{weekday:style,timeZone:'UTC'}).format(new Date(day+'T12:00:00Z'));
-  const dayLabel=(day:string)=>`${dayName(day)} ${Number(day.slice(8))} ${new Intl.DateTimeFormat('en-GB',{month:'short',timeZone:'UTC'}).format(new Date(day+'T12:00:00Z'))}`;
+  const weekday=new Intl.DateTimeFormat('en-GB',{weekday:'short',timeZone:'UTC'});
+  const month=new Intl.DateTimeFormat('en-GB',{month:'short',timeZone:'UTC'});
+  const dayName=(day:string)=>weekday.format(new Date(day+'T12:00:00Z'));
+  const dayLabel=(day:string)=>`${dayName(day)} ${Number(day.slice(8))} ${month.format(new Date(day+'T12:00:00Z'))}`;
   // A clinic row's or a day's issues rolled up (D78): one marker; its popover lists ISSUE_LIST_LIMIT of them, then "Show
   // all M in Fix list" (a draft's Fix list; a published or read-only grid has none, so it says how many more).
   const fixList=hooks.editable&&!hooks.open&&w.status!=='published'?()=>{if(!hooks.fixList?.())ctx.navigate(routeHash('schedule',['issues'],{draft:w.id}).slice(1));}:undefined;

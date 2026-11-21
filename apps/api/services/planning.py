@@ -602,12 +602,12 @@ def assignment_validation_scope(data, before, previous):
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
             external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
-            staffed_creation=False):
+            staffed_creation=False, generation_apply=False):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
     from .planning_groups import guard_changes
-    guard_changes(db, actor, workspace, before, review_rejection=review_rejection)
+    guard_changes(db, actor, workspace, before, review_rejection=review_rejection, generation_apply=generation_apply)
     from .issues import issue_key, issue_changes
     previous_validation = workspace.validation or {}
     previous = workspace.validation or {}
