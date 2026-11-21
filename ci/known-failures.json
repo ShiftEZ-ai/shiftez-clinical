@@ -47,152 +47,8 @@
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
     {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_bounds_predecessor_evidence_before_semantic_comparison[case-aeiaccljmbigpjjnegkidoochdfjfcbldfkioijanljaoefalfoonlhlmnhfkacp]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_bounds_predecessor_evidence_before_semantic_comparison[case-baepoeigoilhllppncjjbiofdbkiogdbmccihjflldfiaigiamhpbbiakoebdmag]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_bounds_predecessor_evidence_before_semantic_comparison[case-jhfljedgppbddcdnffdjkmoiccileomcleeagopebhjediccgdnklikgkkioklap]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_reads_only_one_predecessor_without_rewriting_private_state",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-ahfkojjnblalgdegpakleabihiidpdkickkgiajhmnpploflnmbeocndkkmbihkk]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-bdlfknmjkhmiblkhmjelifpmbegdpbdaomffilmmkobmmfodidknhpaobiekfnpl]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-bdmpmmibafbbhdlgmcnogmcecjlgpaagdcomegbpbfhlnflfegdjmmkcdbejjpnb]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-efckabieilmfollpkhplgjahioicdhmincghdpiggllombofngdjcgihcddbfean]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-egbnepggcldaeiagobmmkehjoibainjahllabbekkddbjgpalflhlmkmhljljgfa]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-fneijaooacijdifbidkmifbclkjpnicngofolkhlbgjphencmkfaphnaeadmoogg]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-fnlpbaldkhifgfnpmjpkekmfkbknajmbfbhgpkmocdcalejckhjcddhngbhhimek]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-hpoibgodlanmbkmibioobbppnbjmigccdgacebiodghjnbhkdmhhdibnnfjocebf]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-jajnoeocedkhennlmaljjbnbhhifhnbhdlphcnmpcpflhnihfglbocmeejidpema]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-jdbahnalknbncpfaegjlddfacildhmckligpkeebmgbbefckddfhfgbdedpejhgk]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-jifonljfpdbdhmlkoheihffnkmeijdbmaidjpbkkaomimnfombhfjjgghdeojdpl]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-ljglgocbhhobccemiaoonjgfilojiamnimhoaggdjmjdoapfpkmedmipkbmdpehl]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-llgodgnckbbnchpigbbegdbdhekgcdopflfmijekggdmenacofaicaiejldalbng]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-mdmfeobpmjdncjlhkhpmmkjlilkaahnmihmonpfdolhbpmiinhccpljfaibpacin]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-mkfppbppcabfgbijfpkgigggallpgkgdjmkcahjjakpggbflfhhjpinmimdgkmfi]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-mpgodohjhhplhgjdaihbiipbijpppbealppgbnmdlldelapligcfjmihkbcandic]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-naidddbipfeognjcdfmdgcoednpfpnafjhbihocmlcahjgodonemleghfpkkklia]",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline-error",
-      "node": "tests/test_autosched_reuse_p0.py::test_followup_runtime_budget_change_does_not_invalidate_candidate_facts",
-      "owner": "maintainer",
-      "reason": "Measured product setup error in run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autosched_solver_p0.py::test_completed_solver_is_released_before_next_search_without_changing_results[case-lkchamhheacedlkklbckmpdhjnjjmaocbdlokhbiopdhgpmflnhddggipgjejglo]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
       "class": "baseline",
       "node": "tests/test_autoschedule_animation.py::test_animation_defaults_save_reload_audit_and_undo_without_invalidating_rotas",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autoschedule_backend_audit.py::test_december_requirements_conflict_cannot_be_applied_or_change_the_draft",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -217,30 +73,6 @@
     {
       "class": "baseline",
       "node": "tests/test_backend_reads_scale.py::test_department_rule_map[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_backend_reads_scale.py::test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation[case-clakpfnknimbgpgjihcedjmcpmibbpohpmbigiangjenjeebbmocicdcloplfcnc]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_backend_reads_scale.py::test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation[case-dpiomincokhnddjfemdeobephmflbcpfpadclbabmbcieonhhfocoeiepolefgag]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_backend_reads_scale.py::test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation[case-fjmahgofeagmfmgkcdbdnconampdmlfjddlgpbdijmomgpooppnmcniicejefoii]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_backend_reads_scale.py::test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation[case-jgjglpnhpmaonppbeekfealpebcejejkfknpdaecdgeehjdmhfohlddllebpdfig]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1224,18 +1056,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_declined_standing_patterns.py::test_applied_receipt_is_not_carried_after_reopen_or_input_change[case-hlnfanjlnfpniakfnikefbenpjloaebamndfmcbmfndhjiagljbadjnohelmpfde]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_declined_standing_patterns.py::test_replacement_recomputes_pattern_breaches_and_keeps_original_reasons",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_department_quota_calendar.py::test_weekend_changes_invalidate_inputs_only_when_the_default_is_used_and_undo[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1573,18 +1393,6 @@
     {
       "class": "baseline",
       "node": "tests/test_lifecycle_read_performance.py::test_lifecycle_and_fairness_at_department_scale",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_lifecycle_short_writer.py::test_revision_only_race_is_checked_inside_final_writer[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_lifecycle_short_writer.py::test_revision_only_race_is_checked_inside_final_writer[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -2340,48 +2148,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_simplify_cpsat_rc13.py::test_activated_simplify_catalogue_runs_real_cp_sat_feasibility_without_definition_errors",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-bemolbblhciibnoonljfgldafedgkfhemimoecopnejdgcchimmmmjmkabkmjggm]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-focoakdooangnjkbfgmmpnkcpbnnigkdafiocbdjhpcoejilcjnhflhgnfbmhjgd]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-gijgidkemfalhpbgpinfaonjaalfnnkfmgdijfobgbphjmeccacnihbhehljnbgl]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-ijmfegmkhikimbancbcecnoemenlepfpopcbaejfgomfikagllphjigipehjlocg]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-lfgkcapmnmalfaigclmmjpahbgmhgfaiphojlpmopjdnbdhemmeeidpgcjggdmnl]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-noadkecedmfmgmjbdbfkckjgngajloimldbbglaldfjmlankdcogdlhgkhabbipj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_simplify_quota_dates_review.py::test_converted_listed_prorated_target_keeps_operative_header_and_override_admission[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -2406,25 +2172,7 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_stability_population.py::test_department_scale_population_apply_preserves_authorised_cover_gap_budget[case-kagopfmoleekcdppnpdfeoodpdlcepelpklgfhbcfocjihdiniaojbclpgphleac]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_stability_population.py::test_department_scale_population_apply_preserves_authorised_cover_gap_budget[case-lhgjlemppdjabjdnohogdclchfpfaloiebijkeoigoedhdgdghbpkjecmfecbbjk]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_staff_overlap_consumers.py::test_staff_rotation_preview_conflicts_use_full_closure_inputs_then_hide_template_labels",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_staff_wishes.py::test_run_catch_up_is_snapshotted_without_changing_staff_budgets_or_history",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
