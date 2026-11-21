@@ -222,6 +222,11 @@ def store_check(_mapper, connection, workspace):
     if 'validation' not in workspace.__dict__:
         return
     db = object_session(workspace)
+    preparation = db.info.get('_planning_preparation') if db is not None else None
+    if (preparation and preparation.get('kind') == 'shift.update'
+            and (not preparation['replay'] or not state.attrs.validation.history.has_changes())):
+        # Preparation rolls back. Replay projects the final check on the flush that stores it.
+        return
     if connection.dialect.name == 'postgresql':
         from sqlalchemy.dialects.postgresql import insert
     else:

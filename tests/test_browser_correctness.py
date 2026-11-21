@@ -94,8 +94,8 @@ def test_a_phone_shows_the_loading_state_while_the_rota_is_read(browser, live_se
     parts = []
     try:
         page.on('request', lambda r: parts.append(r.url) if '/parts?part=' in r.url else None)
-        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'$'))
-        whole = re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'$')
+        whole = re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$')
+        held, release = hold(page, whole)
         with page.expect_request(lambda r: bool(whole.match(r.url))):  # the whole rota, at once (no window first)
             page.evaluate('a => location.hash = a', f"schedule/week/2026-10-04?edit={w['id']}")
         expect(page.locator('#main .loading[aria-busy="true"]').first).to_be_attached()
@@ -117,7 +117,7 @@ def test_continue_anyway_shows_the_loading_state_not_the_notice(browser, live_se
     context, page = sign_in(browser, live_server, 'coordinator', PHONE, phone_notice=True)
     try:
         # Held from the start: a read begun ahead (the address names the rota) cannot finish before Continue.
-        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'$'))
+        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$'))
         page.evaluate('a => location.hash = a', f"schedule/week/2026-10-04?edit={w['id']}")
         notice(page, 'Schedule planning').get_by_role('button', name='Continue anyway', exact=True).click()
         expect(page.locator('#main .desktop-only')).to_have_count(0)

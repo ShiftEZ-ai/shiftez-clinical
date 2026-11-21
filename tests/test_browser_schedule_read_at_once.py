@@ -44,7 +44,7 @@ def open_held(browser, live_server, w, *, scheme='light', viewport=DESKTOP):
 
     def whole_read(url):
         parts = urlsplit(url)
-        return parts.path == f"/api/workspaces/{w['id']}" and not parts.query
+        return parts.path == f"/api/workspaces/{w['id']}" and parts.query == 'view=schedule'
 
     def intercept(route):
         if route.request.method == 'GET':
