@@ -199,8 +199,9 @@ def occurrences(p, first, last, tz, *, bounds=None):
 
 
 def snapshot_source(department_ids, people):
+    from apps.api.snapshots import snapshot_input_row_predicate
     return m.AvailabilityPattern, (m.AvailabilityPattern.department_id.in_(department_ids)
-        & (m.AvailabilityPattern.status == 'active') & m.AvailabilityPattern.person_id.in_(people))
+        & snapshot_input_row_predicate(m.AvailabilityPattern) & m.AvailabilityPattern.person_id.in_(people))
 
 
 def expand(db, department_ids, people, lo, hi, zone, *, acquired=None):

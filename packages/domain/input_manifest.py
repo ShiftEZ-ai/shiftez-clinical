@@ -94,6 +94,24 @@ def generation_input(value):
     return GenerationOptions.model_validate(value or {}).model_dump(mode='json', exclude=GENERATION_RUNTIME_OPTIONS)
 
 
+def department_facts(row):
+    facts = project(row, FIELDS['department'])
+    if row.get('operating_calendar_id') is not None:
+        facts.pop('weekend_days', None)
+    return facts
+
+
+DEPARTMENT_INPUT_FIELDS = frozenset(FIELDS['department']) | {'organisation_id', 'generation_defaults', 'wish_settings'}
+
+
+def department_input(row):
+    from packages.contracts.schemas import WishSettings
+
+    return {**department_facts(row), 'organisation_id': row.get('organisation_id'),
+            'generation_defaults': generation_input(row.get('generation_defaults')),
+            'wish_settings': WishSettings.model_validate(row.get('wish_settings') or {}).model_dump(mode='json')}
+
+
 def manifest(data, *, content_revision=None):
     period, zone = data['workspace'], data['organisation']['timezone']
     focus = set(data['focus_ids'])
@@ -131,10 +149,7 @@ def manifest(data, *, content_revision=None):
         if kind == 'wishes':
             sources[kind + ':' + str(key)]['wish_kind'] = row.get('kind')
     for kind in ('organisation', 'department'):
-        facts = project(data[kind], FIELDS[kind])
-        # An explicit calendar owns working days; weekends are quota inputs only for the fallback.
-        if kind == 'department' and data[kind].get('operating_calendar_id') is not None:
-            facts.pop('weekend_days', None)
+        facts = department_facts(data[kind]) if kind == 'department' else project(data[kind], FIELDS[kind])
         add('mandatory_inputs', kind, data[kind]['id'], facts)
     add('content', 'workspace', period['id'], {**project(period, FIELDS['workspace']),
         'content_revision': period['content_revision'] if content_revision is None else content_revision})

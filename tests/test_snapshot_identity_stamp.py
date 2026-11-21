@@ -9,6 +9,7 @@ from apps.api.db import transaction
 from tests.test_accounts import PASSWORD, accepted, sign_in, with_users_file
 from tests.test_bulk import people_change, preview
 from tests.test_fix_list_performance import backend
+from tests.test_events import event, event_type, repeat
 
 
 def all_stamps(h):
@@ -17,6 +18,7 @@ def all_stamps(h):
 
 
 def extra_organisations(h):
+    source = event(h, event_type(h, blocks_duties=True), repeat=repeat())
     with transaction(h.app.state.engine, write=True) as db:
         other, untouched = [m.Organisation(id=m.uid(), name=name) for name in ('Other synthetic org', 'Untouched synthetic org')]
         db.add_all([other, untouched])
@@ -24,6 +26,18 @@ def extra_organisations(h):
         person = m.Person(id=m.uid(), organisation_id=other.id, display_name='Synthetic linked person')
         department = m.Department(id=m.uid(), organisation_id=other.id, name='Other synthetic department')
         db.add_all([person, department])
+        db.flush()
+        master = db.get(m.Event, source['id'])
+        typ = db.get(m.EventType, master.event_type_id)
+        other_type = m.EventType(**{column.key: getattr(typ, column.key) for column in typ.__table__.columns
+                                   if column.key not in {'id', 'department_id'}}, id=m.uid(), department_id=department.id)
+        db.add(other_type)
+        db.flush()
+        data = {**master.occurrence_data, 'event_type_id': other_type.id,
+                'type': {**master.occurrence_data['type'], 'id': other_type.id, 'department_id': department.id}}
+        db.add(m.Event(**{column.key: getattr(master, column.key) for column in master.__table__.columns
+                         if column.key not in {'id', 'department_id', 'event_type_id', 'occurrence_data'}},
+                       id=m.uid(), department_id=department.id, event_type_id=other_type.id, occurrence_data=data))
     return other.id, untouched.id, person.id, department.id
 
 

@@ -17,6 +17,8 @@ import time
 from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
 from sqlalchemy.orm import Session, with_loader_criteria
+from sqlalchemy.orm.attributes import NO_VALUE
+from sqlalchemy.sql.elements import BindParameter, ClauseElement
 from .errors import Problem
 from .settings import Settings
 
@@ -209,7 +211,7 @@ def snapshot_input_listener_classes():
 
 
 def _snapshot_attribute_changes(name, old, new, exclusions):
-    if name in exclusions:
+    if name in exclusions or (not isinstance(old, ClauseElement) and not isinstance(new, ClauseElement) and old == new):
         return False
     keys = {key.split('.', 1)[1] for key in exclusions if key.startswith(name + '.')}
     if keys and isinstance(old, (dict, type(None))) and isinstance(new, (dict, type(None))):
@@ -218,13 +220,66 @@ def _snapshot_attribute_changes(name, old, new, exclusions):
     return True
 
 
+def _snapshot_previous_value(session, row, name, state):
+    history = state.attrs[name].history
+    if history.deleted:
+        return history.deleted[-1]
+    if state.persistent and history.has_changes():
+        cls = type(row)
+        return session.scalar(select(getattr(cls, name)).where(
+            *(column == value for column, value in zip(state.mapper.primary_key, state.identity)))
+            .execution_options(include_withdrawn=True))
+    return getattr(row, name)
+
+
+def _snapshot_row_is_read(session, shape, row, *, inserting=False, changes=None):
+    if inserting and (insert_filter := getattr(shape, 'insert_filter', None)) is not None:
+        return any(isinstance(getattr(row, name), ClauseElement) or getattr(row, name) is NO_VALUE
+                   for name in shape.columns) or insert_filter(row)
+    if (predicate := getattr(shape, 'where', None)) is None:
+        return True
+    name, expected = predicate
+    state = inspect(row)
+    current = state.attrs[name].loaded_value
+    if current is NO_VALUE:
+        if state.persistent:
+            current = getattr(row, name)
+        elif name not in state.dict:
+            column = state.mapper.columns[name]
+            if column.default is not None and column.default.is_scalar:
+                current = column.default.arg
+            elif column.nullable and column.default is None and column.server_default is None:
+                current = None
+    if changes is not None:
+        previous, current = current, changes.get(name, current)
+    else:
+        previous = _snapshot_previous_value(session, row, name, state) if state.persistent else current
+    return any(value is NO_VALUE or isinstance(value, ClauseElement) or value == expected
+               for value in (previous, current))
+
+
+def _snapshot_projection_changes(session, shape, row, changes=None):
+    if (projection := getattr(shape, 'projection', None)) is None:
+        return True
+    current = {name: getattr(row, name) for name in shape.columns}
+    if changes is None:
+        state = inspect(row)
+        before = {name: _snapshot_previous_value(session, row, name, state) for name in current}
+        after = current
+    else:
+        before = current
+        after = {name: changes.get(name, value) for name, value in current.items()}
+    # A SQL expression may change the projected value even when its result is not known yet.
+    return (any(value is NO_VALUE or isinstance(value, ClauseElement) for value in (*before.values(), *after.values()))
+            or projection(before) != projection(after))
+
+
 @event.listens_for(Session, 'before_flush')
 def stamp_snapshot_inputs(session, _flush_context, _instances):
     """Every registry mutation stamps unless all changed attributes are excluded."""
     from . import models as m
-    from .snapshots import snapshot_input_specs
-    from sqlalchemy.orm.attributes import NO_VALUE
-    specs = {cls: (category, exclusions) for _name, cls, category, _scope, _shape, exclusions in snapshot_input_specs()}
+    from .snapshots import snapshot_input_organisations, snapshot_input_specs
+    specs = {cls: (category, shape, exclusions) for _name, cls, category, _scope, shape, exclusions in snapshot_input_specs()}
     general, availability, related = set(), set(), {}
     for row in (*session.new, *session.dirty, *session.deleted):
         if isinstance(row, (m.Department, m.Organisation, m.RoleBinding, m.SelfApprovalPermission)):
@@ -238,19 +293,23 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
             continue
         if _notice_receipt(row):
             continue
-        category, exclusions = spec
+        category, shape, exclusions = spec
+        if not _snapshot_row_is_read(session, shape, row, inserting=row in session.new):
+            continue
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
             if not any(attribute.history.has_changes() and _snapshot_attribute_changes(
                     attribute.key, attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,
                     getattr(row, attribute.key), exclusions) for attribute in state.attrs):
                 continue
+            if not _snapshot_projection_changes(session, shape, row):
+                continue
         if isinstance(row, m.Organisation) and row in session.new and row.id is None:
             row.id = m.uid()
         ids = _snapshot_input_organisation_ids(session, row, related)
         if ids is None:
             ids = _unresolved_snapshot_input(session, row, related)
-        (availability if category == 'availability' else general).update(ids)
+        (availability if category == 'availability' else general).update(snapshot_input_organisations(session, shape, ids, related))
     if general:
         bump_snapshot_input_revisions(session, general)
     if availability:
@@ -266,8 +325,7 @@ def stamp_snapshot_input_statement(execution):
     """
     if not (execution.is_insert or execution.is_update or execution.is_delete):
         return
-    from .snapshots import snapshot_input_specs
-    from sqlalchemy.sql.elements import BindParameter
+    from .snapshots import snapshot_input_organisations, snapshot_input_specs
     statement, session = execution.statement, execution.session
     table = getattr(statement, 'table', None)
     from .models import Department, Organisation, RoleBinding, SelfApprovalPermission
@@ -279,9 +337,14 @@ def stamp_snapshot_input_statement(execution):
     spec = next((spec for spec in snapshot_input_specs() if spec[1].__tablename__ == getattr(table, 'name', None)), None)
     if spec is None:
         return
-    _name, cls, category, _scope, _shape, exclusions = spec
+    _name, cls, category, _scope, shape, exclusions = spec
+    scope_columns = _snapshot_input_scope_columns(cls)
+    predicate = getattr(shape, 'where', None)
+    read_columns = frozenset({predicate[0]}) if predicate is not None else frozenset()
+    insert_filter = getattr(shape, 'insert_filter', None)
+    if execution.is_insert and insert_filter is not None:
+        read_columns |= shape.columns
     # These SQLAlchemy 2.1 DML value containers have no public inspection API.
-    from sqlalchemy.orm.attributes import NO_VALUE
     values = {getattr(key, 'key', key): value for key, value in (
         getattr(statement, '_values', None) or dict(getattr(statement, '_ordered_values', None) or ())).items()}
     parameters = execution.parameters
@@ -302,22 +365,25 @@ def stamp_snapshot_input_statement(execution):
                 rows = [rows]
             if not rows and statement.select is not None:
                 projected = {name: value for name, value in zip(statement._select_names, statement.select.selected_columns)
-                             if name in _snapshot_input_scope_columns(cls)}
+                             if name in scope_columns | read_columns}
                 if projected and all(isinstance(value, BindParameter) for value in projected.values()):
                     rows = [{name: value.value for name, value in projected.items()}]
                 elif projected:
-                    rows = [dict(row) for row in session.execute(statement.select.with_only_columns(
-                        *(value.label(name) for name, value in projected.items())).distinct()
-                        .execution_options(include_withdrawn=True), execution.parameters).mappings()]
+                    query = statement.select.with_only_columns(*(value.label(name) for name, value in projected.items()))
+                    if insert_filter is None:
+                        query = query.distinct()
+                    rows = [dict(row) for row in session.execute(query.execution_options(include_withdrawn=True),
+                                                               execution.parameters).mappings()]
                     if not rows:
                         return execution.invoke_statement()
             if not rows:
-                rows = list(statement._multi_values[0]) if statement._multi_values else [{}]
+                rows = [{getattr(key, 'key', key): value for key, value in row.items()}
+                        for group in statement._multi_values for row in group] or [{}]
             candidates = [cls(**{name: value for name, value in {**changed_values(row), **row}.items()
-                                if name in inspect(cls).column_attrs and value is not NO_VALUE}) for row in rows]
+                                if name in inspect(cls).column_attrs and (value is not NO_VALUE or name in read_columns)})
+                          for row in rows]
         else:
-            scope_columns = _snapshot_input_scope_columns(cls)
-            query = (select(*(getattr(cls, name) for name in sorted(scope_columns))).distinct()
+            query = (select(*(getattr(cls, name) for name in sorted(scope_columns | read_columns))).distinct()
                      if execution.is_delete else select(cls))
             if statement.whereclause is not None:
                 query = query.where(statement.whereclause)
@@ -357,6 +423,11 @@ def stamp_snapshot_input_statement(execution):
                 if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
                                        for name, value in changes.items()):
                     continue
+                if not _snapshot_projection_changes(session, shape, row, changes):
+                    continue
+            if not _snapshot_row_is_read(session, shape, row, inserting=execution.is_insert,
+                                         changes=changes if execution.is_update else None):
+                continue
             resolved = _snapshot_input_organisation_ids(session, row, related)
             if resolved is None:
                 resolved = _unresolved_snapshot_input(session, row, related)
@@ -381,7 +452,7 @@ def stamp_snapshot_input_statement(execution):
                 if inspect(row).persistent:
                     # ORM evaluation of explicit bind parameters can also retain a stale value.
                     session.expire(row, updated_columns.get(id(row)) or None)
-        if ids:
+        if ids := snapshot_input_organisations(session, shape, ids, related):
             bump_snapshot_input_revisions(session, ids, availability=category == 'availability')
         return result
 
