@@ -191,7 +191,8 @@ def test_heartbeat_write_timeouts_keep_solving_and_recover(h, monkeypatch, failu
         assert len(attempts) >= 3
 
 
-def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch):
+@pytest.mark.parametrize('engine', ['injected', 'greedy'])
+def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch, engine):
     job_id = generation_job(h)
     attempts = []
     monkeypatch.setattr(worker, 'GENERATION_HEARTBEAT_SECONDS', .01)
@@ -212,7 +213,9 @@ def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch):
         assert len(attempts) > 1
         return {'status': 'cancelled'}
 
-    assert worker.process_one(h.app.state.engine, scheduler=solve)
+    monkeypatch.setattr(worker, 'generate', lambda snapshot, *, cancelled: solve(
+        snapshot, progress=lambda row: None, cancelled=cancelled))
+    assert worker.process_one(h.app.state.engine, scheduler=solve if engine == 'injected' else None)
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job_id)
         assert row.status == 'running' and row.result is None and row.error_code is None
