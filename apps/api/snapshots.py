@@ -404,9 +404,7 @@ def _baseline_hint(db, workspace):
         return memo[key]
     from .workspace_baselines import latest
     row = latest(db, workspace.id, include_payload=False)
-    if row is None:
-        return [None, None]
-    hint = [row.id, row.payload_hash]
+    hint = [row.id, row.payload_hash] if row is not None else [None, None]
     memo[key] = hint
     return hint
 

@@ -858,11 +858,11 @@ def capture(db, workspace, actor_id, scope=None, *, payload=None, workspace_revi
     )
     db.add(row)
     db.flush()
-    rows = db.info.get('_baseline_rows')
-    if rows:
+    for name in ('_baseline_rows', '_baseline_hints'):
+        rows = db.info.get(name, {})
         for key in list(rows):
             if key[0] == workspace.id:
-                rows.pop(key, None)
+                del rows[key]
     return row
 
 
@@ -907,23 +907,31 @@ def workspace_generation_defaults(db, workspace, department, *, frozen_settings=
     if workspace.status not in ("draft", "submitted", "approved"):
         return current
     if frozen_settings is None:
-        row = latest(db, workspace.id, include_payload=False)
-        if row is None:
+        from .snapshots import _baseline_hint
+        baseline_id, payload_hash = _baseline_hint(db, workspace)
+        if baseline_id is None:
             return current
 
         def read(_workspace_id):
             baseline = m.WorkspaceBaseline
-            settings = db.scalar(select(baseline.canonical_payload["departments"][department.id].as_json())
-                                 .where(baseline.id == row.id))
-            frozen = frozen_department_settings({"departments": {department.id: settings}},
-                                                department.id, row.included_sources or ())
+            row = db.execute(select(baseline.included_sources,
+                                    baseline.canonical_payload["departments"][department.id].as_json())
+                             .where(baseline.id == baseline_id)).one_or_none()
+            if row is None:
+                return {}
+            sources, settings = row
+            frozen = frozen_department_settings({"departments": {department.id: settings}}, department.id, sources or ())
             return {"generation_defaults": frozen["generation_defaults"]} if "generation_defaults" in frozen else {}
 
         # Warm reads use baseline metadata. Only a projection miss reads the JSON settings.
         from .services.read_projections import CANONICAL_AUDIENCE, cached
-        stamp = snapshot_hash({"baseline": row.id, "hash": row.payload_hash})
-        frozen_settings = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
-                                 read, audience=CANONICAL_AUDIENCE)[workspace.id]
+        memo = db.info.setdefault('read_projection_inputs', {})
+        key = ('generation_defaults', baseline_id, payload_hash)
+        if key not in memo:
+            stamp = snapshot_hash({"baseline": baseline_id, "hash": payload_hash})
+            memo[key] = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
+                               read, audience=CANONICAL_AUDIENCE)[workspace.id]
+        frozen_settings = memo[key]
     return (generation_defaults_record(frozen_settings["generation_defaults"]) or {}
             if "generation_defaults" in frozen_settings else current)
 
