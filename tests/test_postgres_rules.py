@@ -65,7 +65,11 @@ def test_pool_preview_rolls_back_and_current_capacity_and_calendar_gate_publicat
         return evaluated
 
     monkeypatch.setattr(planning, "evaluate", observe)
-    assert pg.lifecycle(approved, "publish", status=409)["error"]["code"] == "STALE_APPROVAL"
+    # Current mandatory findings take precedence over stale approval, which is still reported.
+    refused = pg.lifecycle(approved, "publish", status=422)["error"]
+    assert refused["code"] == "VALIDATION_FAILED"
+    assert refused["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
+    assert {finding["code"] for finding in refused["details"]["findings"]} == {"POOLED_RESOURCE_CAPACITY"}
     assert "POOLED_RESOURCE_CAPACITY" in seen
     assert pg.get("coordinator", "/api/publications")["publications"] == []
 
@@ -73,7 +77,10 @@ def test_pool_preview_rolls_back_and_current_capacity_and_calendar_gate_publicat
     closed = update(pg, "operating_calendars", openings,
                     definition={**openings["definition"], "week": []})
     seen.clear()
-    assert pg.lifecycle(approved, "publish", status=409)["error"]["code"] == "STALE_APPROVAL"
+    refused = pg.lifecycle(approved, "publish", status=422)["error"]
+    assert refused["code"] == "VALIDATION_FAILED"
+    assert refused["details"]["stale_approval"]["code"] == "STALE_APPROVAL"
+    assert {finding["code"] for finding in refused["details"]["findings"]} == {"CALENDAR_CLOSED"}
     assert "CALENDAR_CLOSED" in seen
     assert "POOLED_RESOURCE_CAPACITY" not in seen
     assert pg.get("coordinator", "/api/publications")["publications"] == []
