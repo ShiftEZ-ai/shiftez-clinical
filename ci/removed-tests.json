@@ -148,6 +148,11 @@
       "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
     },
     {
+      "node": "tests/test_solver_search_budget.py::test_stopped_resume_checks_incumbent_without_relabelling_unknown_solver_status",
+      "owner": "maintainer",
+      "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
+    },
+    {
       "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
       "owner": "maintainer",
       "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
