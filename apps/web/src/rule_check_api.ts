@@ -2,7 +2,7 @@
  *  is published): a line's relation to the broader line with the same where, its effect on the drafts its dates overlap,
  *  reach over the line's own dates, the relax seed, the approver's review and one-step activation. Screens import from
  *  here, so a contract change moves only this file. */
-import {get,request,command,serverChecking,rotaMeta} from './api.js';
+import {get,request,command,serverChecking,rotaMeta,rotaWhole} from './api.js';
 import type {RuleLine,RuleLineEffectInput,PromoteAdjustmentInput,PromoteAdjustmentSeed,RotaSummary} from './generated.js';
 import type {Row} from './types.js';
 
@@ -83,7 +83,7 @@ export const CHECK_STOPPED_WHY='check-stopped-why';
 export const checkEndedStopped=(status?:string,current=false)=>status==='failed'||status==='cancelled'&&!current;
 /** DL-024: is the rota's check current, read after its job was set aside? A failed read is "not current": the page cannot
  *  show the rota as checked, so it says the check stopped and offers Check again (Design Lead, 10 Nov 2026). */
-export const rotaCheckCurrent=(id:string)=>rotaMeta(id)
+export const rotaCheckCurrent=(id:string)=>rotaWhole(id)
   .then(d=>d.workspace?.validation_current===true,()=>false);
 /** A rota's check in words, from its JOB's own status (Master, 10 Nov 2026; never from a reply's scope). DL-018, one
  *  state one verb: queued → "Waiting to check" (the same queued rule), past the bound → it hasn't started (the person's

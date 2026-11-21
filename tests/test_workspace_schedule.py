@@ -24,6 +24,7 @@ from .governance_support import identity
 from .test_backend_scale import scale_department
 from .test_bulk import preview
 from .test_bulk_workspace_sources import apply
+from .test_fix_list_performance import backend
 
 
 EDITABLE = ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')
@@ -78,6 +79,18 @@ def scale_rota(scale_harness, request):
     h = scale_harness(request.param)
     w, _, _, _ = scale_department(h)
     return h, '/api/workspaces/' + w['id']
+
+
+def test_schedule_retains_authoritative_check_currency(backend):
+    h = backend
+    w = h.shift(h.workspace())['workspace']
+    path = '/api/workspaces/' + w['id']
+    # Creating and editing a small draft can already store a complete check.
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Workspace, w['id']).validation = None
+    assert schedule(h, path).json()['workspace']['validation_current'] is False
+    h.lifecycle(w, 'validate')
+    assert schedule(h, path).json()['workspace']['validation_current'] is True
 
 
 def test_draft_schedule_byte_budget(scale_rota):
