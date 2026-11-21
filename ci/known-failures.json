@@ -246,12 +246,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_be5_governance.py::test_home_shows_own_rule_and_rota_only_with_current_self_review_permission",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_a11y.py::test_toolbar_fitting_observers_are_released_when_pages_change",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
