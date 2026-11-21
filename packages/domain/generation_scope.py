@@ -35,6 +35,8 @@ def population_candidates(data, selected):
     if has_session_lines(scope['conditions'], SESSION_FIELDS | INTERNAL):
         return {shift['id']: [pid for pid in data['people'] if population_allows(data, shift, pid)] for shift in shifts}
     # The capability predicate keys its dated grants by department and clinics.
+    # Invariant: capability_ids is the only person field that reads the duty. A new person field that reads the duty
+    # must join the grouping key below or the per-duty fallback above, or groups would share a wrong answer.
     clinic_scoped = has_session_lines(scope['conditions'], {'capability_ids'})
     population = {shift['id']: [] for shift in shifts}
     contexts = {}
