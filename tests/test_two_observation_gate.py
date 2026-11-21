@@ -244,7 +244,11 @@ class TwoObservationGateTests(unittest.TestCase):
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
         guarded_tests = {fixture, "tests/test_product_helper.py", "tests/test_runner_hook.py",
                          "tests/test_existing_hook.py", "tests/test_legacy_encoding.py"}
-        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | unrelated | guarded_tests
+        # Class tests for the former full-run triggers: pipeline/policy, contract and migration tests.
+        pipeline_test, contract_test = "tests/test_pipeline_guard.py", "tests/test_contract_guard.py"
+        migration_test = "tests/test_migration_guard.py"
+        files = (trusted_ci.PR_SMOKE | {owner, shared_owner} | unrelated | guarded_tests
+                 | {pipeline_test, contract_test, migration_test})
         durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
         sources = dict.fromkeys(files, "def test_a(): pass\n")
         sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
@@ -252,6 +256,8 @@ class TwoObservationGateTests(unittest.TestCase):
                         "apps/api/consumer.py": "from apps.api.models import value\n",
                         indirect_owner: "from apps.api.consumer import value\n",
                         unknown: "value = 2\n", unknown_doc: "# Example\n",
+                        pipeline_test: "import trusted_ci\n", contract_test: "# generate_contracts\n",
+                        migration_test: "# migrations\n",
                         "scripts/affected_tests.py": (ROOT / "scripts/affected_tests.py").read_text(encoding="utf-8")})
         for name, content in sources.items():
             target = self.folder / name
@@ -265,29 +271,38 @@ class TwoObservationGateTests(unittest.TestCase):
             with patch.object(trusted_ci, "TRUSTED", self.folder):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
                                  trusted_ci.PR_SMOKE | {shared_owner, added})
-            full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
-                          "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
-                          "tests/conftest.py", nested_conftest, fixture, "apps/api/conftest.py",
-                          "tests/fixtures/sample.json", "test_support/fixture.py",
-                          "tests/test_product_helper.py", "tests/test_runner_hook.py", "tests/test_existing_hook.py",
-                          "tests/test_legacy_encoding.py",
-                          "migrations/env.py", "packages/contracts/schemas.py", "apps/web/src/generated.ts",
-                          unknown, unknown_doc)
-            cases = [(path, [], "dev", False, False) for path in full_paths]
-            cases += [(owned, [], "dev", False, True), (shared, [], "dev", False, True), (owner, [], "dev", False, True),
-                      (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
-                      (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
+            # A dev PR never runs the whole suite: each former full-run trigger maps to its owners (or the smoke
+            # files when none is mapped) plus its class tests. Only another base or full-ci runs the full suite.
+            pipeline, contract, migration = {pipeline_test}, {contract_test}, {migration_test}
+            selections = {"scripts/tool.py": set(), ".github/workflows/ci.yml": pipeline, "ci/settings.json": pipeline,
+                          "tools/control.py": pipeline, "requirements/test.lock": set(), "package-lock.json": set(),
+                          "package.json": set(), "pyproject.toml": set(), "tests/conftest.py": pipeline,
+                          nested_conftest: pipeline, fixture: {fixture}, "apps/api/conftest.py": pipeline,
+                          "tests/fixtures/sample.json": set(), "test_support/fixture.py": set(),
+                          "tests/test_product_helper.py": {"tests/test_product_helper.py"},
+                          "tests/test_runner_hook.py": {"tests/test_runner_hook.py"} | pipeline,
+                          "tests/test_existing_hook.py": {"tests/test_existing_hook.py"},
+                          "tests/test_legacy_encoding.py": {"tests/test_legacy_encoding.py"},
+                          "migrations/env.py": migration, "packages/contracts/schemas.py": contract,
+                          "apps/web/src/generated.ts": contract, unknown: set(), unknown_doc: set()}
+            cases = [(path, [], "dev", False, expected) for path, expected in selections.items()]
+            cases += [(owned, [], "dev", False, {owner}), (shared, [], "dev", False, {shared_owner, owner}),
+                      (owner, [], "dev", False, {owner}),
+                      (owned, ["full-ci"], "dev", False, None), (owned, [], "main", False, None),
+                      (owned, [], "dev", True, {owner}), (unknown, [], "dev", True, set()),
+                      (owner, [], "dev", True, {owner})]
             events = [("pull_request", *case) for case in cases]
-            events += [(event, owned, [], "dev", False, False)
+            events += [(event, owned, [], "dev", False, None)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events = [(*case, "dev") for case in events]
             # After the rename the default branch main selects, and a dev target runs in full.
-            events += [("pull_request", owned, [], "main", False, True, "main"),
-                       ("pull_request", shared, [], "main", False, True, "main"),
-                       ("pull_request", owned, [], "dev", False, False, "main")]
-            events.append(("pull_request", owned, [], "dev", False, False, "dev"))
+            events += [("pull_request", owned, [], "main", False, {owner}, "main"),
+                       ("pull_request", shared, [], "main", False, {shared_owner, owner}, "main"),
+                       ("pull_request", owned, [], "dev", False, None, "main")]
+            # A selector failure still runs the full suite.
+            events.append(("pull_request", owned, [], "dev", False, None, "dev"))
             events = [case for case in events if case[0] != "merge_group"]
-            for index, (event, path, labels, branch, deleted, partial, default) in enumerate(events):
+            for index, (event, path, labels, branch, deleted, expected, default) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
                     (self.folder / "tests/test_unreadable.py").mkdir()
@@ -334,9 +349,8 @@ class TwoObservationGateTests(unittest.TestCase):
                     self.assertEqual(plan["sha"], candidate)
                     self.assertEqual(plan["replicas"], replicas)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
-                    if partial:
+                    if expected is not None:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
-                        expected = {shared_owner, owner} if path == shared else {owner}
                         self.assertEqual(actual, trusted_ci.PR_SMOKE | expected)
                         self.assertEqual(trusted_ci.census_files(plan, files), actual)
                     else:

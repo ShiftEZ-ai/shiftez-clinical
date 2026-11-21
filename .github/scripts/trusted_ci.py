@@ -24,6 +24,12 @@ from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
+# A dev PR never runs the whole suite (the merge queue does). Each former full-run trigger adds its class's unit
+# tests, found by what the test text names: pipeline/policy tests, contract tests, migration tests.
+PIPELINE_TESTS = re.compile(r"make_known_failures|trusted_ci|trusted_verdict|canary_evidence|latest_reports"
+                            r"|node_census|hosted_ci|working_policy")
+CONTRACT_TESTS = re.compile(r"generated\.ts|generate_contracts")
+MIGRATION_TESTS = re.compile(r"\bmigrations\b")
 
 
 def settings():
@@ -96,56 +102,52 @@ def quarantine_revision(branch, default, base, candidate):
     return base if branch == "main" and default != "main" else candidate
 
 
-def pr_scope(data, git, trusted_sha, candidate):
+def pr_scope(data, git, candidate):
+    """Changed paths of a PR into the default branch; None (the full suite) only off it or with the full-ci label."""
     pr = data["pull_request"]
     if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
-    base = policy.commit(pr["base"]["sha"])
-    changed = pr_changed_files(base, candidate, git)
-    if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
-           or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
-           for path in changed):
-        return None
+    return pr_changed_files(policy.commit(pr["base"]["sha"]), candidate, git)
+
+
+def trigger_tests(changed, base, candidate, trusted_sha, files):
+    """Class tests for the former full-run triggers; lock files and other Tier 2 paths map through owners only."""
     inventory = policy.control_inventory(trusted_sha)
+    classes = set()
     for path in sorted(changed):
-        before, after = policy.read_file(base, path), policy.read_file(candidate, path)
-        tier, _ = policy.tier(path, before, after, inventory)
-        if tier == 1 or path.rsplit("/", 1)[-1] == "conftest.py":
-            return None
-        if tier == 2 and not (
-            path.startswith(("apps/", "packages/")) and path.endswith((".py", ".ts", ".css"))
-            or ordinary_test_module(path, before, after, inventory)
-        ):
-            return None
-    return changed
+        name = path.rsplit("/", 1)[-1]
+        if path.startswith("migrations/"):
+            classes.add(MIGRATION_TESTS)
+        if path.startswith("packages/contracts/") or name == "generated.ts":
+            classes.add(CONTRACT_TESTS)
+        tier, _ = policy.tier(path, policy.read_file(base, path), policy.read_file(candidate, path), inventory)
+        if tier == 1 or name == "conftest.py":
+            classes.add(PIPELINE_TESTS)
+    if not classes:
+        return set()
+    unit = [path for path in files if not Path(path).name.startswith("test_browser")]
+    texts = {path: Path(path).read_text(encoding="utf-8", errors="replace") for path in unit}
+    return {path for path, text in texts.items() if any(pattern.search(text) for pattern in classes)}
 
 
-def ordinary_test_module(path, before, after, inventory):
-    """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
-    if (after is None or path in inventory["product_imports"]
-            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
-        return False
-    try:
-        if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
-            return False
-        return not (policy.python_controls(after) or policy.mechanisms(after) or policy.reporter_controls(after))
-    except (SyntaxError, ValueError):
-        return False
-
-
-def affected_files(changed, files):
-    required = PR_SMOKE | (changed & files)
+def affected_files(changed, files, extra=frozenset()):
+    required = PR_SMOKE | (changed & files) | extra
     if not PR_SMOKE <= files:
         return None
     if not changed:
         return required
     try:
         selector = runpy.run_path(str(TRUSTED / "scripts/affected_tests.py"))
-        owners = selector["direct_test_owners"](sorted(changed), files)
+        # A path with no mapped owner runs the selector's fixed smoke files; the queue's full suite is the gate.
+        smoke = {target.split("::")[0] for targets in selector["SMOKE"].values() for target in targets} & files
+        owners = set()
+        for path in sorted(changed):
+            found = selector["direct_test_owners"]([path], files)
+            owners |= smoke if found is None else found
     except Exception as error:
         print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
         return None
-    return required | owners if isinstance(owners, set) and owners <= files else None
+    return required | owners if owners <= files else None
 
 
 def plan(base, measurement):
@@ -177,9 +179,11 @@ def plan(base, measurement):
         require_pr_merge(event, policy.git, candidate)
         if not context["bootstrap"]:
             trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
-            changed = pr_scope(event, policy.git, trusted_sha, candidate)
+            changed = pr_scope(event, policy.git, candidate)
             if changed is not None:
-                selected_files = affected_files(changed, set(files))
+                extra = trigger_tests(changed, policy.commit(event["pull_request"]["base"]["sha"]), candidate,
+                                      trusted_sha, files)
+                selected_files = affected_files(changed, set(files), extra)
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)

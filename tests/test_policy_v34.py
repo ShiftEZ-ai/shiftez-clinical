@@ -151,9 +151,11 @@ class ImporterV34Tests(unittest.TestCase):
         source_runs = json.loads(durations.read_text(encoding='utf-8'))['source_run_ids']
         self.assertCountEqual(source_runs, [44114266718, 44131154009])
 
-        config = durations.with_name('bootstrap-settings.json')
-        groups = json.loads(config.read_text(encoding='utf-8'))['merge_group_shards']
-        self.assertEqual(groups, {'unit_shards': 25, 'browser_shards': 30})
+        # One merge group runs the full suite on ~97 shards balanced from these durations; dev PRs run only
+        # affected selections, so their caps are smaller.
+        config = json.loads(durations.with_name('bootstrap-settings.json').read_text(encoding='utf-8'))
+        self.assertEqual(config['merge_group_shards'], {'unit_shards': 42, 'browser_shards': 55})
+        self.assertEqual((config['unit_shards'], config['browser_shards']), (12, 12))
 
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'

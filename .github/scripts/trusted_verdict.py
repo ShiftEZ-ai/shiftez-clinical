@@ -176,7 +176,7 @@ def main():
     if plan["sha"] != candidate or plan["tree"] != source_tree or plan["base_sha"] != base:
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
     partial = "selection" in plan
-    scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), candidate)
+    scope = (pr_scope(data, git, candidate)
              if partial and kind == "pull_request" else None)
     config = settings()
     selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
