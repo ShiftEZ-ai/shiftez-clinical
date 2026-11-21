@@ -411,6 +411,16 @@ def _baseline_hint(db, workspace):
     return hint
 
 
+def _seed_baseline_hints(db, workspaces):
+    from .workspace_baselines import latest_many
+
+    baselines = latest_many(db, [workspace.id for workspace in workspaces])
+    memo = db.info.setdefault('_baseline_hints', {})
+    for workspace in workspaces:
+        row = baselines.get(workspace.id)
+        memo[workspace.id, workspace.revision] = [row.id, row.payload_hash] if row else [None, None]
+
+
 def _verified_baseline(db, workspace):
     """Load and integrity-check one draft baseline once in this request/session."""
     from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
@@ -510,22 +520,37 @@ def _fingerprint_shared_inputs(db, workspace):
     return prepared_snapshot_inputs(db, organisation)
 
 
-def cheap_fingerprints(db, workspaces, *, checks):
+def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
     """Return currencies proven by stored dirty hints without rebuilding snapshots.
 
     Collection and landing reads must never rebuild a department snapshot merely
     to label a row as fresh. Missing or stale hints are omitted so callers can
     conservatively show unknown/outdated and let an authoritative read resolve it.
     """
-    from packages.domain.input_manifest import digest, toolchain
+    from packages.domain.input_manifest import digest, feasibility_token, toolchain
 
     current_toolchain = digest(toolchain(quota_policy_limit()))
     departments = {}
     revision_stamps = {}
     result = {}
+    if feasibility and workspaces:
+        _seed_baseline_hints(db, workspaces)
+        if checks:
+            from .services.read_projections import CANONICAL_AUDIENCE, input_stamp
+            C = m.WorkspaceReadProjection
+            by_id = {workspace.id: workspace for workspace in workspaces if workspace.id in checks}
+            result.update({wid: value for wid, stamp, value in db.execute(
+                select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(by_id),
+                    C.audience == CANONICAL_AUDIENCE, C.kind == 'feasibility_fingerprint'))
+                if value is not None and stamp == input_stamp(db, by_id[wid])})
     for workspace in workspaces:
+        if workspace.id in result:
+            continue
         check = (checks or {}).get(workspace.id) or {}
         manifest = check.get('input_manifest') or {}
+        if feasibility and ('format' not in manifest or not {'content', 'mandatory_inputs', 'toolchain'} <=
+                            (manifest.get('components') or {}).keys()):
+            continue
         hint = manifest.get('dirty_hint') or {}
         department = departments.get(workspace.department_id)
         if department is None:
@@ -544,12 +569,13 @@ def cheap_fingerprints(db, workspaces, *, checks):
                       'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
-            result[workspace.id] = manifest['token']
+            result[workspace.id] = (feasibility_token({'input_manifest': manifest})
+                                    if feasibility else manifest['token'])
     return result
 
 
 def feasibility_fingerprint(db, workspace):
-    """Reads (e.g. every rule-review poll) reuse the stored token for unchanged inputs; writers always rebuild."""
+    """Reuse the stored feasibility token for unchanged inputs."""
     return feasibility_fingerprints(db, [workspace])[workspace.id]
 
 
@@ -932,7 +958,8 @@ def _snapshot_inputs(db, org):
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
-    acquired = records_many(db, sources, exclude={'people': ('pager',)}, order_by=SCHEDULING_ORDER)
+    acquired = records_many(db, sources, exclude={'people': ('pager',)},
+        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id)})
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
@@ -968,7 +995,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False) -> dict:
+                    rule_map_bindings: bool = False, fairness_goals_out: list[dict] | None = None) -> dict:
     if current_scheduling:
         department, org = db.execute(select(m.Department, m.Organisation)
             .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
@@ -1353,6 +1380,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result["fairness_strengths"] = scoring.strengths.model_dump()
     result['generation_options'] = json_value(department_settings.get('generation_defaults') or {})
     goals = balance_goals(result) if include_fairness else []
+    if fairness_goals_out is not None:
+        fairness_goals_out.extend(goals)
     if goals and include_fairness_history:
         from .services.fairness import history
         if any(g['definition']['rule']['metric'] in ('overtime_duties', 'overtime_hours') for g in goals):

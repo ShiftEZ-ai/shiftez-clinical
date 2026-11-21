@@ -9208,6 +9208,7 @@
           "reason": {
             "enum": [
               "optimal",
+              "model_proven",
               "time_limit",
               "plateau",
               "gap",
@@ -27440,6 +27441,20 @@
         "default": true,
         "title": "Active",
         "type": "boolean"
+      },
+      "inactive_from": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "bulk": true,
+        "default": null,
+        "title": "Inactive From"
       },
       "title": {
         "bulk": true,

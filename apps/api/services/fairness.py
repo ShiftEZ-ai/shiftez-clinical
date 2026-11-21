@@ -762,7 +762,8 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
             return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
         workspace = db.get(m.Workspace, latest.workspace_id)
     # Today's goals, also on a published rota (which otherwise keeps the rules it was approved under).
-    data = domain_snapshot(db, workspace, current_scheduling=True)
+    goals = []
+    data = domain_snapshot(db, workspace, current_scheduling=True, fairness_goals_out=goals)
     tree = parse_tree(who)
     allowed = set(matching(data, tree, workspace.starts_on, workspace.ends_on)) if tree else None
     if not sees_everyone(actor):
@@ -773,7 +774,7 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
     data = {**data, '_line_index_cache': {}, '_person_dates_cache': {},
             '_person_rows': index_person_rows(data), '_distribution_cache': {},
             '_policy_applies_cache': {}, '_policy_applies_people': True, '_scope_interval_cache': {}}
-    reports = f.goal_reports(data) + f.quota_goal_reports(data)
+    reports = f.goal_reports(data, groups=f.goal_groups(data, goals)) + f.quota_goal_reports(data)
     trends = defaultdict(list)
     if reports:
         for key, bucket, value in db.execute(select(L.metric_key, L.bucket, L.value).where(
