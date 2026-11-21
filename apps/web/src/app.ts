@@ -333,7 +333,8 @@ function patchDraft(r:Row,kind:string):boolean{
   // A read changes no draft: the draft held stays (dropping it read the whole rota again after an edit or undo, and
   // left an issue list opened meanwhile without its Fix list).
   if(READ_ONLY_COMMANDS.has(kind))return true;
-  if(kind==='generation.apply')lastJobs=null;
+  // The jobs read says the rota's run settings: a baseline capture or refresh, or the department's own, changes them.
+  if(kind==='generation.apply'||kind==='department.settings'||kind.startsWith('workspace.baseline.'))lastJobs=null;
   const id:string=r?.workspace?.id||'',row=plannerMemo?.page.workspaces.find(x=>x.id===id),held=scheduleCache.drafts.get(id);
   // SW3-B-03: a submit or an approval answers with the rota's new state (no health): the list takes it too, so the page
   // redraws in that state reading only the rota, not the whole rota list (minutes under load, and a failed read left
@@ -7392,7 +7393,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   if(!initialJobs){firstWoke=panelWakes;initialJobs=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});}
   if(serial!==renderSerial)return;
   const capability=initialJobs.generation_capability||{},cpSat=capability.engine==='cp_sat',maxDays=Number(capability.max_period_days)||31;
-  const defaults={...capability.default_options,...me!.department.generation_defaults} as GenerationOptions;
+  // An unissued rota runs with the settings captured with it; the rota's job list says them (else the department's).
+  const defaults={...capability.default_options,...('generation_defaults' in initialJobs?initialJobs.generation_defaults:me!.department.generation_defaults)} as GenerationOptions;
   const maxMinutes=Number(defaults.max_search_minutes)||AUTO_SCHEDULE_LIMITS.default_max_minutes;
   // A kept setup that no longer fits (a lower ceiling, other rota dates or clinics) falls back to the defaults.
   if(st().minutes!==undefined&&!(st().minutes!>=AUTO_SCHEDULE_LIMITS.minimum_minutes&&st().minutes!<=maxMinutes))st().minutes=undefined;

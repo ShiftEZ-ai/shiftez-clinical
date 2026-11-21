@@ -135,3 +135,26 @@ async function read(workspaceId='',draftNone=false,sourcePublication=''){
 console.log(JSON.stringify([await read(),await read('selected'),await read('',true),await read('',false,'version')]));
 """)
     assert got == ['submitted', 'draft', 'draft', 'draft']
+
+
+def test_the_auto_schedule_panel_starts_from_the_settings_captured_with_the_rota(client_modules):
+    """The set-up panel's defaults are the ones the rota's job list returns (captured with the draft), over the
+    engine's; only a reply without them falls back to the department's current values. A baseline capture or refresh,
+    or a department settings save, drops the jobs read, so the panel never keeps old run settings."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    defaults = cut(source, r'\n\s*(const defaults = \{ \.\.\.capability\.default_options, .*?\};)\n')
+    drop = cut(source, r"\n\s*(if \(kind === 'generation\.apply'.*?\n\s*lastJobs = null;)\n")
+    got = node(r"""
+const me={department:{generation_defaults:{search_minutes:6,max_search_minutes:30}}};
+const capability={default_options:{search_minutes:5,max_search_minutes:60,mode:'fill_gaps'}};
+const panel=initialJobs=>{""" + defaults + r"""return defaults;};
+const dropped=kind=>{let lastJobs={};""" + drop + r"""return lastJobs===null;};
+console.log(JSON.stringify({
+  captured:panel({generation_defaults:{search_minutes:4}}),
+  none:panel({generation_defaults:{}}),
+  older:panel({jobs:[]}),
+  drops:['workspace.baseline.capture','workspace.baseline.refresh.apply','department.settings','generation.apply','shift.update'].map(dropped)}));""")
+    assert got['captured'] == {'search_minutes': 4, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
+    assert got['none'] == {'search_minutes': 5, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
+    assert got['older'] == {'search_minutes': 6, 'max_search_minutes': 30, 'mode': 'fill_gaps'}
+    assert got['drops'] == [True, True, True, True, False]

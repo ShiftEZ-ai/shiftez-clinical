@@ -198,18 +198,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_autoschedule_budget_api.py::test_generation_queue_uses_the_draft_baseline_after_department_defaults_change",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autoschedule_budget_api.py::test_increasing_runtime_limit_preserves_preparation_fingerprint_and_continue_uses_new_limit",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_backend_reads_scale.py::test_department_rule_map[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."

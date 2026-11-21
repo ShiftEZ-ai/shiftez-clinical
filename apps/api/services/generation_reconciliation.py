@@ -67,7 +67,7 @@ def prepare(db, actor, command):
     for i, ident in assignment_ids.items():
         normalized['additions'][i]['participant']['id'] = ident
     from .planning import background_checks_available, complete_check
-    defaults = frozen.get('generation_defaults') or frozen.get('department', {}).get('generation_defaults') or {}
+    defaults = current['department'].get('generation_defaults')
     baseline = workspace.validation if (not workspace.base_publication_id
         and not population_changed and complete_check(workspace.validation, current, defaults)) else None
     if not population_changed and not workspace.base_publication_id and background_checks_available(db):

@@ -74,7 +74,7 @@ def _dashboard_etag(db, actor, kind, *values, workspace_id=None):
 
 
 def goals_etag(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-    return _dashboard_etag(db, actor, "fairness-goals-v2", workspace_id, who, starts_on, ends_on,
+    return _dashboard_etag(db, actor, "fairness-goals-v3", workspace_id, who, starts_on, ends_on,
                            workspace_id=workspace_id)
 
 
@@ -744,9 +744,9 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
         if latest is None:
             return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
         workspace = db.get(m.Workspace, latest.workspace_id)
-    # Today's goals, also on a published rota (which otherwise keeps the rules it was approved under).
+    # Today's active goals use the rota's captured settings until publication.
     goals = []
-    data = domain_snapshot(db, workspace, current_scheduling=True, fairness_goals_out=goals)
+    data = domain_snapshot(db, workspace, current_goals=True, fairness_goals_out=goals)
     tree = parse_tree(who)
     allowed = set(matching(data, tree, workspace.starts_on, workspace.ends_on)) if tree else None
     if not sees_everyone(actor):
@@ -819,10 +819,9 @@ def schedule(db, workspace):
     score = (normalized_check(workspace.validation) or {}).get('score')
     if not score or score['score'] is None:
         return None
-    department = db.get(m.Department, workspace.department_id)
     data = domain_snapshot(db, workspace)
     return {**{k: score.get(k) for k in ('score', 'publishable', 'gate', 'components', 'why')},
-            'fresh': complete_check(workspace.validation, data, department.generation_defaults)}
+            'fresh': complete_check(workspace.validation, data, data['department'].get('generation_defaults'))}
 
 
 def score_trend(db, department_id, first, last):

@@ -9,7 +9,7 @@ from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
-from .serialization import json_value, record, records_many
+from .serialization import generation_defaults_record, json_value, record, records_many
 from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs, snapshot_window
 from packages.contracts import schemas as s
@@ -946,6 +946,33 @@ def latest_many(db, workspace_ids):
     ).where(B.workspace_id.in_(workspace_ids)).subquery()
     rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
     return {row.workspace_id: row for row in rows}
+
+
+def workspace_generation_defaults(db, workspace, department, *, frozen_settings=None):
+    """Read captured options for an unissued rota, with a fallback for uncaptured settings."""
+    current = generation_defaults_record(department.generation_defaults) or {}
+    if workspace.status not in ("draft", "submitted", "approved"):
+        return current
+    if frozen_settings is None:
+        row = latest(db, workspace.id, include_payload=False)
+        if row is None:
+            return current
+
+        def read(_workspace_id):
+            baseline = m.WorkspaceBaseline
+            settings = db.scalar(select(baseline.canonical_payload["departments"][department.id].as_json())
+                                 .where(baseline.id == row.id))
+            frozen = frozen_department_settings({"departments": {department.id: settings}},
+                                                department.id, row.included_sources or ())
+            return {"generation_defaults": frozen["generation_defaults"]} if "generation_defaults" in frozen else {}
+
+        # Warm reads use baseline metadata. Only a projection miss reads the JSON settings.
+        from .services.read_projections import CANONICAL_AUDIENCE, cached
+        stamp = snapshot_hash({"baseline": row.id, "hash": row.payload_hash})
+        frozen_settings = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
+                                 read, audience=CANONICAL_AUDIENCE)[workspace.id]
+    return (generation_defaults_record(frozen_settings["generation_defaults"]) or {}
+            if "generation_defaults" in frozen_settings else current)
 
 
 def verify(row):
