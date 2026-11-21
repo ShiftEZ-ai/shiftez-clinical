@@ -3,7 +3,7 @@ from copy import deepcopy
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.inspection import inspect
-from packages.contracts.schemas import AutoscheduleAnimationSettings, WishSettings
+from packages.contracts.schemas import AutoscheduleAnimationSettings, SCHEDULE_DETAIL_FIELDS, WishSettings
 from packages.domain.time import aware
 from packages.domain.rota_summary import normalized_check, normalized_score
 from packages.domain.serialization import PLAIN, json_default, json_value
@@ -460,6 +460,22 @@ def job_run_context(snapshot):
                                  'end': max(aware(s['end']) for s in shifts).isoformat()} if shifts else None,
             'service_ids': sorted({sid for s in shifts for sid in s['service_ids']}),
             'basis': 'frozen_workspace_and_selected_duties'}
+
+
+def schedule_projection(data):
+    session, participant, coverage, check = (SCHEDULE_DETAIL_FIELDS[key]
+                                            for key in ('session', 'participant', 'coverage', 'check'))
+    shifts = [{**{key: value for key, value in row.items() if key not in session},
+               'participants': [{key: value for key, value in p.items() if key not in participant}
+                                for p in row['participants']]} for row in data['shifts']]
+    workspace = data['workspace']
+    if isinstance(workspace.get('validation'), dict):
+        validation = {key: value for key, value in workspace['validation'].items() if key not in check}
+        if isinstance(validation.get('coverage'), list):
+            validation['coverage'] = [{key: value for key, value in row.items() if key not in coverage}
+                                      for row in validation['coverage']]
+        workspace = {**workspace, 'validation': validation}
+    return {**data, 'workspace': workspace, 'shifts': shifts}
 
 
 def job_detail_result(kind, result):
