@@ -1019,8 +1019,13 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
                     fairness_goals_out: list[dict] | None = None) -> dict:
-    department = db.get(m.Department, workspace.department_id)
-    org = db.get(m.Organisation, department.organisation_id)
+    if current_scheduling:
+        department, org = db.execute(select(m.Department, m.Organisation)
+            .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
+            .where(m.Department.id == workspace.department_id)).one()
+    else:
+        department = db.get(m.Department, workspace.department_id)
+        org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
     mandatory_overlay_changed = False
     baseline = None

@@ -2410,16 +2410,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_fairness_goals_performance.py::test_supervision_fairness_goals_at_department_scale",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-12",
-    "issue": 69,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_fe_c3_amendment_facts.py::test_the_approvers_home_says_the_rota_to_review_is_an_amendment_with_its_reasons",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
