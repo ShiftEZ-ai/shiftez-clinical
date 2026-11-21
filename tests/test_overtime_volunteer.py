@@ -995,6 +995,8 @@ def test_an_alternate_account_for_requester_cannot_approve(h):
     row = offer(h)["record"]
     identity(h, "requesters_other_login", ["coordinator"], h.seed["people"][0])
     assert decide(h, row, role="requesters_other_login", status=403)["error"]["code"] == "SELF_APPROVAL"
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Identity, h.seed["identities"]["coordinator"]).person_id = h.seed["people"][0]
     own = offer(h, "coordinator")["record"]
     assert decide(h, own, status=403)["error"]["code"] == "SELF_APPROVAL"
     assert facts(h) == []
