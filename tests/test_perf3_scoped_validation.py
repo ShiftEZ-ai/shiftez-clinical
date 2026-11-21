@@ -96,7 +96,8 @@ def test_randomized_relational_fixture_matches_full_and_edit_stores_current_comp
         w = h.shift(w, people=[h.seed['people'][n % 2]], service=n % 2,
                     start=f'{day}T08:00:00+03:00', end=f'{day}T12:00:00+03:00')['workspace']
     oracle(h.snapshot(w), edits=9)
-    target = h.detail(w)['shifts'][0]
+    rows = h.detail(w)['shifts']
+    target = rows[0]
     modes, real = [], planning.evaluate
     def counted(data, **kwargs):
         modes.append(data.get('_partial'))
@@ -112,8 +113,8 @@ def test_randomized_relational_fixture_matches_full_and_edit_stores_current_comp
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', count)
     assert modes and modes[-1]['complete']
-    assert modes[-1]['people'] == set(h.seed['people'])
-    assert len(modes[-1]['shifts']) == 6 and len(modes[-1]['dates']) == 7
+    assert modes[-1]['people'] == {p['person_id'] for p in target['participants']}
+    assert modes[-1]['shifts'] == {row['id'] for row in rows if row['start'] == target['start']}
     assert not result['validation'].get('scope') and 'score' in result['validation']
     assert result['validation']['fingerprint'] == h.snapshot(result['workspace'])['fingerprint']
     assert not validation.INTERNAL_CHECK_KEYS.intersection(result['validation'])

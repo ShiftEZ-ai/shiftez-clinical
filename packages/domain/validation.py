@@ -1460,6 +1460,86 @@ class TrialPresence(dict):
         return dict.__getitem__(self, key)
 
 
+def incremental_edit_scope(data, before, previous, rule_sources):
+    """Reuse only a complete check of the exact pre-edit schedule and current non-edit inputs."""
+    from .finding_causes import DIAGNOSTIC_VERSION
+    from .input_manifest import FIELDS, manifest, project, shift_input
+    from .validation_scope import assignment_scope
+
+    workspace = data.get('workspace')
+    prior = before.get('workspace')
+    stamp = previous.get('input_manifest') or {}
+    current = data.get('input_manifest') or {}
+    prior_components = stamp.get('components') or {}
+    prior_sources = (previous.get('fix_list_context') or {}).get('sources')
+    if (not workspace or not prior or data.get('operational') or previous.get('scope')
+            or previous.get('engine_version') != ENGINE_VERSION or previous.get('contracts') != check_contracts()
+            or previous.get('diagnostic_version') != DIAGNOSTIC_VERSION or not previous.get('evaluated_at')
+            or not isinstance(previous.get('_session_parts'), list) or not isinstance(previous.get('_person_parts'), dict)
+            or project(prior, FIELDS['workspace']) != project(workspace, FIELDS['workspace'])
+            or stamp.get('format') != current.get('format')
+            or not prior_components or not current.get('components')
+            or any(value != prior_components.get(key)
+                   for key, value in current.get('components', {}).items() if key != 'content')
+            or previous.get('fingerprint') != stamp.get('token')
+            or prior_sources is None or list(prior_sources.items()) != list(rule_sources.items())):
+        return None
+
+    focus = set(data['focus_ids'])
+    prior_ids = {shift['id'] for shift in before['shifts']}
+    if {row['shift_id'] for row in previous.get('coverage', ())} != prior_ids:
+        return None
+    own = [shift for shift in data['shifts'] if shift['id'] in focus]
+    others = [shift for shift in data['shifts'] if shift['id'] not in focus]
+    old = with_series_state({**data, 'shifts': before['shifts'] + others,
+                             'workspace': prior, 'focus_ids': prior_ids})
+    if any(shift['assignment_type_id'] not in data['types'] for shift in old['shifts']):
+        return None
+    old_stamp = manifest(old)
+    if any(stamp.get(key) != old_stamp[key] for key in ('token', 'components', 'dirty_hint')):
+        return None
+
+    was = {row['id']: shift_input(row) for row in old['shifts'] if row['id'] in prior_ids}
+    now = {row['id']: shift_input(row) for row in own}
+    touched = {sid for sid in was.keys() | now.keys() if was.get(sid) != now.get(sid)}
+    changed_before = [row for row in old['shifts'] if row['id'] in touched]
+    changed_after = [row for row in own if row['id'] in touched]
+    scope = assignment_scope(data, changed_before, changed_after)
+    scope['shifts'].update(touched)
+    people = set()
+    for sid in touched:
+        old_input, new_input = was.get(sid, {}), now.get(sid, {})
+        old_people = {row['id']: row for row in old_input.get('participants', ())}
+        new_people = {row['id']: row for row in new_input.get('participants', ())}
+        fields = (old_input.keys() | new_input.keys()) - {'revision', 'participants'}
+        setup_changed = any(old_input.get(key) != new_input.get(key) for key in fields)
+        for assignment_id in old_people.keys() | new_people.keys():
+            before_row, after_row = old_people.get(assignment_id), new_people.get(assignment_id)
+            if setup_changed or before_row != after_row:
+                people.update(row['person_id'] for row in (before_row, after_row) if row is not None)
+    # Each edited person keeps their whole duty horizon for window and adjacent-duties rules.
+    scope['people'] = people
+    # A leave finding names all of the person's duties during leave, even on other dates.
+    leave_people = {row['person_id'] for row in data.get('availability', ())
+                    if row['kind'] == 'approved_leave'} & scope['people']
+    if leave_people:
+        scope['shifts'].update(row['id'] for row in own
+                               if any(p['person_id'] in leave_people for p in row['participants']))
+    return {**scope, 'previous': previous, 'complete': True}
+
+
+def _merge_session_checks(partial, shifts, findings, coverage, session_start):
+    previous = partial['previous']
+    affected = partial['shifts']
+    findings.extend(previous['findings'][index] for index in previous['_session_parts']
+                    if previous['findings'][index]['shift_id'] not in affected)
+    order = {shift['id']: index for index, shift in enumerate(shifts)}
+    findings[session_start:] = sorted(findings[session_start:], key=lambda row: order[row['shift_id']])
+    coverage.extend(row for row in previous['coverage'] if row['shift_id'] not in affected)
+    # Whole checks append inactive rows in input order after all active coverage.
+    coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order[row['shift_id']]))
+
+
 def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False, trial_cache=None) -> dict:
     """`session_cache`: private to assignment-copy trials on one otherwise immutable snapshot.
     Reuse unchanged sessions' checks; department reports remain fresh.
@@ -1756,7 +1836,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                 pid = person['person_id']
                 commitments[pid].append((shift, person, a, b))
                 presence[shift["id"], pid] = intervals or []
-                if intervals is None and shift["id"] in focus and (partial is None or shift["id"] in partial["shifts"]):
+                if intervals is None and shift["id"] in focus and (partial is None or complete_partial or shift["id"] in partial["shifts"]):
                     add("PARTICIPATION_INVALID", "Planned presence segments are invalid; no qualified cover is inferred",
                         shift["id"], pid)
 
@@ -1764,7 +1844,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         entries.sort(key=lambda row: row[2])
     overlap_groups = defaultdict(list)
     overlap_conflicts = evaluate_overlaps(data, include_unavailability=False, commitments=commitments)
-    if (overlap_witness is not None and partial is None and not data.get('skip_coverage')
+    if (overlap_witness is not None and (partial is None or complete_partial) and not data.get('skip_coverage')
             and data.get('person_rule_subjects') is None and data.get('quota_subjects') is None
             and not data.get('availability')
             and not any(not row.get('department_available', True) for row in data.get('rotations', []))
@@ -2190,14 +2270,16 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                                   session_signature, supervisor_candidates)
 
     from .rota_summary import grouped_findings
+    if partial is None or complete_partial:
+        for shift in data["shifts"]:
+            if (shift["id"] in focus and inactive(shift)
+                    and (not complete_partial or shift['id'] in partial['shifts'])):
+                coverage.append({"shift_id": shift["id"], "start": shift["start"], "end": shift["end"],
+                                 "scheduled": len(shift["participants"]), "available_eligible": 0,
+                                 "required": 0, "status": 'closed' if shift.get('closed') else 'cancelled',
+                                 "availability_basis": "known_records_not_attendance"})
     if complete_partial:
-        previous = partial['previous']
-        findings.extend(previous['findings'][index] for index in previous['_session_parts']
-                        if previous['findings'][index]['shift_id'] not in partial['shifts'])
-        coverage.extend(row for row in previous['coverage'] if row['shift_id'] not in partial['shifts'])
-        order = {shift['id']: index for index, shift in enumerate(shifts)}
-        findings[non_session_found:] = sorted(findings[non_session_found:], key=lambda f: order[f['shift_id']])
-        coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order.get(row['shift_id'], len(order))))
+        _merge_session_checks(partial, data['shifts'], findings, coverage, non_session_found)
     findings = grouped_findings(findings, coverage)
     session_keys = {tuple(f.get(key) for key in ('code', 'shift_id', 'person_id', 'rule_id', 'start'))
                     for f in findings[non_session_found:]} if session_parts else set()
@@ -2429,13 +2511,6 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     from .resources import evaluate_resources
     evaluate_resources(data, definitions, shifts, focus, add, ancestor_ids, valid_dates)
 
-    for shift in data["shifts"]:
-        if (shift["id"] in focus and inactive(shift)
-                and (not complete_partial or shift['id'] in partial['shifts'])):
-            coverage.append({"shift_id": shift["id"], "start": shift["start"], "end": shift["end"],
-                             "scheduled": len(shift["participants"]), "available_eligible": 0,
-                             "required": 0, "status": 'closed' if shift.get('closed') else 'cancelled',
-                             "availability_basis": "known_records_not_attendance"})
     findings = grouped_rule_findings(findings, data['policies'], tiers=data.get('_policy_group_tiers'))
     check()
     if '_published_session_checks' in data:

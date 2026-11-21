@@ -285,19 +285,6 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     if check := db.info.get('_check_budget'):
         checked['_check_budget'] = check
     preparation = db.info.get('_planning_preparation')
-    if _incremental is not None and not amendment_scope:
-        before, previous = _incremental
-        # Rule reach is reusable only for the same complete before and after inputs.
-        scopes = preparation['validation_scopes'] if preparation and preparation.get('kind') == 'shift.update' else None
-        held = scopes.get(workspace.id) if scopes is not None else None
-        if held is not None and held[0] is previous and held[1] == before and held[2] == data:
-            partial = held[3]
-        else:
-            partial = assignment_validation_scope(data, before, previous)
-            if scopes is not None and not preparation['replay']:
-                scopes[workspace.id] = (previous, before, data, partial)
-        if partial is not None:
-            checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
     defaults = department.generation_defaults
@@ -308,18 +295,28 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                       if preparing else None)
     accepted_issues = (workspace.accepted_issues or []) if preparing else []
     evaluated_at = command_time(db).isoformat()
+    fix_context = None
+
     def compute():
+        nonlocal fix_context
+        from packages.domain.rota_summary import fix_list_context
+        from packages.domain.validation import incremental_edit_scope
+        if not amendment_scope and (preparation is not None or _incremental is not None):
+            fix_context = fix_list_context(data)
+        partial = (incremental_edit_scope(data, *_incremental, fix_context['sources'])
+                   if _incremental is not None and not amendment_scope else None)
         checked['_supervision_commitments'] = supervision_commitments(data)
-        result = evaluate(checked, session_parts=True)
+        validation_data = {**checked, '_partial': partial} if partial is not None else checked
+        result = evaluate(validation_data, session_parts=True)
         if not amendment_scope:
             result['score'] = schedule_score(checked, result, defaults)
             if preparation is not None:
                 from packages.domain.finding_causes import DIAGNOSTIC_VERSION
                 from packages.domain.score import score_dependencies
-                from packages.domain.rota_summary import fix_list_context, remember_fix_list
+                from packages.domain.rota_summary import remember_fix_list
                 result.update(diagnostic_version=DIAGNOSTIC_VERSION, score_dependencies=score_dependencies(defaults),
                     input_manifest=_check_manifest(data['input_manifest']),
-                    evaluated_at=evaluated_at, fix_list_context=fix_list_context(data))
+                    evaluated_at=evaluated_at, fix_list_context=fix_context)
                 remember_fix_list(previous_check, result, accepted_issues=accepted_issues,
                                   summary_cache=preparation['summary_cache'])
         if _overlap_before is None:
@@ -377,7 +374,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
     if amendment_scope or not preparation or preparation.get('kind') != 'shift.update':
-        result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
+        result['fix_list_context'] = fix_context or fix_list_context(full_data if amendment_scope else data)
     remember_fix_list(workspace.validation, result, accepted_issues=workspace.accepted_issues or [],
                       summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     if reviewed_candidate and (workspace.validation or {}).get('review_item_decisions'):
@@ -632,7 +629,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
         # Check metadata is derived, not an edit. Keep the incremental baseline stable
         # across preparation and replay; canonical inputs and revision still gate the write.
         previous = preparation['validation_baselines'].setdefault(workspace.id, previous)
-    incremental = (before, previous) if '_session_parts' in previous else None
+    incremental = (before, previous) if INTERNAL_CHECK_KEYS <= previous.keys() else None
     issues_before = {issue_key(f) for f in (workspace.validation or {}).get('findings', [])}
     if any(before['workspace'][key] != getattr(workspace, key).isoformat() for key in ('starts_on', 'ends_on')):
         from .workspace_access import access_record

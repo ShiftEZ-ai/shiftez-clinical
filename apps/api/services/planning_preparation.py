@@ -35,7 +35,6 @@ def bind(db, plan, *, replay=False):
                                        'inputs': plan.setdefault('inputs', {}),
                                        'input_tokens': plan.setdefault('input_tokens', {}),
                                        'validation_baselines': plan.setdefault('validation_baselines', {}),
-                                       'validation_scopes': plan.setdefault('validation_scopes', {}),
                                        'prepared_snapshots': plan.setdefault('prepared_snapshots', {}),
                                        'summary_cache': plan.setdefault('summary_cache', {}),
                                        'next_snapshot': 0,
