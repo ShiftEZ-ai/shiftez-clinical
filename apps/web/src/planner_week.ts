@@ -9,7 +9,7 @@ import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reas
 import {get,request,command,onSessionReset,ApiError} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
-import type {Row,WorkspaceData} from './types.js';
+import type {PlannerSession,Row,WorkspaceData} from './types.js';
 import {setSessionOpener,tag,ruleSummary,pin,assignmentRules,sessionRules,dayTitle,addsToSelection,selectSession,sessionSelected,type Target as RuleTarget} from './planner_rules.js';
 import {supervisedBy,teamOrder,teamGroups,teamText,shownPeople,leadContext,leadState,leadNeed,type TeamEntry,type LeadState} from './planner_teams.js';
 import {teamView,teamProblem,teamLabel,teamIssue,rankOn,BOX_CODES,statesShortfall,TEAM_LAYOUT_DEFAULT,type TeamProblem,type TeamLayout} from './team_view.js';
@@ -325,7 +325,7 @@ export function resolveQueue(data:WorkspaceData,only=resolve.active?resolve.only
     const c=cover.get(s.id),role=roleGap(data,s.id,c);
     if(c?.gap)out.push({key:'gap:'+s.id,kind:'fill',shift:s,label:role?ROLE_GAP_WORDS[role]:'Open place'});
     for(const f of findings.get(s.id)||[]){
-      const p=s.participants.find((x:Row)=>x.person_id===f.person_id),key=`rule:${s.id}:${f.person_id}`;
+      const p=s.participants.find(x=>x.person_id===f.person_id),key=`rule:${s.id}:${f.person_id}`;
       if(p&&!seen.has(key)){seen.add(key);out.push({key,kind:'person',shift:s,assignment:p.id,label:f.message});}
     }
   }
@@ -653,7 +653,7 @@ export function plannerPanels(ctx:Context,data:WorkspaceData,period:Period,hooks
     else if(panel&&shift){
       // ↑ ↓ step through the sessions the view shows (its filters), each as held now; one gone since is skipped.
       const byId=new Map(now.shifts.map(s=>[s.id,s]));
-      const range=data.shifts.filter(s=>!s.context&&days.includes(dayOf(s))).map(s=>now===data?s:byId.get(s.id)).filter((s):s is Row=>!!s)
+      const range=data.shifts.filter(s=>!s.context&&days.includes(dayOf(s))).map(s=>now===data?s:byId.get(s.id)).filter(s=>s!==undefined)
         .sort((a,b)=>String(a.start).localeCompare(String(b.start))||String(a.id).localeCompare(String(b.id)));
       const aside=sessionPanel(ctx,now,shift,panel,hooks,{time:`${formatTime(shift.start,zone)}–${formatTime(shift.end,zone)}`,day:dayLabel(shift),place:placeName(shift),cover:cover.get(shift.id),rulesFor,close:closePanel,open:openPanel,range,highlight:()=>highlightFocus(root,w.id)});
       if(resolve.active&&queue.length){
@@ -1536,9 +1536,9 @@ function onGrid(shift:Row,leaving:(string|undefined)[],joining=''):()=>void{
 type Duty={s:Row;parts:[number,number][]};
 /** The Planner's sessions: `rota` is everything shown to this account (person facts); `unfiltered` is what the grid
  *  starts from, after My duties (`mine`: the viewer's person id) and the draft-only List view, before the toolbar's filters. */
-export function plannerSessions(shifts:Row[],mine:string|null,listDraft:boolean):{rota:Row[];unfiltered:Row[]}{
+export function plannerSessions(shifts:PlannerSession[],mine:string|null,listDraft:boolean){
   const base=listDraft?shifts.filter(s=>!s.context):shifts;
-  return {rota:shifts,unfiltered:mine?base.filter(s=>s.participants.some((p:Row)=>p.person_id===mine)):base};
+  return {rota:shifts,unfiltered:mine?base.filter(s=>s.participants.some(p=>p.person_id===mine)):base};
 }
 /** A person's attended intervals (ms) per session of a rota: presence segments, else their own start–end, else the
  *  session's (the same intervals as packages/domain/participation.py); published context and closed sessions excluded. */

@@ -197,9 +197,9 @@ def test_a_failed_rota_read_after_a_set_aside_check_reads_as_stopped(client_modu
     """DL-024 (Design Lead FIX): the rota read that decides a set-aside check never leaves it in no state: a failed read
     is "not current", so the page says the check stopped and offers Check again."""
     out = run(client_modules,
-              "globalThis.fetch=async p=>{p=String(p);if(p.endsWith('/w-down'))throw new TypeError('offline');"
-              "if(p.endsWith('/w-500'))return new Response('{}',{status:500});"
-              "return new Response(JSON.stringify({workspace:{validation_current:p.endsWith('/w-ok')}}),{status:200});};"
+              "globalThis.fetch=async p=>{p=String(p);if(p.endsWith('/w-down?view=schedule'))throw new TypeError('offline');"
+              "if(p.endsWith('/w-500?view=schedule'))return new Response('{}',{status:500});"
+              "return new Response(JSON.stringify({workspace:{validation_current:p.endsWith('/w-ok?view=schedule')}}),{status:200});};"
               "out.read=[await r.rotaCheckCurrent('w-ok'),await r.rotaCheckCurrent('w-old'),"
               "await r.rotaCheckCurrent('w-down'),await r.rotaCheckCurrent('w-500')];"
               "out.stopped=r.checkEndedStopped('cancelled',await r.rotaCheckCurrent('w-down'));")
