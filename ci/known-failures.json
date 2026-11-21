@@ -990,18 +990,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_bulk_dev_migration_upgrade.py::test_bulk_upgrade_from_dev_head_preserves_settings_and_evidence[case-kagopfmoleekcdppnpdfeoodpdlcepelpklgfhbcfocjihdiniaojbclpgphleac]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_bulk_dev_migration_upgrade.py::test_bulk_upgrade_from_dev_head_preserves_settings_and_evidence[case-lhgjlemppdjabjdnohogdclchfpfaloiebijkeoigoedhdgdghbpkjecmfecbbjk]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_bulk_performance.py::test_150_people_changes_with_current_rotas_and_rule_history[case-kfjnhpbjiiiahgcladkgieacokjlhfoohoamfnpalkcdjnmcmcnfcaocldmfcmka]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1104,18 +1092,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_contact_configuration.py::test_migration_retains_all_existing_data[case-kagopfmoleekcdppnpdfeoodpdlcepelpklgfhbcfocjihdiniaojbclpgphleac]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_contact_configuration.py::test_migration_retains_all_existing_data[case-lhgjlemppdjabjdnohogdclchfpfaloiebijkeoigoedhdgdghbpkjecmfecbbjk]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_contact_preview_perf.py::test_contact_preview_at_department_scale_and_checked_undo[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1135,12 +1111,6 @@
     {
       "class": "baseline",
       "node": "tests/test_declined_standing_patterns.py::test_replacement_recomputes_pattern_breaches_and_keeps_original_reasons",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_department_quota_calendar.py::test_weekend_changes_invalidate_inputs_only_when_the_default_is_used_and_undo[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1201,12 +1171,6 @@
     {
       "class": "baseline",
       "node": "tests/test_department_settings.py::test_swap_settings_validate_persist_audit_and_undo_without_invalidating_rotas[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_department_settings.py::test_weekend_days_are_one_audited_department_setting_that_leaves_rotas_alone",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1417,12 +1381,6 @@
     {
       "class": "baseline",
       "node": "tests/test_open_ended_attachments.py::test_sqlite_attachment_upgrade_preserves_rows_and_guards",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_outdated_review.py::test_stale_approval_explains_recovery_and_keeps_recorded_evidence",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
