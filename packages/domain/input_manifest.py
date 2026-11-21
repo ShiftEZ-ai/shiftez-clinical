@@ -19,7 +19,7 @@ FIELDS = {
     'department': ('id', 'operating_calendar_id', 'weekend_days'),
     'workspace': ('id', 'department_id', 'starts_on', 'ends_on', 'origin', 'base_publication_id',
                   'replaces_publication_id', 'rule_adjustments', 'target_overrides'),
-    'people': ('id', 'active', 'tags'),
+    'people': ('id', 'active', 'inactive_from', 'tags'),
     'tags': ('id', 'name', 'labels', 'members'),
     'memberships': ('id', 'department_id', 'person_id', 'category_id', 'starts_on', 'ends_on'),
     'eligibilities': ('id', 'department_id', 'person_id', 'service_id', 'starts_on', 'ends_on'),
