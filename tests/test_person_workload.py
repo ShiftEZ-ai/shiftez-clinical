@@ -223,3 +223,29 @@ def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget(per
 def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget_cpu_budget(person_workload_scale):
     _, _, elapsed = person_workload_scale
     assert elapsed < python_budget(1), f'150 people and 500 duties must remain a bounded read: {elapsed:.3f}s'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_department_scale_workload_bounds_duty_applicability(scale_harness, monkeypatch, backend):
+    from apps.api.services import person_workload
+    from apps.api.snapshots import workspace_shifts
+    from tests.test_backend_reads_scale import read_department
+
+    h = scale_harness(backend)
+    w = read_department(h)
+    with transaction(h.app.state.engine) as db:
+        shifts = workspace_shifts(db, w['id'])
+    assert len(shifts) >= 500
+    person = shifts[0]['participants'][0]['person_id']
+    calls = 0
+    original = person_workload.policy_applies
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(person_workload, 'policy_applies', counted)
+    result = periods(h.get('coordinator', endpoint(person, workspace_id=w['id'])))
+    assert result['this_rota']['limits']
+    assert calls <= 2_000, f'{calls} duty applicability checks for one person with 1,000 department rules'
