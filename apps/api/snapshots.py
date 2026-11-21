@@ -435,7 +435,10 @@ def _verified_baseline(db, workspace):
     from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
 
     rows = baseline_rows(db)
-    row_key = (workspace.id, workspace.revision)
+    # Session edits only update their own sessions and workspace metadata. Their snapshots
+    # in this transaction share one baseline even after the workspace revision advances.
+    preparation = db.info.get('_planning_preparation') or {}
+    row_key = (workspace.id, None if preparation.get('kind') == 'shift.update' else workspace.revision)
     baseline = rows.get(row_key)
     if row_key not in rows or (baseline is not None and object_session(baseline) is not db):
         baseline = rows[row_key] = latest_baseline(db, workspace.id)
