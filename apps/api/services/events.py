@@ -139,7 +139,7 @@ def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
     rows = [row for row in stored if not row.cancelled and aware(row.start) < hi and aware(row.end) > lo
             and row.data['type'].get('blocks_duties')]
     existing = {(row.event_id, aware(row.original_start)): row for row in stored}
-    now = m.now()
+    active_after = max(lo, m.now())
     for event in acquired_rows('events'):
         if not event.repeat:
             continue
@@ -148,11 +148,11 @@ def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
         data = event.occurrence_data
         timezone = data['timezone']
         local_zone = ZoneInfo(timezone)
-        first = lo.astimezone(local_zone).date()
+        # Only recorded occurrences can establish history after they end.
+        first = active_after.astimezone(local_zone).date()
         overnight = any(day.weekday == (first.weekday() - 1) % 7 and day.end_time != '24:00'
                         and day.end_time < day.start_time for day in value.repeat.days)
-        # Match materialisation: revised definitions must not invent unrecorded past occurrences.
-        first = max(first - timedelta(days=int(overnight)), now.astimezone(local_zone).date())
+        first -= timedelta(days=int(overnight))
         last = hi.astimezone(local_zone).date()
         if hi != local_midnight(last, timezone):
             last += timedelta(days=1)
@@ -161,7 +161,7 @@ def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
         for timing in window_times(value, timezone, last, type_end, starts_on=first):
             start, end = aware(timing['start']), aware(timing['end'])
             occurrence = existing.get((event.id, start))
-            if start < now or start >= hi or end <= lo or occurrence and (not occurrence.cancelled or occurrence.overridden):
+            if start >= hi or end <= active_after or occurrence and (not occurrence.cancelled or occurrence.overridden):
                 continue
             # Older bounded edits may have cancelled matching unedited dates; they still block.
             rows.append(SimpleNamespace(id=occurrence.id if occurrence else str(uuid5(NAMESPACE_URL,

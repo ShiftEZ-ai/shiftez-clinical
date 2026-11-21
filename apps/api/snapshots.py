@@ -894,7 +894,7 @@ def event_local_date_for_hint(db, workspace, organisation, *, now=None):
     """Return the local date only when recurring blocking-event facts depend on today.
 
     ``blocking_occurrences`` clamps recurring projections to ``m.now()``'s local
-    date and drops starts before that instant.  Stored occurrences do not use the
+    date and drops occurrences that ended before that instant.  Stored occurrences do not use the
     clock, so an unaffected draft keeps the same compact hint across midnight.
     """
     timezone = (organisation.get('timezone') if isinstance(organisation, Mapping)
