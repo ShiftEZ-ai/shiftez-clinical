@@ -64,7 +64,8 @@ def test_workspace_reads_revalidate_after_a_worker_check_finishes_without_a_work
     with transaction(h.app.state.engine) as db:
         result = planning.revalidate(db, db.get(m.Workspace, w['id']), store=False, include_internal=True)
     client = h.client('coordinator')
-    paths = [f"/api/workspaces/{w['id']}", f"/api/workspaces/{w['id']}?view=compact"]
+    path = f"/api/workspaces/{w['id']}"
+    paths = [path, path + "?view=compact", path + "?view=schedule"]
     before = [client.get(path) for path in paths]
     assert all(response.status_code == 200 for response in before)
     assert retry_write(h.app.state.engine, lambda db: finish_job(db, claim, result, 'CHECK_FAILED'))
