@@ -267,7 +267,7 @@ def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', lease_seconds)
 
     def wait_for_claim(engine, **kwargs):
-        worker.time.sleep(lease_seconds * 2)
+        clock[0] += lease_seconds * 2
         return claim_pending(engine, **kwargs)
 
     def write(engine, operation, **kwargs):
