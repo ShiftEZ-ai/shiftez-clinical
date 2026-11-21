@@ -2771,7 +2771,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A published-only schedule's checks are the live check of what is published (publishedLive), current when read.
       const stored=!draftData?(shown.workspace.validation as unknown as Row|undefined):null;
       const live=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive.evaluation as unknown as Row:null;
-      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?w!.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,person});
+      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?draftData.workspace.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,kept:reading,person});
       const pub=String(s.publication_id||source?.publication.id||'');
       const published=!acts&&(s.context||!draftData)&&!!pub&&changeable(s);
       if(pubHooks&&published)publishedSession(dock,s,pub,pubHooks,summary);else body.append(summary());
@@ -7893,7 +7893,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}
@@ -8675,7 +8675,7 @@ async function onPulse(given?:Row){
     const editing=editingNow();
     // F-L2: roles compared as sets, and never from a pulse without them (a restarting server): an unchanged account must
     // not rebuild the app and drop an open form. A real change waits while a form is being edited (the server refuses
-    // whatever the new roles no longer permit), then rebuilds.
+    // whatever the new roles no longer permit), then rebuilds and says why.
     const rolesChanged=Array.isArray(pulse.roles)&&JSON.stringify([...me.roles].sort())!==JSON.stringify([...pulse.roles].sort());
     const stale=!!changes?.length||key!==loadedKey||moved||!connected||redrawOwed||opsWatch;
     // Revision-keyed caches (schedule windows, academic time) see the new revisions without reading the account.
@@ -8688,8 +8688,11 @@ async function onPulse(given?:Row){
       else{adopt();seenActivity=pulse.activity;const scopes=new Set(changes.map(c=>c.scope));
         // The Schedule's own edit: its check, once it lands, reads the counts (autoCheck settle), as the redraw did before.
         if(!(ownPulse&&view==='schedule'&&plannerMemo)&&Object.values(BADGE_SOURCES).some(b=>b.live.some(s=>scopes.has(s))))void loadNavBadges(true,[],scopes);}}
-    if(rolesChanged&&readerBusy())hold(pulse);
-    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};document.querySelectorAll('dialog').forEach(d=>d.remove());await boot();}
+    // Any dialog holds it, open or not: the browser closes a dialog with unsaved changes by itself (a repeated Escape)
+    // and showDialog opens it again a task later, so a restart in that instant would drop it unsaid. Every app dialog
+    // is removed when it closes (showDialog, palette, the sign-in shade on resuming), so none holds it for ever.
+    if(rolesChanged&&(readerBusy()||document.querySelector('dialog')))hold(pulse);
+    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};const was=me;await boot();if(me&&me!==was)notify('Your access changed.','info');}
     // Swaps and review routes redraw only when something moved (the activity counter covers swaps): an unconditional
     // redraw every 10 s took keyboard focus away. Operations follows the worker only while it has work (opsBusy);
     // imports run inside their command, so Imports redraws on a change like every other page.

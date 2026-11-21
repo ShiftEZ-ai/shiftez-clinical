@@ -380,6 +380,10 @@ let legendSeq=0;
 /** An entry a reader can use (Fairness's people): hovering or focusing it highlights its marks (`hover`), choosing it
  *  acts (`act`, with `aria` as its name); `note`: a short figure after its words (a total). */
 export type LegendUse={hover?:(on:boolean)=>void;act?:()=>void;note?:string;aria?:string};
+const legendFits=new WeakMap<Element,()=>void>();
+function fitLegends(scope:ParentNode){
+  for(const key of scope.querySelectorAll('.view-legend'))legendFits.get(key)?.();
+}
 // What a key lists is chosen in its collection's one View settings (Properties, Colour by, Layers): the key has no
 // settings button of its own (D-163: one View settings per collection).
 export function legend(label='Legend'){
@@ -398,13 +402,16 @@ export function legend(label='Legend'){
   // One line below its view reviewed: the entries that don't fit, the last first, go behind the one "+N",
   // which lists every entry. The first entry always stays; print shows them all (app.css).
   let width=-1;
-  const fit=()=>{root.querySelector(':scope>.lg-more')?.remove();
+  const fit=()=>{
+    width=root.hidden||!root.isConnected?0:root.clientWidth;
+    if(!width)return;
+    root.querySelector(':scope>.lg-more')?.remove();
     const lis=[...root.querySelectorAll<HTMLElement>(':scope>li[data-lg-entry]')];for(const l of lis)l.hidden=false;
-    if(root.hidden||!root.isConnected)return;
     const list=()=>lis.map(l=>{const i=items.get(l.dataset.lgK||'');return i?el('span',{class:'lg-pop'},...entry({...i,mark:i.mark.cloneNode(true) as HTMLElement})):'';});
     for(let i=lis.length-1,n=1;i>0&&root.scrollWidth>root.clientWidth+1;i--,n++){lis[i].hidden=true;root.querySelector(':scope>.lg-more')?.remove();
       root.append(el('li',{class:'lg-more'},overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list})));}};
-  observeSize(root,(_,{width:w})=>{if(w!==width){width=w;fit();}});
+  legendFits.set(root,fit);
+  observeSize(root,()=>{if(root.clientWidth!==width)fit();});
   const add=(key:string,mark:string|HTMLElement,text:string,order=1,use?:LegendUse)=>{
     if(items.has(key))return;
     items.set(key,{mark:typeof mark==='string'?el('span',{class:'lg-swatch '+mark,'aria-hidden':'true'}):mark,label:text,order,use});
@@ -1490,7 +1497,11 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 export const footerStatus=(...children:Child[])=>el('div',{class:'footer-status'},...children);
 /** The page the shell is building, detached until it is shown (app.ts renderPage): its reads may answer before then. */
 let pageBuilding:HTMLElement|null=null;
-export const buildingPage=(content:HTMLElement|null)=>{pageBuilding=content;};
+export const buildingPage=(content:HTMLElement|null)=>{
+  // The legend can paint off-page. Fit it on mount before the first resize callback.
+  if(!content&&pageBuilding?.isConnected)fitLegends(pageBuilding);
+  pageBuilding=content;
+};
 /** Whether a late answer may still draw into `node`: it is on screen, or in the page being built. Never `isConnected`
  *  alone, which drops an answer that lands before the page is shown; a replaced page's detached nodes stay gone. */
 export const alive=(node:Node|null|undefined)=>!!node&&(node.isConnected||!!pageBuilding?.contains(node));
@@ -2056,9 +2067,10 @@ function watchPick(box:Element){
   for(const ref of watching){const b=ref.deref();if(b?.isConnected)shown.add(b);else if(!b||shown.has(b)){if(b)unwatchPick.get(b)?.();watching.delete(ref);}}
   unwatchPick.get(box)?.();watching.add(new WeakRef(box));unwatchPick.set(box,observeSize(box,refit));
 }
-// A web font arriving changes every width without resizing anything: fit the fields and the footer again.
+// A web font can change the text widths without resizing their containers.
 if(typeof document!=='undefined')document.fonts?.addEventListener('loadingdone',()=>{
   document.querySelectorAll('.pick-values').forEach(b=>fits.get(b)?.());
+  fitLegends(document);
   const slot=document.querySelector<HTMLElement>('.app-footer .page-status');if(slot)fitFooter(slot);});
 /** Plain data tables: numeric columns align right, and an empty table says so instead of showing bare headings. */
 export function table(headings: Child[], rows: Child[][], emptyText='Nothing to show yet.'): HTMLElement {

@@ -2342,7 +2342,7 @@ export type GenerationScope = {
 };
 
 export type GenerationSearchStop = {
-  "reason": "optimal" | "time_limit" | "plateau" | "gap" | "score" | "clock" | "operator_stop" | "cancelled" | "failed" | "no_search" | "conflict";
+  "reason": "optimal" | "model_proven" | "time_limit" | "plateau" | "gap" | "score" | "clock" | "operator_stop" | "cancelled" | "failed" | "no_search" | "conflict";
   "search_seconds": number;
   "detail"?: string;
 };
@@ -6442,7 +6442,7 @@ export const WISH_PRIORITY_FIELDS = {"wish_priority_decay": {"title": "Wish prio
 export const GENERATION_FILL_FIELDS = {"fill_tier_time_share": {"title": "Fill-priority time share (0\u20131)", "help": "Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.", "default": 0.5, "min": 0, "max": 1, "integer": false}} as const;
 export const GENERATION_STOP_FIELDS = {"stop_without_improvement_seconds": {"title": "Stop after no improvement", "help": "0 uses the whole search time.", "default": 10, "min": 0, "max": 600, "integer": true}, "target_gap_percent": {"title": "Stop when within (%)", "help": "Stops once the schedule is proven this close to the best possible one. Empty: off.", "default": null, "min": 0, "max": 100, "integer": false}, "target_score": {"title": "Stop at score", "help": "Stops once the schedule score (0\u2013100) reaches this. Empty: off.", "default": null, "min": 0, "max": 100, "integer": false}, "stop_by": {"title": "Stop by", "help": "Stops searching at this time today, in department time. For one run only.", "default": null, "min": null, "max": null, "integer": false}, "on_conflict": {"title": "If rules conflict", "help": "Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every break is a must-fix and blocks publishing until fixed.", "default": "report", "min": null, "max": null, "integer": false}} as const;
 export const GENERATION_CONFLICT_CHOICES = {"report": "Stop and show me", "continue_flagged": "Continue with fewest breaks"} as const;
-export const GENERATION_STOP_REASONS = {"optimal": "proven best for these priorities", "time_limit": "search time used up", "plateau": "stopped when it stopped improving", "gap": "close enough to the best possible", "score": "target score reached", "clock": "stop time reached", "operator_stop": "stopped with Stop and keep best", "cancelled": "cancelled", "failed": "stopped by an error", "no_search": "nothing to search", "conflict": "rules conflict"} as const;
+export const GENERATION_STOP_REASONS = {"optimal": "proven best for these priorities", "time_limit": "search time used up", "plateau": "stopped when it stopped improving", "gap": "close enough to the best possible", "score": "target score reached", "clock": "stop time reached", "operator_stop": "stopped with Stop and keep best", "model_proven": "search finished; checks changed the proposal", "cancelled": "cancelled", "failed": "stopped by an error", "no_search": "nothing to search", "conflict": "rules conflict"} as const;
 export const WISH_KINDS = ["prefer_off", "prefer_on", "prefer_shift_type", "avoid_shift_type", "max_days_in_row", "min_days_off_together", "max_weekends_in_row", "whole_weekends"] as const;
 export const SWAP_KINDS = ["exchange", "give"] as const;
 export const PATTERN_WISH_KINDS = ["max_days_in_row", "min_days_off_together", "max_weekends_in_row", "whole_weekends"] as const;
