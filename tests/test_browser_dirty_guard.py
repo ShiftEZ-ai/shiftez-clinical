@@ -4,7 +4,7 @@ going, focuses Keep editing and never discards silently later."""
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, open_config, expect_loaded, navigate, planner_tool  # noqa: F401
+from .test_browser import browser, live_server, sign_in, open_config, expect_loaded, navigate, planner_tool, save_dialog  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -96,5 +96,71 @@ def test_add_recurring_sessions_refused_untouched_cancels_without_asking(browser
         dialog.get_by_role('button', name='Cancel', exact=True).click()
         expect(dialog).to_have_count(0)
         assert h.detail(workspace)['shifts'] == []
+    finally:
+        context.close()
+
+
+def submitted_rota(h, name):
+    """A rota the coordinator submitted: the approver reviews it independently."""
+    return h.lifecycle(h.shift(h.workspace(name))['workspace'], 'submit')['workspace']
+
+
+def test_back_or_an_address_keeps_an_approve_note_and_asks_first(browser, live_server, h):
+    """Back (or any address change) with a dialog holding unsaved input asks that dialog's own "Close anyway?" and leaves
+    the input where it was; Keep editing goes on with it. One Approve dialog at a time, whatever is pressed meanwhile."""
+    w = submitted_rota(h, 'Fictional approve kept on back')
+    route = f"schedule?edit={w['id']}&approve={w['id']}"
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, route)
+        # A quick press of the page's Approve while the address's own review opens (behind a modal: a script's press).
+        # The page's button is drawn after the address opens the review; while that review loads it is held and reads
+        # "Approving rota…" (one opening per rota), and a press joins it. Wait for the button in either state.
+        page_approve = """labels => [...document.querySelectorAll('button')]
+            .filter(x => !x.closest('dialog') && labels.includes(x.textContent.trim()))"""
+        labels = ['Approve rota', 'Approving rota…']
+        page.wait_for_function(f"labels => ({page_approve})(labels).length > 0", arg=labels)
+        pressed = page.evaluate(f"labels => {{const b = ({page_approve})(labels); b.forEach(x => x.click()); return b.length;}}", labels)
+        assert pressed >= 1
+        approve = page.get_by_role('dialog', name='Approve rota', exact=True)
+        expect(approve).to_be_visible()
+        expect(approve).to_have_count(1)
+        note = approve.get_by_label('Note', exact=True)
+        note.fill('Fictional independent review note')
+        question = approve.locator('.unsaved-bar')
+
+        def held():
+            expect(question).to_contain_text('Not saved. Close anyway?')
+            expect(approve).to_be_visible()
+            expect(note).to_have_value('Fictional independent review note')
+            expect(approve).to_have_count(1)
+            assert 'approve=' not in page.evaluate('location.hash')  # the address is the rota's again, not where it was going
+            question.get_by_role('button', name='Keep editing', exact=True).click()
+            expect(question).to_have_count(0)
+            expect(note).to_have_value('Fictional independent review note')
+
+        page.go_back()  # browser Back, Alt+Left or a phone's back gesture
+        held()
+        page.evaluate('r => { location.hash = r }', route)  # a link or a typed address
+        held()
+        expect(page.get_by_role('dialog', name='Leave this page?')).to_have_count(0)
+        save_dialog(approve, 'Approve rota')
+        expect(page.locator('.toast').filter(has_text='Approved · ready to publish')).to_be_visible()
+        expect(page.get_by_role('dialog', name='Approve rota', exact=True)).to_have_count(0)
+    finally:
+        context.close()
+
+
+def test_back_closes_an_unchanged_dialog_without_asking(browser, live_server, h):
+    w = submitted_rota(h, 'Fictional approve closed on back')
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, f"schedule?edit={w['id']}&approve={w['id']}")
+        approve = page.get_by_role('dialog', name='Approve rota', exact=True)
+        expect(approve).to_be_visible()
+        page.go_back()
+        expect(approve).to_have_count(0)
+        expect(page.locator('.unsaved-bar')).to_have_count(0)
+        expect(page.get_by_role('dialog', name='Leave this page?')).to_have_count(0)
     finally:
         context.close()

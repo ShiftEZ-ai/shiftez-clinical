@@ -43,7 +43,33 @@ def _append(db, actor, department, definition, reason):
 
 def sync_projection(db, actor, department, generation_defaults, reason):
     """Record an existing department-settings scoring change without creating a second source of truth."""
+    _ensure_projection(db, actor, department)
     return _append(db, actor, department, definition_from_options(generation_defaults), reason)[0]
+
+
+def _projected(department):
+    """Expose the initial version without turning a read into a write."""
+    row = m.ScoreSettingsVersion(
+        department_id=department.id,
+        revision=1,
+        definition=definition_from_options(department.generation_defaults),
+        actor_id=None,
+        reason='Recorded existing score settings',
+        previous_id=None,
+        effective_from=department.created_at,
+    )
+    row.id = None
+    row.created_at = department.created_at
+    return {**record(row), 'stored': False}
+
+
+def _ensure_projection(db, actor, department):
+    """Persist the baseline while the caller holds the department row lock."""
+    row = latest(db, department.id)
+    if row is None:
+        row = _append(db, actor, department, definition_from_options(department.generation_defaults),
+                      'Recorded existing score settings')[0]
+    return row
 
 
 def configure(db, actor, command):
@@ -54,7 +80,9 @@ def configure(db, actor, command):
     if previous:
         expected(previous, command.expected_revision)
     else:
-        require(command.expected_revision is None, 'STALE_REVISION', 'Configuration was not created yet', 409)
+        require(command.expected_revision in (None, 1), 'STALE_REVISION',
+                'Use the initial score settings revision', 409, {'current_revision': 1})
+        previous = _ensure_projection(db, actor, department)
     if command.kind.endswith('.rollback'):
         value = s.ScoreSettingsRollback.model_validate(command.payload)
         source = scoped(db, m.ScoreSettingsVersion, value.version_id, actor)
@@ -95,8 +123,11 @@ def read(db, actor, *, history_view=False, offset=0, limit=100):
         rows = list(db.scalars(select(m.ScoreSettingsVersion).where(
             m.ScoreSettingsVersion.department_id == actor.department_id)
             .order_by(m.ScoreSettingsVersion.revision.desc()).offset(offset).limit(limit + 1)))
+        if not rows and offset == 0:
+            department = db.get(m.Department, actor.department_id)
+            return {'versions': [_projected(department)], 'has_more': False}
         return {'versions': [record(row) for row in rows[:limit]], 'has_more': len(rows) > limit}
     department = db.get(m.Department, actor.department_id)
     row = latest(db, actor.department_id)
-    return {'settings': record(row) if row else None,
+    return {'settings': record(row) if row else _projected(department),
             'definition': definition_from_options(department.generation_defaults)}

@@ -16,12 +16,16 @@ def projection(workspace, validation=None, *, summary=None):
             'review_items': review_items(workspace, current=value)}
 
 
-def require_accepted(workspace, result, *, reviewed=False):
+def require_accepted(workspace, result, *, reviewed=False, frozen=None):
     require(not result.get('scope') or bool(workspace.base_publication_id), 'PARTIAL_CHECK',
             'A partial check cannot qualify a whole rota; check the complete rota before review or publication', 422)
     value = projection(workspace, result)
     must = [c for c in value['causes'] if c['level'] == 'must']
-    require(not value['summary']['submit_blocked'], 'VALIDATION_FAILED',
+    blocked = value['summary']['submit_blocked']
+    if frozen is not None:
+        captured = {(c['id'], c['evidence_hash']) for c in frozen['causes'] if c['level'] == 'must'}
+        blocked = any((c['id'], c['evidence_hash']) not in captured for c in must)
+    require(not blocked, 'VALIDATION_FAILED',
             'Fix safety findings and acknowledge each remaining mandatory cause with a reason', 422,
             {**result, 'fix_list': value})
     if reviewed:
@@ -30,8 +34,11 @@ def require_accepted(workspace, result, *, reviewed=False):
     return value
 
 
-def submit(db, actor, workspace, result, acknowledgements, reason):
+def submit(db, actor, workspace, result, acknowledgements, reason, *, current=None):
     value = projection(workspace, result)
+    if current is not None:
+        # An acknowledgement needs evidence in the frozen review the approver will see.
+        require_accepted(workspace, current, frozen=value)
     by_id = {c['id']: c for c in value['causes'] if c['level'] == 'must'}
     selected = [a.cause_id for a in acknowledgements]
     require(len(set(selected)) == len(selected), 'DUPLICATE_ACKNOWLEDGEMENT', 'Give one reason per cause')
