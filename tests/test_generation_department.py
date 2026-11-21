@@ -597,8 +597,10 @@ def test_daily_programme_targets_allocate_whole_sessions_and_keep_protected_time
         'start': '2026-10-06T00:00:00+03:00', 'end': '2026-10-07T00:00:00+03:00'})
     unavailable = generate(data)
     assert unavailable['status'] == 'candidate_feasible'  # Advisory gaps remain visible without blocking safety-valid drafts.
-    assert any(f['code'] == 'QUOTA_BELOW_TARGET' for f in unavailable['unmet_requirements'])
-    assert next(r for r in unavailable['validation']['quota_report']['rows'] if r['starts_on'] == '2026-10-06')['actual'] == 0
+    # leave covers this daily target window, so the target prorates to zero and the gap disappears.
+    assert not any(f['code'] == 'QUOTA_BELOW_TARGET' for f in unavailable['unmet_requirements'])
+    row = next(r for r in unavailable['validation']['quota_report']['rows'] if r['starts_on'] == '2026-10-06')
+    assert (row['amount'], row['actual']) == (0, 0)
     assert len(unavailable['additions']) == 5
     assert all(not a['participant']['start'].startswith('2026-10-06') for a in unavailable['additions'])
 
