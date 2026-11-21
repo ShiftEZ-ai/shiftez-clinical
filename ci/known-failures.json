@@ -18,12 +18,6 @@
   "fails": [
     {
       "class": "baseline",
-      "node": "tests/test_accounts.py::test_server_invite_admin_prints_a_one_time_link",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_assignment_override_reason.py::test_changing_existing_participation_into_a_zero_maximum_needs_reason[case-oljdfbfgdfngppiehdemoiladdmnfnjddmphkpcghgboddhgeenobloamgmaocpe]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -31,18 +25,6 @@
     {
       "class": "baseline",
       "node": "tests/test_assignment_source.py::test_migration_adds_null_columns_without_rewriting_existing_rows",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autosched_completion_p0.py::test_completion_allowance_is_cumulative_and_separate_from_stopped_search",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_autosched_completion_p0.py::test_completion_watcher_enforces_cap_without_solution_callbacks",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
@@ -1218,12 +1200,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_declined_standing_patterns.py::test_applied_receipt_is_not_carried_after_reopen_or_input_change[case-hlnfanjlnfpniakfnikefbenpjloaebamndfmcbmfndhjiagljbadjnohelmpfde]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1483,90 +1459,6 @@
     {
       "class": "baseline",
       "node": "tests/test_home_backend_needs.py::test_home_uses_each_drafts_canonical_fix_list_without_separate_place_actions",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_changed_seed_is_refused_after_first_load",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_late_validation_failure_rolls_back_all_seed_records",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-dafgcnlfdigficmdhopledbhdfimbdhbejhodmcgckejkckodhepbfnblcodfoel]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-ffdkkgffedgkjfpopicdicbpamigkajodlkmipbbhhcpcghimnkdgjjkdpblhdfi]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-kjnnjpbjmboclilpjgbkkmilgdnfcehakdeoigijebpglmaigohcakncglopnilf]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-ollcbmpocbdapmjpgmaabebniabdjkkioniglbjgomgmpkmpfcdgpcpjchffeaoo]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_mounted_seed_bundle_retains_a_predecessor_runtimes_defaults",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_nonempty_installation_is_refused_without_changes",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_reseed_preserves_operator_edits_records_and_rule_lifecycle[case-ijcejbcbbdcggaalhhpaegecbipodipaebifhoglimlfcfdffipadpogpibmoeal]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_reseed_preserves_operator_edits_records_and_rule_lifecycle[case-lmhpjcbciombmelmaahgbdodenhhcpdjnoeidkfmdigfijahaicnadpgicnbcaaf]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_seed_creates_reviewable_configuration_and_linked_audit_only[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_seed_creates_reviewable_configuration_and_linked_audit_only[case-mojafnmhhgpnfnkfdhbmeaefjfnmiemgolelnabcinibmdcjppdhkkchkgdgcbjp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_seed_requires_current_schema_and_never_migrates",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_initial_seed.py::test_system_command_run_updates_seeded_department",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
