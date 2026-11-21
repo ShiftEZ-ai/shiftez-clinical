@@ -44,7 +44,8 @@ def bind(db, plan, *, replay=False):
     event.listen(db, 'after_attach', assign_id)
 
 
-def command_compute(db, kind, data, compute, *, options=None, final=False, input_token=None, defer=False):
+def command_compute(db, kind, data, compute, *, options=None, final=False, input_token=None, defer=False,
+                    refresh_on_replay=False):
     state = db.info.get('_planning_preparation')
     if state is None:
         return compute()
@@ -60,7 +61,10 @@ def command_compute(db, kind, data, compute, *, options=None, final=False, input
             state['pending_checks'].append((key, compute))
             return None
         raise ComputePreparation(key, compute, final=final, pending=state['pending_checks'])
-    require(index < len(state['checks']) and key == state['checks'][index][0], 'STALE_INPUTS',
+    current = index < len(state['checks']) and key == state['checks'][index][0]
+    if state['replay'] and refresh_on_replay and not current:
+        return compute()
+    require(current, 'STALE_INPUTS',
             'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again', 409,
             {'recoverable': True})
     return deepcopy(state['checks'][index][1])
