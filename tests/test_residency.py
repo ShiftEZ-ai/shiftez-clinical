@@ -955,6 +955,15 @@ def test_external_rotators_use_canonical_rank_eligibility_protection_and_fairnes
 
 
 def test_plan_and_notes_batch_reads_at_department_scale(r):
+    check_plan_and_notes_batch_reads_at_department_scale(r)
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_plan_and_notes_batch_reads_at_department_scale_on_postgresql(r):
+    check_plan_and_notes_batch_reads_at_department_scale(r)
+
+
+def check_plan_and_notes_batch_reads_at_department_scale(r):
     from datetime import date
     from sqlalchemy import event, select, func
     from apps.api import models as m
@@ -1006,6 +1015,7 @@ def test_plan_and_notes_batch_reads_at_department_scale(r):
     finally:
         event.remove(h.app.state.engine, "before_cursor_execute", count_select)
     assert len(copied["created"]) == 300 and copy_reads < 40, copy_reads
+    print('rotation reads', {'plan': plan_reads, 'notes': note_reads, 'copy': copy_reads, 'remove': remove_reads})
     assert removed["removed"] == 300 and remove_reads < 40, remove_reads
     with transaction(h.app.state.engine) as db:
         assert db.scalar(select(func.count()).select_from(m.DefinitionHistory).where(m.DefinitionHistory.kind == "rotations")) == 900
