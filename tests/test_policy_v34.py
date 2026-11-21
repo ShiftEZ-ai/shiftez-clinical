@@ -67,13 +67,13 @@ class ImporterV34Tests(unittest.TestCase):
         importer.require_dispatch_expiry(capture,{'unstable_expires_on':'2026-12-17'})
         for wrong in ('2026-12-16','2026-12-18'):
             with self.assertRaisesRegex(ValueError,'plus 30'):importer.require_dispatch_expiry(capture,{'unstable_expires_on':wrong})
-    def test_expiry_extension_changes_nothing_except_existing_date(self):
+    def test_expiry_extension_is_refused_even_without_other_changes(self):
         old={'schema':3,'fails':[],'unstable':[{'node':'tests/test_a.py::test_a','class':'unstable','expires_on':'2026-12-17'}]}
         new=json.loads(json.dumps(old));new['unstable'][0]['expires_on']='2027-12-17'
-        self.assertTrue(policy.renewal_only(json.dumps(old).encode(),json.dumps(new).encode()))
+        self.assertFalse(policy.removal_only(json.dumps(old).encode(),json.dumps(new).encode()))
         for field,value in (('node','tests/test_b.py::test_b'),('class','baseline')):
             changed=json.loads(json.dumps(new));changed['unstable'][0][field]=value
-            self.assertFalse(policy.renewal_only(json.dumps(old).encode(),json.dumps(changed).encode()))
+            self.assertFalse(policy.removal_only(json.dumps(old).encode(),json.dumps(changed).encode()))
 
     def test_nightly_requires_19_free_jobs(self):
         for running, admitted in ((0, True), (461, True), (462, False), (480, False)):
@@ -151,16 +151,31 @@ class ImporterV34Tests(unittest.TestCase):
 
         config = durations.with_name('bootstrap-settings.json')
         groups = json.loads(config.read_text(encoding='utf-8'))['merge_group_shards']
-        self.assertEqual(groups, {'unit_shards': 17, 'browser_shards': 20})
+        self.assertEqual(groups, {'unit_shards': 25, 'browser_shards': 30})
 
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'
         for name in ('ci.yml','ci-tests.yml','working-policy.yml'):
             doc=yaml.load((root/name).read_text(),Loader=yaml.BaseLoader)
             jobs = doc['jobs']
+            if name == 'working-policy.yml':
+                self.assertEqual(doc['name'], 'Working policy')
+                self.assertEqual(jobs['policy']['name'], 'Working policy')
+            if name == 'ci-tests.yml':
+                setup = next(step for step in jobs['tests']['steps']
+                             if step.get('name') == 'Check Postgres and retain runner/setup evidence')
+                self.assertIn(
+                    '( while :; do date +%s; cat /proc/loadavg; head -1 /proc/stat; '
+                    'cat /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory 2>/dev/null; '
+                    'sleep 15; done > .run/reports/cpu-samples.txt 2>&1 & )',
+                    setup['run'].splitlines(),
+                )
             if name == 'ci.yml':
                 self.assertEqual(doc['concurrency']['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
                 self.assertIn("github.event_name == 'schedule' && 'ci-nightly'", doc['concurrency']['group'])
+                # A label added by a person must not start a new run and cancel the running one.
+                self.assertEqual(doc['on']['pull_request']['types'],
+                                 ['opened', 'synchronize', 'reopened', 'ready_for_review'])
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
                 limits = {
@@ -179,6 +194,8 @@ class ImporterV34Tests(unittest.TestCase):
                         self.assertEqual(job.get('timeout-minutes'), expected)
                     for step in job.get('steps', []):
                         self.assertNotIn('timeout-minutes', step)
-        self.assertNotIn('--timeout=',(HELPERS/'trusted_ci.py').read_text())
+        trusted_ci = (HELPERS/'trusted_ci.py').read_text()
+        for option in ('--timeout=600', '--timeout-method=signal', 'faulthandler_timeout=540'):
+            self.assertIn(option, trusted_ci)
 
 if __name__=='__main__':unittest.main()

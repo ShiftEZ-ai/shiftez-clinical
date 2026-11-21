@@ -3,6 +3,66 @@
   "removed": [],
   "removed_nodes": [
     {
+      "node": "tests/test_browser_audit_rules_layout.py::test_search_keeps_horizontal_scroll_and_row_actions_capture_immediate_native_scroll",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_audit_rules_layout.py::test_switching_rule_and_issue_columns_starts_at_their_identifying_facts[case-mnnanfkigcdpfabkjacapdhhbampobljmmgojnkmnpknaejckgekciginockalng]",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_audit_rules_layout.py::test_switching_rule_and_issue_columns_starts_at_their_identifying_facts[case-mpcjdkfjjaijoajdmcflimcglcekebkfggkfbmfmkpkpagjnfinpcbkcinoemndg]",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rule_balance.py::test_read_only_roles_read_balance_as_a_fact[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue.py::test_the_rules_table_fits_and_wraps_a_column_from_its_menu",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue_conflicts.py::test_a_tick_cleared_while_propose_fails_still_guards_the_retry",
+      "owner": "maintainer",
+      "reason": "Overlap acknowledgement is removed by design: a winning exception is not a conflict and nothing asks to acknowledge it; equal-tier conflicts are asserted in the rule exception and attention tests."
+    },
+    {
+      "node": "tests/test_browser_rule_catalogue_conflicts.py::test_an_unacknowledged_overlap_is_asked_for_and_the_approver_sees_the_check",
+      "owner": "maintainer",
+      "reason": "Overlap acknowledgement is removed by design: a winning exception is not a conflict and nothing asks to acknowledge it. Its approver assertions (the check lists each gives-way line and the both-apply warning) are kept in test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflicts."
+    },
+    {
+      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-filfjglkkpihkpdkmogkjpaoaojnhjlkgoeohnfafppokhbpkpmmhkjckihhjmdm]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
+    },
+    {
+      "node": "tests/test_browser_rule_filter_builder.py::test_every_role_reads_the_filters_as_it_may[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer holds the rules read permission, so it cannot read the Rules page; the readers now come from the permission itself, and a separate test asserts that the credentialer is refused the Rules page."
+    },
+    {
+      "node": "tests/test_browser_rules_column_menus.py::test_rules_column_menus_sort_filter_wrap_hide_and_move",
+      "owner": "maintainer",
+      "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
+    },
+    {
+      "node": "tests/test_browser_rules_database.py::test_list_orders_lines_broad_to_specific",
+      "owner": "maintainer",
+      "reason": "Lines are now grouped by place with the broadest line first and its exceptions under it; that order is asserted by the rule exception tree tests."
+    },
+    {
+      "node": "tests/test_bulk_rule_lines.py::test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions[case-dlpmiejdobjndppjnhjgoiickgagokiogifbdpbklikebnpplfemclhphgkapnim]",
+      "owner": "maintainer",
+      "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
@@ -13,9 +73,94 @@
       "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."
     },
     {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-dabioglbkkkcninpiihdhnmocljhclgabjgogbbndhojhkceomgddckibmhkceep]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-hkhignlpfdbjejlefchinocdbcgadcpkbamaegmfjbcbacjcnhhhlegpcpembifd]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-hnmieklojkdefkjkpdeacdpacjcdfdckijflkgaaekjcccnmeieehddndapkknli]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_context.py::test_home_never_labels_applied_dismissed_or_stale_artifacts_current[case-pcifjcfabagehgcgdjedmodkdibffkkkmgmapoppjkgcclickpjijlchlebfcahe]",
+      "owner": "maintainer",
+      "reason": "Case id follows the greedy version, which moves once for release 0.1.0; the same case runs under its new id with every assertion."
+    },
+    {
+      "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
+      "owner": "maintainer",
+      "reason": "The same assertions now run for SQLite and PostgreSQL, with additional queue refusal and job persistence checks."
+    },
+    {
+      "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
+      "owner": "maintainer",
+      "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_expiry_only_renewal_is_ci_eligible_but_remains_tier1",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_only_edit_is_refused_and_remains_tier1, which keeps the Tier 1 assertion and asserts that only a removal is accepted."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_real_verdict_accepts_reviewed_renewal_without_lifting_ci",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_edit_is_refused_while_the_reader_honors_a_valid_existing_entry, which asserts the refusal and that the verdict still honours a valid existing entry."
+    },
+    {
+      "node": "tests/test_policy_v33.py::V33Tests::test_renewal_cannot_add_or_change_metadata",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_allowance_edit_cannot_add_or_change_metadata, which keeps every metadata case."
+    },
+    {
+      "node": "tests/test_policy_v34.py::ImporterV34Tests::test_expiry_extension_changes_nothing_except_existing_date",
+      "owner": "maintainer",
+      "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
+    },
+    {
+      "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
+      "owner": "maintainer",
+      "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
+    },
+    {
+      "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
+      "owner": "maintainer",
+      "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
+    },
+    {
       "node": "tests/test_solver_search_budget.py::test_stopped_resume_checks_incumbent_without_relabelling_unknown_solver_status",
       "owner": "maintainer",
       "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
+    },
+    {
+      "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
+      "owner": "maintainer",
+      "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
+    },
+    {
+      "node": "tests/test_worker_write_timeouts.py::test_heartbeat_timeouts_cancel_only_near_lease_expiry",
+      "owner": "maintainer",
+      "reason": "Parametrised over the injected and greedy engines. The injected case keeps every original assertion; the greedy case adds the same heartbeat check for the greedy fallback."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_continues_for_audited_route_and_standalone_still_refuses",
+      "owner": "maintainer",
+      "reason": "Tier 1 changes no longer need the audited maintenance route: CODEOWNERS and code-owner review replace that refusal. The clean product change and the Tier 1 findings on both events are asserted in test_guard_allows_changes_in_owned_tier1_paths."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_stops_on_other_policy_refusals_before_fan_out",
+      "owner": "maintainer",
+      "reason": "The Checks-step wrapper that ran the guard for the audited Tier 1 route is removed with that route; the same four refusals (known-failures addition, agent file, syntax error, preview history) are asserted directly against the guard in test_guard_keeps_other_policy_refusals."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
+      "owner": "maintainer",
+      "reason": "A change to an owned Tier 1 path is no longer refused; it passes the guard and is flagged for code-owner review. The Tier 1 and Tier 2 findings are asserted in test_guard_keeps_owned_tier1_and_tier2_findings."
     }
   ]
 }

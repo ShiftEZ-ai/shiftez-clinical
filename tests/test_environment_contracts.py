@@ -16,4 +16,6 @@ def test_authored_environment_journeys_reference_existing_local_functions(filena
             name='tests.'+node.module if node.level else node.module
             module=importlib.import_module(name)
             for alias in node.names:
+                if not hasattr(module,alias.name):  # `from package import submodule` imports it, whatever ran before
+                    importlib.import_module(name+'.'+alias.name)
                 assert hasattr(module,alias.name),(filename,name,alias.name)

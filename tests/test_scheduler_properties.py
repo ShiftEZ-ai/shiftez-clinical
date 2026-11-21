@@ -239,7 +239,7 @@ def test_generation_reports_staged_progress_with_budget_and_best_so_far(staged_p
     # Preparation has its own clock; the configured 30 seconds belongs to search.
     assert all(u['time_limit_seconds'] == 30
                and u['search_started_seconds'] >= 0 for u in searching)
-    assert all(u['objective_names'] == ['coverage', 'weighted'] for u in searching)
+    assert all(u['objective_names'] == ['coverage', 'desired_coverage', 'weighted'] for u in searching)
     incumbents = [u for u in updates if u.get('objective_value') is not None]
     assert incumbents and all(u['best_bound'] <= u['objective_value'] + 1e-6 for u in incumbents)
     for tier in {u['tier'] for u in incumbents}:

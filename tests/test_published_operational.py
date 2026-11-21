@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -350,6 +350,8 @@ def test_changed_or_missing_amendment_demand_has_no_invented_target_and_refreshe
                 row.attributes = {'synthetic_demand': 'changed'}
             else:
                 row.type_snapshot = {**row.type_snapshot, 'name': 'Changed demand definition'}
+            # Raw fixture writes bypass command stamps; discard disposable read projections.
+            db.execute(delete(m.WorkspaceReadProjection))
     action = warning_action(h, pub, ids[0])
     assert action['amendment_workspace_id'] == amendment['id'] and action['shift_id'] == ids[0]
     assert action['amendment_shift_state'] == 'changed_or_missing' and action['amendment_shift_id'] is None
@@ -457,10 +459,11 @@ def test_amendment_matching_batches_sql_and_visits_each_relevant_demand_once(h, 
         finally:
             event.remove(engine, 'before_cursor_execute', statement)
         assert measurements[0]['sql_statements'] == measurements[1]['sql_statements'] == 2
-        plan = list(db.connection().exec_driver_sql('EXPLAIN QUERY PLAN ' + sql[0][0], sql[0][1]))
-        assert not any('SCAN shifts' in row[-1] for row in plan)
         print('Amendment deterministic work: ' + json.dumps(measurements))
-        print('Amendment demand query plan: ' + json.dumps([row[-1] for row in plan]))
+        if engine.dialect.name == 'sqlite':
+            plan = list(db.connection().exec_driver_sql('EXPLAIN QUERY PLAN ' + sql[0][0], sql[0][1]))
+            assert not any('SCAN shifts' in row[-1] for row in plan)
+            print('Amendment demand query plan: ' + json.dumps([row[-1] for row in plan]))
 
 
 def test_shared_mapping_keeps_score_baseline_duplicate_and_inactive_semantics():

@@ -664,5 +664,10 @@
     "class": "additive",
     "sha256": "131a32ed15cdb7a0272ee89803c27fc6b4287607ce52a64f252dd0b450ef11ec",
     "review": "Adds default-false withdrawal flags to four dated relationship tables; preserves every identity, date, reference and history row without data rewriting."
+  },
+  "0148_bulk_analyze": {
+    "class": "destructive",
+    "sha256": "331f10adaefe17a9c9c8a00cbc87387a767604a3c103e38db8b5c8dabfee53d2",
+    "review": "The source checker cannot prove these PostgreSQL storage settings. They change only analyze thresholds and leave every row intact. Take the verified pre-deploy backup. Downgrade resets both settings to database defaults."
   }
 }

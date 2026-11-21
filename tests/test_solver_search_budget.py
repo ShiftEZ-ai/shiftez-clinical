@@ -1,4 +1,7 @@
 """Search-only budgets, durable preparation and cooperative stop/extension."""
+import base64
+import gzip
+import io
 import json
 import threading
 import time
@@ -216,10 +219,30 @@ def test_invalid_persisted_search_duration_is_rejected(spent):
         SolverControl(search_control=lambda: {'spent_seconds': spent})
 
 
+def test_prepared_state_compression_preserves_legacy_envelope_bytes(h):
+    from packages.contracts.schemas import GenerationOptions
+
+    data = snapshot(h)
+    options = GenerationOptions()
+    prepared = cp_sat._prepare(data, 3, 1, SolverControl(), options, False, False)
+    assert 'model' in prepared, prepared
+    prepared['data']['checkpoint_test_label'] = 'عيادة تجريبية'
+    key = solver_resume.resume_key(data, options, False, False)
+    state = solver_resume.prepared_state(key, prepared)
+
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode='wb', compresslevel=1, mtime=0) as compressed:
+        with io.TextIOWrapper(compressed, encoding='utf-8') as output:
+            json.dump(state, output, ensure_ascii=False, separators=(',', ':'))
+    legacy = {'encoding': 'gzip', 'data': base64.b64encode(buffer.getbuffer()).decode('ascii'),
+              'key': state.get('key')}
+    assert solver_resume.compress_state(state) == legacy
+
+
 def test_prepared_state_compression_roundtrip_and_legacy_raw_support(monkeypatch):
     state = {'key': 'bound-to-input', 'model': 'variables { domain: 0 domain: 1 }\n' * 200,
              'prepared': {'mapping': [['label', 'عيادة تجريبية'], ['values', list(range(20))]]}}
-    monkeypatch.setattr(solver_resume.json, 'dumps', lambda *args, **kwargs: pytest.fail('Built a full JSON string'))
+    monkeypatch.setattr(solver_resume.json, 'dump', lambda *args, **kwargs: pytest.fail('Used the streaming JSON encoder'))
     encoded = solver_resume.compress_state(state)
     assert encoded['encoding'] == 'gzip' and encoded['key'] == state['key']
     assert solver_resume.decompress_state(encoded) == state
