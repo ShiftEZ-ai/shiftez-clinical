@@ -1,4 +1,5 @@
 """Schedule Timeline layout, card properties (View settings › Properties) and trainee pairing marks in People."""
+from tests.historical_staffing import retained_staffing
 import os
 import re
 import pytest
@@ -30,7 +31,7 @@ def paired(h):
         {'person_id': trainee, 'start': s, 'end': e, 'participation': 'trainee', 'supervisor_person_id': supervisor},
         {'person_id': supervisor, 'start': s, 'end': e, 'participation': 'supervisor'}])['workspace']
     s, e = at(5)
-    return h.shift(w, s, e, typ=typ['id'], people=[{'person_id': trainee, 'start': s, 'end': e, 'participation': 'trainee'}])['workspace']
+    return retained_staffing(h, w, s, e, typ=typ['id'], people=[{'person_id': trainee, 'start': s, 'end': e, 'participation': 'trainee'}])['workspace']
 
 
 # Not staff: a doctor's View settings have no people rows (SW3-C-18, fe_c9 test_a_doctors_view_and_export_settings_…).

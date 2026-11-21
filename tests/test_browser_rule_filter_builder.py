@@ -9,10 +9,13 @@ import pytest
 from playwright.sync_api import expect
 
 from .governance_support import identity
-from .test_browser import add_filter, browser, live_server, navigate, sign_in, press_escape  # noqa: F401
+from .test_browser import add_filter, browser, choose, live_server, navigate, sign_in, press_escape  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot, weekly
+from packages.contracts.schemas import PERMISSIONS
 
 pytestmark = pytest.mark.browser
+RULES_READERS = tuple(role for role in PERMISSIONS['rules.read']
+                      if role == 'admin' or role not in PERMISSIONS['rule.propose'])
 
 VIEWS = [(1440, 'light'), (390, 'dark')]
 ALL_VIEWS = [(w, c) for w in (1440, 390) for c in ('light', 'dark')]  # the screenshots the owner reviews
@@ -84,9 +87,7 @@ def propose(page, reason):
         close.click()  # a phone's sheet covers the page
     page.locator('.topbar').get_by_role('button', name=re.compile(r'^Propose \d+ changes?$')).click()
     dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
-    understood = dialog.get_by_label('I have read which lines give way and that is intended')
-    if understood.count():
-        understood.check()
+    expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
     dialog.get_by_label('Reason', exact=True).fill(reason)
     dialog.get_by_role('button', name='Propose', exact=True).click()
     expect(dialog).to_have_count(0)
@@ -330,6 +331,8 @@ def test_reach_lists_group_people_by_their_filter_with_load_and_links(browser, l
         expect(pop.get_by_role('option')).to_have_count(1)
         pop.get_by_role('combobox').fill('')
         shot(page, f'reach-people-{width}-{scheme}', full_page=False)
+        press_escape(page)
+        expect(pop).to_have_count(0)
         clinics = panel.locator('.rc-lp-title').nth(1).get_by_role('button', name='2 clinics')
         clinics.click()
         pop = page.locator('.picker')
@@ -370,11 +373,10 @@ def test_the_table_marks_lines_counted_for_each(browser, live_server, h, width, 
         context.close()
 
 
-@pytest.mark.parametrize('role,width,scheme', [(r, w, c) for r in ('admin', 'approver', 'credentialer', 'programme_lead', 'auditor')
+@pytest.mark.parametrize('role,width,scheme', [(r, w, c) for r in RULES_READERS
                                                 for w, c in VIEWS] + [('staff', 1440, 'light')])
 def test_every_role_reads_the_filters_as_it_may(browser, live_server, h, role, width, scheme):
-    """Admins edit; approvers, credentialers, programme leads and auditors read the same filters as facts; details of the
-    reach for the roles that may read them (not credentialers); staff have no Rules page."""
+    """Admins edit; every Rules reader reads the same filters as facts; staff have no Rules page."""
     if role == 'programme_lead':
         identity(h, role, [role])
     flag(h)
@@ -417,6 +419,18 @@ def test_every_role_reads_the_filters_as_it_may(browser, live_server, h, role, w
         context.close()
 
 
+
+def test_credentialer_is_refused_the_rules_page(browser, live_server):
+    context, page = sign_in(browser, live_server, 'credentialer')
+    try:
+        page.evaluate("location.hash='rules'")
+        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'restricted')
+        expect(page.get_by_role('heading', name='Restricted page', exact=True)).to_be_visible()
+        expect(page.locator('#main')).not_to_have_attribute('data-loaded-view', 'rules')
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('width,scheme', VIEWS)
 def test_a_new_line_opens_itself_advisory_and_empty_and_says_what_is_on_screen(browser, live_server, h, width, scheme):
     """Audit H01/H5/M09: + New line opens that line (never the previously open one), with no numbers; a number typed
@@ -443,7 +457,7 @@ def test_a_new_line_opens_itself_advisory_and_empty_and_says_what_is_on_screen(b
         keep = panel.get_by_role('button', name='Keep change')
         expect(keep).to_have_attribute('aria-disabled', 'true')
         expect(keep).to_have_attribute('data-tip', 'Add a minimum, maximum or target')
-        expect(page.locator('#main .rc-checkbar')).to_contain_text('⚠ 1 overlap')
+        expect(page.locator('#main .rc-checkbar')).to_be_empty()
         expect(page.locator('#main .rc-checkbar')).not_to_contain_text('refused')
         expect(page.locator('#main tr[data-row], #main [data-row]').filter(has_text='Demo learners')).to_have_count(0)
         panel.get_by_label('Maximum', exact=True).fill('4')
@@ -500,6 +514,8 @@ def test_an_excluded_tag_reads_not_and_groups_as_combined_filters(browser, live_
     try:
         navigate(page, 'rules/duties_per_week')
         expect(page.locator(f'#main [data-row="{lines[0]["id"]}"] .tag-chip')).to_contain_text('not #Night')
+        # A rule's page groups its lines by place; grouped by who kind, a who of a group reads Combined filters.
+        choose(page.locator('#main'), 'Group', 'Group by', 'Who kind')
         expect(page.locator('#main').get_by_text('Combined filters', exact=True)).to_have_count(1)
         expect(page.locator('#main').get_by_text('Everyone', exact=True)).to_have_count(0)
     finally:

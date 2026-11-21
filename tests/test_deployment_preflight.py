@@ -111,7 +111,8 @@ def test_oidc_trust_url_has_no_embedded_credentials_queries_or_fragments(issuer)
 def test_production_requires_managed_passwords_and_refuses_sqlite_secret_file_shortcut(tmp_path,monkeypatch):
     clean_env(monkeypatch)
     users = tmp_path / 'users.json'; users.write_text('{"users": {}}', encoding='utf-8')
-    production(identity_users_file=str(users), fmuc_data_key='01' * 32).check()
+    settings = production(identity_users_file=str(users), fmuc_data_key='01' * 32)
+    replace(settings, oidc_issuer=settings.public_origin + "/authelia").check()
     path=tmp_path/'dburl';path.write_text('sqlite:///example.db');path.chmod(0o600)
     monkeypatch.setenv('DATABASE_URL_FILE',str(path));monkeypatch.setenv('ROTA_ENV','production')
     with pytest.raises(RuntimeError,match='PostgreSQL'):Settings.from_env().check()
@@ -189,13 +190,18 @@ def test_production_password_key_preflight_rejects_missing_or_invalid_keys_witho
 
 @pytest.mark.parametrize('enabled', [False, True])
 def test_production_password_key_preflight_preserves_fixed_mode(tmp_path, monkeypatch, enabled):
+    # Fixed mode stays supported with a key; sign-in event and rate-limit keys are keyed hashes (#930), so a keyless
+    # production cannot store them safely and is refused at startup, naming the setting only.
     clean_env(monkeypatch)
     users = tmp_path / 'users.yml'
     users.write_text('{}', encoding='utf-8')
     settings = production(password_login_enabled=enabled, password_login_progressive_delay=False,
                           identity_users_file=str(users), oidc_issuer='https://rota.invalid/authelia')
-    result = preflight.inspect(settings, require_production=True)
-    assert next(row for row in result['checks'] if row['check'] == 'configuration')['status'] == 'passed'
+    keyless = next(row for row in preflight.inspect(settings, require_production=True)['checks']
+                   if row['check'] == 'configuration')
+    assert keyless['status'] == 'failed' and keyless['detail'] == 'FMUC_DATA_KEY is required for sign-in in production'
+    keyed = preflight.inspect(replace(settings, fmuc_data_key='01' * 32), require_production=True)
+    assert next(row for row in keyed['checks'] if row['check'] == 'configuration')['status'] == 'passed'
 
 
 @pytest.mark.parametrize('enabled', [False, True])

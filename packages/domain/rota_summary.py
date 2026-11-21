@@ -250,6 +250,7 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
         keys = sorted({issue_key(findings[i]) for i in indices})
         evidence, lines, who, pids, sids, starts, ends, rule_names, templates = [], {}, {}, set(), set(), [], [], set(), []
         prefills = {}
+        leave_duties = set()
         acknowledgeable = level == 'must'
         for i in indices:
             for observation in observations[i]:
@@ -279,6 +280,9 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
                 if leave_classification(observation) == DUTIES_DURING_APPROVED_LEAVE:
                     sids.update(observation.get('leave_shift_ids') or observation_cause.get('leave_shift_ids')
                                 or detail.get('leave_shift_ids') or [])
+                    if (family == 'leave_conflict' and observation['code'] == 'UNAVAILABLE'
+                            and observation.get('person_id') and observation.get('shift_id')):
+                        leave_duties.add((observation['person_id'], observation['shift_id']))
                 hints = observation.get('fix_hints') or []
                 evidence_ids = set(detail.get('affected_shift_ids') or ([observation['shift_id']] if observation.get('shift_id') else []))
                 for hint in hints:
@@ -396,7 +400,9 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
         cid = hashlib.sha256(json.dumps([context.get('workspace', {}).get('id'), identity], sort_keys=True).encode()).hexdigest()[:24]
         evidence_hash = hashlib.sha256(json.dumps(sorted(evidence, key=lambda row: json.dumps(row, sort_keys=True)), sort_keys=True).encode()).hexdigest()
         matches = [accepted.get(key, {}) for key in keys]
-        meta = template['meta'].format(people=people, dates=dates, rules=rules, checks=len(indices))
+        # Quota and overlapping absence evidence can describe the same leave duty.
+        checks = len(leave_duties) or len(indices)
+        meta = template['meta'].format(people=people, dates=dates, rules=rules, checks=checks)
         if action == 'open_eligibility' and any(row['code'] == 'CAPABILITY_GAP' for row in evidence):
             meta += ' · A credentialer grants the required skill'
         acknowledged = (acknowledgeable and all(a.get('cause_id') == cid and a.get('evidence_hash') == evidence_hash
@@ -424,7 +430,7 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
             for sid in row['shift_ids']:
                 if sid in sids:
                     session_findings.setdefault(sid, row['finding_key'])
-        causes.append({'id': cid, 'level': level, 'checks': len(indices),
+        causes.append({'id': cid, 'level': level, 'checks': checks,
             'who': list(who.values()), 'person_ids': sorted(pids), 'shift_ids': sorted(sids),
             'safety': identity[4], 'new': cid not in check['fix_list_state']['previous_ids'] if check.get('fix_list_state') else False,
             'sentence': session_words(fact_sentence or cause_sentence),
@@ -518,21 +524,21 @@ def fix_list_effect_projection(before_data, before_validation, after_data, after
             'fix_list_delta': fix_list_delta(phases[0]['fix_list'], phases[1]['fix_list'])}
 
 
-def remember_fix_list(previous, current, *, submitted=False, accepted_issues=()):
+def remember_fix_list(previous, current, *, submitted=False, accepted_issues=(), summary_cache=None):
     """Persist only derived ID receipts in the existing check JSON; edits retain their normal Undo."""
     from zoneinfo import ZoneInfo
-    before = rota_summary(previous, accepted_issues=accepted_issues)['fix_list'] if previous else None
+    before = rota_summary(previous, accepted_issues=accepted_issues, cache=summary_cache)['fix_list'] if previous else None
     at = current['evaluated_at']
     day = aware(at).astimezone(ZoneInfo((current.get('fix_list_context') or {}).get('timezone', 'UTC'))).date().isoformat()
     state = (previous or {}).get('fix_list_state') or {}
     since = state.get('since')
     reset_since = submitted or not since or since.get('day') != day
     if reset_since:
-        ids_after = rota_summary(current, accepted_issues=accepted_issues)['fix_list']['causes']
+        ids_after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']['causes']
         since = {'at': at, 'day': day, 'ids': [c['id'] for c in ids_after]}
     current['fix_list_state'] = {'previous_ids': [c['id'] for c in (before or {'causes': []})['causes']], 'since': since}
     # Reset needs a second pass so the stored delta carries the state-aware `since` receipt.
-    after = rota_summary(current, accepted_issues=accepted_issues)['fix_list']
+    after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']
     current['fix_list_delta'] = fix_list_delta(before, after)
     return current
 
@@ -828,13 +834,24 @@ def blocking_without_open_places(findings, deficits, legacy_open):
         finding_observations({'findings': [f]}) if o['severity'] == 'error') for f in findings)
 
 
-def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False):
+def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False, cache=None):
     """A place is one required person on a session, filled throughout its required intervals.
 
     Count a session once: peak required cover and greatest coverage deficit across
     its intervals, including scoped/skill requirements. Non-staffing safety issues remain separate.
     Issues count findings, rather than affected sessions or people.
     """
+    if cache is not None:
+        from copy import deepcopy
+        from .input_manifest import digest
+        from .validation import INTERNAL_CHECK_KEYS
+        value = {key: item for key, item in (validation or {}).items()
+                 if key not in INTERNAL_CHECK_KEYS | {'fix_list_delta', '_command_scope'}}
+        accepted = sorted(accepted_issues) if isinstance(accepted_issues, (set, frozenset)) else accepted_issues
+        key = digest([bool(validation), value, shifts, accepted, compact])
+        if key not in cache:
+            cache[key] = rota_summary(validation, shifts, accepted_issues, compact=compact)
+        return deepcopy(cache[key])
     check = normalized_check(validation) or {}
     from .validation import finding_observations
     sessions, deficits, legacy_open = {}, {}, {}

@@ -111,3 +111,57 @@ def test_redo_applies_an_undone_auto_schedule_proposal_again(h):
     assert again['status'] == 'applied'
     assert again['result']['applied_content_revision'] == redone['content_revision']
     assert people(h, redone) == people(h, applied)
+
+
+def test_department_redo_only_extracts_the_revision_to_choose_between_edits(scale_harness):
+    from types import SimpleNamespace
+
+    from sqlalchemy import event
+    from apps.api.db import make_engine
+    from apps.api.services.planning import redo_available
+    from apps.api.snapshots import workspace_content
+    from tests.test_backend_scale import scale_department
+
+    h = scale_harness()
+    draft, _, _, _ = scale_department(h)
+    actor = SimpleNamespace(identity_id=h.seed['identities']['coordinator'])
+    with transaction(h.app.state.engine, write=True) as db:
+        workspace = db.get(m.Workspace, draft['id'])
+        workspace.content_revision += 1
+        snapshot = workspace_content(db, workspace)
+        assert len(snapshot['shifts']) >= 500
+        db.add(m.ChangeSet(workspace_id=workspace.id, resulting_content_revision=workspace.content_revision,
+                           actor_id=actor.identity_id, reason='Synthetic undo', undone=True,
+                           before_snapshot={**snapshot, '_undo_of': m.uid()}))
+
+    revision_reads = []
+    engine = make_engine(h.settings.database_url, settings=h.settings)
+    def count_revision(value):
+        revision_reads.append(value)
+        return value
+
+    @event.listens_for(engine, 'connect')
+    def register_counter(connection, _record):
+        connection.create_function('count_revision', 1, count_revision)
+
+    @event.listens_for(engine, 'before_cursor_execute', retval=True)
+    def count_json_revision(_conn, _cursor, sql, args, _context, _many):
+        expression = 'JSON_EXTRACT(JSON_QUOTE(JSON_EXTRACT(change_sets.before_snapshot, ?)), ?)'
+        return sql.replace(expression, f'count_revision({expression})'), args
+
+    try:
+        with transaction(engine) as db:
+            workspace = db.get(m.Workspace, draft['id'])
+            assert redo_available(db, actor, workspace)
+        assert len(revision_reads) == 0, 'One matching edit needs no JSON revision lookup'
+
+        with transaction(h.app.state.engine, write=True) as db:
+            db.add(m.ChangeSet(workspace_id=workspace.id, resulting_content_revision=workspace.content_revision,
+                               actor_id=actor.identity_id, reason='Synthetic newer edit',
+                               before_snapshot={**snapshot, 'workspace': {
+                                   **snapshot['workspace'], 'revision': workspace.revision + 1}}))
+        with transaction(engine) as db:
+            assert not redo_available(db, actor, workspace)
+        assert sorted(revision_reads) == [workspace.revision, workspace.revision + 1]
+    finally:
+        engine.dispose()

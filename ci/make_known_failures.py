@@ -1,6 +1,8 @@
 """Build and enforce a shrinking baseline from complete, source-bound hosted JUnits."""
 import argparse
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from functools import partial
 import hashlib
 import importlib.util
 import json
@@ -15,34 +17,31 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
-from canary_evidence import node as report_node, outcome as report_outcome
-
-def case_rows(paths):
-    import xml.etree.ElementTree as ET
-    for path in paths:
-        for case in ET.parse(path).getroot().iter("testcase"):
-            yield report_node(case), {"outcome": report_outcome(case)}
+from canary_evidence import (collection_error, failed_nodes, node as report_node, outcome as report_outcome,
+                             quarantine_xfail, recovered_nodes, report_cases)
+from latest_reports import artifact_shard, earlier_reports, planned_shards, producing_attempt
+from quarantine_registry import SAFE_NODE, canonical_node, expired_entries, utc_today
 
 KNOWN = "ci/known-failures.json"
-BASE_NODE = r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py::(?:[A-Za-z_][A-Za-z0-9_]*::)*test_[A-Za-z0-9_]+"
-SAFE_NODE = re.compile(BASE_NODE + r"(?:\[case-[a-p]{64}\])?")
-
-
-def canonical_node(node):
-    base, marker, parameter = node.partition("[")
-    if not re.fullmatch(BASE_NODE, base) or marker and not parameter.endswith("]"):
-        raise ValueError("Invalid collected node identity")
-    if not marker:
-        return base
-    # Keep every parameter case distinct without publishing its possibly private display label.
-    fingerprint = hashlib.sha256(parameter.encode("utf-8")).hexdigest().translate(
-        str.maketrans("0123456789abcdef", "abcdefghijklmnop"))
-    return base + "[case-" + fingerprint + "]"
+CLASSES = ("baseline", "cleanup", "unstable", "baseline-error")
 
 
 def classes(data):
     return {kind: {row["node"] for row in data["fails"] + data["unstable"] if row["class"] == kind}
-            for kind in ("baseline", "cleanup", "unstable", "baseline-error")}
+            for kind in CLASSES}
+
+
+def listed_nodes(current):
+    return set().union(*classes(current).values()) if current else set()
+
+
+def retry_run(plan):
+    return (os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "pull_request"}
+            and plan["replicas"] == [1] and not plan.get("smoke"))
+
+
+def retry_nodes(cases, listed):
+    return [node for node in failed_nodes(cases) if canonical_node(node) not in listed]
 
 
 def require_root_runs(runs):
@@ -131,11 +130,12 @@ def at_revision(revision):
     return decode_list(git("show", revision + ":" + KNOWN)) if names else None
 
 
-def context(base_sha):
+def _read_context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
+    single_replica = base is not None and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1, 2]}
+            "replicas": [1] if single_replica else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -153,6 +153,13 @@ def require_bootstrap_inputs(issue, expires_on, *, today=None):
         raise ValueError(message)
 
 
+def context(base_sha):
+    result = _read_context(base_sha)
+    if not result["bootstrap"] and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        result["replicas"] = [1]
+    return result
+
+
 def preflight(ctx, *, smoke, limit, issue, expires_on,
               baseline_path=Path("ci/frozen-baseline-failures.json"),
               exceptions_path=Path("ci/hosted-env-exceptions.json"),
@@ -168,7 +175,7 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
         if len(current["unstable"]) > limit:
             raise ValueError("Unstable entry cap exceeded")
         if any(date.fromisoformat(row["expires_on"]) <= datetime.now(timezone.utc).date() for row in current["unstable"]):
-            raise ValueError("Expired unstable entries require a fix or reviewed renewal")
+            raise ValueError("Expired unstable entries require a fix and removal from the allowance list")
     if base and current:
         require_class_ratchet(current, base)
     if ctx["bootstrap"]:
@@ -191,55 +198,119 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
             raise ValueError("Entry class disagrees with the frozen baseline input")
 
 
-def collect_reports(plan, directory, run_id, run_attempt):
-    expected = {(suite, index, replica)
-                for suite, row in plan["suites"].items()
-                for index in range(1, len(row["shards"]) + 1) for replica in plan["replicas"]}
-    seen, runs = set(), {replica: {} for replica in plan["replicas"]}
-    for path in sorted(directory.rglob("shard-receipt.json")):
+@dataclass
+class ReportEvidence:
+    recovered: dict[str, str] = field(default_factory=dict)
+    reruns: dict[str, int] = field(default_factory=dict)
+    unobserved: list[dict] = field(default_factory=list)
+
+
+def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False,
+                    evidence=None, quarantine_nodes=None):
+    retry = not historical_capture and retry_run(plan)
+    if retry and listed is None:
+        listed = listed_nodes(at_revision(plan["sha"]))
+    if evidence is None:
+        evidence = ReportEvidence()
+    expected = planned_shards(plan)
+    seal = digest(plan)
+
+    def read_shard(path, root, *, earlier=False):
         receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         identity = (receipt["suite"], receipt["shard"], receipt["replica"])
         if (receipt.get("schema") != 1 or type(receipt["shard"]) is not int or type(receipt["replica"]) is not int
-                or identity not in expected or identity in seen or receipt["sha"] != plan["sha"]
-                or receipt["tree"] != plan["tree"] or receipt["plan_sha256"] != digest(plan)
-                or receipt["run_id"] != run_id or receipt["run_attempt"] != run_attempt):
+                or identity not in expected or receipt["sha"] != plan["sha"]
+                or receipt["tree"] != plan["tree"] or receipt["run_id"] != run_id):
             raise ValueError("Duplicate, unexpected or incorrectly bound shard")
-        seen.add(identity)
-        suite, index, replica = identity
+        attempt = run_attempt if historical_capture else producing_attempt(root, path, identity, run_attempt)
+        if receipt["run_attempt"] != attempt:
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        if receipt["plan_sha256"] != seal:
+            # "Re-run all jobs" replans from the moved dev tip; an older plan's outcomes are not comparable.
+            if earlier:
+                return None
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        suite, index, _ = identity
         files = plan["suites"][suite]["shards"][index - 1]["files"]
         report_names = ["junit.xml"]
         if suite == "unit" and TIMING_NODE.split("::")[0] in files:
             report_names.append("junit-timing.xml")
         if [row["file"] for row in receipt["reports"]] != report_names:
             raise ValueError("Missing or unexpected invocation report")
+        outcomes, retries = {}, {}
         for row in receipt["reports"]:
             report = path.parent / row["file"]
-            sidecars = [report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json")]
-            if any(item.is_symlink() or not item.is_file() or hashlib.sha256(item.read_bytes()).hexdigest()
-                   != row["sha256"].get(item.name) for item in sidecars):
-                raise ValueError("Missing or changed shard evidence")
-            selected = json.loads(sidecars[1].read_text(encoding="utf-8"))
-            cases = list(case_rows([report]))
-            intentionally_empty = False
-            if not selected and "selection" in plan:
-                deselected = json.loads(sidecars[2].read_text(encoding="utf-8"))
-                intentionally_empty = bool(deselected) and all(node.split("::", 1)[0] in files for node in deselected)
-            if ((not selected and not intentionally_empty) or len(selected) != len(set(selected))
-                    or sorted(node for node, _ in cases) != sorted(selected)
-                    or type(row["exit_code"]) is not int or row["exit_code"] not in (0, 1)
-                    or (row["exit_code"] == 1) != any(item["outcome"] in {"failed", "error"} for _, item in cases)):
-                raise ValueError("Incomplete execution or pytest infrastructure failure")
-            for node, outcome in cases:
+            cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
+            recovered = recovered_nodes(report, row, retry_nodes(cases, listed) if retry else (), allow_retry=retry)
+            for case in cases:
+                node = report_node(case)
                 if node.split("::")[0] not in files:
                     raise ValueError("Reported node lies outside its planned shard")
                 canonical = canonical_node(node)
-                if canonical in runs[replica]:
+                if canonical in outcomes:
                     raise ValueError("A node executed more than once in a full run")
-                runs[replica][canonical] = outcome["outcome"]
-    if seen != expected:
+                outcome = report_outcome(case)
+                # Bind quarantine xfails to the source registry before recording the outcome.
+                if quarantine_nodes is not None and outcome == "skipped" and quarantine_xfail(case):
+                    if canonical not in quarantine_nodes:
+                        raise ValueError("Quarantine xfail has no source registry entry: " + canonical)
+                    outcome = "failed"
+                outcomes[canonical] = outcome
+                if node in recovered:
+                    retries[canonical] = outcome
+        return identity, int(attempt), outcomes, retries
+
+    latest, runs = {}, {replica: {} for replica in plan["replicas"]}
+    for path in sorted(directory.rglob("shard-receipt.json")):
+        identity, attempt, outcomes, retries = read_shard(path, directory)
+        if identity in latest:
+            raise ValueError("Duplicate, unexpected or incorrectly bound shard")
+        latest[identity] = attempt
+        run = runs[identity[2]]
+        if run.keys() & outcomes.keys():
+            raise ValueError("A node executed more than once in a full run")
+        run.update(outcomes)
+        run.update(dict.fromkeys(retries, "passed"))
+        evidence.recovered.update(retries)
+    if latest.keys() != expected:
         raise ValueError("Missing shard: every planned producer must report")
     if len({tuple(sorted(run)) for run in runs.values()}) != 1:
         raise ValueError("Full runs collected different node sets")
+
+    if not historical_capture:
+        archive = earlier_reports(directory)
+        if archive.is_symlink():
+            raise ValueError("Invalid earlier shard artifact directory")
+        seen = {(identity, attempt) for identity, attempt in latest.items()}
+        for folder in sorted(archive.iterdir()) if archive.exists() else ():
+            named_attempt, identity = artifact_shard(folder)
+            attempt = int(named_attempt)
+            if identity not in expected or not 1 <= attempt < latest[identity]:
+                raise ValueError("Earlier shard evidence differs from the artifact identity or attempt")
+            for path in folder.rglob("shard-receipt.json"):
+                observed = read_shard(path, archive, earlier=True)
+                if observed is None:
+                    continue
+                _, _, outcomes, _ = observed
+                if (identity, attempt) in seen:
+                    raise ValueError("Duplicate shard artifact attempt: " + folder.name)
+                seen.add((identity, attempt))
+                for node, outcome in outcomes.items():
+                    if (outcome in {"failed", "error"} and all(run.get(node) == "passed" for run in runs.values())
+                            and (node not in evidence.reruns or attempt < evidence.reruns[node])):
+                        evidence.recovered[node] = outcome
+                        evidence.reruns[node] = attempt
+        evidence.unobserved.extend(
+            {"suite": suite, "shard": shard, "replica": replica, "attempt": attempt}
+            for suite, shard, replica in sorted(expected) for attempt in range(1, int(run_attempt))
+            if ((suite, shard, replica), attempt) not in seen)
+
+    if evidence.recovered and output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "recovered-tests.json").write_text(encoded([
+            {"node": node, "class": "unstable", "observations": [outcome, "passed"]}
+            for node, outcome in sorted(evidence.recovered.items())
+        ]), encoding="utf-8")
     return [runs[replica] for replica in plan["replicas"]]
 
 
@@ -290,10 +361,10 @@ def load_env_exceptions(path):
     return set(nodes), hashlib.sha256(raw).hexdigest()
 
 
-def classified_results(runs, baseline, exceptions):
+def classified_results(runs, baseline, exceptions, recovered=()):
     errors = {node for run in runs for node, outcome in run.items() if outcome == "error"}
     ordinary = [{node:value for node,value in run.items() if node not in errors} for run in runs]
-    unstable = differing(ordinary) - set(exceptions)
+    unstable = (differing(ordinary) | set(recovered)) - set(exceptions)
     stable = {node for node in ordinary[0] if all(run[node] == "failed" for run in ordinary)} - unstable - set(exceptions)
     return {"baseline": stable & set(baseline), "cleanup": stable - set(baseline), "unstable": unstable, "baseline-error": errors}
 
@@ -377,39 +448,44 @@ def outside_observations(current, runs, exceptions=frozenset()):
              "red_count": sum(run.get(node) in {"failed", "error"} for run in runs)} for node in sorted(outside)]
 
 
-def product_error_nodes(directory, *, listed=frozenset()):
+def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False, quarantined=frozenset()):
     """Classify individual errors after the producer and report checks."""
-    group = os.getenv("GITHUB_EVENT_NAME") == "merge_group"
     infrastructure = re.compile(r"connection refused|could not connect|server closed the connection|connection reset|could not translate host|temporary failure in name resolution|no route to host|network is unreachable|too many connections|remaining connection slots|password authentication failed|database is locked|database is busy|deadlock detected|no space left on device|out of memory|browser executable.*(?:missing|exist)|ECONNREFUSED|permission denied", re.I)
     product_types = {"AssertionError", "AttributeError", "KeyError", "NameError", "TypeError", "ValueError", "IndexError", "LookupError", "ZeroDivisionError", "NotImplementedError", "IntegrityError", "ProgrammingError", "DataError"}
     result = set()
     infrastructure_nodes = set()
+    listed = set(listed) | set(quarantined)
     for receipt_path in sorted(directory.rglob("shard-receipt.json")):
         receipt = json.loads(receipt_path.read_bytes())
-        for report in receipt["reports"]:
-            for case in ET.parse(receipt_path.parent / report["file"]).getroot().iter("testcase"):
+        for row in receipt["reports"]:
+            report = receipt_path.parent / row["file"]
+            cases = list(ET.parse(report).getroot().iter("testcase"))
+            recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if allow_retry and "retry" in row else (),
+                                            allow_retry=allow_retry)
+            for case in cases:
                 error = case.find("error")
                 element = error if error is not None else case.find("failure")
                 if element is None:
                     continue
-                node = canonical_node(report_node(case))
+                raw_node = report_node(case)
+                node = canonical_node(raw_node)
                 message, text = element.get("message", ""), element.text or ""
-                if error is not None and re.search(r"failed (?:during|on) collect(?:ion|ing)|error collecting", message, re.I):
+                if collection_error(case):
                     raise ValueError("Collection error in test evidence: " + node)
-                if node in listed and not group:
+                if node in quarantined or (node in listed and not allow_retry):
                     continue
                 summary = message + "\n" + "\n".join(line for line in text.splitlines() if line.startswith("E "))
                 if infrastructure.search(summary):
-                    if not group:
+                    if not allow_retry:
                         raise ValueError("Infrastructure failure in test evidence: " + node)
                     infrastructure_nodes.add(node)
                     if len(infrastructure_nodes) > 1:
                         raise ValueError("Infrastructure failure in multiple test nodes: "
                                          + ", ".join(sorted(infrastructure_nodes)))
-                    if error is not None and node not in listed:
+                    if error is not None and node not in listed and raw_node not in recovered_raw:
                         result.add(node)
                     continue
-                if error is None or node in listed:
+                if error is None or node in listed or raw_node in recovered_raw:
                     continue
                 kinds = re.findall(r"(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception)\b", message or text)
                 kind = kinds[0].rsplit(".", 1)[-1] if kinds else "UNKNOWN"
@@ -421,28 +497,54 @@ def product_error_nodes(directory, *, listed=frozenset()):
     return result
 
 
-def mixed_listed_nodes(current, runs):
-    if not current or len(runs) != 2 or set(runs[0]) != set(runs[1]):
+def mixed_listed_nodes(current, runs, recovered=()):
+    if not current:
         return set()
-    return {node for node in set.union(*classes(current).values()) & set(runs[0])
-            if {run[node] for run in runs} in ({"passed", "failed"}, {"passed", "error"})}
+    listed = set.union(*classes(current).values())
+    mixed = listed & set(recovered)
+    if len(runs) == 2 and set(runs[0]) == set(runs[1]):
+        mixed.update(node for node in listed & set(runs[0])
+                     if {run[node] for run in runs} in ({"passed", "failed"}, {"passed", "error"}))
+    return mixed
 
 
-def report_outside(current, runs, output, exceptions=frozenset()):
+def report_outside(current, runs, output, exceptions=frozenset(), recovered=None, *, reruns=None, unobserved=(),
+                   quarantined=frozenset()):
+    recovered = recovered or {}
+    exceptions = set(exceptions) | set(quarantined)
+    reruns = reruns or {}
+
+    def recovery_note(node, default=""):
+        if node in reruns:
+            return f" | recovered on re-run (attempt {reruns[node]})"
+        return " | recovered on retry" if node in recovered else default
+
+    groups = classes(current) if current else {}
+    known = set().union(*groups.values())
     rows = outside_observations(current, runs, exceptions)
+    rows.extend({"node": node, "test_file": node.split("::", 1)[0], "observations": [recovered[node], "passed"],
+                 "red_count": 1} for node in set(recovered) - known - set(exceptions))
+    rows.sort(key=lambda row: row["node"])
     proposed = [{**row, "class": "unstable", "status": "PROPOSED"} for row in rows
                 if len(row["observations"]) == 2 and row["red_count"] == 1 and "passed" in row["observations"]]
-    unstable = classes(current)["unstable"] if current else set()
+    unstable = groups.get("unstable", set())
     listed = [{"node": node, "test_file": node.split("::", 1)[0],
-               "observations": [run[node] for run in runs], "class": "unstable",
+               "observations": [recovered[node], "passed"] if node in recovered else [run[node] for run in runs],
+               "class": "unstable",
                "status": "ALREADY_UNSTABLE" if node in unstable else "PROPOSED_REMARK"}
-              for node in sorted(mixed_listed_nodes(current, runs))]
+              for node in sorted(mixed_listed_nodes(current, runs, recovered) - set(quarantined))]
     (output / "outside-observations.json").write_text(encoded({"observations": rows, "unstable_count": len(proposed),
-        "proposed_list_entries": proposed, "listed_unstable_count": len(listed), "listed_unstable": listed}), encoding="utf-8")
-    lines = ["UNSTABLE " + row["node"] + " | test file " + row["test_file"] + " | red 1/2 | proposed for reviewed list" for row in proposed]
+        "proposed_list_entries": proposed, "listed_unstable_count": len(listed), "listed_unstable": listed,
+        "unobserved_attempts": list(unobserved)}), encoding="utf-8")
+    lines = ["UNSTABLE " + row["node"] + " | test file " + row["test_file"]
+             + recovery_note(row["node"], " | red 1/2")
+             + " | proposed for reviewed list" for row in proposed]
     lines.insert(0, "UNSTABLE outside-list nodes: " + str(len(proposed)))
     lines.append("UNSTABLE listed nodes: " + str(len(listed)))
-    lines.extend("UNSTABLE " + row["node"] + " | test file " + row["test_file"] + " | " + row["status"] for row in listed)
+    lines.extend("UNSTABLE " + row["node"] + " | test file " + row["test_file"] + " | " + row["status"]
+                 + recovery_note(row["node"]) for row in listed)
+    lines.extend("unobserved attempt | {suite} | shard {shard} | replica {replica} | attempt {attempt}".format(**row)
+                 for row in unobserved)
     for line in lines:
         print(line)
     if lines and os.getenv("GITHUB_STEP_SUMMARY"):
@@ -455,19 +557,85 @@ def stale_report_dir(output):
     return output if os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "push"} else None
 
 
+def write_stale_report(output, sha, nodes, *, reported=None):
+    run_id = os.environ["GITHUB_RUN_ID"]
+    if not re.fullmatch(r"[1-9][0-9]*", run_id) or not re.fullmatch(r"[a-f0-9]{40}", sha or ""):
+        raise ValueError("Stale report requires the producing run and commit")
+    report = {"run_id": run_id, "sha": sha, "nodes": sorted(nodes)}
+    if reported:
+        report["reported"] = dict(sorted(reported.items()))
+    (output / "stale-report.json").write_text(encoded(report), encoding="utf-8")
+
+
+def write_summary_lines(lines):
+    text = "\n".join(lines)
+    print(text)
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(text + "\n")
+
+
+def report_pr_stale(output, sha, lookup, nodes):
+    reported = lookup(nodes) if nodes else {}
+    if reported:
+        write_stale_report(output, sha, nodes, reported=reported)
+        write_summary_lines([f"- {node}: stale on dev (run {run_id}); removal candidate"
+                             for node, run_id in sorted(reported.items())])
+    return reported
+
+
+def report_quarantine(runs, quarantine, today):
+    passing = sum(all(run.get(node) == "passed" for run in runs) for node in quarantine)
+    failing = sorted(node for node in quarantine if any(run.get(node) in {"failed", "error"} for run in runs))
+    expired = expired_entries(quarantine, today)
+    write_summary_lines([f"quarantined and passing now: {passing}",
+                         f"quarantined and failing now: {len(failing)}",
+                         *(f"- {node}: quarantined-failing" for node in failing),
+                         f"expired quarantine (still active): {len(expired)}",
+                         *(f"- {row['nodeid']}: expired {row['expires']}, issue {row['issue']}" for row in expired)])
+
+
+def release_failure_list(current, quarantine):
+    """Apply the release ratchet to the reviewed classes regardless of their storage."""
+    current = {**current, "fails": list(current["fails"]), "unstable": list(current["unstable"])}
+    for node, row in quarantine.items():
+        kind = row["reason"].split(":", 1)[0].strip()
+        if kind not in CLASSES:
+            raise ValueError("Invalid quarantine failure class for release: " + node)
+        entry = {"node": node, "class": kind}
+        if kind == "unstable":
+            current["unstable"].append({**entry, "expires_on": row["expires"]})
+        else:
+            current["fails"].append(entry)
+    return current
+
+
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
+             group=False, merge_group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
-             selected_files=None, stale_output=None):
-    today = today or datetime.now(timezone.utc).date()
+             selected_files=None, stale_output=None, expected_replicas=2, stale_sha=None,
+             observe_stale=None, quarantine=None, release=False):
+    today = today or utc_today()
+    quarantined = set() if release else set(quarantine or ())
+    if quarantine:
+        report_quarantine(runs, quarantine, today)
+        if release:
+            blockers = sorted(node for node, row in quarantine.items() if row["blocker"])
+            if blockers:
+                raise ValueError("Release blockers remain in quarantine: " + ", ".join(blockers))
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
-    groups = classes(current)
+    if release and quarantine:
+        current = release_failure_list(current, quarantine)
+        if base is not None:
+            base = release_failure_list(base, quarantine)
+    groups = {kind: nodes - quarantined for kind, nodes in classes(current).items()}
     if len(groups["unstable"]) > limit:
         raise ValueError("Unstable entry cap exceeded")
     if len(groups["cleanup"]) > current["cleanup_cap"]:
         raise ValueError("Cleanup entry cap exceeded")
     if any(date.fromisoformat(row["expires_on"]) <= today for row in current["unstable"]):
-        raise ValueError("Expired unstable entries: fix them or renew them through review")
+        raise ValueError("Expired unstable entries require a fix and removal from the allowance list")
     current_nodes = set.union(*groups.values())
     if base is None:
         if not bootstrap_add_only or current != bootstrap_candidate:
@@ -475,42 +643,47 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     else:
         require_class_ratchet(current, base)
         moved = {row["node"] for row in base["fails"]} & groups["unstable"]
-        if moved and (len(runs) != 2 or not moved <= differing(runs)):
-            raise ValueError("Moving failures to unstable requires two full runs with different results")
+        if moved:
+            if merge_group and not moved <= set(recovered):
+                raise ValueError("Moving failures to unstable requires verified recovery on retry")
+            if not merge_group and (len(runs) != 2 or not moved <= differing(runs)):
+                raise ValueError("Moving failures to unstable requires two full runs with different results")
+    if group and base is not None:
+        expected_replicas = 1
     observed = set(runs[0])
-    mixed_listed = mixed_listed_nodes(current, runs)
+    mixed_listed = mixed_listed_nodes(current, runs, recovered)
     problems = []
-    outside = outside_observations(current, runs, exceptions)
-    transient = {row["node"] for row in outside if len(runs) == 2 and set(runs[0]) == set(runs[1])
+    outside = outside_observations(current, runs, set(exceptions) | quarantined)
+    transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
                  and row["red_count"] == 1 and "passed" in row["observations"]}
-    if outside and (len(runs) != 2 or any(set(run) != observed for run in runs)):
-        problems.append("New failures outside the known-failure list require two complete replicas")
+    if outside and (len(runs) != expected_replicas or any(set(run) != observed for run in runs)):
+        required = "two complete replicas" if expected_replicas == 2 else "one complete replica"
+        problems.append("New failures outside the known-failure list require " + required)
     expected = current_nodes if selected_files is None else {
         node for node in current_nodes if node.split("::", 1)[0] in selected_files}
     if expected - observed:
         problems.append("Vanished listed nodes: delete their lines from ci/known-failures.json")
-    stable = groups["baseline"] | groups["cleanup"] | groups["baseline-error"]
+    stable = (groups["baseline"] | groups["cleanup"] | groups["baseline-error"]) - set(recovered)
+    all_stale = {node for node in stable if len(runs) == expected_replicas
+                 and all(run.get(node) == "passed" for run in runs)}
+    reported = all_stale & set(observe_stale(all_stale) or ()) if observe_stale is not None else set()
     if stale_output is not None:
-        stale = sorted(node for node in stable if len(runs) == 2 and all(run.get(node) == "passed" for run in runs))
-        (stale_output / "stale-report.json").write_text(encoded(stale), encoding="utf-8")
-        lines = ["Stale passing failure entries: " + str(len(stale)), *("- " + node for node in stale)]
-        print("\n".join(lines))
-        if os.getenv("GITHUB_STEP_SUMMARY"):
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                summary.write("\n".join(lines) + "\n")
+        write_stale_report(stale_output, stale_sha, all_stale)
+        write_summary_lines(["Stale passing failure entries: " + str(len(all_stale)),
+                             *("- " + node for node in sorted(all_stale))])
     for run in runs:
         if any(run[node] == "skipped" for node in current_nodes & observed):
             problems.append("A listed test did not execute; skipped is not passing")
         errors = {node for node, outcome in run.items() if outcome == "error"}
-        new_errors = errors - groups["baseline-error"] - mixed_listed - (transient & set(product_errors))
+        new_errors = errors - quarantined - groups["baseline-error"] - mixed_listed - (transient & set(product_errors))
         if new_errors:
             problems.append("New errors outside the baseline-error class: " + ", ".join(sorted(new_errors)))
         stale = stable & {node for node, outcome in run.items() if outcome == "passed"}
-        stale -= mixed_listed
+        stale -= mixed_listed | reported
         if stale and stale_output is None:
             problems.append("Stale passing failure entries: delete their lines from ci/known-failures.json: " + ", ".join(sorted(stale)))
         failures = {node for node, outcome in run.items() if outcome == "failed"}
-        new_failures = failures - (current_nodes - groups["baseline-error"]) - set(exceptions) - transient - mixed_listed
+        new_failures = failures - quarantined - (current_nodes - groups["baseline-error"]) - set(exceptions) - transient - mixed_listed
         if new_failures:
             problems.append("New failures outside the known-failure list: " + ", ".join(sorted(new_failures)))
     if problems:
@@ -550,7 +723,8 @@ def verify_privacy(data, matcher_path, table_path, staff_path):
     return {**policy.hashes(), "matcher_sha256": matcher_hash}
 
 
-def main():
+def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, nightly=False,
+         quarantine=None, release=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--reports", type=Path)
@@ -596,14 +770,20 @@ def main():
               root_path=args.root_evidence, removed_path=args.removed_tests)
     if plan["replicas"] != ([1] if plan["smoke"] else ctx["replicas"]) or plan["base_sha"] != ctx["base_sha"]:
         raise ValueError("Aggregate context differs from the checked plan")
-    runs = collect_reports(plan, args.reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+    if evidence is None:
+        evidence = ReportEvidence()
+    if runs is None:
+        runs = collect_reports(plan, args.reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                               args.output, evidence=evidence)
     add_only = (os.getenv("GITHUB_EVENT_NAME") in {"pull_request", "merge_group"}
                 and git("diff", "--name-status", "--no-renames", ctx["base_sha"], "HEAD") == "A\t" + KNOWN)
     tree = git("rev-parse", ctx["base_sha"] + "^{tree}") if add_only else plan["tree"]
     args.output.mkdir(parents=True, exist_ok=True)
     selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
                       if "selection" in plan else None)
-    listed = set.union(*classes(ctx["current"]).values()) if ctx["current"] else set()
+    quarantined = (quarantine or {}).keys()
+    listed = listed_nodes(ctx["current"]) | quarantined
+    retry = retry_run(plan)
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):
@@ -614,7 +794,11 @@ def main():
             print("Frozen baseline sha256=" + baseline_sha)
             if exceptions:
                 print("::warning::Applying " + str(len(exceptions)) + " explicit hosted environment exceptions; evidence and review references are committed")
-            groups = classified_results(runs, baseline, exceptions)
+            if product_errors is None:
+                product_errors = set() if args.capture_root else product_error_nodes(
+                    args.reports, listed=listed, allow_retry=retry, quarantined=() if release else quarantined)
+            recovered = evidence.recovered
+            groups = classified_results(runs, baseline, exceptions, recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
             (args.output / "cleanup-failures.json").write_text(json.dumps(sorted(groups["cleanup"]), indent=2) + "\n", encoding="utf-8")
             comparison = {"baseline_sha256": baseline_sha, "env_exceptions_sha256": exception_sha, "counts": counts}
@@ -631,19 +815,29 @@ def main():
                 print("Root class counts: " + json.dumps(counts, sort_keys=True))
                 return
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
-            require_root_binding(ctx["current"], root_evidence, root_sha)
-            product_errors = product_error_nodes(args.reports, listed=listed)
-            report_outside(ctx["current"], runs, args.output, exceptions)
+            comparison_list = release_failure_list(ctx["current"], quarantine) if release and quarantine else ctx["current"]
+            require_root_binding(comparison_list, root_evidence, root_sha)
+            report_outside(comparison_list, runs, args.output, exceptions, recovered,
+                           reruns=evidence.reruns, unobserved=evidence.unobserved,
+                           quarantined=() if release else quarantined)
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,
                                         exceptions=exceptions) if ctx["bootstrap"] else ctx["current"])
             if candidate:
                 (args.output / "known-failures.candidate.json").write_text(encoded(candidate), encoding="utf-8")
+            observe_stale = None
+            if stale_lookup is not None:
+                observe_stale = partial(report_pr_stale, args.output, plan["sha"], stale_lookup)
+            elif nightly:
+                observe_stale = partial(write_stale_report, args.output, plan["sha"])
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
+                     group=retry, merge_group=os.getenv("GITHUB_EVENT_NAME") == "merge_group",
+                     recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
-                     stale_output=stale_report_dir(args.output))
+                     stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]),
+                     stale_sha=plan["sha"], observe_stale=observe_stale, quarantine=quarantine, release=release)
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:

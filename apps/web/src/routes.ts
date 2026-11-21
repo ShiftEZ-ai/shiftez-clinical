@@ -14,9 +14,13 @@ export function scheduleView(shown=''):string{
   return mode==='year'?'year':mode==='person'?'people':mode==='coverage'?'coverage':mode==='list'?'list':range==='month'?'month':range==='day'?'day':'week';
 }
 
+/** A lookup map built from an object literal, with no Object.prototype behind it: a key read from an address
+ *  (#constructor, #__proto__, #toString…) is simply absent, never an inherited member. */
+export const withoutPrototype=<T extends object>(map:T):T=>Object.setPrototypeOf(map,null);
+
 /** Old address → current address: ONE map for every merged page. Read before routing, by navigate(), first load and the
  *  hashchange handler. A function entry also carries the old address's parts (e.g. a rota id and view) to the new page. */
-export const ROUTE_ALIASES:Record<string,Alias>={
+export const ROUTE_ALIASES:Record<string,Alias>=withoutPrototype({
   overview:'home',today:'home',
   availability:'requests',swaps:'requests?type=swap',
   directory:'people',
@@ -31,11 +35,11 @@ export const ROUTE_ALIASES:Record<string,Alias>={
   calendar:(_,c)=>routeHash('schedule',['people',c.today],{leave:'1'}).slice(1),
   // A publication link opens that version read-only; otherwise today's published duties (planners: the month).
   published:(_,c)=>routeHash('schedule',[c.planner?'month':'week',...(c.publication?[]:[c.today])],{source:c.publication}).slice(1),
-};
+});
 
 /** Pages made of tabs: each tab keeps the roles of the page it replaced. A page is open to anyone who may see one tab. */
 /** `phone`: the tab opens on a phone (phone scope, maintenance); a tabbed page fits a phone through its phone tabs only. */
-export const PAGE_TABS:Record<string,{key:string;label:string;roles:string[];phone?:boolean}[]>={
+export const PAGE_TABS:Record<string,{key:string;label:string;roles:string[];phone?:boolean}[]>=withoutPrototype({
   insights:[
     {key:'fairness',label:'Fairness',roles:[CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN,CAPABILITY.AUDITOR,CAPABILITY.PROGRAMME_LEAD]},
     {key:'workload',label:'Workload',roles:[CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.AUDITOR]},
@@ -55,7 +59,7 @@ export const PAGE_TABS:Record<string,{key:string;label:string;roles:string[];pho
     {key:'audit',label:'Audit log',roles:[CAPABILITY.AUDIT_READ]},
     {key:'feedback',label:'Feedback',roles:[CAPABILITY.FEEDBACK_READ_ALL]},
   ],
-};
+});
 
 export interface Route {page:string;parts:string[];query:URLSearchParams}
 
