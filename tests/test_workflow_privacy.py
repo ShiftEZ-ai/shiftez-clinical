@@ -145,15 +145,18 @@ class DefaultBranchTests(unittest.TestCase):
         paths = [*sorted((self.REPO / ".github/workflows").glob("*.y*ml")), *sorted((self.REPO / ".github/scripts").glob("*.py")),
                  *sorted((self.REPO / "ci").glob("*.py")), self.REPO / "scripts/affected_tests.py"]
         self.assertGreater(len(paths), 10)
-        triggers = 0
+        offenders, triggers = [], 0
         for path in paths:
             lines = path.read_text(encoding="utf-8").splitlines()
             for number, line in enumerate(lines):
-                with self.subTest(path=path.relative_to(self.REPO).as_posix(), line=number + 1):
-                    self.assertNotIn("refs/heads/dev", line)
-                    if line.strip() == "- dev":
-                        self.assertEqual(lines[number - 2:number + 2], self.TRIGGER)
-                        triggers += 1
+                where = path.relative_to(self.REPO).as_posix() + ":" + str(number + 1)
+                if "refs/heads/dev" in line:
+                    offenders.append(where)
+                if line.strip() == "- dev":
+                    triggers += 1
+                    if lines[number - 2:number + 2] != self.TRIGGER:
+                        offenders.append(where)
+        self.assertEqual(offenders, [])
         self.assertEqual(triggers, 3)
         for name in ("ci.yml", "dependency-graph.yml", "image.yml"):
             doc = yaml.load((self.REPO / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
