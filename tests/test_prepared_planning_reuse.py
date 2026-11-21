@@ -88,7 +88,7 @@ def test_scale_preparation_acquires_inputs_outside_writer_once(harness, monkeypa
 def test_replayed_snapshots_are_detached_and_equal_to_canonical_inputs(harness):
     from apps.api import models as m
     from apps.api.db import transaction
-    from apps.api.services.planning_preparation import bind
+    from apps.api.services.planning_preparation import bind, restore_replay
     h = harness
     workspace = h.shift(h.workspace())['workspace']
     plan = {'seed': m.uid(), 'at': m.now(), 'kind': 'shift.update', 'checks': []}
@@ -97,6 +97,8 @@ def test_replayed_snapshots_are_detached_and_equal_to_canonical_inputs(harness):
         bind(db, plan)
         prepared = snapshots.domain_snapshot(db, row)
         assert prepared == snapshots._domain_snapshot(db, row)
+    restore_replay(plan)
+    assert plan['restored_snapshots']
     for _ in range(2):
         with transaction(h.app.state.engine) as db:
             row = db.get(m.Workspace, workspace['id'])
@@ -105,6 +107,7 @@ def test_replayed_snapshots_are_detached_and_equal_to_canonical_inputs(harness):
             assert replayed == snapshots._domain_snapshot(db, row) == prepared
             replayed['people'].clear()
             replayed['shifts'].clear()
+            assert not plan['restored_snapshots']
 
 
 def test_preconditioned_edit_replays_the_same_snapshot_sequence(harness, monkeypatch):

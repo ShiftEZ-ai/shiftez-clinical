@@ -1480,7 +1480,8 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         cached = state['prepared_snapshots'].get(index)
         if (cached and cached[0] == key and currency_match(stamp, stamp)
                 and _prepared_event_currency_matches(db, cached[2])):
-            return pickle.loads(cached[1])
+            restored = state.get('restored_snapshots') or {}
+            return restored.pop(index) if index in restored else pickle.loads(cached[1])
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',

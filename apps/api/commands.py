@@ -1014,6 +1014,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     continue
                 raise
 
+    if planning_plan is not None and command.kind == 'shift.update':
+        planning_preparation.restore_replay(planning_plan)
+
     changed_department = []
 
     def operation(db):
