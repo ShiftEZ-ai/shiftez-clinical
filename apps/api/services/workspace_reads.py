@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, literal, select, union_all
 from sqlalchemy.orm import object_session
 from apps.api import models as m
 from apps.api.snapshots import DRAFT_POLICY_BASIS, draft_policy_hint
@@ -19,40 +19,45 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
     row revisions or the organisation input counters, so a conditional read can stop
     before fingerprinting, wishes, review projections and session serialisation.
     """
-    department = db.get(m.Department, workspace.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
-    validation_stamp = db.scalar(select(m.WorkspaceReadProjection.stamp).where(
+    department, organisation = m.Department, m.Organisation
+    stored_check = select(m.WorkspaceReadProjection.stamp).where(
         m.WorkspaceReadProjection.workspace_id == workspace.id,
         m.WorkspaceReadProjection.audience == CANONICAL_AUDIENCE,
-        m.WorkspaceReadProjection.kind == 'stored_check'))
+        m.WorkspaceReadProjection.kind == 'stored_check').scalar_subquery()
+    parent_inputs = db.execute(select(
+        stored_check, department.revision, department.catalogue_revision, department.leave_reason_display,
+        organisation.revision, organisation.input_revision, organisation.availability_revision,
+    ).select_from(department).join(organisation, organisation.id == department.organisation_id)
+        .where(department.id == workspace.department_id)).one()
+    validation_stamp, *parent_revisions = parent_inputs
     if validation_stamp is None:
         # Legacy rows may lack the projection; use the writer's full validation stamp.
         validation_stamp = check_stamp(db, workspace)
     stamp = [workspace.revision, workspace.content_revision, workspace.status,
-             validation_stamp, department.revision, department.catalogue_revision,
-             department.leave_reason_display, organisation.revision,
-             organisation.input_revision, organisation.availability_revision, *draft_policy_hint(workspace).values()]
+             validation_stamp, *parent_revisions, *draft_policy_hint(workspace).values()]
     if include_check_state:
         from .rota_summary import validation_job_stamp
         stamp.append(validation_job_stamp(db, workspace_id=workspace.id))
     if include_job_state:
         from .job_reads import job_stamp
         stamp.append(job_stamp(db, workspace_id=workspace.id))
-    for cls, column in ((m.Approval, m.Approval.workspace_id),
-                        (m.ReviewDecision, m.ReviewDecision.workspace_id),
-                        (m.ChangeSet, m.ChangeSet.workspace_id),
-                        (m.WorkspaceForkBase, m.WorkspaceForkBase.workspace_id),
-                        (m.WorkspaceAccessVersion, m.WorkspaceAccessVersion.workspace_id),
-                        (m.SwapRequest, m.SwapRequest.workspace_id),
-                        (m.PublicationChangeList, m.PublicationChangeList.workspace_id)):
-        stamp.append(tuple(db.execute(select(func.max(cls.revision), func.max(cls.created_at)).where(
-            column == workspace.id)).one()))
+    metadata_queries = []
+    for index, (cls, column) in enumerate(((m.Approval, m.Approval.workspace_id),
+                                          (m.ReviewDecision, m.ReviewDecision.workspace_id),
+                                          (m.ChangeSet, m.ChangeSet.workspace_id),
+                                          (m.WorkspaceForkBase, m.WorkspaceForkBase.workspace_id),
+                                          (m.WorkspaceAccessVersion, m.WorkspaceAccessVersion.workspace_id),
+                                          (m.SwapRequest, m.SwapRequest.workspace_id),
+                                          (m.PublicationChangeList, m.PublicationChangeList.workspace_id))):
+        metadata_queries.append(select(literal(index).label('kind'), func.max(cls.revision).label('revision'),
+                                       func.max(cls.created_at).label('created_at')).where(column == workspace.id))
     for cls in (m.AuditEvent, m.ReviewRoute, m.ReviewDelegation, m.Publication):
-        query = select(func.max(cls.revision), func.max(cls.created_at)).where(
-            cls.department_id == actor.department_id)
+        query = select(literal(len(metadata_queries)).label('kind'), func.max(cls.revision).label('revision'),
+                       func.max(cls.created_at).label('created_at')).where(cls.department_id == actor.department_id)
         if cls is m.AuditEvent:
             query = query.where(cls.target_id == workspace.id)
-        stamp.append(tuple(db.execute(query).one()))
+        metadata_queries.append(query)
+    stamp.extend((revision, created_at) for _, revision, created_at in sorted(db.execute(union_all(*metadata_queries))))
     parent = db.execute(select(m.Workspace.revision, m.Workspace.content_revision).join(
         m.WorkspaceForkBase, m.Workspace.id == m.WorkspaceForkBase.source_workspace_id).where(
             m.WorkspaceForkBase.workspace_id == workspace.id)).first()

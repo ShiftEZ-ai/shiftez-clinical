@@ -2997,12 +2997,12 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             from .services.conditional_reads import conditional_response
-            tag = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
-            cached = conditional_response(request, tag)
+            validator = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+            cached = conditional_response(request, validator[0])
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
-            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on)
+            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on, validator=validator)
 
     @app.get("/api/fairness/exposure", response_model=s.FairnessExposure)
     def fairness_exposure(request: Request, response: Response, rows: str | None = Query(None, max_length=20000), cols: str | None = Query(None, max_length=20000),

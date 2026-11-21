@@ -282,12 +282,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_audit_rule_context.py::test_additional_rules_are_counted_context_with_complete_readable_effects[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_audit_schedule_resize.py::test_panel_replacement_keeps_or_discards_the_rule_form[case-chchkifohodpdgebfapjdbaophflgjpgjbodchojjegmibboonibbjdboacmdnlh]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1200,18 +1194,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_deployment_preflight.py::test_production_keyless_password_preflight_refusal_does_not_depend_on_legacy_flag[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_deployment_preflight.py::test_production_keyless_password_preflight_refusal_does_not_depend_on_legacy_flag[case-mojafnmhhgpnfnkfdhbmeaefjfnmiemgolelnabcinibmdcjppdhkkchkgdgcbjp]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_environment_contracts.py::test_authored_environment_journeys_reference_existing_local_functions[case-bflhidcbmlileifajepehoeihjiepcnibeomobobmliiefbdghafocjbnlablmpa]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1279,12 +1261,6 @@
     {
       "class": "baseline",
       "node": "tests/test_events_access_fingerprint.py::test_event_attendance_access_change_stales_only_blocking_generation[case-phkklmeniipmhgbkpndcccklngjpkbiacoikcphkdaebedlgckmpcljfjnpcdeaa]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_fairness_goals_performance.py::test_supervision_fairness_goals_at_department_scale",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
