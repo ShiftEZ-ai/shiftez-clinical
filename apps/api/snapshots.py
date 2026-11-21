@@ -98,6 +98,8 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
+    # `validation` stamps only when a settled rota's stored `wishes` reservation
+    # changes (db._wish_reservation_changes); other check saves do not.
     ('workspaces', m.Workspace, 'general', 'department',
         SnapshotInputRead(frozenset({'status', 'validation', 'archived_at'}), insert_filter=_workspace_reserves_wishes), frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',

@@ -274,6 +274,24 @@ def _snapshot_projection_changes(session, shape, row, changes=None):
             or projection(before) != projection(after))
 
 
+def _wish_reservation(validation):
+    wishes = validation.get('wishes') if isinstance(validation, dict) else None
+    # The reader sorts reserved wishes by unique id, so list order is not part of the read.
+    return {wish['id']: wish for wish in wishes} if isinstance(wishes, list) else wishes
+
+
+def _wish_reservation_changes(row, name, old, new):
+    """snapshot_wishes reads a settled rota's stored check `wishes` as every other rota's wish reservation.
+
+    `validation` stays excluded otherwise: draft check saves and unchanged reservations do not stamp.
+    """
+    from . import models as m
+    from .services.wishes import SETTLED
+    if name != 'validation' or not isinstance(row, m.Workspace) or row.status not in SETTLED:
+        return False
+    return old is NO_VALUE or new is NO_VALUE or _wish_reservation(old) != _wish_reservation(new)
+
+
 @event.listens_for(Session, 'before_flush')
 def stamp_snapshot_inputs(session, _flush_context, _instances):
     """Every registry mutation stamps unless all changed attributes are excluded."""
@@ -298,9 +316,11 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
             continue
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
-            if not any(attribute.history.has_changes() and _snapshot_attribute_changes(
-                    attribute.key, attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,
-                    getattr(row, attribute.key), exclusions) for attribute in state.attrs):
+            if not any(attribute.history.has_changes() and (
+                    _snapshot_attribute_changes(attribute.key, old, getattr(row, attribute.key), exclusions)
+                    or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))
+                    for attribute in state.attrs
+                    for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)):
                 continue
             if not _snapshot_projection_changes(session, shape, row):
                 continue
@@ -353,7 +373,8 @@ def stamp_snapshot_input_statement(execution):
     def changed_values(row_parameters):
         return {name: row_parameters.get(value.key, value.value) if isinstance(value, BindParameter) else NO_VALUE
                 for name, value in values.items()}
-    if execution.is_update and values and set(values) <= exclusions:
+    if execution.is_update and values and set(values) <= exclusions and not (
+            cls.__tablename__ == 'workspaces' and 'validation' in values):
         return
     if session.autoflush and execution.execution_options.get('autoflush', True):
         session.flush()
@@ -421,6 +442,7 @@ def stamp_snapshot_input_statement(execution):
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
                 if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
+                                       or _wish_reservation_changes(row, name, getattr(row, name), value)
                                        for name, value in changes.items()):
                     continue
                 if not _snapshot_projection_changes(session, shape, row, changes):
