@@ -277,7 +277,8 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     from .published_changes import validation_scope as published_scope
     amendment_scope = published_scope(db, workspace, data)
     checked = {**data, '_distribution_cache': {}, '_workload_normalization_cache': {},
-               '_scope_interval_cache': {}, '_policy_applies_cache': {}, '_allocation_match_cache': {},
+               '_workload_matches_cache': {}, '_scope_interval_cache': {}, '_policy_applies_cache': {},
+               '_allocation_match_cache': {},
                '_policy_applies_people': True}
     if _overlap_witness is not None:
         checked['_overlap_witness'] = _overlap_witness
