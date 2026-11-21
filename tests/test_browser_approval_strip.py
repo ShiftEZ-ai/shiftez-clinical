@@ -158,7 +158,7 @@ def test_approved_stale_rota_note_and_reopen_follow_the_actor(browser, live_serv
         expect(approver_bar.get_by_role('button', name='Reopen as draft', exact=True)).to_have_count(0)
         note = approver_bar.locator('.health-pill.info').filter(has_text='Waiting for the coordinator')
         expect(note).to_be_visible()
-        expect(note).to_have_attribute('data-tip', re.compile(r'the coordinator reopens it'))
+        expect(note).to_have_attribute('data-tip', re.compile(r'The coordinator reopens it'))
 
         show(coordinator, f'schedule/week/2026-10-04?edit={w["id"]}')
         coordinator_bar = coordinator.locator('.topbar .planner-bar')
