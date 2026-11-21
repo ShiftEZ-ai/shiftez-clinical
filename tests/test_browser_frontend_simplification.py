@@ -14,6 +14,7 @@ from .test_browser import (minutes_words, browser, live_server, sign_in, navigat
 from .test_browser_autoschedule_review import FOUR, _open
 from .test_browser_cp_sat import cp_server, _review
 from .test_browser_legends import two_duties, key
+from .legend_guard import legend_entries
 from .test_browser_pairs import paired
 from .browser_acceptance_support import shot
 from .test_fill_options import companion_case
@@ -77,8 +78,9 @@ def test_configured_duty_times_then_by_and_legend_survive_saved_view_edits(brows
                 expect(team.locator('button.pchip')).to_have_count(2)
             legend = key(page)
             expect(legend).to_have_count(1)
-            expect(legend).to_contain_text('Night cover')
-            legend.get_by_role('button', name='Change what is shown', exact=True).click()
+            with legend_entries(page, legend) as entries:
+                expect(entries.filter(has_text='Night cover')).to_have_count(1)
+            view_settings(bar)
             expect(page.get_by_role('dialog', name='View settings', exact=True)).to_be_visible()
             expect(bar.get_by_role('button', name=re.compile(r'^View settings: '))).to_have_attribute('aria-expanded', 'true')
             shot(page, f"ux-first-{layout}-settings-{view['width']}-{scheme}", full_page=False)
@@ -223,7 +225,7 @@ def test_selected_success_keeps_whole_rota_blockers_and_comparison_requires_fres
             after = job['result']['fix_list_after']
             # One must-fix cause per whole-rota problem: the selection's success does not hide any of them.
             assert job['result']['fix_list_before']['summary']['must'] == 1 and after['summary']['must'] == 3
-            page.route('**/api/workspaces/' + w['id'], lambda route: route.fulfill(json=drawn))
+            page.route('**/api/workspaces/' + w['id'] + '?view=schedule', lambda route: route.fulfill(json=drawn))
             page.route('**/api/jobs/' + latest['id'], lambda route: route.fulfill(json=result))
             page.reload()
             open_rota(page, w['id'])

@@ -1,15 +1,5 @@
 [
   {
-    "nodeid": "tests/test_accounts.py::test_server_invite_admin_prints_a_one_time_link",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-13",
-    "issue": 745,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_assignment_override_reason.py::test_changing_existing_participation_into_a_zero_maximum_needs_reason[case-oljdfbfgdfngppiehdemoiladdmnfnjddmphkpcghgboddhgeenobloamgmaocpe]",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -27,26 +17,6 @@
     "expires": "2026-12-14",
     "issue": 776,
     "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_autosched_completion_p0.py::test_completion_allowance_is_cumulative_and_separate_from_stopped_search",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-06",
-    "issue": 723,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_autosched_completion_p0.py::test_completion_watcher_enforces_cap_without_solution_callbacks",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-06",
-    "issue": 723,
-    "milestone": "v0.1.0",
     "blocker": false
   },
   {
@@ -940,26 +910,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_fe_c13.py::test_a_phone_month_of_my_duties_fits_with_codes_and_the_day_grid_says_each_fact_once[case-jegjmkfmiinlbjkakefjhnepomhhjehlfkboffoemogkcdeghonfbdjnmpgbfkfm]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_fe_c13.py::test_a_phone_month_of_my_duties_fits_with_codes_and_the_day_grid_says_each_fact_once[case-jjgplebloiklppimphfgnffoaobbfpbomkknlklgmcckpnndhfakleobdgookoff]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_browser_fe_c3.py::test_the_approvers_home_names_an_amendment_with_its_changes",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -1080,46 +1030,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-enbloijbadnkcecgmakmdfggjijbpdjihkjpfgegjcedhpjomaiianlgpcijmonh]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-jhoeiaogjbedkflkhehlpclcfdegbccbjmammgeoopgaenfbiglmjfoobagjanjl]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_frontend_simplification.py::test_configured_duty_times_then_by_and_legend_survive_saved_view_edits[case-kljfloblomgpmhhiidjnligafgeoledjeldchdbgbofnljconmmkiacfacmjheji]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_browser_frontend_simplification.py::test_reloaded_run_setup_rechecks_current_bounds_and_keeps_jobs_server_authoritative",
     "reason": "unstable: Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
     "owner": "maintainers",
@@ -1190,37 +1100,7 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_legend_guard_gaps.py::test_the_session_panels_rule_rows_are_keyed",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-05",
-    "issue": 842,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_browser_legends.py::test_empty_planner_has_no_legend",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_legends.py::test_planner_legend_follows_filters_colour_by_names_and_layouts[case-bebaejngncfbocbofoojkefkilechkkimkmmnbpjfjgppfgpimcddkhapgpebjge]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_legends.py::test_planner_legend_follows_filters_colour_by_names_and_layouts[case-kjikidfnckdbaocffgpkkajibcfedbkmkipgbjdabafmmajfckdjkiikbgiicfgp]",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
     "added": "2026-11-19",
@@ -1690,16 +1570,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_rules_sheet.py::test_rule_rows_marks_pills_and_reach[case-mefjihmgaddfkfjkobbngmochihpgjnkogcaopoekmgganebnkmmkokmijglddfb]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_browser_schedule.py::test_every_role_opens_the_schedule_on_desktop_and_phone_in_light_and_dark[case-andimlfjdclfhgiemkokifalgpldkcieibmdfmmonlfkfklncemcaojclmihpnjj]",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -1767,16 +1637,6 @@
     "expires": "2026-12-13",
     "issue": 985,
     "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_browser_schedule_layouts.py::test_month_is_the_week_grid_in_bands_with_more",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
     "blocker": false
   },
   {
@@ -2060,16 +1920,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_where_is_everyone.py::test_the_legend_lists_the_marks_drawn_and_hides_from_view_settings",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-17",
-    "issue": 89,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_bulk_dev_migration_upgrade.py::test_bulk_upgrade_from_dev_head_preserves_settings_and_evidence[case-kagopfmoleekcdppnpdfeoodpdlcepelpklgfhbcfocjihdiniaojbclpgphleac]",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -2296,16 +2146,6 @@
     "added": "2026-11-19",
     "expires": "2026-12-08",
     "issue": 830,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_data_safety.py::test_initial_seed_template_replaces_visible_default_without_losing_workload",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
     "milestone": "v0.2.0",
     "blocker": false
   },
@@ -2760,146 +2600,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_initial_seed.py::test_changed_seed_is_refused_after_first_load",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_late_validation_failure_rolls_back_all_seed_records",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-dafgcnlfdigficmdhopledbhdfimbdhbejhodmcgckejkckodhepbfnblcodfoel]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-ffdkkgffedgkjfpopicdicbpamigkajodlkmipbbhhcpcghimnkdgjjkdpblhdfi]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-kjnnjpbjmboclilpjgbkkmilgdnfcehakdeoigijebpglmaigohcakncglopnilf]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_missing_current_module_or_transitive_dependency_fails_atomically[case-ollcbmpocbdapmjpgmaabebniabdjkkioniglbjgomgmpkmpfcdgpcpjchffeaoo]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_mounted_seed_bundle_retains_a_predecessor_runtimes_defaults",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_nonempty_installation_is_refused_without_changes",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_reseed_preserves_operator_edits_records_and_rule_lifecycle[case-ijcejbcbbdcggaalhhpaegecbipodipaebifhoglimlfcfdffipadpogpibmoeal]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_reseed_preserves_operator_edits_records_and_rule_lifecycle[case-lmhpjcbciombmelmaahgbdodenhhcpdjnoeidkfmdigfijahaicnadpgicnbcaaf]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_seed_creates_reviewable_configuration_and_linked_audit_only[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_seed_creates_reviewable_configuration_and_linked_audit_only[case-mojafnmhhgpnfnkfdhbmeaefjfnmiemgolelnabcinibmdcjppdhkkchkgdgcbjp]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_seed_requires_current_schema_and_never_migrates",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_initial_seed.py::test_system_command_run_updates_seeded_department",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 701,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_lifecycle_read_performance.py::test_lifecycle_and_fairness_at_department_scale",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -3177,26 +2877,6 @@
     "expires": "2026-12-15",
     "issue": 717,
     "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-04",
-    "issue": 76,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-04",
-    "issue": 76,
-    "milestone": "v0.1.0",
     "blocker": false
   },
   {

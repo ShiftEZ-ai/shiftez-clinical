@@ -63,7 +63,7 @@ UNAVAILABLE_OUTCOME: dict[str, Literal['definite', 'unknown']] = {
 LiveScope = Literal["workspace", "publication", "rules", "catalogue", "people", "availability", "requests", "swaps", "inbox", "jobs", "settings", "access", "feedback"]
 WorkerLiveness = Literal['running', 'not_responding', 'never_seen']
 JobStatus = Literal['queued', 'running', 'succeeded', 'failed', 'cancelled']
-WorkspaceDetailView = Literal['full', 'compact']
+WorkspaceDetailView = Literal['full', 'compact', 'schedule']
 
 INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 JOB_PRIVATE_CHECK_FIELDS = (*sorted(INTERNAL_CHECK_KEYS), 'fix_list_context', 'fix_list_state', 'fix_list_delta',
@@ -1948,6 +1948,7 @@ class PersonInput(Schema):
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     active: bool = Field(default=True, json_schema_extra={"bulk": True})
+    inactive_from: date | None = Field(default=None, json_schema_extra={"bulk": True})
     title: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     work_email: Email | Literal[""] = ""
     work_phone: str = Field(default="", max_length=80, json_schema_extra={"bulk": True})
