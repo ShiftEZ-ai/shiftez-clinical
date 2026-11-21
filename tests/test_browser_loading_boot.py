@@ -8,7 +8,9 @@ import re
 from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, bundle_file, route_fetch, reconnect  # noqa: F401
+from .test_browser import (  # noqa: F401
+    browser, live_server, sign_in, navigate, bundle_file, route_fetch, reconnect, holding, wait_held,
+)
 
 pytestmark = pytest.mark.browser
 
@@ -107,20 +109,12 @@ def test_a_role_change_waits_for_an_open_form(browser, live_server):
         context.close()
 
 
-def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
+def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server, h):
     """F-L2: a real role change never removes a dialog, even one without changes (the browser can close one for a task
     before it opens again); the restart waits until no dialog is left, then says why the page started again."""
     context, page = sign_in(browser, live_server, 'staff')
     try:
-        page.route('**/api/events', lambda route: route.abort())  # no live stream: the 10 s check reads the pulse
-
-        def other_roles(route):
-            response = route_fetch(route)
-            body = response.json()
-            body['roles'] = sorted({*body['roles'], 'auditor'})
-            route.fulfill(response=response, body=json.dumps(body))
-        page.clock.install()
-        page.reload()
+        page.route('**/api/events', lambda route: route.abort())
         navigate(page, 'requests')
         page.evaluate('() => document.activeElement?.blur()')
         page.keyboard.press('?')
@@ -128,11 +122,20 @@ def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
         expect(dialog).to_be_visible()
         reads = []
         page.on('request', lambda r: reads.append(r.url) if r.method == 'GET' and urlsplit(r.url).path == '/api/me' else None)
-        # The restart's account read reports the same roles as the pulse.
-        page.route('**/api/me', other_roles)
-        page.route('**/api/pulse*', other_roles)
-        with page.expect_response('**/api/pulse*'):
+        # Grant the role before the pulse reaches the server so the restart's protected reads use the same access.
+        pulse_url = '**/api/pulse*'
+        with holding(page) as held:
+            held.hold(pulse_url)
             reconnect(page)
+            wait_held(page, held[pulse_url])
+            request = held[pulse_url][0].request
+            h.command('admin', 'role.grant', {
+                'identity_id': h.seed['identities']['staff'], 'role': 'credentialer',
+                'starts_on': '2020-01-01', 'reason': 'Fictional cover from another session',
+            })
+            with page.expect_response(lambda response: response.request == request) as pulse:
+                held.release(pulse_url)
+        assert pulse.value.ok and 'credentialer' in pulse.value.json()['roles']
         expect(page.locator('#connection')).to_have_attribute('aria-label', 'Connected')
         expect(dialog).to_be_visible()
         assert reads == []  # held: no restart under the dialog
@@ -143,6 +146,7 @@ def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
             dialog.get_by_role('button', name='Close dialog').click()
             page.clock.fast_forward(10_000)
         assert urlsplit(replay.value.url).path == '/api/me'
+        expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
         expect(page.get_by_role('status').filter(has_text='Your access changed.')).to_be_visible()
         expect(dialog).to_have_count(0)
         assert len(reads) == 1, reads
