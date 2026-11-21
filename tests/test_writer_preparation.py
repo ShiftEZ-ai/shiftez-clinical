@@ -481,7 +481,9 @@ def test_redo_placement_check_is_bounded_however_many_sessions_it_puts_back(harn
 
         def listen(_connection, _cursor, statement, *_):
             text = ' '.join(statement.split())
-            if 'FROM shift_services WHERE shift_services.shift_id =' in text or 'WHERE shifts.id =' in text:
+            # A per-session read binds one id; the batched array form (= ANY) reads every session at once.
+            single_id = 'FROM shift_services WHERE shift_services.shift_id =' in text or 'WHERE shifts.id =' in text
+            if single_id and '= ANY' not in text:
                 single.append(text)
         event.listen(h.app.state.engine, 'before_cursor_execute', listen)
         try:
