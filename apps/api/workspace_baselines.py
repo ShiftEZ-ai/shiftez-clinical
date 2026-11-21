@@ -9,9 +9,9 @@ from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
-from .serialization import json_value, record, records_many
+from .serialization import json_value, record
 from .settings import Settings
-from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs, snapshot_window
+from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs
 from packages.contracts import schemas as s
 from packages.domain.generation_scope import selected_session_ids
 
@@ -510,63 +510,14 @@ def _catalogue_destination_at_least_as_strict(source, destination):
 
 
 def _live_safety_snapshot(db, workspace):
-    """Read only the live safety and qualification sources needed by a draft overlay."""
+    """Reacquire the same shared inputs used by a fresh draft snapshot."""
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    department_ids = select(m.Department.id).where(m.Department.organisation_id == organisation.id)
-    person_ids = select(m.Person.id).where(m.Person.organisation_id == organisation.id)
-    policy_ids = select(m.Policy.id).where(m.Policy.department_id.in_(department_ids))
-    lo, hi = snapshot_window(workspace, organisation.timezone)
-    sources = {
-        "people": (m.Person, m.Person.organisation_id == organisation.id),
-        "departments": (m.Department, m.Department.organisation_id == organisation.id),
-        **{key: (cls, cls.department_id.in_(department_ids)) for key, cls in LIVE_VALIDITY_SOURCES.items()},
-        **{key: (cls, cls.department_id.in_(department_ids)) for key, cls in {
-            "programmes": m.Programme, "rotation_types": m.RotationType, "cohorts": m.Cohort,
-            "tags": m.Tag, "tag_members": m.TagMember, "capabilities": m.Capability, "categories": m.Category,
-        }.items()},
-        "memberships": (m.Membership, m.Membership.department_id.in_(department_ids)),
-        "eligibilities": (m.Eligibility, m.Eligibility.department_id.in_(department_ids)),
-        "grants": (m.CapabilityGrant, m.CapabilityGrant.department_id.in_(department_ids)),
-        "rotations": (m.Rotation, m.Rotation.department_id.in_(department_ids)),
-        "programme_memberships": (m.ProgrammeMembership, m.ProgrammeMembership.department_id.in_(department_ids)),
-        "mentorships": (m.Mentorship, m.Mentorship.department_id.in_(department_ids)),
-        "resource_pools": (m.ResourcePool, m.ResourcePool.department_id.in_(department_ids)),
-        "operating_calendars": (m.OperatingCalendar, m.OperatingCalendar.department_id.in_(department_ids)),
-        "closures": (m.LocationClosure, m.LocationClosure.department_id.in_(department_ids)),
-        "date_sets": (m.DateSet, m.DateSet.department_id.in_(department_ids)),
-        "policies": (m.Policy, m.Policy.department_id.in_(department_ids)),
-        "exceptions": (m.PolicyException, m.PolicyException.policy_id.in_(policy_ids)),
-        "policy_seed_lines": (m.PolicySeedLine, m.PolicySeedLine.policy_id.in_(policy_ids)),
-        "scheduling_facts": (m.SchedulingFact, m.SchedulingFact.department_id.in_(department_ids)),
-        # Keep retracted rows in the currency so both adding and removing a leave
-        # invalidates a bound check; the evaluator still receives only active rows.
-        "type_lead_ownership": (m.TypeLeadOwnership, m.TypeLeadOwnership.department_id.in_(department_ids)),
-    }
     cache = db.info.setdefault("_live_safety_sources", {})
     cache_key = (organisation.id, organisation.input_revision, organisation.availability_revision)
-    acquired = cache.get(cache_key)
-    if acquired is None:
-        acquired = records_many(db, sources, exclude={"people": ("pager",)})
-        cache[cache_key] = acquired
-    availability = records_many(db, {"availability": (m.Availability, m.Availability.person_id.in_(person_ids)
-                         & (m.Availability.start < hi) & (m.Availability.end > lo))},
-                               exclude={"availability": ("private_reason",)})["availability"]
-    acquired = {**acquired, "availability": availability}
-    from .snapshots import tag_data
-    scheduling_facts = [row for row in acquired["scheduling_facts"]
-                        if row.get("status") in ("active", "retired") and row.get("approved_by")]
-    return {"organisation": record(organisation),
-            "people": {row["id"]: row for row in acquired["people"]},
-             **{key: {row["id"]: row for row in acquired[key]} for key in
-                ("resource_pools", "operating_calendars", "date_sets", *LIVE_VALIDITY_SOURCES)},
-             "closures": acquired["closures"],
-             "tags": tag_data(db, department_ids, acquired={"tags": acquired["tags"],
-                                                               "tag_members": acquired["tag_members"]}),
-            **{key: acquired[key] for key in (*LIVE_QUALIFICATION_KEYS, *LIVE_QUALIFICATION_DEFINITIONS,
-                                               "policies", "exceptions", "availability", "type_lead_ownership",
-                                               "departments", "policy_seed_lines") if key != "tags"},
-            "scheduling_facts": scheduling_facts}
+    if cache_key not in cache:
+        cache[cache_key] = snapshot_inputs(db, organisation)
+    return cache[cache_key]
 
 
 def _scope(value):
@@ -849,7 +800,9 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])
     for key in LIVE_QUALIFICATION_KEYS:
-        result[key] = current.get(key, result.get(key, []))
+        value = current.get(key, result.get(key, []))
+        # The shared projection already orders clinic eligibility by creation.
+        result[key] = value if key == "eligibilities" else sorted_rows(value)
     for key in LIVE_QUALIFICATION_DEFINITIONS:
         value = current.get(key)
         if value is not None:

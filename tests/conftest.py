@@ -40,6 +40,17 @@ ROLES = ("admin", "coordinator", "approver", "credentialer", "staff", "operator"
 
 
 @pytest.fixture
+def synthetic_initial_seed(tmp_path, monkeypatch):
+    """Supply invented configuration through the loader's existing directory boundary."""
+    from scripts import initial_seed
+    directory = tmp_path / "synthetic-seed"
+    directory.mkdir()
+    shutil.copyfile(Path(__file__).parent / "fixtures/seeds/synthetic-v1.json", directory / "production-v1.json")
+    monkeypatch.setattr(initial_seed, "SEEDS", directory)
+    return directory
+
+
+@pytest.fixture
 def public_oidc_dns(monkeypatch):
     """Synthetic provider hosts resolve publicly; OIDC network traffic remains mocked by each fixture."""
     from apps.api import oidc
