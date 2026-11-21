@@ -297,8 +297,14 @@ class SolverControl:
         `tier=None` shares its first finite allowance across score completions, without changing search progress
         or plateau state."""
         self.check()
-        if self.stopped:
+        if self.stopped and tier is not None:
             return cp_model.UNKNOWN
+
+        def completion_grace_remaining():
+            if tier is None and self.stop_deadline is not None:
+                return self.stop_deadline - time.monotonic() - self.reserve_seconds
+            return float('inf')
+
         searching = isinstance(tier, int)
         managed = self.search_budget is not None and searching
         slice_seconds = solver.parameters.max_time_in_seconds if managed else None
@@ -321,6 +327,7 @@ class SolverControl:
             if self.completion_budget is None:
                 self.completion_budget = completion_seconds
             completion_seconds = min(completion_seconds, max(0, self.completion_budget - self.completion_spent))
+            completion_seconds = min(completion_seconds, max(0, completion_grace_remaining()))
             if completion_seconds <= 0:
                 return cp_model.UNKNOWN
             solver.parameters.max_time_in_seconds = completion_seconds
@@ -338,7 +345,7 @@ class SolverControl:
             def on_solution_callback(self):
                 control.poll()
                 if not searching:
-                    if control.cancelled() or control.stopped:
+                    if control.cancelled() or control.stopped and tier is not None:
                         self.stop_search()
                     return
                 if not first_incumbent:
@@ -395,12 +402,14 @@ class SolverControl:
         finished = threading.Event()
         def interrupt():
             last_progress = solve_started
-            while not finished.wait(.1):
+            wait = min(.1, max(0, completion_grace_remaining()))
+            while not finished.wait(wait):
                 self.poll()
+                grace_remaining = completion_grace_remaining()
                 if self.cancelled():
                     # Repeat until completion: cancellation can race solver startup.
                     solver.stop_search()
-                elif self.stopped:
+                elif self.stopped and (tier is not None or grace_remaining <= 0):
                     solver.stop_search()
                 elif tier == 'diagnostics' and self.diagnostic_deadline is not None and time.monotonic() >= self.diagnostic_deadline:
                     solver.stop_search()
@@ -437,6 +446,7 @@ class SolverControl:
                         'improvements_found': self.improvements_found,
                         'search_elapsed_seconds': self.timings()['search_seconds'],
                         'phase_timings': self.timings(), 'shared_validation_passed': False})
+                wait = min(.1, grace_remaining) if grace_remaining > 0 else .1
 
         solve_started = time.monotonic()
         if managed:
@@ -455,7 +465,14 @@ class SolverControl:
                 self._solve_started = None
             elif completion_seconds is not None:
                 self.completion_spent += time.monotonic() - solve_started
-        self.check()
+        try:
+            self.check()
+        except StopGraceExpired:
+            if tier is None:
+                return cp_model.UNKNOWN
+            raise
+        if completion_grace_remaining() <= 0:
+            return cp_model.UNKNOWN
         if searching and self.fairness_plateau:
             ended = time.monotonic()
             def last_gain(rows):
