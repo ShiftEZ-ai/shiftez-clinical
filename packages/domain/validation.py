@@ -329,7 +329,8 @@ def effective_type_definition(data, shift):
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
-        effective = deepcopy((current if operational else issued) or {})
+        definition = (current if operational else issued) or {}
+        effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain both sources so their identities cannot be reused during this run.

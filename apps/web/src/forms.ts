@@ -5,7 +5,7 @@ import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
 import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
-import {command,get,instant,knownRevision,plainWords,request} from './api.js';
+import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
 import {operatingCalendarFields,resourceRequirementsBuilder} from './resource_forms.js';
@@ -670,7 +670,7 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       const day=start.input.value;if(base||!day||sourceChosen)return;
       const id=(await get<{previous_workspace_id:string|null}>(`/api/workspaces?limit=1&copy_starts_on=${day}`).catch(()=>null))?.previous_workspace_id;
       if(!id||day!==start.input.value||sourceChosen)return;
-      if(!previous.some(r=>r.id===id)){const w=(await get<{workspace:Row}>(`/api/workspaces/${id}`).catch(()=>null))?.workspace;if(!w)return;previous.push(w);source.input.append(el('option',{value:w.id},rotaChoice(w).label));}
+      if(!previous.some(r=>r.id===id)){const w=(await rotaMeta(id).catch(()=>null))?.workspace;if(!w)return;previous.push(w);source.input.append(el('option',{value:w.id},rotaChoice(w).label));}
       source.input.value=id;fitSource();};
     const people=check('Include assigned people',false);
     const automate=check('Run auto-schedule after setup',true);

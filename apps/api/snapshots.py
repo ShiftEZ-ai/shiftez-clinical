@@ -1041,6 +1041,28 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
     return publications, query
 
 
+def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, limit, previous, current):
+    # A shift update writes only its own draft. Each preparation transaction holds a consistent
+    # read of issued sessions, even while the edited shift and workspace revision change.
+    import pickle
+    preparation = db.info.get('_planning_preparation') or {}
+    shared = (preparation.get('kind') == 'shift.update' and not preparation['replay'] and previous is None)
+    if shared:
+        memo = db.info.setdefault('_prepared_external_schedule', {})
+        key = (workspace.id, workspace.base_publication_id, workspace.replaces_publication_id, workspace.starts_on,
+               tuple(department_ids), lo, hi, zone, limit)
+        if key in memo:
+            publications, rows = memo[key]
+            return publications, pickle.loads(rows)
+    publications, query = external_schedule(db, workspace, department_ids, lo, hi, zone)
+    external = _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit)
+    if external is None:
+        external = shift_records(db, db.scalars(query if limit is None else query.limit(limit)))
+    if shared:
+        memo[key] = publications, pickle.dumps(external, protocol=pickle.HIGHEST_PROTOCOL)
+    return publications, external
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1048,7 +1070,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False, fairness_goals_out: list[dict] | None = None) -> dict:
+                    rule_map_bindings: bool = False, include_manifest: bool = True,
+                    fairness_goals_out: list[dict] | None = None) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1354,7 +1377,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     from .services.schedule import in_force_shifts
     from packages.contracts.schemas import GenerationOptions
     scoring = GenerationOptions.model_validate(department_settings.get('generation_defaults') or {}).scoring
-    own = workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts
+    own = own_shifts
+    if own is None:
+        edited = db.info.get('_prepared_shift_edit')
+        own = edited[1] if edited is not None and edited[0] == workspace.id else workspace_shifts(db, workspace.id)
     if own_publication is not None and own_publication.effective_until:
         # A published rota partly replaced by a later one: only the days it is still in force.
         own = in_force_shifts(own_publication, own, org.timezone)
@@ -1374,12 +1400,9 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         if wishes != result["wishes"]:
             score_context["wishes"] = wishes
     result["focus_ids"] = [s["id"] for s in own]
-    publications, query = external_schedule(db, workspace, department_ids, lo, hi, org.timezone)
-    if quota_policies:
-        query = query.limit(MAX_SHIFTS + 1)
-    external = _unchanged_external_shifts(db, workspace, external_snapshot, result, lo, hi, MAX_SHIFTS + 1 if quota_policies else None)
-    if external is None:
-        external = shift_records(db, db.scalars(query))
+    publications, external = _snapshot_external_schedule(
+        db, workspace, department_ids, lo, hi, org.timezone, MAX_SHIFTS + 1 if quota_policies else None,
+        external_snapshot, result)
     if own_publication is not None:
         own = frozen_series_states(own, own_publication)
     published = {p.workspace_id: p for p in publications}
@@ -1438,9 +1461,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["fairness_history"] = history(db, result, goals)
     if score_context:
         result["score_context"] = score_context
-    from packages.domain.input_manifest import manifest
-    result['input_manifest'] = manifest(result)
-    result['fingerprint'] = result['input_manifest']['token']
+    if include_manifest:
+        from packages.domain.input_manifest import manifest
+        result['input_manifest'] = manifest(result)
+        result['fingerprint'] = result['input_manifest']['token']
     return result
 
 
@@ -1465,7 +1489,8 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
     supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'current_mandatory',
-                                         'include_fairness', 'include_objectives', 'include_fairness_history'} or value is None
+                                         'include_fairness', 'include_objectives', 'include_fairness_history',
+                                         'include_manifest'} or value is None
                                  for key, value in kwargs.items())
     if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
         db.flush()
@@ -1563,26 +1588,22 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     person_ids = {a["person_id"] for s in result["shifts"] for a in s["participants"]}
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
-    result["locations"] = {r.id: record(r) for r in db.scalars(select(m.Location).where(
-        m.Location.id.in_({s['location_id'] for s in result['shifts']})))}
-    service_ids = {sid for s in result["shifts"] for sid in s["service_ids"]}
-    result["services"] = {r.id: record(r) for r in db.scalars(select(m.Service).where(m.Service.id.in_(service_ids)))}
-    location_ids = set(result["locations"])
-    for location_id in list(location_ids):
-        row = db.get(m.Location, location_id)
-        while row and row.parent_id and row.parent_id not in result["locations"]:
-            row = db.get(m.Location, row.parent_id)
-            result["locations"][row.id] = record(row)
-    pool_ids = {d["resource_pool_id"] for shift in result["shifts"]
-                for d in shift["type_snapshot"]["definition"].get("resources", [])}
-    result["resource_pools"] = {pid: record(db.get(m.ResourcePool, pid)) for pid in pool_ids}
-    calendar_ids = {r["calendar_id"] for r in list(result["locations"].values()) + list(result["resource_pools"].values()) + list(result["services"].values()) if r.get("calendar_id")}
-    result["operating_calendars"] = {cid: record(db.get(m.OperatingCalendar, cid)) for cid in calendar_ids}
-    department_calendar_id = result['department']['operating_calendar_id']
-    if department_calendar_id in data.get('operating_calendars', {}):
-        result['operating_calendars'][department_calendar_id] = json_value(data['operating_calendars'][department_calendar_id])
-    from .services.date_sets import data as date_set_data
-    result['date_sets'] = date_set_data(db, [workspace.department_id])
+    # Keep issued evidence on the checked catalogue basis and scoped to this rota.
+    from packages.domain.validation import ancestor_ids
+    location_ids = {ident for shift in result['shifts'] for ident in ancestor_ids(data, shift['location_id'])}
+    service_ids = {ident for shift in result['shifts'] for ident in shift['service_ids']}
+    pool_ids = {demand['resource_pool_id'] for shift in result['shifts']
+                for demand in shift['type_snapshot']['definition'].get('resources', [])}
+    for key, ids in (('locations', location_ids), ('services', service_ids), ('resource_pools', pool_ids)):
+        result[key] = {ident: json_value(data[key][ident]) for ident in sorted(ids) if ident in data[key]}
+    calendar_ids = {row['calendar_id'] for key in ('locations', 'services', 'resource_pools')
+                    for row in result[key].values() if row.get('calendar_id')}
+    if department_calendar_id := result['department']['operating_calendar_id']:
+        calendar_ids.add(department_calendar_id)
+    result['operating_calendars'] = {ident: json_value(data['operating_calendars'][ident])
+                                     for ident in sorted(calendar_ids) if ident in data['operating_calendars']}
+    result['date_sets'] = {ident: json_value(row) for ident, row in data['date_sets'].items()
+                           if row['department_id'] == workspace.department_id}
     from packages.domain.fairness import offered_intervals
     from packages.domain.reports import METRIC_VERSION
     result["metric_version"] = METRIC_VERSION
