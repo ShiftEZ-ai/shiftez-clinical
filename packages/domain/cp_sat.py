@@ -2375,8 +2375,10 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 if now != row['value']:
                     row.update(value=now, proven_optimal=False)
             outcome[tier] = {'tier': tier, 'name': names[tier], 'value': best,
-                             # A stopped search claims no proof for the tier it was improving.
-                             'proven_optimal': status == cp_model.OPTIMAL and not shortlist or best <= floor() and not control.stopped,
+                             # A stopped search claims no proof for a later tier it was improving; coverage at its floor
+                             # stays proven, since later tiers and the coverage warning depend on it.
+                             'proven_optimal': status == cp_model.OPTIMAL and not shortlist or best <= floor() and (
+                                 not control.stopped or names[tier] == 'coverage'),
                              'stopped_without_improvement': control.stalled, 'search_status': solver.status_name(status)}
             if control.fairness_plateau:
                 outcome[tier]['search'] = control.last_search
