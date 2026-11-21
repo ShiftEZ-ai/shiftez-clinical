@@ -42,7 +42,8 @@ def test_greedy_repairs_required_cover_when_both_existing_orders_strand_a_seat(h
     assert result['validation']['valid']
     assert result['algorithm_version'] == generation.ALGORITHM_VERSION
     assert result['required_cover_repair']['solver_status'] == 'FEASIBLE'
-    assert result['required_cover_repair']['search_stop']['reason'] == 'optimal'
+    # The repair model is proven best, but the saved greedy proposal is not proven optimal (#34).
+    assert result['required_cover_repair']['search_stop']['reason'] == 'model_proven'
     assert result['required_cover_repair']['moved'] == 1
     assert any('moved 1 greedy suggestion.' in warning for warning in result['warnings'])
     assert 'search_stop' not in result and 'first_solution_seconds' not in result
