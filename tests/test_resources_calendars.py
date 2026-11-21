@@ -136,6 +136,34 @@ def test_clinic_calendar_blocks_duties_and_is_preserved_in_publication(h):
         assert cal['id'] in snapshot['operating_calendars']
 
 
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_publication_records_only_the_checked_catalogue_rows(request, backend):
+    from apps.api.snapshots import publication_snapshot
+
+    h = request.getfixturevalue(backend)
+    opening = calendar(h)
+    unused = calendar(h, week=[], name='Synthetic separate calendar')
+    location = attach(h, opening)
+    service = next(row for row in h.get('admin', '/api/catalogues')['services'] if row['id'] == h.seed['services'][0])
+    service = update(h, 'services', service, calendar_id=opening['id'])
+    draft = h.shift(h.workspace('Synthetic publication catalogue'))['workspace']
+    checked = h.snapshot(draft)
+    validation = evaluate(checked)
+    assert validation['valid']
+
+    update(h, 'locations', location, capacity=(location['capacity'] or 1) + 1)
+    update(h, 'services', service, calendar_id=unused['id'])
+    with transaction(h.app.state.engine) as db:
+        workspace = db.get(m.Workspace, draft['id'])
+        issued = publication_snapshot(db, workspace, validation, data=checked)
+
+    assert issued['locations'][location['id']] == checked['locations'][location['id']]
+    assert issued['services'][service['id']] == checked['services'][service['id']]
+    assert issued['operating_calendars'][opening['id']] == checked['operating_calendars'][opening['id']]
+    assert unused['id'] not in issued['operating_calendars']
+    assert set(issued['services']) == {service['id']}
+
+
 @pytest.mark.parametrize('change',[{'active':False},{'starts_on':'2026-10-05'},{'ends_on':'2026-10-04'}])
 def test_calendar_effective_lifecycle_is_consumed(h,change):
     cal=calendar(h,**change);attach(h,cal)

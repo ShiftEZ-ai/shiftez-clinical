@@ -527,18 +527,18 @@ def fix_list_effect_projection(before_data, before_validation, after_data, after
 def remember_fix_list(previous, current, *, submitted=False, accepted_issues=(), summary_cache=None):
     """Persist only derived ID receipts in the existing check JSON; edits retain their normal Undo."""
     from zoneinfo import ZoneInfo
-    before = rota_summary(previous, accepted_issues=accepted_issues, cache=summary_cache)['fix_list'] if previous else None
+    before = rota_summary(previous, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list'] if previous else None
     at = current['evaluated_at']
     day = aware(at).astimezone(ZoneInfo((current.get('fix_list_context') or {}).get('timezone', 'UTC'))).date().isoformat()
     state = (previous or {}).get('fix_list_state') or {}
     since = state.get('since')
     reset_since = submitted or not since or since.get('day') != day
     if reset_since:
-        ids_after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']['causes']
+        ids_after = rota_summary(current, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list']['causes']
         since = {'at': at, 'day': day, 'ids': [c['id'] for c in ids_after]}
     current['fix_list_state'] = {'previous_ids': [c['id'] for c in (before or {'causes': []})['causes']], 'since': since}
     # Reset needs a second pass so the stored delta carries the state-aware `since` receipt.
-    after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']
+    after = rota_summary(current, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list']
     current['fix_list_delta'] = fix_list_delta(before, after)
     return current
 
