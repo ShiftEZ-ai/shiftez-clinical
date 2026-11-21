@@ -1,9 +1,51 @@
-"""One visible gate for malformed or expired reviewed quarantines."""
-from datetime import datetime, timezone
+"""One visible gate for malformed reviewed quarantines."""
+from datetime import date, datetime, timezone
+import json
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from ci.quarantine_registry import decode_registry, expired_entries
 
 from tests.quarantine import entries
 
 
 def test_reviewed_quarantine_is_valid_and_current():
-    entries(Path(__file__).with_name('quarantine.json'), datetime.now(timezone.utc).date())  # real clock: quarantine expiry is wall-clock policy
+    today = datetime.now(timezone.utc).date()  # real clock: quarantine expiry is wall-clock policy
+    registry = entries(Path(__file__).with_name("quarantine.json"), today)
+    for row in expired_entries(registry, today):
+        print(f"Expired quarantine remains active: {row['nodeid']}, issue {row['issue']}")
+
+
+def registry_row(name, issue, *, expires="2000-01-02", kind="baseline", blocker=False):
+    return {"nodeid": f"tests/test_example.py::test_{name}", "reason": f"{kind}: reviewed",
+            "owner": "maintainers", "issue": issue, "blocker": blocker,
+            "added": "2000-01-01", "expires": expires}
+
+
+def test_quarantine_report_groups_expiry_classes_and_blockers(tmp_path):
+    registry = tmp_path / "quarantine.json"
+    registry.write_text(json.dumps([
+        registry_row("a", 19, blocker=True),
+        registry_row("b", 2, kind="unstable"),
+        registry_row("c", 19),
+        registry_row("d", 2, expires="2099-01-01", kind="unstable", blocker=True),
+    ]), encoding="utf-8")
+    script = Path(__file__).parents[1] / "ci/quarantine_report.py"
+    result = subprocess.check_output([sys.executable, str(script), str(registry)], text=True)
+    assert result.splitlines() == [
+        "Expired quarantine entries by issue: #2: 1 node, #19: 2 nodes",
+        "Quarantine entries by class: baseline: 2, unstable: 2",
+        "Release blockers in quarantine: 2",
+    ]
+
+
+def test_quarantine_reader_preserves_reviewed_flake_evidence():
+    row = {**registry_row("flake", 2, kind="unstable"), "recovered_runs": ["123456"]}
+    today = date(2000, 1, 2)
+    assert decode_registry(json.dumps([row]), today) == {row["nodeid"]: row}
+    for run in ("latest", "\u0661\u0662\u0663"):
+        with pytest.raises(ValueError, match="numeric run IDs"):
+            decode_registry(json.dumps([{**row, "recovered_runs": [run]}]), today)
