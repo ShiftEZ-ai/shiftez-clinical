@@ -1119,7 +1119,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if command.kind == 'rotation.swap' or command.kind == 'timeline.rotation' and result.get('status') == 'submitted':
             reason = 'Rotation change requested'
         # A configuration create names the record it made, and every configuration change its list (an enum, never
-        # private text). Other creates keep no target: their histories add "created" themselves (requests, swaps).
+        # private text). Requests and swaps add their "created" entries in their own histories.
         fact = result.get("fact") if isinstance(result.get("fact"), dict) else {}
         made = (result.get("record") or {}) if command.kind.startswith(("catalogue.", "date_set.", "rule.catalogue.", "rule.migrate_to_catalogue")) else fact
         if command.kind == "catalogue.bulk_update" and command.payload.get("catalogue") == "programmes" and result.get("removed_ids"):
@@ -1149,9 +1149,14 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
+            if command.kind == 'rule.propose':
+                target_id = result['record']['id']
+            elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
+                target_id = made.get('id')
+            else:
+                target_id = command.target_id or made.get('id')
             db.add(audit_envelope(db, command, result, m.AuditEvent(department_id=actor.department_id, actor_id=actor.identity_id,
-                                action=event_action(command.kind, result), target_id=(made.get("id") if command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings'))
-                                                              else command.target_id or made.get("id")),
+                                action=event_action(command.kind, result), target_id=target_id,
                                 reason=reason, detail={**subject_detail(db, command.kind, result, department_id=actor.department_id),
                                                       "receipt_id": receipt_id, 'input_changes': list(db.info.get('_input_changes', {}).values()), "payload_fields": sorted(
                                     key for key in command.payload if key != "token" or command.kind != "integration.github.connect"),
