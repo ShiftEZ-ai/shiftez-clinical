@@ -276,12 +276,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_browser_audit_rule_context.py::test_additional_rules_are_counted_context_with_complete_readable_effects[case-ogpomlbeecdoolkgijbmblapegljlahhnidihcapfgkikhmoocbdboiicgfljkil]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_browser_audit_schedule_resize.py::test_panel_replacement_keeps_or_discards_the_rule_form[case-chchkifohodpdgebfapjdbaophflgjpgjbodchojjegmibboonibbjdboacmdnlh]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
