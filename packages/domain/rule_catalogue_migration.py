@@ -394,14 +394,22 @@ def _census_rule(policy):
     return entry_id, version, rule, lines
 
 
-def _line_safety(entry_id, version, rule, line):
+def _line_safety(entry_id, version, rule, line, *, mandatory=True):
     try:
         entry = catalogue_entry(entry_id, version)
-        return any(slot_for_number(entry, key, rule, line, list(line.get('numbers') or {}))['kind'] in NEVER_OVERRIDDEN
-                   and (number.get('level') or 'mandatory') == 'mandatory'
-                   for key, number in (line.get('numbers') or {}).items())
+        numbers = line.get('numbers') or {}
+        for key, number in numbers.items():
+            slot = slot_for_number(entry, key, rule, line, numbers)
+            if slot['kind'] not in NEVER_OVERRIDDEN:
+                continue
+            level = number.get('level', 'mandatory')
+            if level is None:
+                level = 'medium' if slot['advisory'] or 'mandatory' not in entry['levels'] else 'mandatory'
+            if (level == 'mandatory') == mandatory:
+                return True
     except (KeyError, TypeError, ValueError):
         return False
+    return False
 
 
 def _line_classifications(policy, entry_id, version, rule, lines):
@@ -897,7 +905,11 @@ def plan_v2(policies, held=None, week_start=0, department_id=None, *, tag_ids=()
             if cutoff:
                 material = [(n, line) for n, line in material
                             if line_validity(projected, line, cutoff)['effective'] != 'ended']
-            if material and original['kind'] in NEVER_OVERRIDDEN and d.get('severity') == 'advisory':
+            if material and (
+                original['kind'] in NEVER_OVERRIDDEN and d.get('severity') == 'advisory'
+                or any(_line_safety(entry_id, version, old_rule, candidate, mandatory=False)
+                       for _, line in material for candidate in (line, line.get('source_default')) if candidate)
+            ):
                 raise Kept('Review this safety rule and approve a mandatory version before conversion')
             if original['kind'] != 'catalogue' and d.get('listed_only') and field is not None and any(
                     d['per_person'][n].get('amount') is None for n, _ in material):

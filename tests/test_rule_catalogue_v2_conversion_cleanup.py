@@ -42,21 +42,23 @@ def test_every_safety_slot_stays_a_rule_line_at_any_stored_level(entry, key, slo
     assert census([original])['lines'][0]['classification'] != 'person_fact'
     plan = plan_v2([original], department_id=uid(10))
     assert not plan['scheduling_facts']
+    if level != 'mandatory':
+        assert [row['rule_id'] for row in plan['blocked']] == [original['id']]
+        assert not plan['targets'] and not plan['bindings']
+        return
+    assert not plan['blocked'], plan['blocked']
     target = plan['targets'][0]['payload']['definition']['rule']
     [converted] = target['lines']
     assert tier(converted) == 3
-    assert converted['numbers'][key]['level'] == level
-    if level not in entry['levels']:
-        assert {blocked['kind'] for blocked in plan['blocked']} == {'contract'}
-        return
-    assert not plan['blocked'], plan['blocked']
+    assert converted['numbers'][key]['level'] == 'mandatory'
     before = {'policies': [original]}
     assert strict_expanded(before, after_snapshot(before, plan))['equal']
 
 
-@pytest.mark.parametrize('level', ADVISORY)
+@pytest.mark.parametrize('level', ['mandatory', *ADVISORY])
 @pytest.mark.parametrize('named_person', [False, True])
 def test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings(h, level, named_person):
+    """Advisory records stay in place; mandatory records retain their findings after conversion."""
     workspace = h.workspace()
     h.shift(workspace)
     before = h.snapshot(workspace)
@@ -66,8 +68,12 @@ def test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings(
     before.update(policies=[original], source_bindings=[], scheduling_facts=[])
     assert census([original])['lines'][0]['classification'] == 'v2_workload_limit'
     plan = plan_v2(before['policies'], department_id=workspace['department_id'])
-    assert not plan['blocked'], plan['blocked']
     assert not plan['scheduling_facts']
+    if level != 'mandatory':
+        assert [row['rule_id'] for row in plan['blocked']] == [original['id']]
+        assert not plan['targets'] and not plan['bindings']
+        return
+    assert not plan['blocked'], plan['blocked']
     target = plan['targets'][0]['payload']['definition']['rule']
     assert target['id'] == 'workload_limit'
     [converted] = target['lines']
@@ -90,6 +96,10 @@ def test_protected_time_becomes_protected_data_with_its_safety_restriction(audie
     original = catalogue('protected_time', [line(uid(200), {'apply': {'value': None, 'level': level}},
         audience, settings={'restriction': {'leave_buffer_days': 1}}, calendar_entry_id=calendar)])
     plan = plan_v2([original], department_id=uid(10))
+    if level != 'mandatory':
+        assert [row['rule_id'] for row in plan['blocked']] == [original['id']]
+        assert not plan['targets'] and not plan['bindings'] and not plan['scheduling_facts']
+        return
     if calendar is None and (audience is None or tier({'who': audience}) != 3):
         assert not plan['blocked'], plan['blocked']
         assert not plan['scheduling_facts']

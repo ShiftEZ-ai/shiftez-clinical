@@ -1,27 +1,30 @@
-"""Catalogue conversion cannot turn protected safety limits into preferences."""
-from copy import deepcopy
-
+"""Catalogue conversion refuses advisory levels on protected safety rules."""
 import pytest
 
 from apps.api import models as m
 from apps.api.db import transaction
-from packages.contracts.schemas import NEVER_OVERRIDDEN
-from packages.domain.cp_sat import generate
-from packages.domain.validation import evaluate, finding_observations
+from packages.contracts.rule_catalogue import CATALOGUE_MAPPING, NEVER_OVERRIDDEN, RULE_CATALOGUE
+from tests.test_rule_catalogue_api import approve, line, propose
 from tests.test_rule_catalogue_v2_api import preview, proposed
 from tests.test_rule_safety_audit import safety_settings
 
 
-BREACHES = {
-    'restriction': ({}, 'RESTRICTION'),
-    'min_rest': ({'hours': 20}, 'MIN_REST'),
-    'forbidden_transition': ({}, 'FORBIDDEN_TRANSITION'),
-    'minimum_cover': ({'minimum': 2}, 'SCOPED_COVERAGE_GAP'),
-    'maximum_participants': ({'maximum': 0}, 'SCOPED_PARTICIPANT_LIMIT'),
-}
+SAFETY_REVIEW_REASON = 'Review this safety rule and approve a mandatory version before conversion'
+V1_SAFETY_NUMBERS = [
+    pytest.param(entry['id'], key, slot, id=f"{entry['id']}-{key}")
+    for entry in RULE_CATALOGUE
+    if CATALOGUE_MAPPING[entry['id']] and 'medium' in entry['levels']
+    for key, slots in entry['numbers'].items()
+    for slot in slots if slot['kind'] in NEVER_OVERRIDDEN
+]
 
 
-def assert_refused(h, plan, source):
+def assert_refused(h, source, reason):
+    plan = preview(h, proof=False)
+    assert plan['blocked'] == [{
+        'rule_id': source['id'], 'name': source['name'], 'kind': source['kind'], 'reason': reason,
+        'proposal_ids': [], 'person_ids': [], 'line_ids': [],
+    }]
     refused = h.command('coordinator', 'rule.migrate_to_catalogue', {
         'version': 2, 'plan_hash': plan['plan_hash'], 'reason': 'Review safety rule conversion',
     }, status=409)
@@ -45,23 +48,34 @@ def test_advisory_safety_conversion(h, kind):
         assert any('are mandatory' in detail['message'] for detail in rejected['error']['details'])
         return
 
-    if kind == 'spread_evenly':
-        source = h.policy(rule, severity='advisory')
-        plan = preview(h, proof=False)
-        assert any(row['rule_id'] == source['id'] and row['kind'] == kind for row in plan['blocked'])
-        assert_refused(h, plan, source)
-        return
-
-    settings, code = BREACHES[kind]
-    workspace = h.shift(h.workspace())['workspace']
-    if kind in {'min_rest', 'forbidden_transition'}:
-        workspace = h.shift(workspace, '2026-10-05T04:00:00+03:00', '2026-10-05T08:00:00+03:00')['workspace']
-    source = h.policy({**rule, **settings}, severity='advisory')
+    source = h.policy(rule, severity='advisory')
     assert source['definition']['severity'] == 'advisory'
-    plan = preview(h, proof=False)
-    if plan['blocked']:
-        assert any(row['rule_id'] == source['id'] and 'mandatory' in row['reason'] for row in plan['blocked']), plan['blocked']
-        assert_refused(h, plan, source)
+    reason = "'spread_evenly'" if kind == 'spread_evenly' else SAFETY_REVIEW_REASON
+    assert_refused(h, source, reason)
+
+
+@pytest.mark.parametrize('entry_id,key,slot', V1_SAFETY_NUMBERS)
+def test_v1_advisory_safety_conversion(h, entry_id, key, slot):
+    kind = slot['kind']
+    settings = safety_settings(h)[kind]
+    value = settings.pop(slot['field'], None)
+    if entry_id == 'companion_cover':
+        settings['when_person_ids'] = [h.seed['people'][0]]
+    source = approve(h, propose(h, entry_id, [
+        line(numbers={key: {'value': value, 'level': 'medium'}}, settings={kind: settings}),
+    ], catalogue_version=1)['record'])
+    assert source['definition']['rule']['lines'][0]['numbers'][key]['level'] == 'medium'
+    assert_refused(h, source, SAFETY_REVIEW_REASON)
+
+
+@pytest.mark.parametrize('level', ['medium', 'mandatory'])
+def test_v1_mixed_or_mandatory_safety_conversion(h, level):
+    source = approve(h, propose(h, 'rest_between_duties', [
+        line(numbers={'min': {'value': 20, 'level': 'mandatory'}}, weekdays=[0]),
+        line(numbers={'min': {'value': 12, 'level': level}}, weekdays=[1]),
+    ], catalogue_version=1)['record'])
+    if level == 'medium':
+        assert_refused(h, source, SAFETY_REVIEW_REASON)
         return
 
     change = proposed(h)
@@ -69,38 +83,13 @@ def test_advisory_safety_conversion(h, kind):
                        change['id'], change['revision'])['record']
     assert active['status'] == 'active'
     [binding] = [b for b in active['plan']['bindings'] if b['source_policy_id'] == source['id']]
-    [destination] = binding['destinations']
+    first, second = binding['destinations']
+    assert first['id'] == second['id']
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Policy, source['id']).status == 'retired'
-        stored = db.get(m.Policy, destination['id'])
+        stored = db.get(m.Policy, first['id'])
         assert stored.status == 'active'
-        [line] = [line for line in stored.definition['rule']['lines'] if line['id'] == destination['line_id']]
-
-    workspace = h.refresh_draft_baseline(workspace)
-    data = h.snapshot(workspace)
-
-    def severities(validation):
-        return {f['severity'] for f in finding_observations(validation)
-                if f['code'] == code and f.get('rule_id') == source['id']}
-
-    solver_input = deepcopy(data)
-    for shift in solver_input['shifts']:
-        shift['locked'] = True
-    result = generate(solver_input, time_budget_seconds=5, deterministic=True)
-    submitted = h.lifecycle(workspace, 'submit', status=(200, 422))
-    error = submitted.get('error', {})
-    outcomes = {
-        'line levels': {number['level'] for number in line['numbers'].values()},
-        'validator severities': severities(evaluate(data)),
-        'generation rejects breach': result['status'] in {'requirements_conflict', 'candidate_with_gaps'}
-        and 'error' in severities({'findings': result.get('issues', []) + result.get('validation', {}).get('findings', [])}),
-        'Submit refusal': error.get('code'),
-        'Submit severities': severities(error.get('details') or {}),
-    }
-    assert outcomes == {
-        'line levels': {'mandatory'},
-        'validator severities': {'error'},
-        'generation rejects breach': True,
-        'Submit refusal': 'VALIDATION_FAILED',
-        'Submit severities': {'error'},
-    }
+        assert stored.definition['rule']['catalogue_version'] == 2
+        destination_ids = {first['line_id'], second['line_id']}
+        assert {line['id']: line['numbers']['min']['level'] for line in stored.definition['rule']['lines']
+                if line['id'] in destination_ids} == dict.fromkeys(destination_ids, 'mandatory')
