@@ -527,7 +527,8 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
             result['algorithm_version'] = ALGORITHM_VERSION
             result['unmet_requirements'] = unmet_requirements(result['validation'])
             if repair_timed_out:
-                result['status'] = 'unknown_time_limit'
+                result['message'] = ('Search time expired. The complete validated rota is retained; '
+                                     'score optimization is unfinished.')
             suggestions = 'suggestion' if moved == 1 else 'suggestions'
             result.setdefault('warnings', []).append(
                 f'Required cover was repaired with CP-SAT. The repair moved {moved} greedy {suggestions}.')
