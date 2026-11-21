@@ -150,6 +150,19 @@ def test_other_run_rules_count_before_validity(counting_world, rule, dates, code
     assert shape_cost(data) == 0
 
 
+@pytest.mark.parametrize('start,end,expected', [
+    ('2026-11-30', '2026-12-01', ['DAYS_OFF_SHORT']),
+    ('2026-12-01', None, []),
+    ('2026-09-01', '2026-11-30', []),
+])
+def test_days_off_between_fixed_duties_requires_an_effective_focus_day(counting_world, start, end, expected):
+    data = mirror(counting_world, ['2026-11-29', '2026-11-30', '2026-12-01'], ['2026-11-30'],
+                  {'kind': 'days_off_run', 'minimum': 2}, start, end)
+    data['shifts'][1]['participants'] = []
+    assert [row['code'] for row in findings(data)] == expected
+    assert bool(shape_cost(data)) == bool(expected)
+
+
 def shape_cost(data):
     from packages.domain.time import aware
     model, flags = cp_model.CpModel(), {}

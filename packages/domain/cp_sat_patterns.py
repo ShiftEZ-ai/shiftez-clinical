@@ -10,8 +10,8 @@ inequalities for weekends, succession and together/apart.
 from collections import defaultdict
 from datetime import timedelta
 
-from .recurrence import inactive
-from .patterns import SHAPE_KINDS, day_of, weekend_of, wish_days, wish_shape
+from .patterns import (SHAPE_KINDS, day_of, effective_gap_focus, gap_touches_focus, shape_focus_days,
+                       weekend_of, wish_days, wish_shape)
 from .validation import counting_policy, policy_applies
 from .cp_sat_score import ScoreModel
 
@@ -30,8 +30,7 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
     focus_ids = set(data['focus_ids']) if 'focus_ids' in data else None
     if shape_breaches is not None:
         from .score import rule_copy_key
-        focus_days = {day_of(s['start'], zone) for s in data['shifts']
-                      if (focus_ids is None or s['id'] in focus_ids) and not inactive(s)}
+        focus_days = shape_focus_days(data, focus_ids)
 
     def constant(x):
         if isinstance(x, int):
@@ -113,7 +112,7 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
         terms.append((cost, [v]))
         worst[0] += cost
 
-    def shape(rule, by_day, by_type, cost, *, combine=False, person=None, focal=None):
+    def shape(rule, by_day, by_type, cost, *, combine=False, person=None, focal=None, gap_focus=()):
         if not by_day:
             return
         rows = []
@@ -127,7 +126,7 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
                 rows.extend(instance)
             else:
                 active = None
-                if focal_day is not None:
+                if focal_day is not None and not gap_touches_focus(*span, gap_focus):
                     active = any_of([flag for day, flag in focal_day.items()
                                      if span[0] <= day <= span[1]])
                 breach(cost, *instance, person=person, span=span, active=active)
@@ -216,6 +215,8 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
         rule = policy['definition']['rule']
         if rule['kind'] not in SHAPE_KINDS or policy['definition']['severity'] != 'advisory':
             continue
+        gap_focus = (effective_gap_focus(policy, focus_days)
+                     if shape_breaches is not None and rule['kind'] == 'days_off_run' else ())
         cost = 1000 * strengths[policy['definition'].get('strength', 'medium')]
         people = sorted(rule['person_ids'] if rule['kind'] == 'together_apart' else by_person)
         rows = {}  # person -> [(day, shift, x)]
@@ -264,7 +265,7 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
             all_focal = (set(focal) == set(by_day)
                          and all({literal_key(x) for x in focal[day]} == {literal_key(x) for x in xs}
                                  for day, xs in by_day.items()))
-            shape(rule, by_day, by_type, cost, person=pid, focal=None if all_focal else focal)
+            shape(rule, by_day, by_type, cost, person=pid, focal=None if all_focal else focal, gap_focus=gap_focus)
 
     # Staff wishes: any duty counts, whatever the rules' scopes.
     if shape_breaches is not None:
