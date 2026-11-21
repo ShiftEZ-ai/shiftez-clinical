@@ -20,7 +20,7 @@ import {mustWords,couldWords} from './fix_list.js';
 import {teamGroups,teamText} from './planner_teams.js';
 import {teamView,teamProblem,rankOn,BOX_CODES} from './team_view.js';
 import type {Context} from './forms.js';
-import type {Row,WorkspaceData,Evaluation} from './types.js';
+import type {PlannerSession,Row,WorkspaceData,Evaluation} from './types.js';
 import {dateInput} from './date_picker.js';
 import {sidePanel} from './side_panel.js';
 import {clashesOf} from './double_booking.js';
@@ -128,7 +128,7 @@ export function scheduleNav(view:SchedRange,p:Period,today:string,move:(anchor:s
 }
 
 /** Published sessions of a window (GET /api/schedule/sessions). */
-export type ScheduleWindow={summary?:PublishedScheduleSummary;starts_on:string;ends_on:string;sources:Row[];shifts:Row[];coverage:Row[];findings:Row[];people:Record<string,Row>;locations:Record<string,Row>;services:Record<string,Row>;
+export type ScheduleWindow={summary?:PublishedScheduleSummary;starts_on:string;ends_on:string;sources:Row[];shifts:PlannerSession[];coverage:Row[];findings:Row[];people:Record<string,Row>;locations:Record<string,Row>;services:Record<string,Row>;
   /** Named department dates by day (holidays and dates off). */date_set_markers?:Record<string,DateSetMarker[]>};
 /** One data set for every renderer. With a draft: its sessions, plus published ones as read-only context (`context`) on
  *  the days around it (and under it in Overlay). Without one: the published sessions with their stored checks. */

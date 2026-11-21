@@ -219,12 +219,14 @@ def named(data, definition):
     """What a rule's scope names outright: flat fields plus "is any of" lines, and what its lines name (people, clinics,
     duty types and days)."""
     scope, rows = definition['scope'], definition.get('per_person') or []
+    condition_values = {field: [] for field in ('person_ids', 'service_ids', 'location_ids', 'assignment_type_ids')}
+    for line in _lines(scope.get('conditions'), condition_values):
+        if line.get('op', 'any') in {'any', 'is'}:
+            condition_values[line['field']].extend(absolute_values(line) or ())
 
     def pick(field, *flat):
         values = [v for k in flat for v in (scope.get(k) if isinstance(scope.get(k), list) else [scope[k]] if scope.get(k) else [])]
-        values += [v for c in _lines(scope.get('conditions'), {field}) if c.get('op', 'any') in {'any', 'is'}
-                   for v in absolute_values(c) or ()]
-        return list(dict.fromkeys(values + [v for r in rows for v in r.get(field) or []]))
+        return list(dict.fromkeys(values + condition_values[field] + [v for r in rows for v in r.get(field) or []]))
     places = set(pick('location_ids', 'location_id'))
     weekdays = scope.get('weekdays', list(range(7)))
     if rows and all(r.get('weekdays') is not None for r in rows):

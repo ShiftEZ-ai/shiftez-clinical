@@ -1,5 +1,17 @@
 import type {Row,WorkspaceData} from './types.js';
-import type {LiveChange} from './generated.js';
+import {SCHEDULE_DETAIL_FIELDS,type LiveChange,type ScheduleParticipant,type ScheduleSession} from './generated.js';
+
+function withoutDetail(row:Row,fields:readonly string[]):Row{
+  const kept={...row};
+  for(const key of fields)delete kept[key];
+  return kept;
+}
+const scheduleParticipant=(row:Row)=>withoutDetail(row,SCHEDULE_DETAIL_FIELDS.participant) as unknown as ScheduleParticipant;
+export const scheduleSession=(row:Row):ScheduleSession=>({
+  ...withoutDetail(row,SCHEDULE_DETAIL_FIELDS.session),participants:(row.participants||[]).map(scheduleParticipant),
+}) as ScheduleSession;
+const scheduleCoverage=(rows:Row[])=>rows.map(row=>withoutDetail(row,SCHEDULE_DETAIL_FIELDS.coverage));
+
 
 /** Another person's edit carried on a workspace pulse change (PERF remote-watcher 1f08c8059): the same compact fields
  *  as the edit's own reply, so it is applied through the same path (applyEditDelta via app.ts patchDraft, which needs the
@@ -42,7 +54,8 @@ export function applyCheckDelta(held:WorkspaceData|undefined,reply:Row|null|unde
   if(!held||held.partial||!d||d.kind!=='complete_check'||d.stale||d.partial||!d.validation
     ||String(d.workspace_id)!==String(held.workspace.id)||Number(d.revision)!==Number(held.workspace.revision)
     ||!Array.isArray(d.validation.findings)||!Array.isArray(d.validation.coverage))return null;
-  return {...held,workspace:{...held.workspace,validation:d.validation},
+  const validation={...withoutDetail(d.validation,SCHEDULE_DETAIL_FIELDS.check),coverage:scheduleCoverage(d.validation.coverage)};
+  return {...held,workspace:{...held.workspace,validation},
     current_fingerprint:d.current_fingerprint||d.validation.fingerprint||held.current_fingerprint};
 }
 
@@ -53,19 +66,19 @@ export function applyEditDelta(held:WorkspaceData|undefined,reply:Row|null|undef
   // An amendment's change list (change_diff) is the server's to recompute: read it whole.
   if(!held||held.partial||held.workspace.base_publication_id||!d||d.stale||!w||!d.current_fingerprint)return null;
   if(Number(held.workspace.revision)!==Number(d.base_revision)||Number(w.revision)!==Number(d.revision))return null;
-  const gone=new Set(d.removed_shift_ids||[]),byId=new Map<string,Row>();
+  const gone=new Set(d.removed_shift_ids||[]),byId=new Map<string,ScheduleSession>();
   for(const s of held.shifts)if(!gone.has(String(s.id)))byId.set(String(s.id),s);
-  for(const s of d.shifts||[])byId.set(String(s.id),s);
+  for(const s of d.shifts||[])byId.set(String(s.id),scheduleSession(s));
   // Assignments on their own: each lands in its session (by shift_id); a session not held means the copy is incomplete.
   const leaving=new Set(d.removed_assignment_ids||[]);
-  const joining=new Map<string,Row[]>();for(const a of d.assignments||[]){const k=String(a.shift_id);joining.set(k,[...(joining.get(k)||[]),a]);}
+  const joining=new Map<string,ScheduleParticipant[]>();for(const a of d.assignments||[]){const k=String(a.shift_id);joining.set(k,[...(joining.get(k)||[]),scheduleParticipant(a)]);}
   for(const k of joining.keys())if(!byId.has(k))return null;
   // A session sent whole is taken as it is: assignment patches for it are not applied on top (EDIT-DELTA.md).
   const whole=new Set((d.shifts||[]).map(s=>String(s.id)));
   if(leaving.size||joining.size)for(const [id,s] of byId){if(whole.has(id))continue;
-    const add=joining.get(id),drop=(s.participants||[]).some((p:Row)=>leaving.has(String(p.id)));if(!add&&!drop)continue;
+    const add=joining.get(id),drop=(s.participants||[]).some(p=>leaving.has(String(p.id)));if(!add&&!drop)continue;
     const ids=new Set((add||[]).map(a=>String(a.id)));
-    byId.set(id,{...s,participants:[...(s.participants||[]).filter((p:Row)=>!leaving.has(String(p.id))&&!ids.has(String(p.id))),...(add||[])]});
+    byId.set(id,{...s,participants:[...(s.participants||[]).filter(p=>!leaving.has(String(p.id))&&!ids.has(String(p.id))),...(add||[])]});
   }
   // The server's order (snapshots.workspace_shifts): start, then id.
   const shifts=[...byId.values()].sort((a,b)=>String(a.start).localeCompare(String(b.start))||String(a.id).localeCompare(String(b.id)));
@@ -74,11 +87,11 @@ export function applyEditDelta(held:WorkspaceData|undefined,reply:Row|null|undef
     return (r:Row)=>s.has(String(r.shift_id))||!!r.person_id&&p.has(String(r.person_id));};
   const replaced=(held:Row[]|undefined,part:{shift_ids?:string[];person_ids?:string[];items:Row[]}|undefined)=>{
     if(!part)return held;const hit=inScope(part);return [...(held||[]).filter(r=>!hit(r)),...part.items];};
-  const findings=replaced(old.findings,d.findings),coverage=replaced(old.coverage,d.coverage);
+  const findings=replaced(old.findings,d.findings),coverage=replaced(old.coverage,d.coverage&&{...d.coverage,items:scheduleCoverage(d.coverage.items)});
   // The reply's workspace carries the check as a summary (counts, fingerprint); the held findings and coverage, patched, stay.
   // (serialization.compact_reply puts it on the workspace, or beside it as `validation`).
   const summary=(w.validation||reply!.validation||{}) as Row;
-  const validation={...old,...summary,findings,coverage};
+  const validation={...old,...withoutDetail(summary,SCHEDULE_DETAIL_FIELDS.check),findings,coverage};
   return {...held,workspace:{...held.workspace,...w,validation},shifts,current_fingerprint:d.current_fingerprint,
     current_input_revision:d.current_input_revision??held.current_input_revision,current_availability_revision:d.current_availability_revision??held.current_availability_revision};
 }

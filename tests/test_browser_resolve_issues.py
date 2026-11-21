@@ -568,7 +568,7 @@ def test_revealed_issues_clear_selection_and_undo_stay_clickable_beside_the_toas
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 600})
     try:
         held = []
-        route_url = '**/api/workspaces/' + w['id']
+        route_url = '**/api/workspaces/' + w['id'] + '?view=schedule'
         page.route(route_url, lambda route: held.append(route))
         page.evaluate("id=>location.hash='schedule/issues?view=checks&draft='+id", w['id'])
         wait_held(page, held)
