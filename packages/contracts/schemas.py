@@ -1948,6 +1948,7 @@ class PersonInput(Schema):
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     active: bool = Field(default=True, json_schema_extra={"bulk": True})
+    inactive_from: date | None = Field(default=None, json_schema_extra={"bulk": True})
     title: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     work_email: Email | Literal[""] = ""
     work_phone: str = Field(default="", max_length=80, json_schema_extra={"bulk": True})
@@ -7737,13 +7738,14 @@ GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged':
 GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_limit': 'search time used up',
     'plateau': 'stopped when it stopped improving', 'gap': 'close enough to the best possible',
     'score': 'target score reached', 'clock': 'stop time reached', 'operator_stop': 'stopped with Stop and keep best',
-    'cancelled': 'cancelled', 'failed': 'stopped by an error', 'no_search': 'nothing to search',
+    'model_proven': 'search finished; checks changed the proposal', 'cancelled': 'cancelled',
+    'failed': 'stopped by an error', 'no_search': 'nothing to search',
     'conflict': 'rules conflict'}
 
 
 class GenerationSearchStop(Schema):
     """The typed reason a finished generation run stopped searching."""
-    reason: Literal['optimal', 'time_limit', 'plateau', 'gap', 'score', 'clock',
+    reason: Literal['optimal', 'model_proven', 'time_limit', 'plateau', 'gap', 'score', 'clock',
                     'operator_stop', 'cancelled', 'failed', 'no_search', 'conflict']
     search_seconds: float = Field(ge=0, allow_inf_nan=False)
     detail: str = ''
