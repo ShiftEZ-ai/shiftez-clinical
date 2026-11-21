@@ -138,7 +138,29 @@ def test_swap_other_subject_requires_self_approval_and_stays_out_of_waiting(swap
     assert h.command("swap_reviewer", "request.decide", payload, row["id"], row["revision"])["record"]["status"] == "rejected"
     event = next(e for e in h.get("auditor", "/api/audit?self_approved=true")["events"] if e["action"] == "request.decide")
     assert event["detail"]["self_approved"] == [{"action": "request.decide", "permission_id": permission["id"]}]
+    assert "entered_on_behalf_by" not in event["detail"]
     assert_waiting(h, "swap_reviewer", [])
+
+
+@pytest.mark.parametrize("enterer_is_party", [True, False], ids=["swap-party", "outside-coordinator"])
+def test_rotation_swap_approval_marks_only_an_outside_enterer(swap, enterer_is_party):
+    h, _, cohort, types, people, rotations = swap
+    peer = h.configure("rotations", {"person_id": people[1], "cohort_id": cohort["id"],
+        "rotation_type_id": types[1]["id"], "starts_on": "2026-12-01", "ends_on": "2026-12-15"}, role="coordinator")["record"]
+    enterer = identity(h, "swap_enterer", ["coordinator"],
+                       person=people[1] if enterer_is_party else h.seed["people"][2])
+    row = propose(h, [rotations[0], peer], role="swap_enterer")["record"]
+    assert (row["person_id"], row["details"]["swap"]["person_id"]) == tuple(people)
+    approved = h.command("approver", "request.decide", {"decision": "approve", "reason": "Reviewed the exchange"},
+                         row["id"], row["revision"])["record"]
+    assert approved["status"] == "approved" and approved["decided_by"] == h.seed["identities"]["approver"]
+    event = next(e for e in h.get("auditor", "/api/audit")["events"]
+                 if e["action"] == "request.decide" and e["target_id"] == row["id"])
+    assert "self_approved" not in event["detail"]
+    if enterer_is_party:
+        assert "entered_on_behalf_by" not in event["detail"]
+    else:
+        assert event["detail"]["entered_on_behalf_by"] == [enterer]
 
 
 def test_overtime_entered_for_another_subject_is_independent(database):
