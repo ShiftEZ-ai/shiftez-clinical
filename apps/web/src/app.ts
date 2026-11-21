@@ -5050,6 +5050,11 @@ function inlineField(kind:string,fieldName:string,edit:Omit<EditSpec<Row>,'save'
   // The reply's records patch the list and the lists in memory in place (C-34); switching one on or off recounts the nav.
   return {...edit,value:edit.value||(r=>r[fieldName]),...(fieldName==='active'?{afterSave:recount}:{}),save:async(list,value)=>{
     const result=await command('catalogue.bulk_update',{catalogue:kind,items:list.map(r=>({id:r.id,revision:r.revision})),set:{[fieldName]:fieldName==='short_code'?String(value).toUpperCase():value},reason:'Inline edit'});
+    if(kind==='people'){
+      await loadLists();
+      const people=new Map(rows('people').map(r=>[r.id,r]));
+      return list.map(r=>people.get(r.id)||r);
+    }
     // The write reply is the bare record: its fields go onto the row in memory, which keeps what the read added
     // (a person's current rank, programme, aliases) for the list and the next visit.
     const byId=new Map((result.records as Row[]).map(r=>[r.id,r])),merge=(r:Row)=>byId.has(r.id)?{...r,...byId.get(r.id)}:r;
@@ -5093,7 +5098,7 @@ function peopleBulkActions(ids:string[]):BulkAction[]{
     // day), with the selected people already chosen; several people go through one bulk change with one Undo.
     ...(permits(CAPABILITY.COORDINATOR)?[{label:'Record leave',icon:'leave' as const,more:true,run:(i:string[],d:()=>void)=>formDialog(`Record leave for ${plural(i.length,'person','people')}`,'',form=>{
       const save=availabilityFields(ctx(),form,false,{person_ids:i});return async()=>{await save();d();};},'Record leave')}]:[]),
-    ...(picked.some(p=>p.active!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
+    ...(picked.some(p=>(p.configured_active??p.active)!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
     ...(picked.length&&picked.every(p=>p.active===false)&&permits(CAPABILITY.ADMIN)?[{label:'Remove personal details',icon:'trash' as const,danger:true,run:(i:string[],d:()=>void)=>confirmAction(`Remove personal details of ${plural(i.length,'former staff member')}`,'For people who have left. Their name, contact and staff details, private leave reasons and notes, calendar links and sign-in are removed for good; they appear as “Former staff member”. Rotas, publications and the audit log keep what they recorded.',async reason=>{await runBulk({collection:'people',noun:['person','people'],destructive:true,verb:'Remove details of',message:'Personal details removed for {n} people.',onDone:async()=>{d();await refresh();},
       body:{item_kind:'person.anonymise',items:i.map(id=>({target_id:id,expected_revision:picked.find(p=>p.id===id)!.revision})),reason}});},'Remove details')}]:[]),
   ];
@@ -5208,7 +5213,7 @@ async function peoplePage(target:HTMLElement){
       ...contact,
       ...(!full?[]:[{key:'status',label:'Status',field:'active',options:['Active','Inactive'],text:(p:Row)=>p.active===false?'Inactive':'Active',facet:(p:Row)=>p.active===false?'Inactive':'Active',
         cell:(p:Row)=>p.active===false?statusBadge('inactive','Inactive'):statusBadge('active','Active'),  // the one status palette (P-21)
-        edit:inlineField('people','active',{kind:'toggle',value:p=>p.active!==false})}]),
+        edit:inlineField('people','active',{kind:'toggle',value:p=>(p.configured_active??p.active)!==false})}]),
       // Details to review is for the people who can fix them (editors; credentialers for clinic eligibility).
       ...(manager||cred?[{key:'review',label:'Details to review',options:['Needs attention','Complete'],facet:(p:Row)=>of(p).gaps.length?'Needs attention':'Complete',sort:(p:Row)=>of(p).gaps.length,
         cell:(p:Row)=>of(p).gaps.length?pillList(of(p).gaps.map(([text,tip,tone])=>{const b=badge(text,tone);b.setAttribute('data-tip',tip);return b;}),{label:['detail to review','details to review']}):el('span',{class:'muted'},'Complete')}]:[]),

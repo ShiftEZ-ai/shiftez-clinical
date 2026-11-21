@@ -332,7 +332,8 @@ def test_bulk_future_date_is_preserved_and_stale_active_date_is_ignored(h):
               'items': [{'id': inactive['id'], 'revision': inactive['revision']}],
               'set': {'inactive_from': future}, 'reason': 'Schedule inactivity'})
     dated = rows(h, 'people', [person['id']])[0]
-    assert dated['active'] is False and dated['inactive_from'] == future
+    assert dated['configured_active'] is False and dated['inactive_from'] == future
+    assert dated['active'] is True
     h.command('admin', 'catalogue.bulk_update', {'catalogue': 'people',
               'items': [{'id': dated['id'], 'revision': dated['revision']}],
               'set': {'title': 'Staff'}, 'reason': 'Keep the effective date'})
@@ -466,3 +467,130 @@ def test_inactive_date_edit_reaches_an_open_draft_without_refresh_or_baseline_dr
         assert verify(baseline)['people'][person_id]['active'] is True
         current = snapshot_inputs(db, db.get(m.Organisation, h.seed['organisation_id']))
         assert not any(change['source'] == 'people' for change in _diff(baseline, workspace, current)[2])
+
+
+@pytest.fixture
+def dated_people(h):
+    future, undated, _ = h.seed['people']
+    with transaction(h.app.state.engine, write=True) as db:
+        person = db.get(m.Person, future)
+        person.active, person.inactive_from = False, date(2026, 10, 6)
+        db.get(m.Person, undated).active = False
+    return future, undated
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_people_reads_and_counts_change_at_department_midnight(h, dated_people, monkeypatch):
+    from packages.domain.time import local_midnight
+
+    future, undated = dated_people
+    with transaction(h.app.state.engine, write=True) as db:
+        zone = db.get(m.Organisation, h.seed['organisation_id']).timezone
+        for row in db.scalars(select(m.Membership).where(m.Membership.person_id == future)):
+            row.ends_on = date(2026, 10, 5)
+    cutoff = local_midnight(date(2026, 10, 6), zone)
+    client = h.client('coordinator')
+    workspace = h.workspace()
+    summary_path = f'/api/workspaces/{workspace["id"]}/summary'
+    path = '/api/catalogues?include=people'
+    previous, summary_etag = None, None
+    for instant, active in ((cutoff - timedelta(seconds=1), True), (cutoff, False)):
+        monkeypatch.setattr(m, 'now', lambda: instant)
+        reply = client.get(path, headers={'If-None-Match': previous} if previous else {})
+        assert reply.status_code == 200
+        previous = reply.headers['etag']
+        people = {p['id']: p for p in reply.json()['people']}
+        assert people[future]['active'] is active
+        assert people[future]['configured_active'] is False
+        assert people[undated]['active'] is False
+        assert (future in {p['id'] for p in h.get('staff', '/api/directory')['people']}) is active
+        assert undated not in {p['id'] for p in h.get('staff', '/api/directory')['people']}
+        counts = h.get('coordinator', '/api/people/summary')
+        assert counts == {'active_people': 1 + active, 'people_without_current_rank': int(active)}
+        assert h.get('coordinator', path + '&counts_only=true')['counts']['people'] == 1 + active
+        home = h.get('coordinator', '/api/home')
+        assert next((row['count'] for row in home['attention'] if row['key'] == 'no_rank'), 0) == int(active)
+        summary = client.get(summary_path, headers={'If-None-Match': summary_etag} if summary_etag else {})
+        assert summary.status_code == 200
+        summary_etag = summary.headers['etag']
+        assert summary.json()['people'] == counts
+        selected = client.post('/api/bulk/rows', json={'selection': {'collection': 'people',
+            'where': {'filters': {'status': ['active']}}}})
+        assert selected.status_code == 200
+        assert {row['id'] for row in selected.json()['rows']} == (
+            {h.seed['people'][2], future} if active else {h.seed['people'][2]})
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_rule_reach_clips_the_people_window_at_deactivation(h, dated_people):
+    from packages.domain.rule_map import rule_map
+    from .test_rule_map import entry
+    from .test_rule_templates import activate, propose
+
+    future, undated = dated_people
+    rule = {'kind': 'max_hours', 'hours': 48}
+    scope = {'person_ids': [future, undated]}
+    general = activate(h, propose(h, rule, scope, name='Dated reach'))
+    later = activate(h, propose(h, rule, scope, name='Later reach', starts_on='2026-10-06'))
+    for day, expected in (('2026-10-05', 1), ('2026-10-06', 0)):
+        counted = h.get('coordinator', f'/api/policies/reach?day={day}')['reach']
+        assert (counted[general['id']], counted[later['id']]) == (expected, 0)
+    for first, ids in (('2026-10-05', {future}), ('2026-10-06', set())):
+        detailed = h.get('coordinator', f'/api/policies/reach?starts_on={first}&ends_on=2026-10-07')
+        assert detailed['reach'][general['id']] == len(ids)
+        assert detailed['reach'][later['id']] == 0
+        assert {p['person_id'] for line in detailed['details'].get(general['id'], {}).get('lines', [])
+                for p in line['people']} == ids
+    mapped = rule_map(h.snapshot(h.workspace()))
+    assert entry(mapped, general['id'])['people'] == {future: [[0, 2]]}
+    assert entry(mapped, later['id'])['people'] == {}
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_overtime_reads_each_day_before_deactivation(h, dated_people):
+    from .test_overtime_volunteer import offer_rule
+
+    future, _ = dated_people
+    offer_rule(h, person=future)
+
+    def eligibility(person, start, end):
+        return h.get('coordinator', f'/api/requests/overtime-eligibility?starts_on={start}'
+                     f'&ends_on={end}&person_id={person}')
+
+    crossing = eligibility(future, '2026-10-05', '2026-10-07')
+    assert crossing['eligible'] and {offer['starts_on'] for offer in crossing['offers']} == {'2026-10-05'}
+    assert not eligibility(future, '2026-10-06', '2026-10-07')['eligible']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Person, future).inactive_from = None
+    assert not eligibility(future, '2026-10-05', '2026-10-07')['eligible']
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_person_score_uses_the_rota_window_for_freshness_and_opportunities(h, dated_people):
+    from packages.contracts.schemas import RequirementSegment
+
+    future, undated = dated_people
+    with transaction(h.app.state.engine, write=True) as db:
+        typ = db.get(m.AssignmentType, h.seed['type'])
+        typ.definition = {**typ.definition, 'requirements': [RequirementSegment(minimum=2).model_dump()]}
+        person = db.get(m.Person, future)
+        person.active, person.inactive_from = True, None
+    before = h.workspace(start='2026-10-04', end='2026-10-06')
+    after = h.workspace(start='2026-10-06', end='2026-10-08')
+    h.shift(before, people=[])
+    h.shift(after, start='2026-10-06T08:00:00+03:00', end='2026-10-06T12:00:00+03:00', people=[])
+
+    def score(person, workspace):
+        path = f'/api/people/{person}/score?workspace_id={workspace["id"]}&open_limit=20'
+        return h.get('coordinator', path)['draft']
+
+    control = score(future, before)
+    assert control['fresh'] and len(control['open_places']) == 1
+    with transaction(h.app.state.engine, write=True) as db:
+        person = db.get(m.Person, future)
+        person.active, person.inactive_from = False, date(2026, 10, 6)
+    past = score(future, before)
+    assert past['fresh'] and past['open_places'] == control['open_places']
+    for person, workspace in ((future, after), (undated, before), (undated, after)):
+        result = score(person, workspace)
+        assert not result['fresh'] and result['open_places'] == []

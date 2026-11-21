@@ -12,16 +12,18 @@ from pathlib import PurePath
 from sqlalchemy import func, select
 
 from apps.api import models as m
-from apps.api.auth import require_role
+from apps.api.auth import _local_today, require_role
 from apps.api.errors import Problem, require
 from apps.api.serialization import record
 from apps.api.snapshots import snapshot_hash, workspace_shifts
 from packages.domain.time import aware
 from packages.contracts import schemas as s
 from packages.domain.time import local_stamp
+from packages.domain.validation import person_active_on
 from . import catalogue, imports, planning
 from .common import expected, scoped
-from .score_check_parser import prepare_score_check_file, parse_score_check_file, ScoreCheckParseError
+from .people import active_people_on
+from .score_check_parser import prepare_score_check_file, parse_score_check_file, person_match_days, ScoreCheckParseError
 
 
 def require_enabled(db, department_id):
@@ -38,23 +40,29 @@ def _sources(db, batch):
                            .order_by(m.ImportSource.created_at, m.ImportSource.id)))
 
 
-def extraction_context(db, actor, source):
+def extraction_context(db, actor, source, *, dated_people=False, match_day=None):
     batch = scoped(db, m.ScoreCheckImportBatch, source.batch_id, actor)
-    people = list(db.scalars(select(m.Person).where(m.Person.active.is_(True), m.Person.id.in_(
-        select(m.Membership.person_id).where(m.Membership.department_id == actor.department_id)))))
-    return {'people': [{key: getattr(p, key) for key in ('id', 'display_name', 'short_code', 'rota_name', 'rota_aliases')} for p in people],
+    start = source.starts_on or (batch.starts_on if not batch.period_inferred else None)
+    end = source.ends_on or (batch.ends_on if not batch.period_inferred else None)
+    # The local parser and validator know the duty dates; other callers get the selected day's candidate list.
+    day = date.min if dated_people else match_day or start or _local_today(db, actor.department_id)
+    people = db.scalars(select(m.Person).where(active_people_on(day), m.Person.id.in_(
+        select(m.Membership.person_id).where(m.Membership.department_id == actor.department_id))))
+    fields = ('id', 'display_name', 'short_code', 'rota_name', 'rota_aliases')
+    if dated_people:
+        fields += ('active', 'inactive_from')
+    return {'people': [{key: getattr(p, key) for key in fields} for p in people],
             'duty_types': [{'id': t.id, 'name': t.name} for t in db.scalars(select(m.AssignmentType).where(
                 m.AssignmentType.department_id == actor.department_id))],
             'clinics': [{'id': r.id, 'name': r.name, 'kind': kind} for cls, kind in ((m.Service, 'service'), (m.Location, 'location'))
                         for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))],
-            'period_start': source.starts_on or (batch.starts_on if not batch.period_inferred else None),
-            'period_end': source.ends_on or (batch.ends_on if not batch.period_inferred else None), 'group': source.group}
+            'period_start': start, 'period_end': end, 'group': source.group}
 
 
 def validate_extraction(db, actor, source, value, inventory=None):
     """Validate every reference against this department and the actual uploaded file."""
     value = s.RotaExtraction.model_validate(value).model_dump(mode='json')
-    context = extraction_context(db, actor, source)
+    context = extraction_context(db, actor, source, dated_people=True)
     if inventory is None:
         if source.format in {'csv', 'tsv', 'xlsx'}:
             inventory = prepare_score_check_file(source.content, source.file_name, file_ref=source.file_ref)
@@ -72,11 +80,23 @@ def validate_extraction(db, actor, source, value, inventory=None):
             'EXTRACTION_FILE', 'The extraction must describe exactly the uploaded file')
     require(not source.group or value['files'][0]['group'] == source.group,
             'EXTRACTION_GROUP', 'The extraction must retain the selected group')
-    ids = {key: {r['id'] for r in context[key]} for key in ('people', 'duty_types', 'clinics')}
+    people = {p['id']: p for p in context['people']}
+    days = person_match_days(value['assignments'])
+    fallback = context['period_start']
+    for item in value['people']:
+        target = item.get('suggested_person_id')
+        if target:
+            person = people.get(target)
+            day = days.get(item['as_written'])
+            if day is None:
+                fallback = fallback or _local_today(db, actor.department_id)
+                day = fallback
+            require(person and person_active_on(person['active'], person['inactive_from'], day), 'EXTRACTION_ID',
+                    'The extraction suggests an identifier outside the candidate list')
+    ids = {key: {r['id'] for r in context[key]} for key in ('duty_types', 'clinics')}
     ids['services'] = {r['id'] for r in context['clinics'] if r['kind'] == 'service'}
     ids['locations'] = {r['id'] for r in context['clinics'] if r['kind'] == 'location'}
-    for kind, field, allowed in (('people', 'suggested_person_id', 'people'),
-            ('duty_codes', 'suggested_type_id', 'duty_types'), ('clinics', 'suggested_service_id', 'services'),
+    for kind, field, allowed in (('duty_codes', 'suggested_type_id', 'duty_types'), ('clinics', 'suggested_service_id', 'services'),
             ('clinics', 'suggested_location_id', 'locations')):
         for item in value[kind]:
             require(not item.get(field) or item[field] in ids[allowed], 'EXTRACTION_ID',
@@ -230,13 +250,15 @@ def refresh(db, batch):
             m.Membership.department_id == batch.department_id,
             m.Membership.starts_on < batch.ends_on,
             (m.Membership.ends_on.is_(None) | (m.Membership.ends_on > batch.starts_on)))))
-        membership_context = {}
+        membership_context, first_membership = {}, {}
         for row in memberships:
             membership_context.setdefault(row.person_id, []).append([row.id, row.revision, row.category_id,
                 row.starts_on.isoformat(), row.ends_on.isoformat() if row.ends_on else None])
-        people = db.scalars(select(m.Person).where(m.Person.id.in_(membership_context), m.Person.active.is_(True)))
+            first = max(batch.starts_on, row.starts_on)
+            first_membership[row.person_id] = min(first, first_membership.get(row.person_id, first))
+        people = db.scalars(select(m.Person).where(m.Person.id.in_(membership_context)))
         for person in people:
-            if person.id not in present:
+            if person.id not in present and person_active_on(person.active, person.inactive_from, first_membership[person.id]):
                 gaps.append({'id': snapshot_hash(['missing', person.id, batch.starts_on.isoformat(), batch.ends_on.isoformat(),
                     person.revision, sorted(membership_context[person.id])]), 'kind': 'missing', 'entity_kind': 'person',
                     'source_id': None, 'file_ref': None, 'cell_refs': [], 'as_written': person.display_name,
@@ -368,7 +390,7 @@ def _read_files(db, actor, batch, files, settings, *, group='', starts_on=None, 
             require(format in {'csv', 'tsv', 'xlsx'}, 'AI_REQUIRED', 'PDF and image files require an enabled AI provider and consent')
             try:
                 extraction = parse_score_check_file(content, name, file_ref=source.file_ref,
-                                                    **extraction_context(db, actor, source))
+                                                    **extraction_context(db, actor, source, dated_people=True))
                 source.extraction = validate_extraction(db, actor, source, extraction)
             except ScoreCheckParseError as error:
                 require(False, 'INVALID_FILE', str(error))
@@ -449,7 +471,7 @@ def update(db, actor, command, settings):
             source.extraction = extraction
         if {'starts_on', 'ends_on'} & edit.model_fields_set and source.format in {'csv', 'tsv', 'xlsx'}:
             source.extraction = parse_score_check_file(source.content, source.file_name, file_ref=source.file_ref,
-                                                       **extraction_context(db, actor, source))
+                                                       **extraction_context(db, actor, source, dated_people=True))
     batch.revision += 1
     if time_only:
         return {**view(db, actor, batch), 'previous_value': previous}
@@ -464,7 +486,8 @@ def decide(db, actor, command, settings):
     batch = _editable(db, actor, value.batch_id, command.expected_revision)
     gap = next((g for g in batch.gaps if g['id'] == value.gap_id), None)
     require(gap is not None, 'NOT_FOUND', 'Gap not found', 404)
-    require(value.gap_id not in _decisions(db, batch), 'GAP_DECIDED', 'Undo the current decision before changing it', 409)
+    decisions = _decisions(db, batch)
+    require(value.gap_id not in decisions, 'GAP_DECIDED', 'Undo the current decision before changing it', 409)
     allowed = {'missing': {'acknowledge'}, 'unknown': {'add', 'match', 'exclude'},
                'uncertain': {'confirm', 'match', 'exclude'}, 'unreadable': {'resolve', 'exclude'}}
     require(value.action in allowed[gap['kind']], 'GAP_ACTION', 'Choose an action appropriate to this gap')
@@ -480,7 +503,9 @@ def decide(db, actor, command, settings):
         scoped(db, cls, target, actor)
         if cls is m.Person:
             source = db.get(m.ImportSource, gap['source_id'])
-            require(target in {p['id'] for p in extraction_context(db, actor, source)['people']},
+            days = person_match_days(_effective_extraction(source, decisions).get('assignments', []))
+            require(target in {p['id'] for p in extraction_context(db, actor, source,
+                    match_day=days.get(gap['as_written']))['people']},
                     'IMPORT_PERSON', 'Choose a person from this department')
     if value.action == 'add':
         require(gap['entity_kind'] in {'person', 'clinic'}, 'GAP_ACTION',
@@ -498,7 +523,7 @@ def decide(db, actor, command, settings):
         assignment = s.RotaExtractionAssignment.model_validate(value.replacement).model_dump(mode='json')
         require(assignment['file_ref'] == source.file_ref and assignment['cell_ref'] in gap['cell_refs'],
                 'EXTRACTION_CELL', 'Resolve the original unreadable cell')
-        candidate = _corrected(_effective_extraction(source, _decisions(db, batch)), assignment,
+        candidate = _corrected(_effective_extraction(source, decisions), assignment,
                                replace_cell=source.format in {'csv', 'tsv', 'xlsx'})
         validate_extraction(db, actor, source, candidate)
     decision = m.ScoreCheckGapDecision(department_id=actor.department_id, batch_id=batch.id,

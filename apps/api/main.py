@@ -1394,11 +1394,13 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor)['people']
+            current = current_people(db, actor, today)['people']
             aliases = imported_aliases(db, actor)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
+                if not employee_number_redacted:
+                    person['configured_active'] = person['active']
                 person.update(current.get(person['id'], {}))
                 person['employee_number_redacted'] = employee_number_redacted
             from .services.people import visible_people
@@ -1643,13 +1645,14 @@ def create_app(settings: Settings | None = None, engine=None):
         """Active people, with the same field visibility as the people catalogue."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
+            from .services.independence import today
+            from .services.people import active_people_on, current_people, visible_people
+            day = today(db, actor.department_id)
             rows = list(db.execute(select(m.Person.id, *(getattr(m.Person, f) for f in DIRECTORY_FIELDS)).where(
-                m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True)).order_by(
+                m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            from .services.people import current_people
-            current = current_people(db, actor)['people']
-            from .services.people import visible_people
+            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}

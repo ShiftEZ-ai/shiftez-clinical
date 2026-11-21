@@ -12,7 +12,7 @@ from packages.domain.generation import allocation_policy_matches
 from packages.domain.rule_lines import resolved_overtime_offers
 from packages.domain.time import aware, local_midnight, local_stamp
 from packages.domain.validation import (ancestor_ids, location_type_allowed, location_validity_findings,
-                                        qualified, scope_intervals, valid_dates)
+                                        person_active_for_interval, qualified, scope_intervals, valid_dates)
 from apps.api import models as m
 from apps.api.auth import person_access, require_role
 from apps.api.errors import require
@@ -35,13 +35,9 @@ def _value(row):
 
 def _context(db, actor, person_id, starts_on, ends_on):
     from .policies import people_data
-    data, _, _ = people_data(db, actor, starts_on)
-    person = db.get(m.Person, person_id)
-    if not (person is not None and person.active and any(
-        r["person_id"] == person_id and r["starts_on"] < ends_on.isoformat()
-        and (not r.get("ends_on") or starts_on.isoformat() < r["ends_on"]) for r in data["memberships"])):
+    data, _, _ = people_data(db, actor, starts_on, last=ends_on)
+    if person_id not in data["people"]:
         return data
-    data["people"][person_id] = record(person)
     data["policies"] = [record(p) for p in db.scalars(select(m.Policy).where(
         m.Policy.department_id == actor.department_id)) if not p.definition.get("workspace_id")]
     for key, cls in (("services", m.Service), ("location_types", m.LocationType),
@@ -184,7 +180,9 @@ def offers(db, actor, value, *, validate=True, cache=None, allowed=None):
     choices = selections[selection]
     for day in requested_days:
         a, b = _clock(day, value.start_time, zone), _clock(day, value.end_time, zone)
-        candidates = initial if day == first else resolved_overtime_offers(data, value.person_id, a, b)
+        candidates = []
+        if person_active_for_interval(data, value.person_id, a, b):
+            candidates = initial if day == first else resolved_overtime_offers(data, value.person_id, a, b)
         found = []
         for policy in candidates:
             lo = max(a, local_midnight(date.fromisoformat(str(policy["starts_on"])), zone)) if policy.get("starts_on") else a
