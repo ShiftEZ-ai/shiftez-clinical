@@ -400,7 +400,7 @@ def _line_safety(entry_id, version, rule, line, *, mandatory=True):
         numbers = line.get('numbers') or {}
         for key, number in numbers.items():
             slot = slot_for_number(entry, key, rule, line, numbers)
-            if slot['kind'] not in NEVER_OVERRIDDEN:
+            if slot['kind'] not in NEVER_OVERRIDDEN or (slot['advisory'] and not mandatory):
                 continue
             level = number.get('level', 'mandatory')
             if level is None:

@@ -15,7 +15,8 @@ V1_SAFETY_NUMBERS = [
     for entry in RULE_CATALOGUE
     if CATALOGUE_MAPPING[entry['id']] and 'medium' in entry['levels']
     for key, slots in entry['numbers'].items()
-    for slot in slots if slot['kind'] in NEVER_OVERRIDDEN
+    # Contract-advisory slots are scoring preferences under #144.
+    for slot in slots if slot['kind'] in NEVER_OVERRIDDEN and not slot['advisory']
 ]
 
 
@@ -93,3 +94,23 @@ def test_v1_mixed_or_mandatory_safety_conversion(h, level):
         destination_ids = {first['line_id'], second['line_id']}
         assert {line['id']: line['numbers']['min']['level'] for line in stored.definition['rule']['lines']
                 if line['id'] in destination_ids} == dict.fromkeys(destination_ids, 'mandatory')
+
+
+def test_v1_cover_converts_with_mandatory_minimum_and_advisory_target(h):
+    numbers = {'min': {'value': 2, 'level': 'mandatory'}, 'target': {'value': 3, 'level': 'medium'}}
+    source = approve(h, propose(h, 'people_per_session', [line(numbers=numbers)], catalogue_version=1)['record'])
+    plan = preview(h, proof=False)
+    assert not plan['blocked'], plan['blocked']
+
+    change = proposed(h)
+    active = h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent safety conversion review'},
+                       change['id'], change['revision'])['record']
+    assert active['status'] == 'active'
+    [binding] = [b for b in active['plan']['bindings'] if b['source_policy_id'] == source['id']]
+    [destination] = binding['destinations']
+    with transaction(h.app.state.engine) as db:
+        stored = db.get(m.Policy, destination['id'])
+        assert stored.status == 'active'
+        assert stored.definition['rule']['catalogue_version'] == 2
+        [converted] = [line for line in stored.definition['rule']['lines'] if line['id'] == destination['line_id']]
+        assert converted['numbers'] == numbers
