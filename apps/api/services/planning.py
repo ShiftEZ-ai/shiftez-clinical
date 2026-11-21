@@ -287,7 +287,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     if _incremental is not None and not amendment_scope:
         before, previous = _incremental
         # Rule reach is reusable only for the same complete before and after inputs.
-        scopes = preparation['validation_scopes'] if preparation and preparation['kind'] == 'shift.update' else None
+        scopes = preparation['validation_scopes'] if preparation and preparation.get('kind') == 'shift.update' else None
         held = scopes.get(workspace.id) if scopes is not None else None
         if held is not None and held[0] is previous and held[1] == before and held[2] == data:
             partial = held[3]
@@ -935,7 +935,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False)
+        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1795,7 +1796,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
-    touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
+    touched = [row for row in current if row['id'] not in old or
+               (row != old[row['id']] and shift_input(row) != shift_input(old[row['id']]))]
     prior = [old[row['id']] for row in touched if row['id'] in old]
     open_places = []
     if staffing_gaps_only:
