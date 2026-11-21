@@ -8,25 +8,22 @@ from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import job_result_summary
 from tests.test_backend_scale import measure, scale_department
-from tests.test_fix_list_performance import backend
 from tests.test_performance_budget import python_budget
 
 
-def test_department_fix_list_evidence_is_lazy_and_version_bound(backend):
-    pg = backend
+@pytest.mark.postgres
+def test_department_fix_list_evidence_is_lazy_and_version_bound(pg):
     workspace, _, _, _ = scale_department(pg, assigned=False)
     pg.command('coordinator', 'workspace.validate', {'reason': 'Synthetic scale check'}, workspace['id'], workspace['revision'])
     path = f'/api/workspaces/{workspace["id"]}/fix-list'
     full = pg.client('coordinator').get(path)
-    slim = pg.client('coordinator').get(path+'?include_evidence=false')
+    slim, timing = measure(pg, 'fix-list-lazy', lambda: pg.client('coordinator').get(path+'?include_evidence=false'))
     expected = full.json()
     for cause in expected['causes']:
         cause['evidence'] = []
     assert slim.status_code == 200 and slim.json() == expected
-    lean, timing = measure(pg, 'fix-list-lean', lambda: pg.client('coordinator').get(path+'?view=lean'))
-    assert lean.status_code == 200
-    assert len(lean.content) < len(full.content) * .2
-    assert len(lean.content) < 200_000
+    assert len(slim.content) < len(full.content) * .2
+    assert len(slim.content) < 200_000
     assert timing['sql'].get('SELECT', 0) <= 30
     original = full.json()['causes'][0]
     url = path+'?cause_id='+original['id']+'&evidence_hash='+original['evidence_hash']
@@ -36,7 +33,7 @@ def test_department_fix_list_evidence_is_lazy_and_version_bound(backend):
     assert pg.client('coordinator').get(path+'?cause_id=missing').status_code == 409
     assert pg.client('staff').get(url).status_code == 403
     assert pg.client('coordinator').get(path).json() == full.json()
-    print('fix-list bytes', {'full': len(full.content), 'slim': len(slim.content), 'lean': len(lean.content)})
+    print('fix-list bytes', {'before': len(full.content), 'after': len(slim.content)})
     return locals()
 
 
@@ -61,14 +58,26 @@ def test_department_fix_list_opens_lean_and_says_its_bytes(pg):
     (include_evidence=false), its bytes printed against the full object. FIXLIST-UX, 8 Nov 2026, this fixture (1 cause,
     768 open sessions), PERF 10c26e6a2: lean 123.6 KB raw / 37.1 KB gzip; old open 275.3 / 70.0; full 1,223.8 / 104.6.
     What is left is per session (session_findings, shift_ids): LEAD-UIUX designs that separately."""
+    lean_fix_list_budget(pg)
+
+
+def test_department_fix_list_opens_lean_on_sqlite(h):
+    lean_fix_list_budget(h)
+
+
+def lean_fix_list_budget(pg):
     import gzip
     workspace, _, _, _ = scale_department(pg, assigned=False)
     pg.command('coordinator', 'workspace.validate', {'reason': 'Synthetic scale check'}, workspace['id'], workspace['revision'])
     path = f'/api/workspaces/{workspace["id"]}/fix-list'
     client = pg.client('coordinator')
-    full, before, lean = (client.get(path + q) for q in ('', '?include_evidence=false', '?view=lean'))
+    full, before = (client.get(path + q) for q in ('', '?include_evidence=false'))
+    lean, timing = measure(pg, 'fix-list-lean', lambda: client.get(path+'?view=lean'))
     assert lean.status_code == 200 and not any('evidence' in c for c in lean.json()['causes'])
     assert len(lean.content) < len(before.content) * .6 and len(before.content) < len(full.content)
+    assert len(lean.content) < len(full.content) * .2
+    assert len(lean.content) < 200_000
+    assert timing['sql'].get('SELECT', 0) <= 30
     print('fix-list open bytes', {'full': len(full.content), 'before': len(before.content), 'lean': len(lean.content),
                                   'lean_gzip': len(gzip.compress(lean.content))})
 

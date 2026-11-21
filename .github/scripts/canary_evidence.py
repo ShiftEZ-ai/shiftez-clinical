@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from quarantine_registry import QUARANTINE_XFAIL_PREFIX
+
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -14,6 +16,12 @@ def sha(path):
 def outcome(case):
     return ("error" if case.find("error") is not None else "failed" if case.find("failure") is not None
             else "skipped" if case.find("skipped") is not None else "passed")
+
+
+def quarantine_xfail(case):
+    skipped = case.find("skipped")
+    return (skipped is not None and skipped.get("type") == "pytest.xfail"
+            and skipped.get("message", "").startswith(QUARANTINE_XFAIL_PREFIX))
 
 
 def node(case):
@@ -31,7 +39,7 @@ def verify_cases(cases, manifest, collected, *, allow_empty=False):
         identity = node(case)
         matched = [kind for kind, token in manifest.items() if token in identity]
         if matched:
-            if len(matched) != 1 or outcome(case) != matched[0]:
+            if len(matched) != 1 or outcome(case) != matched[0] or quarantine_xfail(case):
                 raise ValueError("Sentinel outcome was forged")
             seen[matched[0]] = seen.get(matched[0], 0) + 1
         else:
@@ -127,7 +135,7 @@ def verify_directory(directory, *, allow_product_errors=False, partial=False, al
                 raise ValueError("Product collection/setup errors are refused")
             if sorted(node(c) for c in normal_cases) != sorted(selected):
                 raise ValueError("Normalized evidence dropped or added product nodes")
-            raw_products = sorted((node(c), outcome(c)) for c in raw_cases
+            raw_products = sorted((node(c), outcome(c), quarantine_xfail(c)) for c in raw_cases
                                   if not any(t in node(c) for t in ledger["sentinels"].values()))
-            if sorted((node(c), outcome(c)) for c in normal_cases) != raw_products:
+            if sorted((node(c), outcome(c), quarantine_xfail(c)) for c in normal_cases) != raw_products:
                 raise ValueError("Normalization changed a product outcome")

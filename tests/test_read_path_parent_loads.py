@@ -16,14 +16,18 @@ from tests.test_fix_list_performance import actor, backend
 def test_parent_rows_are_retained_only_until_transaction_end(backend, finish):
     h = backend
     with Session(h.app.state.engine, expire_on_commit=False) as db:
+        db.info['_request_parents'] = {}
         parents = [(m.Department, h.seed['department_id']), (m.Organisation, h.seed['organisation_id'])]
         references = [weakref.ref(db.get(cls, key)) for cls, key in parents]
         assert all(reference() is not None for reference in references)
         with db.begin_nested():
             pass
+        assert all(db.get(cls, key) is reference() for (cls, key), reference in zip(parents, references))
         savepoint = db.begin_nested()
         savepoint.rollback()
-        assert all(db.get(cls, key) is reference() for (cls, key), reference in zip(parents, references))
+        assert all(reference() is None for reference in references)
+        references = [weakref.ref(db.get(cls, key)) for cls, key in parents]
+        assert all(reference() is not None for reference in references)
         getattr(db, finish)()
         assert all(reference() is None for reference in references)
         assert all(db.get(cls, key) is not None for cls, key in parents)
@@ -52,13 +56,13 @@ def test_workspace_validator_batches_revision_metadata(backend):
 def test_fairness_route_builds_one_validator_per_read(backend, monkeypatch):
     h = backend
     workspace = h.workspace()
-    original, calls = fairness.goals_etag, []
+    original, calls = fairness._goals_tag, []
 
     def counted(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(fairness, 'goals_etag', counted)
+    monkeypatch.setattr(fairness, '_goals_tag', counted)
     client = h.client('coordinator')
     path = '/api/fairness/goals?workspace_id=' + workspace['id']
     first = client.get(path)
@@ -120,8 +124,8 @@ def test_workspace_read_revalidates_changed_body(backend, change):
     assert unchanged.headers['etag'] == changed.headers['etag']
 
 
-@pytest.mark.parametrize('change', ['assignment', 'organisation'])
-def test_fairness_goals_revalidates_changed_body(backend, change):
+@pytest.mark.parametrize('change', ['assignment', 'organisation', 'concurrent_organisation'])
+def test_fairness_goals_revalidates_changed_body(backend, change, monkeypatch):
     h = backend
     policy = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share'}, severity='advisory')
     person = h.seed['people'][0]
@@ -138,9 +142,7 @@ def test_fairness_goals_revalidates_changed_body(backend, change):
     assert unchanged.status_code == 304 and unchanged.content == b''
     assert unchanged.headers['etag'] == first.headers['etag']
 
-    if change == 'assignment':
-        h.shift(workspace, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00', people=[person])
-    else:
+    def change_name():
         with transaction(h.app.state.engine, write=True) as db:
             organisation = db.get(m.Organisation, h.seed['organisation_id'])
             stamp = organisation.input_revision
@@ -150,12 +152,33 @@ def test_fairness_goals_revalidates_changed_body(backend, change):
             assert organisation.input_revision > stamp
             saved = db.get(m.Workspace, workspace['id'])
             assert (saved.revision, saved.content_revision) == (workspace['revision'], workspace['content_revision'])
+            return replacement_name
+
+    if change == 'assignment':
+        h.shift(workspace, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00', people=[person])
+    elif change == 'organisation':
+        replacement_name = change_name()
+    else:
+        original = fairness.goals
+        def change_after_http_validator(*args, **kwargs):
+            nonlocal replacement_name
+            replacement_name = change_name()
+            return original(*args, **kwargs)
+
+        replacement_name = None
+        with monkeypatch.context() as patch:
+            patch.setattr(fairness, 'goals', change_after_http_validator)
+            raced = client.get(path)
+        assert raced.status_code == 200
+        assert raced.headers['etag'] == first.headers['etag']
 
     changed = client.get(path, headers={'If-None-Match': first.headers['etag']})
     assert changed.status_code == 200
     assert changed.headers['etag'] != first.headers['etag']
     after = changed.json()
     assert after != before
+    if change == 'concurrent_organisation':
+        assert raced.json() == after
     report = next(goal for goal in after['goals'] if goal['policy_id'] == policy['id'])
     current = next(row for row in report['people'] if row['person_id'] == person)
     if change == 'assignment':

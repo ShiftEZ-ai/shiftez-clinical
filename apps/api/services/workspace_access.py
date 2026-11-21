@@ -47,7 +47,7 @@ def visible_ids(identity_id, planner):
     return select(workspace.id).where(_visibility_clause(workspace, identity_id if planner else None))
 
 
-def _workspace_graph_criteria(identity_id, planner):
+def _workspace_graph_criteria(identity_id, planner, shift_workspace_id=None):
     ids = visible_ids(identity_id, planner)
     workspace_clause = (
         (lambda workspace: _visibility_clause(workspace, identity_id, correlate_workspace=True)) if planner
@@ -62,6 +62,8 @@ def _workspace_graph_criteria(identity_id, planner):
         m.WorkspaceMergeProposal.source_workspace_id.in_(ids), include_aliases=True))
     shift = m.Shift.__table__
     shifts = select(shift.c.id).where(shift.c.workspace_id.in_(ids))
+    if shift_workspace_id is not None:
+        shifts = shifts.where(shift.c.workspace_id == shift_workspace_id)
     for cls in (m.Assignment, m.ShiftService):
         criteria.append(with_loader_criteria(cls, cls.shift_id.in_(shifts), include_aliases=True))
     criteria.append(with_loader_criteria(m.CommandReceipt,
@@ -81,7 +83,8 @@ def filter_workspace_graph(state):
     actor = info.get('workspace_actor')
     if not state.is_select or actor is None:
         return
-    key = (actor.identity_id, actor.permits('coordinator') and not info.get('workspace_shared_only'))
+    key = (actor.identity_id, actor.permits('coordinator') and not info.get('workspace_shared_only'),
+           state.execution_options.get('shift_workspace_id'))
     memo = info.get('_request_workspace_criteria')
     criteria = memo.get(key) if memo is not None else None
     if criteria is None:

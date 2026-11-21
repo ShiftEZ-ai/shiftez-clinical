@@ -187,10 +187,17 @@ def _disclosed_change(change, db, actor):
         {'absence_reason': wording['absence_reason']} if wording.get('absence_reason') else {})
 
 
-def review_payload(db, workspace, actor=None):
+def review_payload(db, workspace, actor=None, *, projected_shifts=None):
     publication = db.get(m.Publication, workspace.base_publication_id) if workspace.base_publication_id else None
-    before = schedule.in_force_snapshot(db, publication)['shifts'] if publication else []
-    sessions = delta(before, project_series_shifts(db, workspace, workspace_shifts(db, workspace.id))) if publication else []
+    sessions = []
+    if publication:
+        before = schedule.in_force_snapshot(db, publication)['shifts']
+        after = (projected_shifts if projected_shifts is not None
+                 else project_series_shifts(db, workspace, workspace_shifts(db, workspace.id)))
+        sessions = delta(before, after)
+        if projected_shifts is not None:
+            # The full response decorates participants after projecting the review diff.
+            sessions = copy.deepcopy(sessions)
     org = db.get(m.Organisation, db.get(m.Department, workspace.department_id).organisation_id)
     first = min((aware(sh['start']).astimezone(ZoneInfo(org.timezone)).date()
                  for row in sessions for sh in (row['before'], row['after']) if sh), default=None)

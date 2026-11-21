@@ -133,7 +133,7 @@ def _finish_record(table, value, row=None):
     return value
 
 
-def records_many(db, sources, *, exclude=None, order_by=None):
+def records_many(db, sources, *, exclude=None, order_by=None, execution_options=None):
     """Read heterogeneous records together, selecting only their public columns."""
     exclude = exclude or {}
     tables, columns = {}, {}
@@ -142,9 +142,49 @@ def records_many(db, sources, *, exclude=None, order_by=None):
         tables[name] = mapper.local_table.name
         columns[name] = {field.key: field.columns[0] for field in _record_fields(mapper, exclude.get(name, ()))}
     result = {name: [] for name in sources}
-    for name, value in _values_many(db, sources, order_by=order_by, projected_columns=columns):
+    for name, value in _values_many(db, sources, order_by=order_by, projected_columns=columns,
+                                    execution_options=execution_options):
         result[name].append(_finish_record(tables[name], value))
     return result
+
+
+def shift_link_rows(db, ids, *, include_participants, execution_options=None):
+    """Read clinics and public assignment records in one typed statement."""
+    from sqlalchemy import Date, DateTime, any_, bindparam, null, union_all
+    from sqlalchemy.dialects.postgresql import ARRAY
+    from .models import Assignment, ShiftService
+
+    if db.get_bind().dialect.name == 'postgresql':
+        shift_ids = bindparam('shift_ids', ids, type_=ARRAY(ShiftService.shift_id.type))
+        links = ShiftService.shift_id == any_(shift_ids)
+        participant_links = Assignment.shift_id == any_(shift_ids)
+    else:
+        links = ShiftService.shift_id.in_(ids)
+        participant_links = Assignment.shift_id.in_(ids)
+    if not include_participants:
+        query = select(ShiftService.shift_id, ShiftService.service_id).where(links)
+        for shift_id, service_id in db.execute(query.execution_options(**(execution_options or {}))):
+            yield shift_id, service_id, None
+        return
+
+    fields = _record_fields(inspect(Assignment), ())
+    keys = [field.key for field in fields]
+    dates = [field.key for field in fields if isinstance(field.columns[0].type, (Date, DateTime))]
+    shift_index = keys.index('shift_id')
+    assignments = select(*(getattr(Assignment, key) for key in keys), null()).where(participant_links)
+    # Keep the assignment columns first in the UNION so results use their SQLAlchemy types.
+    services = select(*(ShiftService.shift_id if key == 'shift_id' else null() for key in keys),
+                      ShiftService.service_id).where(links)
+    for row in db.execute(union_all(assignments, services).execution_options(**(execution_options or {}))):
+        shift_id, service_id = row[shift_index], row[-1]
+        if service_id is not None:
+            yield shift_id, service_id, None
+            continue
+        value = dict(zip(keys, row))
+        for key in dates:
+            if (item := value[key]) is not None:
+                value[key] = json_default(item)
+        yield shift_id, None, value
 
 
 def rows_many(db, sources, *, order_by=None):
@@ -155,7 +195,7 @@ def rows_many(db, sources, *, order_by=None):
     return result
 
 
-def _values_many(db, sources, *, order_by=None, projected_columns=None):
+def _values_many(db, sources, *, order_by=None, projected_columns=None, execution_options=None):
     import json
     from sqlalchemy import Boolean, Date, DateTime, JSON, Text, cast, func, literal, union_all
     from . import models as m
@@ -192,6 +232,8 @@ def _values_many(db, sources, *, order_by=None, projected_columns=None):
     query = union_all(*queries)
     if order_by:
         query = query.order_by('source', 'position')
+    if execution_options:
+        query = query.execution_options(**execution_options)
     for name, encoded, _ in db.execute(query):
         value = json.loads(encoded)
         for key, convert in converters[name]:

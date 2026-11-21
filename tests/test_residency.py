@@ -947,8 +947,16 @@ def test_external_rotators_use_canonical_rank_eligibility_protection_and_fairnes
     assert member_days(data, pid, date(2026, 10, 4), date(2026, 10, 5)) == []
 
 
-@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_plan_and_notes_batch_reads_at_department_scale(r):
+    check_plan_and_notes_batch_reads_at_department_scale(r)
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_plan_and_notes_batch_reads_at_department_scale_on_postgresql(r):
+    check_plan_and_notes_batch_reads_at_department_scale(r)
+
+
+def check_plan_and_notes_batch_reads_at_department_scale(r):
     from datetime import date
     from sqlalchemy import event, select, func
     from apps.api import models as m

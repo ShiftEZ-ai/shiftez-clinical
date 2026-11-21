@@ -8,6 +8,7 @@ SQLite: BEGIN IMMEDIATE is a tested local-development analogue, not production.
 """
 from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
+from functools import cache
 import logging
 import os
 from pathlib import Path
@@ -44,14 +45,8 @@ def filter_withdrawn_relationships(state):
             m.Mentorship, live_mentorship_clause(), include_aliases=True))
 
 
-@event.listens_for(Session, 'loaded_as_persistent')
-def pin_snapshot_parents(session, instance):
-    """Keep department and organisation parents alive for the transaction."""
-    from . import models as m
-    if isinstance(instance, (m.Department, m.Organisation)):
-        session.info.setdefault('_pinned_parents', {})[(type(instance), instance.id)] = instance
-
-
+# Reuse the SQL predicate and evaluate current rows on every read.
+@cache
 def live_mentorship_clause():
     """Owned attachments follow live rotations; adopted or independently edited mentorships stay live."""
     from . import models as m
@@ -628,7 +623,6 @@ def discard_finished_snapshot_input_state(session, transaction):
         session.info.pop('_request_authority', None)
         session.info.pop('_request_workspace_criteria', None)
         session.info.pop('_snapshot_input_revisions', None)
-        session.info.pop('_pinned_parents', None)
 
 
 def allow_long_idle(db, minutes: int):
