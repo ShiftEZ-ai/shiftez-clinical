@@ -90,6 +90,31 @@ def test_full_workspace_does_not_walk_the_projection_in_fastapi(scale_harness, m
     assert full_walks == []
 
 
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_full_workspace_shift_rows_avoid_deep_json_conversion(scale_harness, monkeypatch, backend):
+    from apps.api import snapshots
+    from apps.api.services.workspace_detail import full_shifts
+
+    h = scale_harness(backend)
+    workspace, *_ = scale_department(h)
+    converted = []
+    original = snapshots.json_value
+
+    def count(value):
+        if isinstance(value, dict) and 'type_snapshot' in value:
+            converted.append(value['id'])
+        return original(value)
+
+    with transaction(h.app.state.engine) as db:
+        expected = snapshots.workspace_shifts(db, workspace['id'])
+        monkeypatch.setattr(snapshots, 'json_value', count)
+        actual = full_shifts(db, workspace['id'])
+
+    assert len(actual) >= 500
+    assert actual == expected
+    assert len(converted) <= 8, f'{len(converted)} session rows re-walked after SQL projection'
+
+
 @pytest.fixture(scope='module', params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def person_fairness_measurement(request, scale_harness):
     h = scale_harness(request.param)
