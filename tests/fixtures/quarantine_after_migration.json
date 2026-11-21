@@ -370,16 +370,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_be16_published.py::test_real_changed_session_blocker_is_refused_server_side[case-cmlfofaonlfjgnphcpoajgodlegkilfdbikjamonimccikomdmpebnchppckokdl]",
-    "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-16",
-    "issue": 958,
-    "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_be17_cold_reads.py::test_after_one_shift_edit_first_read_needs_no_snapshot_or_evaluation[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
     "reason": "unstable: green in 4 observations of runs 44114266718 + 44131154009 on the same product tree; red in both attempts of run 44154487353",
     "owner": "maintainers",
