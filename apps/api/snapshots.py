@@ -1065,13 +1065,13 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             # A draft may add a local duty after capture. Keep only the referenced
             # catalogue rows needed to interpret that local content. The captured
             # policy/configuration is the basis for the overlay below.
-            own_ids = list(db.scalars(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)))
-            if own_ids:
-                refs = db.execute(select(m.Shift.assignment_type_id, m.Shift.location_id)
-                                  .where(m.Shift.id.in_(own_ids))).all()
+            own = select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)
+            refs = db.execute(own.with_only_columns(m.Shift.assignment_type_id, m.Shift.location_id).distinct()).all()
+            if refs:
                 type_ids = {row[0] for row in refs}
                 location_ids = {row[1] for row in refs}
-                service_ids = set(db.scalars(select(m.ShiftService.service_id).where(m.ShiftService.shift_id.in_(own_ids))))
+                service_ids = set(db.scalars(select(m.ShiftService.service_id)
+                    .where(m.ShiftService.shift_id.in_(own)).distinct()))
                 # Baselines freeze governed inputs, not only people already assigned in a draft.
                 # The prepared phase payload already contains every organisation person.
                 current_people = (live_inputs or {}).get('people') or {}
