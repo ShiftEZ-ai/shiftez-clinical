@@ -465,11 +465,9 @@ def job_run_context(snapshot):
 def job_detail_result(kind, result):
     value = job_result_summary(result)
     def visible_check(check):
-        from packages.domain.validation import INTERNAL_CHECK_KEYS
+        from packages.contracts.schemas import JOB_PRIVATE_CHECK_FIELDS
         # Reuse inputs belong to the retained job, not its findings/coverage UI.
-        private = INTERNAL_CHECK_KEYS | {'fix_list_context', 'fix_list_state', 'fix_list_delta',
-                                        'input_manifest', 'score_dependencies', 'diagnostic_version'}
-        return {key: part for key, part in check.items() if key not in private}
+        return {key: part for key, part in check.items() if key not in JOB_PRIVATE_CHECK_FIELDS}
     if value is not None:
         if kind == 'validation':
             value = visible_check(value)
