@@ -1366,7 +1366,7 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .wk-pair{display:block;color:var(--muted)}
 .wk-key{display:flex;align-items:center;gap:5px}
 /* The view key (legend() in dom.ts): one compact strip under every view, listing only what the view draws. */
-.view-legend{list-style:none;margin:0;padding:6px 2px;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
+.view-legend{list-style:none;margin:0;padding:6px 2px;max-inline-size:100%;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
 .view-legend[hidden]{display:none}
 /* An entry is as wide as its words (live check 6cea25859: "Day numbers…" lost to a 260 px cap), at most the key's width. */
 .view-legend li{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%}
