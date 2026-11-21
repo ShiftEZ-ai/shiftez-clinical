@@ -150,6 +150,18 @@ def test_filters_by_action_group_person_text_and_dates(h):
     assert stamps == sorted(stamps, reverse=True)
 
 
+def test_target_filter_includes_rule_proposal_and_decline(h):
+    policy = h.command('coordinator', 'rule.propose', {'catalogue_id': 'duties_per_week',
+        'lines': [{'id': str(uuid4()), 'numbers': {'max': {'value': 5}}}], 'reason': 'Weekly duty limit'})['record']
+    h.command('approver', 'policy.decline', {'reason': 'Keep the current rules'}, policy['id'], policy['revision'])
+
+    rows = events(h, f"target_id={policy['id']}")
+    assert {(row['action'], row['target_id'], row['actor_id']) for row in rows} == {
+        ('rule.propose', policy['id'], h.seed['identities']['coordinator']),
+        ('policy.decline', policy['id'], h.seed['identities']['approver']),
+    }
+
+
 def test_invalid_filters_are_refused(h):
     for query in ('from=2026-10-05&to=2026-10-01', 'from=1999-12-31', 'to=not-a-date', 'action=Workspace', 'action=a.b',
                   'self_approved=maybe', 'q=' + 'x' * 201, 'actor_id=' + 'x' * 37, 'offset=-1'):

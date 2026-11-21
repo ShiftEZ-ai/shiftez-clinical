@@ -105,10 +105,23 @@ def test_department_shift_links_do_not_decode_whole_rows(scale_harness, backend,
         return value
 
     monkeypatch.setattr(json, 'loads', count_link_records)
-    with transaction(h.app.state.engine) as db:
-        shifts = workspace_shifts(db, workspace['id'])
+    link_binds = []
+
+    def count_binds(_conn, _cursor, sql, args, _context, _many):
+        if 'FROM shift_services' in sql and 'UNION ALL' in sql:
+            link_binds.append(len(args))
+
+    engine = h.app.state.engine
+    event.listen(engine, 'before_cursor_execute', count_binds)
+    try:
+        with transaction(engine) as db:
+            shifts = workspace_shifts(db, workspace['id'])
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_binds)
 
     assert len(shifts) == 768
     assert sum(len(row['service_ids']) for row in shifts) == 768
     assert sum(len(row['participants']) for row in shifts) == 2304
     assert whole_row_decodes == 0, f'{whole_row_decodes} whole link rows decoded from JSON'
+    if backend == 'pg':
+        assert link_binds == [1], 'One shift-ID array serves both UNION arms'
