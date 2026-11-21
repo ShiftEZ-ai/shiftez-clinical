@@ -150,10 +150,17 @@ def records_many(db, sources, *, exclude=None, order_by=None, execution_options=
 
 def shift_link_rows(db, ids, *, include_participants, execution_options=None):
     """Read clinics and public assignment records in one typed statement."""
-    from sqlalchemy import Date, DateTime, null, union_all
+    from sqlalchemy import Date, DateTime, any_, bindparam, null, union_all
+    from sqlalchemy.dialects.postgresql import ARRAY
     from .models import Assignment, ShiftService
 
-    links = ShiftService.shift_id.in_(ids)
+    if db.get_bind().dialect.name == 'postgresql':
+        shift_ids = bindparam('shift_ids', ids, type_=ARRAY(ShiftService.shift_id.type))
+        links = ShiftService.shift_id == any_(shift_ids)
+        participant_links = Assignment.shift_id == any_(shift_ids)
+    else:
+        links = ShiftService.shift_id.in_(ids)
+        participant_links = Assignment.shift_id.in_(ids)
     if not include_participants:
         query = select(ShiftService.shift_id, ShiftService.service_id).where(links)
         for shift_id, service_id in db.execute(query.execution_options(**(execution_options or {}))):
@@ -164,7 +171,7 @@ def shift_link_rows(db, ids, *, include_participants, execution_options=None):
     keys = [field.key for field in fields]
     dates = [field.key for field in fields if isinstance(field.columns[0].type, (Date, DateTime))]
     shift_index = keys.index('shift_id')
-    assignments = select(*(getattr(Assignment, key) for key in keys), null()).where(Assignment.shift_id.in_(ids))
+    assignments = select(*(getattr(Assignment, key) for key in keys), null()).where(participant_links)
     # Keep the assignment columns first in the UNION so results use their SQLAlchemy types.
     services = select(*(ShiftService.shift_id if key == 'shift_id' else null() for key in keys),
                       ShiftService.service_id).where(links)
@@ -458,11 +465,9 @@ def job_run_context(snapshot):
 def job_detail_result(kind, result):
     value = job_result_summary(result)
     def visible_check(check):
-        from packages.domain.validation import INTERNAL_CHECK_KEYS
+        from packages.contracts.schemas import JOB_PRIVATE_CHECK_FIELDS
         # Reuse inputs belong to the retained job, not its findings/coverage UI.
-        private = INTERNAL_CHECK_KEYS | {'fix_list_context', 'fix_list_state', 'fix_list_delta',
-                                        'input_manifest', 'score_dependencies', 'diagnostic_version'}
-        return {key: part for key, part in check.items() if key not in private}
+        return {key: part for key, part in check.items() if key not in JOB_PRIVATE_CHECK_FIELDS}
     if value is not None:
         if kind == 'validation':
             value = visible_check(value)

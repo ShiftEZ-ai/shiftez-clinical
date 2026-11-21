@@ -2,7 +2,7 @@ import copy
 from uuid import NAMESPACE_URL, uuid5
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import and_, delete, exists, func, insert, select, tuple_, update
+from sqlalchemy import and_, case, delete, exists, func, insert, select, tuple_, update
 from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.domain.recurrence import expand, inactive, series_state, stored_series_definition, with_series_state
@@ -242,6 +242,10 @@ def archive(db, actor, command):
                           'allowed_actions': allowed_actions(db, actor, workspace)}}
 
 
+def _check_manifest(manifest):
+    return {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
+
+
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
                _overlap_output=None, final_compute=False, creation_before=None, mandatory_rules=True,
@@ -302,7 +306,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                 from packages.domain.score import score_dependencies
                 from packages.domain.rota_summary import fix_list_context, remember_fix_list
                 result.update(diagnostic_version=DIAGNOSTIC_VERSION, score_dependencies=score_dependencies(defaults),
-                    input_manifest={k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')},
+                    input_manifest=_check_manifest(data['input_manifest']),
                     evaluated_at=evaluated_at, fix_list_context=fix_list_context(data))
                 remember_fix_list(previous_check, result, accepted_issues=accepted_issues,
                                   summary_cache=preparation['summary_cache'])
@@ -357,7 +361,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
         result['score_dependencies'] = score_dependencies(department.generation_defaults)
-    result['input_manifest'] = {k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')}
+    result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
     result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
@@ -686,7 +690,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                 current_manifest = manifest(data)
             require(current_manifest['token'] == data['fingerprint'], 'RECONCILIATION_MISMATCH',
                     'The saved batch differs from the reviewed plan; the proposal is retained', 409)
-            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': {k: current_manifest[k] for k in ('format', 'token', 'components', 'dirty_hint')}}
+            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': _check_manifest(current_manifest)}
             from packages.domain.rota_summary import fix_list_context, remember_fix_list
             result['fix_list_context'] = fix_list_context(data)
             remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
@@ -2112,11 +2116,15 @@ def move(db, actor, command):
     return result
 
 
-def latest_change(workspace, *columns):
+def latest_change(workspace, *columns, skip_single_sort=False):
     """The edit Undo puts back (or, after an Undo, the step Redo re-applies): the newest at the rota's content revision."""
+    revision = m.ChangeSet.before_snapshot['workspace']['revision'].as_integer()
+    if skip_single_sort:
+        # Extract the revision from the large snapshot only when it can affect the choice.
+        revision = case((func.count().over() > 1, revision))
     return (select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
                                    m.ChangeSet.resulting_content_revision == workspace.content_revision)
-            .order_by(m.ChangeSet.before_snapshot['workspace']['revision'].as_integer().desc()).limit(1))
+            .order_by(revision.desc()).limit(1))
 
 
 def put_back(db, actor, workspace, snapshot, current):
@@ -2181,7 +2189,7 @@ def redo_available(db, actor, workspace):
     if workspace.status != 'draft' or workspace.archived_at is not None:
         return False
     row = db.execute(latest_change(workspace, m.ChangeSet.actor_id,
-                                   m.ChangeSet.before_snapshot['_undo_of'].as_string())).first()
+                                   m.ChangeSet.before_snapshot['_undo_of'].as_string(), skip_single_sort=True)).first()
     return row is not None and row[1] is not None and row[0] == actor.identity_id
 
 
@@ -2646,24 +2654,26 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
                                  current=current[0] if current is not None else None)
         swaps.validate_publication(db, workspace)
-        workspace.validation = {**result, "wishes": data["wishes"]}
+        check = {**result, 'wishes': data['wishes']}
         from packages.domain.rota_summary import remember_fix_list
-        remember_fix_list(result, workspace.validation, submitted=True)
+        remember_fix_list(result, check, submitted=True)
         from .wishes import _applied_reasons
         receipt = _applied_reasons(db, workspace, data, data['wishes'])
         if receipt is not None:
-            workspace.validation = {**workspace.validation, 'wish_receipt': receipt}
+            check['wish_receipt'] = receipt
+        workspace.validation = check
         workspace.review_snapshot = reviews.resolve_route(db, workspace)
         workspace.submitted_at = m.now()
         workspace.status = "submitted"
         workspace.return_note = None
-        # Submission changes preference reservations, but no other scheduling facts.
-        # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
-        workspace.submitted_fingerprint = (data['fingerprint'] if not data['wishes']
-                                           else fingerprint(db, workspace))
-        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint}
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
+        # Submission can change preference reservations. Preserve the checked inputs when there are none.
+        if data['wishes']:
+            data = domain_snapshot(db, workspace)
+        workspace.submitted_fingerprint = data['fingerprint']
+        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint,
+                                'input_manifest': _check_manifest(data['input_manifest'])}
     elif action == "approve":
         require(workspace.status == "submitted", "WORKFLOW_STATE", "Only a submitted candidate can be approved", 409)
         fp = validation[1]['fingerprint'] if validation is not None else fingerprint(db, workspace)
@@ -2788,6 +2798,19 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .generation_resume import clear_generation_resume
         clear_generation_resume(db, workspace_id=workspace.id)
     db.flush()
+    if (action in {'submit', 'approve'} and (manifest := workspace.validation.get('input_manifest'))
+            and (hint := manifest.get('dirty_hint'))):
+        # The status write stamps currency. Amendment history also advances its department's catalogue revision.
+        organisation = db.get(m.Organisation, actor.organisation_id)
+        dirty = {**hint, 'input_revision': organisation.input_revision,
+                 'availability_revision': organisation.availability_revision}
+        if workspace.base_publication_id and 'department_revisions' in dirty:
+            department = db.get(m.Department, workspace.department_id)
+            dirty['department_revisions'] = [
+                [ident, revision, department.catalogue_revision if ident == department.id else catalogue]
+                for ident, revision, catalogue in dirty['department_revisions']]
+        if dirty != hint:
+            workspace.validation = {**workspace.validation, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
     if action == "approve" and workspace.status == "approved" and db.get(m.Department, workspace.department_id).swap_auto_publish:
         swap = db.scalar(select(m.SwapRequest).where(m.SwapRequest.workspace_id == workspace.id))
         if swap:

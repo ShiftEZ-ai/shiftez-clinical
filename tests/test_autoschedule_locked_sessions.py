@@ -36,6 +36,10 @@ def test_locked_understaffed_session_stays_open_while_other_sessions_are_filled(
     result = generate(data, 5)
     assert result['status'] == 'candidate_with_gaps', result
     assert not result['optimality_proven'] and not result['validation']['valid']
+    assert all(tier['proven_optimal'] for tier in result['objectives'])
+    assert result['solver_status'] == 'OPTIMAL'
+    assert result['generation_outcome']['status'] == 'UNKNOWN'
+    assert result['search_stop']['reason'] == 'model_proven'
     assert data == original
     assert result['removals'] == []
     assert {a['shift_id'] for a in result['additions']} == {editable}
@@ -46,6 +50,15 @@ def test_locked_understaffed_session_stays_open_while_other_sessions_are_filled(
     assert open_place['message'] == 'This session is locked with 1 of 2 people. Unlock it or add someone by hand.'
     shortage = next(d for d in result['diagnostics'] if d['shift_id'] == locked)
     assert shortage['message'] == open_place['message']
+
+
+def test_unlocked_staffing_proposal_retains_optimal_stop(h):
+    w, locked, _ = locked_and_editable(h)
+    data = h.snapshot(w)
+    next(s for s in data['shifts'] if s['id'] == locked)['locked'] = False
+    result = generate(data, 5)
+    assert result['generation_outcome']['status'] == 'OPTIMAL', result
+    assert result['search_stop']['reason'] == 'optimal'
 
 
 def test_locked_gap_candidate_applies_only_to_editable_sessions(h):
