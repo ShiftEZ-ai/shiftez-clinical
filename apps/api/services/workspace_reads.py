@@ -172,14 +172,22 @@ def check_projection(workspace, check):
         'health': health(SimpleNamespace(validation=check, accepted_issues=workspace.accepted_issues))}
 
 
-def check_stamp(db, workspace):
+def _stored_check_stamps(db, workspace_ids):
+    if not workspace_ids:
+        return {}
+    projection = m.WorkspaceReadProjection
+    return dict(db.execute(select(projection.workspace_id, projection.stamp).where(
+        projection.workspace_id.in_(workspace_ids), projection.audience == CANONICAL_AUDIENCE,
+        projection.kind == 'stored_check')).all())
+
+
+def check_stamp(db, workspace, *, stored_stamps=None):
     # Deferred collection reads must reuse the compact projection without hydrating
     # the full validation JSON; write listeners still include the changed value.
     if 'validation' not in workspace.__dict__:
-        stamp = db.scalar(select(m.WorkspaceReadProjection.stamp).where(
-            m.WorkspaceReadProjection.workspace_id == workspace.id,
-            m.WorkspaceReadProjection.audience == CANONICAL_AUDIENCE,
-            m.WorkspaceReadProjection.kind == 'stored_check'))
+        if stored_stamps is None:
+            stored_stamps = _stored_check_stamps(db, [workspace.id])
+        stamp = stored_stamps.get(workspace.id)
         if stamp is not None:
             return stamp
     return digest([source_identity(db), workspace.revision, workspace.accepted_issues,
@@ -188,6 +196,7 @@ def check_stamp(db, workspace):
 
 def stored_checks(db, workspaces):
     workspaces = {w.id: w for w in workspaces}
+    stamps = _stored_check_stamps(db, [wid for wid, w in workspaces.items() if 'validation' not in w.__dict__])
     def acquire(ids):
         result = {wid: check_projection(workspaces[wid], workspaces[wid].validation) for wid in ids
                   if 'validation' in workspaces[wid].__dict__}
@@ -199,7 +208,7 @@ def stored_checks(db, workspaces):
                 result[wid] = check_projection(workspaces[wid], check)
         return result
     return cached(db, workspaces, 'stored_check',
-                  {wid: check_stamp(db, w) for wid, w in workspaces.items()}, build_many=acquire)
+                  {wid: check_stamp(db, w, stored_stamps=stamps) for wid, w in workspaces.items()}, build_many=acquire)
 
 
 def store_check(_mapper, connection, workspace):
