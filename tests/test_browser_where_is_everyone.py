@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl
 import pytest
 from playwright.sync_api import expect
 
-from .legend_guard import assert_legend_matches
+from .legend_guard import assert_legend_matches, legend_entries
 from .test_browser import browser, choose, close_popover, condition, expect_loaded, filter_by, live_server, navigate, sign_in, sort_direction, toolbar  # noqa: F401
 
 pytestmark = pytest.mark.browser
@@ -499,9 +499,8 @@ def test_an_admin_sets_which_areas_a_month_names_with_undo(browser, live_server,
 
 
 def test_the_legend_lists_the_marks_drawn_and_hides_from_view_settings(browser, live_server, h):
-    """Owner, 7 Nov 2026: "no legend!". The shared key (dom.ts `legend`) sits above the timeline and lists only the marks
-    this view and range draw, with a swatch and a word each; areas in the department's area order (name order); a bare
-    short label with its full name. View settings › Show › Legend hides it, saved with the view, with no new read."""
+    """The shared key sits below the timeline and lists the drawn marks, areas in name order and full code meanings.
+    View settings changes the drawn layers; drawing-only choices need no read and persist after reload."""
     kinds(h)
     context, page = sign_in(browser, live_server, "coordinator", {"width": 1440, "height": 900})
     try:
@@ -510,24 +509,21 @@ def test_the_legend_lists_the_marks_drawn_and_hides_from_view_settings(browser, 
         board = where_is_everyone(page)
         key = page.locator(".tl-host > .view-legend.tl-legend")
         expect(key).to_be_visible()
-        assert key.evaluate("n=>n.getBoundingClientRect().bottom") <= board.evaluate("n=>n.getBoundingClientRect().top") + 1  # above it
-        items = key.locator("li")
-        words = items.all_inner_texts()
-        for mark in ("Worked in", "Rotation", "Rotation elsewhere", "Leave", "Academic or protected", "Not in the department", "Not published yet"):
-            assert mark in words, words
-        # Every entry has its swatch; at most two lines.
-        expect(items.locator(".tl-swatch, .code-chip")).to_have_count(len(words))
-        assert key.evaluate("n=>n.getBoundingClientRect().height") <= 50
-        # The guard (tests/legend_guard.py): every mark drawn is stamped with its entry, every entry has a mark, no mark
-        # without one; every row is laid out, so the timeline is scrolled through.
+        assert board.evaluate("n=>n.getBoundingClientRect().bottom") <= key.evaluate("n=>n.getBoundingClientRect().top") + 1
+        with legend_entries(page, key) as items:
+            words = items.all_inner_texts()
+            for mark in ("Worked in", "Rotation", "Rotation elsewhere", "Leave", "Academic or protected", "Not in the department", "Not published yet"):
+                assert mark in words, words
+            expect(items.locator(".tl-swatch, .code-chip")).to_have_count(len(words))
+            assert key.evaluate("n=>n.getBoundingClientRect().height") <= 50
+            # Areas keep their colour, short and full name in name order, including overflow.
+            shorts = [w.split(" ")[0] for w in words if w in ("AA Field medicine", "Proc Procedures", "ZZ Urgent cover")]
+            assert shorts == ["AA", "Proc", "ZZ"], words
+            expect(items.filter(has=page.locator(".code-chip", has_text="Ophtha")).locator(".lg-words")).to_have_text("Ophthalmology")
+        # Every mark has an entry and every entry a mark; scroll all virtualised rows through the same guard.
         assert_legend_matches(page, root=".tl-host", scrollers=[".tl"], expect_marks=[
             "mark:work", "mark:home", "mark:away", "mark:leave", "mark:protected", "mark:outside", "mark:draft",
             "area:AA", "area:ZZ", "area:Proc", "code:Ophtha", "code:AL"])
-        # Areas: their colour with short and full name, in name order whichever led a month.
-        shorts = [w.split(" ")[0] for w in words if w in ("AA Field medicine", "Proc Procedures", "ZZ Urgent cover")]
-        assert shorts == ["AA", "Proc", "ZZ"], words
-        # A bare code drawn on the line (Ophtha) is in the key with its full name; the card says both too.
-        expect(items.filter(has=page.locator(".code-chip", has_text="Ophtha")).locator(".lg-words")).to_have_text("Ophthalmology")
         row(board, people[1]).locator(".tl-lane>.tl-bar").first.hover()
         card = page.get_by_role("tooltip")
         expect(card.locator(".code-chip")).to_have_text("Ophtha")
@@ -537,21 +533,30 @@ def test_the_legend_lists_the_marks_drawn_and_hides_from_view_settings(browser, 
         panel = toolbar(page, "View settings")
         show = panel.get_by_role("group", name="Show", exact=True)
         show.get_by_role("checkbox", name="Leave", exact=True).uncheck()
-        expect(items.filter(has_text="Leave")).to_have_count(0)
-        expect(items.filter(has=page.locator(".code-chip", has_text="AL"))).to_have_count(0)
-        # Legend off: hidden, drawing only (no new read), and kept with the view.
+        close_popover(page)
+        with legend_entries(page, key) as items:
+            expect(items.filter(has_text="Leave")).to_have_count(0)
+            expect(items.filter(has=page.locator(".code-chip", has_text="AL"))).to_have_count(0)
+        panel = toolbar(page, "View settings")
+        show = panel.get_by_role("group", name="Show", exact=True)
+        expect(show.get_by_role("checkbox", name="Legend", exact=True)).to_have_count(0)
+        # Short stretches is drawing only: it retains the key and does not read again.
         reads = len(asked)
-        legend_switch = show.get_by_role("checkbox", name="Legend", exact=True)
-        expect(legend_switch).to_be_checked()
-        legend_switch.uncheck()
-        expect(page.locator(".tl-host > .view-legend")).to_have_count(0)
+        show.get_by_role("checkbox", name="Short stretches", exact=True).check()
+        expect(key).to_be_visible()
         expect(row(board, people[0]).locator(".tl-lane>.tl-bar").first).to_be_visible()
         assert len(asked) == reads
         close_popover(page)
         page.reload()
         expect_loaded(page, "people")
         expect(page.get_by_role("region", name="People timeline")).to_be_visible()
-        expect(page.locator(".tl-host > .view-legend")).to_have_count(0)
+        with legend_entries(page, key) as items:
+            expect(items.filter(has_text="Leave")).to_have_count(0)
+            expect(items.filter(has=page.locator(".code-chip", has_text="AL"))).to_have_count(0)
+        show = toolbar(page, "View settings").get_by_role("group", name="Show", exact=True)
+        expect(show.get_by_role("checkbox", name="Leave", exact=True)).not_to_be_checked()
+        expect(show.get_by_role("checkbox", name="Short stretches", exact=True)).to_be_checked()
+        close_popover(page)
     finally:
         context.close()
 
@@ -564,9 +569,9 @@ def test_a_phone_shows_the_same_compact_legend(browser, live_server, h):
         board = page.get_by_role("region", name="People timeline")
         key = page.locator(".tl-host > .view-legend.tl-legend")
         expect(key).to_be_visible()
-        expect(key.locator("li").filter(has_text="Worked in")).to_have_count(1)
-        # A key wraps onto the lines it needs and never scrolls, clips or hides an entry (eb8635b6d, UIUX-AUDIT L1): on a
-        # phone it may take more lines than on a desktop, but never scrolls inside itself.
+        with legend_entries(page, key) as items:
+            expect(items.filter(has_text="Worked in")).to_have_count(1)
+        # A phone keeps the same single row; all remaining entries are usable in its overflow popover.
         assert key.evaluate("n=>n.scrollHeight<=n.clientHeight+1&&n.scrollWidth<=n.clientWidth+1")
         assert_legend_matches(page, root=".tl-host", scrollers=[".tl"])
         assert page.evaluate("document.documentElement.scrollWidth<=innerWidth")
