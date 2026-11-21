@@ -1128,12 +1128,6 @@
     },
     {
       "class": "baseline",
-      "node": "tests/test_bulk_reverse_transitions.py::test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
       "node": "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
@@ -1723,18 +1717,6 @@
     {
       "class": "baseline",
       "node": "tests/test_postgres_markers.py::test_postgres_fixture_dependencies_have_selectable_marker",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-dkoikaclbkbcoimimbfnidlfdddljpghphjkloeacnneneeegnhjhfmlmjeagdmj]",
-      "owner": "maintainer",
-      "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
-    },
-    {
-      "class": "baseline",
-      "node": "tests/test_qa2_snapshot_reuse.py::test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback[case-nebonopejgkabifnaebchngildencabhpbdplpinflcofaggpcifkminhpndkfla]",
       "owner": "maintainer",
       "reason": "Measured assertion failure in both replicas of run 44114266718, attempt 1."
     },
