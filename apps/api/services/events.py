@@ -585,10 +585,11 @@ def receipt_list(db, actor, occurrence_id, page, page_size):
         'page': page, 'page_size': page_size, 'total': total}
 
 
-def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None):
+def protected_facts(db, department_ids, people, lo, hi, zone, *, acquired=None, occurrences=None):
     """Derive protected-time facts, resolved by the same catalogue path as approved academic time."""
     from . import audiences
-    rows = blocking_occurrences(db, department_ids, lo, hi, acquired=acquired)
+    rows = (blocking_occurrences(db, department_ids, lo, hi, acquired=acquired)
+            if occurrences is None else occurrences)
     if not rows or not people:
         return []
     going = {}

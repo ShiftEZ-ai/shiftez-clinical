@@ -1010,6 +1010,20 @@ def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, lim
     return publications, external
 
 
+def _event_occurrence_currency(rows):
+    # Source revisions cover the audience, definitions and overrides. The clock can
+    # change which recurring occurrences project, even within the same local date.
+    return sorted((row.id, aware(row.start), aware(row.end)) for row in rows)
+
+
+def _prepared_event_currency_matches(db, currency):
+    if not currency:
+        return True
+    from .services import events
+    department_ids, lo, hi, recorded = currency
+    return _event_occurrence_currency(events.blocking_occurrences(db, department_ids, lo, hi)) == recorded
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1018,7 +1032,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
-                    fairness_goals_out: list[dict] | None = None) -> dict:
+                    fairness_goals_out: list[dict] | None = None, _event_currency=None) -> dict:
     department = db.get(m.Department, workspace.department_id)
     org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
@@ -1316,7 +1330,12 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                                          acquired=window_inputs['patterns'])
     result["availability"] += weekly
     from packages.domain.rule_lines import fact_policy
-    facts = events.protected_facts(db, department_ids, list(result["people"]), lo, hi, org.timezone, acquired=window_inputs)
+    occurrences = None
+    if _event_currency is not None and any(row.repeat for row in window_inputs['events']):
+        occurrences = events.blocking_occurrences(db, department_ids, lo, hi, acquired=window_inputs)
+        _event_currency.extend((department_ids, lo, hi, _event_occurrence_currency(occurrences)))
+    facts = events.protected_facts(db, department_ids, list(result["people"]), lo, hi, org.timezone,
+                                   acquired=window_inputs, occurrences=occurrences)
     result["scheduling_facts"] += facts
     result["policies"] += [fact_policy(fact) for fact in facts]
     # Staff wishes on the rota's days, each weighted by its share of the points budget and any catch-up for declined wishes.
@@ -1447,14 +1466,17 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
                              'stamp': stamp})
         cached = state['prepared_snapshots'].get(index)
-        if cached and cached[0] == key and currency_match(stamp, stamp):
+        if (cached and cached[0] == key and currency_match(stamp, stamp)
+                and _prepared_event_currency_matches(db, cached[2])):
             return pickle.loads(cached[1])
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
                 409, {'recoverable': True})
-        value = _domain_snapshot(db, workspace, *args, **kwargs)
-        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+        event_currency = []
+        value = _domain_snapshot(db, workspace, *args, _event_currency=event_currency, **kwargs)
+        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL),
+                                              event_currency)
         return value
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)
