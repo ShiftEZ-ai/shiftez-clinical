@@ -58,6 +58,11 @@
       "reason": "Lines are now grouped by place with the broadest line first and its exceptions under it; that order is asserted by the rule exception tree tests."
     },
     {
+      "node": "tests/test_bulk_reverse_transitions.py::test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references",
+      "owner": "maintainer",
+      "reason": "Same test now runs on sqlite and postgresql (parametrized), so its node identity gains a case suffix; every assertion remains and it adds a check that preview leaves the input and availability revisions unchanged."
+    },
+    {
       "node": "tests/test_bulk_rule_lines.py::test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions[case-dlpmiejdobjndppjnhjgoiickgagokiogifbdpbklikebnpplfemclhphgkapnim]",
       "owner": "maintainer",
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
