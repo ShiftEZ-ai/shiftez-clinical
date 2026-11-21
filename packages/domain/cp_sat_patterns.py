@@ -65,7 +65,8 @@ def add_patterns(model, data, by_person, strengths, *, check=None, shape_breache
             return score.any(xs)
         if isinstance(active, int):
             return score.any(xs) if active else 0
-        return score.positive(active + sum(xs) - 1)
+        # One conjunction of the gate with the OR of all rows: a sum would flag two broken rows while the gate is off.
+        return score.positive(active + score.any(xs) - 1)
 
     def breach(cost, *rows, include_fixed=False, person=None, span=None, active=None):
         """One 0/1 breach from rows (plus, minus, k): sum(plus) - sum(minus) - k."""

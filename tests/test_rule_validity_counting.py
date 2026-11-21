@@ -314,3 +314,38 @@ def test_v2_weekly_and_monthly_minimums_and_targets_are_block_quotas():
     assert 'block_quota' not in VALIDITY_FOCAL_ONLY_KINDS
     assert VALIDITY_FOCAL_ONLY_KINDS < WORKLOAD_COUNT_KINDS
     assert SHAPE_KINDS == {'run_length', 'days_off_run', 'weekend_shape', 'shift_succession', 'together_apart'}
+
+
+def _shape_breach_flags(data, assigned_focal):
+    model, flags = cp_model.CpModel(), {}
+    pid = next(iter(data['people']))
+    entries = []
+    for s in data['shifts']:
+        for p in s['participants']:
+            if s['id'] in data['focus_ids']:
+                x = model.new_bool_var('focal')
+                model.add(x == int(assigned_focal))
+            else:
+                x = model.new_constant(1)
+            entries.append((s, p, aware(p['start']), aware(p['end']), x))
+    add_patterns(model, data, {pid: entries}, {'medium': 1}, shape_breaches=flags)
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = 1
+    assert solver.solve(model) == cp_model.OPTIMAL
+    return sum(solver.value(f) for group in flags.values() for f in group)
+
+
+def test_multi_row_shape_breach_is_gated_like_validation(counting_world):
+    """A three-day weekend shape has several rows per breach; with the focal day unassigned no breach is charged."""
+    rule = {'kind': 'weekend_shape', 'shape': 'complete', 'weekend_start': 4, 'weekend_days': 3}
+    dates, start = ['2026-12-04', '2026-12-05'], '2026-12-05'
+    data = mirror(counting_world, dates, [dates[-1]], rule, start)
+    with_focal = [r['code'] for r in findings(data)]
+    cost_with = _shape_breach_flags(data, True)
+    focal = next(s for s in data['shifts'] if s['id'] in data['focus_ids'])
+    saved, focal['participants'] = focal['participants'], []
+    without_focal = [r['code'] for r in findings(data)]
+    focal['participants'] = saved
+    cost_without = _shape_breach_flags(data, False)
+    assert with_focal and cost_with
+    assert not without_focal and not cost_without, (without_focal, cost_without)
