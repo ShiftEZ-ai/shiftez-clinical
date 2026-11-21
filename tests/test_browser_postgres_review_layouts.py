@@ -4,6 +4,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
+from packages.contracts.schemas import FINDING_MESSAGES
 
 from .test_browser import (
     browser,
@@ -220,7 +221,7 @@ def test_resource_and_opening_hours_preview_the_linked_rota_before_saving(browse
         "definition": {"resources": [{"resource_pool_id": pool["id"], "units": 1}]},
     })["record"]
     draft = h.shift(h.workspace("Rota using shared equipment"), typ=duty["id"])["workspace"]
-    finding = "The required interval is outside configured opening windows"
+    finding = FINDING_MESSAGES["CALENDAR_CLOSED"]  # the review says the finding in the contract's plain words
 
     context, page = sign_in(browser, live_server, "admin")
     try:
