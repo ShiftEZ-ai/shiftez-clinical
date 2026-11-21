@@ -8,7 +8,7 @@ import re
 from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, bundle_file, route_fetch  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, bundle_file, route_fetch, reconnect  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -116,9 +116,9 @@ def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
 
         def other_roles(route):
             response = route_fetch(route)
-            pulse = response.json()
-            pulse['roles'] = sorted({*pulse['roles'], 'auditor'})
-            route.fulfill(response=response, body=json.dumps(pulse))
+            body = response.json()
+            body['roles'] = sorted({*body['roles'], 'auditor'})
+            route.fulfill(response=response, body=json.dumps(body))
         page.clock.install()
         page.reload()
         navigate(page, 'requests')
@@ -128,18 +128,21 @@ def test_a_role_change_waits_for_any_dialog_then_says_why(browser, live_server):
         expect(dialog).to_be_visible()
         reads = []
         page.on('request', lambda r: reads.append(r.url) if r.method == 'GET' and urlsplit(r.url).path == '/api/me' else None)
+        # The restart's account read reports the same roles as the pulse.
+        page.route('**/api/me', other_roles)
         page.route('**/api/pulse*', other_roles)
         with page.expect_response('**/api/pulse*'):
-            page.clock.run_for(11000)
-            page.clock.run_for(11000)
-        page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+            reconnect(page)
+        expect(page.locator('#connection')).to_have_attribute('aria-label', 'Connected')
         expect(dialog).to_be_visible()
         assert reads == []  # held: no restart under the dialog
-        # The kept pulse is replayed from memory; the restart's own pulse reads the account's real roles again.
-        page.unroute('**/api/pulse*')
-        with page.expect_response(lambda r: r.request.method == 'GET' and urlsplit(r.url).path == '/api/me'):
+        # The held pulse starts the restart before any new pulse is requested.
+        with page.expect_request(
+            lambda r: r.method == 'GET' and urlsplit(r.url).path in ('/api/me', '/api/pulse')
+        ) as replay:
             dialog.get_by_role('button', name='Close dialog').click()
-            page.clock.run_for(11000)
+            page.clock.fast_forward(10_000)
+        assert urlsplit(replay.value.url).path == '/api/me'
         expect(page.get_by_role('status').filter(has_text='Your access changed.')).to_be_visible()
         expect(dialog).to_have_count(0)
         assert len(reads) == 1, reads
