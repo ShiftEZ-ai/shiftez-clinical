@@ -17,29 +17,18 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts"))
 from hosted_ci import TIMING_NODE, digest, unique_object
-from canary_evidence import collection_error, failed_nodes, node as report_node, outcome as report_outcome, recovered_nodes, report_cases
+from canary_evidence import (collection_error, failed_nodes, node as report_node, outcome as report_outcome,
+                             quarantine_xfail, recovered_nodes, report_cases)
 from latest_reports import artifact_shard, earlier_reports, planned_shards, producing_attempt
+from quarantine_registry import SAFE_NODE, canonical_node, expired_entries, utc_today
 
 KNOWN = "ci/known-failures.json"
-BASE_NODE = r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py::(?:[A-Za-z_][A-Za-z0-9_]*::)*test_[A-Za-z0-9_]+"
-SAFE_NODE = re.compile(BASE_NODE + r"(?:\[case-[a-p]{64}\])?")
-
-
-def canonical_node(node):
-    base, marker, parameter = node.partition("[")
-    if not re.fullmatch(BASE_NODE, base) or marker and not parameter.endswith("]"):
-        raise ValueError("Invalid collected node identity")
-    if not marker:
-        return base
-    # Keep every parameter case distinct without publishing its possibly private display label.
-    fingerprint = hashlib.sha256(parameter.encode("utf-8")).hexdigest().translate(
-        str.maketrans("0123456789abcdef", "abcdefghijklmnop"))
-    return base + "[case-" + fingerprint + "]"
+CLASSES = ("baseline", "cleanup", "unstable", "baseline-error")
 
 
 def classes(data):
     return {kind: {row["node"] for row in data["fails"] + data["unstable"] if row["class"] == kind}
-            for kind in ("baseline", "cleanup", "unstable", "baseline-error")}
+            for kind in CLASSES}
 
 
 def listed_nodes(current):
@@ -186,7 +175,7 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
         if len(current["unstable"]) > limit:
             raise ValueError("Unstable entry cap exceeded")
         if any(date.fromisoformat(row["expires_on"]) <= datetime.now(timezone.utc).date() for row in current["unstable"]):
-            raise ValueError("Expired unstable entries require a fix or reviewed renewal")
+            raise ValueError("Expired unstable entries require a fix and removal from the allowance list")
     if base and current:
         require_class_ratchet(current, base)
     if ctx["bootstrap"]:
@@ -217,7 +206,7 @@ class ReportEvidence:
 
 
 def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False,
-                    evidence=None):
+                    evidence=None, quarantine_nodes=None):
     retry = not historical_capture and retry_run(plan)
     if retry and listed is None:
         listed = listed_nodes(at_revision(plan["sha"]))
@@ -261,6 +250,11 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
                 if canonical in outcomes:
                     raise ValueError("A node executed more than once in a full run")
                 outcome = report_outcome(case)
+                # Bind quarantine xfails to the source registry before recording the outcome.
+                if quarantine_nodes is not None and outcome == "skipped" and quarantine_xfail(case):
+                    if canonical not in quarantine_nodes:
+                        raise ValueError("Quarantine xfail has no source registry entry: " + canonical)
+                    outcome = "failed"
                 outcomes[canonical] = outcome
                 if node in recovered:
                     retries[canonical] = outcome
@@ -454,12 +448,13 @@ def outside_observations(current, runs, exceptions=frozenset()):
              "red_count": sum(run.get(node) in {"failed", "error"} for run in runs)} for node in sorted(outside)]
 
 
-def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False):
+def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False, quarantined=frozenset()):
     """Classify individual errors after the producer and report checks."""
     infrastructure = re.compile(r"connection refused|could not connect|server closed the connection|connection reset|could not translate host|temporary failure in name resolution|no route to host|network is unreachable|too many connections|remaining connection slots|password authentication failed|database is locked|database is busy|deadlock detected|no space left on device|out of memory|browser executable.*(?:missing|exist)|ECONNREFUSED|permission denied", re.I)
     product_types = {"AssertionError", "AttributeError", "KeyError", "NameError", "TypeError", "ValueError", "IndexError", "LookupError", "ZeroDivisionError", "NotImplementedError", "IntegrityError", "ProgrammingError", "DataError"}
     result = set()
     infrastructure_nodes = set()
+    listed = set(listed) | set(quarantined)
     for receipt_path in sorted(directory.rglob("shard-receipt.json")):
         receipt = json.loads(receipt_path.read_bytes())
         for row in receipt["reports"]:
@@ -477,7 +472,7 @@ def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False):
                 message, text = element.get("message", ""), element.text or ""
                 if collection_error(case):
                     raise ValueError("Collection error in test evidence: " + node)
-                if node in listed and not allow_retry:
+                if node in quarantined or (node in listed and not allow_retry):
                     continue
                 summary = message + "\n" + "\n".join(line for line in text.splitlines() if line.startswith("E "))
                 if infrastructure.search(summary):
@@ -513,8 +508,10 @@ def mixed_listed_nodes(current, runs, recovered=()):
     return mixed
 
 
-def report_outside(current, runs, output, exceptions=frozenset(), recovered=None, *, reruns=None, unobserved=()):
+def report_outside(current, runs, output, exceptions=frozenset(), recovered=None, *, reruns=None, unobserved=(),
+                   quarantined=frozenset()):
     recovered = recovered or {}
+    exceptions = set(exceptions) | set(quarantined)
     reruns = reruns or {}
 
     def recovery_note(node, default=""):
@@ -535,7 +532,7 @@ def report_outside(current, runs, output, exceptions=frozenset(), recovered=None
                "observations": [recovered[node], "passed"] if node in recovered else [run[node] for run in runs],
                "class": "unstable",
                "status": "ALREADY_UNSTABLE" if node in unstable else "PROPOSED_REMARK"}
-              for node in sorted(mixed_listed_nodes(current, runs, recovered))]
+              for node in sorted(mixed_listed_nodes(current, runs, recovered) - set(quarantined))]
     (output / "outside-observations.json").write_text(encoded({"observations": rows, "unstable_count": len(proposed),
         "proposed_list_entries": proposed, "listed_unstable_count": len(listed), "listed_unstable": listed,
         "unobserved_attempts": list(unobserved)}), encoding="utf-8")
@@ -570,7 +567,7 @@ def write_stale_report(output, sha, nodes, *, reported=None):
     (output / "stale-report.json").write_text(encoded(report), encoding="utf-8")
 
 
-def write_stale_summary(lines):
+def write_summary_lines(lines):
     text = "\n".join(lines)
     print(text)
     if os.getenv("GITHUB_STEP_SUMMARY"):
@@ -582,26 +579,63 @@ def report_pr_stale(output, sha, lookup, nodes):
     reported = lookup(nodes) if nodes else {}
     if reported:
         write_stale_report(output, sha, nodes, reported=reported)
-        write_stale_summary([f"- {node}: stale on dev (run {run_id}); removal candidate"
+        write_summary_lines([f"- {node}: stale on dev (run {run_id}); removal candidate"
                              for node, run_id in sorted(reported.items())])
     return reported
+
+
+def report_quarantine(runs, quarantine, today):
+    passing = sum(all(run.get(node) == "passed" for run in runs) for node in quarantine)
+    failing = sorted(node for node in quarantine if any(run.get(node) in {"failed", "error"} for run in runs))
+    expired = expired_entries(quarantine, today)
+    write_summary_lines([f"quarantined and passing now: {passing}",
+                         f"quarantined and failing now: {len(failing)}",
+                         *(f"- {node}: quarantined-failing" for node in failing),
+                         f"expired quarantine (still active): {len(expired)}",
+                         *(f"- {row['nodeid']}: expired {row['expires']}, issue {row['issue']}" for row in expired)])
+
+
+def release_failure_list(current, quarantine):
+    """Apply the release ratchet to the reviewed classes regardless of their storage."""
+    current = {**current, "fails": list(current["fails"]), "unstable": list(current["unstable"])}
+    for node, row in quarantine.items():
+        kind = row["reason"].split(":", 1)[0].strip()
+        if kind not in CLASSES:
+            raise ValueError("Invalid quarantine failure class for release: " + node)
+        entry = {"node": node, "class": kind}
+        if kind == "unstable":
+            current["unstable"].append({**entry, "expires_on": row["expires"]})
+        else:
+            current["fails"].append(entry)
+    return current
 
 
 def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_only=False,
              group=False, merge_group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
              selected_files=None, stale_output=None, expected_replicas=2, stale_sha=None,
-             observe_stale=None):
-    today = today or datetime.now(timezone.utc).date()
+             observe_stale=None, quarantine=None, release=False):
+    today = today or utc_today()
+    quarantined = set() if release else set(quarantine or ())
+    if quarantine:
+        report_quarantine(runs, quarantine, today)
+        if release:
+            blockers = sorted(node for node, row in quarantine.items() if row["blocker"])
+            if blockers:
+                raise ValueError("Release blockers remain in quarantine: " + ", ".join(blockers))
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
-    groups = classes(current)
+    if release and quarantine:
+        current = release_failure_list(current, quarantine)
+        if base is not None:
+            base = release_failure_list(base, quarantine)
+    groups = {kind: nodes - quarantined for kind, nodes in classes(current).items()}
     if len(groups["unstable"]) > limit:
         raise ValueError("Unstable entry cap exceeded")
     if len(groups["cleanup"]) > current["cleanup_cap"]:
         raise ValueError("Cleanup entry cap exceeded")
     if any(date.fromisoformat(row["expires_on"]) <= today for row in current["unstable"]):
-        raise ValueError("Expired unstable entries: fix them or renew them through review")
+        raise ValueError("Expired unstable entries require a fix and removal from the allowance list")
     current_nodes = set.union(*groups.values())
     if base is None:
         if not bootstrap_add_only or current != bootstrap_candidate:
@@ -619,7 +653,7 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     observed = set(runs[0])
     mixed_listed = mixed_listed_nodes(current, runs, recovered)
     problems = []
-    outside = outside_observations(current, runs, exceptions)
+    outside = outside_observations(current, runs, set(exceptions) | quarantined)
     transient = {row["node"] for row in outside if expected_replicas == len(runs) == 2 and set(runs[0]) == set(runs[1])
                  and row["red_count"] == 1 and "passed" in row["observations"]}
     if outside and (len(runs) != expected_replicas or any(set(run) != observed for run in runs)):
@@ -635,13 +669,13 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     reported = all_stale & set(observe_stale(all_stale) or ()) if observe_stale is not None else set()
     if stale_output is not None:
         write_stale_report(stale_output, stale_sha, all_stale)
-        write_stale_summary(["Stale passing failure entries: " + str(len(all_stale)),
+        write_summary_lines(["Stale passing failure entries: " + str(len(all_stale)),
                              *("- " + node for node in sorted(all_stale))])
     for run in runs:
         if any(run[node] == "skipped" for node in current_nodes & observed):
             problems.append("A listed test did not execute; skipped is not passing")
         errors = {node for node, outcome in run.items() if outcome == "error"}
-        new_errors = errors - groups["baseline-error"] - mixed_listed - (transient & set(product_errors))
+        new_errors = errors - quarantined - groups["baseline-error"] - mixed_listed - (transient & set(product_errors))
         if new_errors:
             problems.append("New errors outside the baseline-error class: " + ", ".join(sorted(new_errors)))
         stale = stable & {node for node, outcome in run.items() if outcome == "passed"}
@@ -649,7 +683,7 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
         if stale and stale_output is None:
             problems.append("Stale passing failure entries: delete their lines from ci/known-failures.json: " + ", ".join(sorted(stale)))
         failures = {node for node, outcome in run.items() if outcome == "failed"}
-        new_failures = failures - (current_nodes - groups["baseline-error"]) - set(exceptions) - transient - mixed_listed
+        new_failures = failures - quarantined - (current_nodes - groups["baseline-error"]) - set(exceptions) - transient - mixed_listed
         if new_failures:
             problems.append("New failures outside the known-failure list: " + ", ".join(sorted(new_failures)))
     if problems:
@@ -689,7 +723,8 @@ def verify_privacy(data, matcher_path, table_path, staff_path):
     return {**policy.hashes(), "matcher_sha256": matcher_hash}
 
 
-def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, nightly=False):
+def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, nightly=False,
+         quarantine=None, release=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--reports", type=Path)
@@ -746,7 +781,8 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
     args.output.mkdir(parents=True, exist_ok=True)
     selected_files = ({path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
                       if "selection" in plan else None)
-    listed = listed_nodes(ctx["current"])
+    quarantined = (quarantine or {}).keys()
+    listed = listed_nodes(ctx["current"]) | quarantined
     retry = retry_run(plan)
     try:
         if plan["smoke"]:
@@ -760,7 +796,7 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                 print("::warning::Applying " + str(len(exceptions)) + " explicit hosted environment exceptions; evidence and review references are committed")
             if product_errors is None:
                 product_errors = set() if args.capture_root else product_error_nodes(
-                    args.reports, listed=listed, allow_retry=retry)
+                    args.reports, listed=listed, allow_retry=retry, quarantined=() if release else quarantined)
             recovered = evidence.recovered
             groups = classified_results(runs, baseline, exceptions, recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
@@ -779,9 +815,11 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                 print("Root class counts: " + json.dumps(counts, sort_keys=True))
                 return
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
-            require_root_binding(ctx["current"], root_evidence, root_sha)
-            report_outside(ctx["current"], runs, args.output, exceptions, recovered,
-                           reruns=evidence.reruns, unobserved=evidence.unobserved)
+            comparison_list = release_failure_list(ctx["current"], quarantine) if release and quarantine else ctx["current"]
+            require_root_binding(comparison_list, root_evidence, root_sha)
+            report_outside(comparison_list, runs, args.output, exceptions, recovered,
+                           reruns=evidence.reruns, unobserved=evidence.unobserved,
+                           quarantined=() if release else quarantined)
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,
@@ -799,7 +837,7 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                      recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
                      stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]),
-                     stale_sha=plan["sha"], observe_stale=observe_stale)
+                     stale_sha=plan["sha"], observe_stale=observe_stale, quarantine=quarantine, release=release)
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:

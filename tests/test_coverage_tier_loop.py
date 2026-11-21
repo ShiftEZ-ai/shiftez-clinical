@@ -224,6 +224,43 @@ def test_fillable_desired_cover_reaches_zero_before_quality_search():
     assert len(result['additions']) == 45
 
 
+def test_diagnostic_desired_cover_improves_on_required_only_hint(h, monkeypatch):
+    data = tier_loop_data(h)
+    data['generation_options']['allocation_order'] = 'weighted'
+    required = data['shifts'][0]
+    desired = copy.deepcopy(required)
+    desired.update(id=required['id'] + '-desired', start='2026-10-06T08:00:00+03:00',
+                   end='2026-10-06T12:00:00+03:00')
+    required['type_snapshot']['definition']['requirements'][0].update(minimum=3, target=None, maximum=3)
+    data['shifts'].append(desired)
+    data['focus_ids'].append(desired['id'])
+    original = SolverControl.solve
+
+    def solve(self, solver, model, tier):
+        name = self.context['objective_names'][tier] if tier is not None else None
+        if name == 'coverage':
+            # Start with a required-only incumbent, leaving the desired shift empty.
+            model = model.clone()
+            for index, variable in enumerate(model.proto.variables):
+                if variable.name.startswith(desired['id'] + ':'):
+                    model.add(model.get_bool_var_from_proto_index(index) == 0)
+        elif name == 'desired_coverage' and not solver.parameters.cp_model_presolve:
+            # Model the short search that found only its complete hint.
+            solver.parameters.fix_variables_to_their_hinted_value = True
+            assert original(self, solver, model, tier) == cp_model.OPTIMAL
+            return cp_model.FEASIBLE
+        return original(self, solver, model, tier)
+
+    monkeypatch.setattr(SolverControl, 'solve', solve)
+    result = generate(data, 2, workers=1, deterministic=True, diagnostic_proposal=True)
+    assert result['status'] == 'candidate_with_gaps', result
+    rows = {row['name']: row for row in result['objectives']}
+    minutes = int((aware(required['end']) - aware(required['start'])).total_seconds() / 60)
+    assert rows['coverage']['value'] == minutes and rows['coverage']['proven_optimal']
+    assert rows['desired_coverage']['value'] == 0 and rows['desired_coverage']['proven_optimal']
+    assert sum(row['shift_id'] == desired['id'] for row in result['additions']) == 1
+
+
 @pytest.mark.parametrize('proven', [False, True])
 def test_desired_shortfall_receipt_distinguishes_search_from_proof(h, monkeypatch, proven):
     data = tier_loop_data(h)
