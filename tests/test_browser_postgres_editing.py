@@ -156,17 +156,23 @@ def test_segmented_presence_survives_preview_and_explicit_draft_save(browser, li
         shown_change = editor.get_by_role("row").filter(has_text="12:30")
         assert h.detail(rota)["shifts"] == [original]
         assert assert_draft(h, page, rota)["revision"] == rota["revision"]
-        expect(shown_change.get_by_role("cell").nth(2)).to_contain_text("presence 08:00–09:30; 10:15–12:00")
+        # Changed times keep each segment inside them and move the outer edges with the session (forms.ts keptAttendance):
+        # the second segment now ends at the new end, never a whole-duty booking.
+        expect(shown_change.get_by_role("cell").nth(2)).to_contain_text("presence 08:00–09:30; 10:15–12:30")
 
         editor.get_by_role("button", name="Save draft session", exact=True).click()
         expect(editor).not_to_be_visible()
         reload_view(page, "schedule")
         assert_draft(h, page, rota)
         open_session(page)
-        expect(page.locator(".wk-session").get_by_text(segment_text, exact=True)).to_be_visible()
+        expect(page.locator(".wk-session").get_by_text("08:00–09:30, 10:15–12:30", exact=True)).to_be_visible()
         saved, = h.detail(rota)["shifts"]
         assert saved["id"] == original["id"] and saved["end"] != original["end"]
-        assert saved["participants"][0]["segments"] == original["participants"][0]["segments"]
+        first, second = saved["participants"][0]["segments"]
+        kept_first, kept_second = original["participants"][0]["segments"]
+        assert first == kept_first
+        assert second["start"] == kept_second["start"]
+        assert datetime.fromisoformat(second["end"]) == datetime.fromisoformat(saved["end"])
 
 
 def test_staffing_choice_previews_without_saving_until_explicit_save(browser, live_server, h):
