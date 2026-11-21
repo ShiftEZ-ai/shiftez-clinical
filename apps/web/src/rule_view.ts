@@ -9,7 +9,7 @@ import {quotaUnits} from './quotas.js';
 import {SESSION_FIELDS,RULE_FIELDS,scopeAsConditions,conditionsText} from './conditions.js';
 import type {Row} from './types.js';
 import type {PersonAmount} from './generated.js';
-import type {MapRule} from './planner_rules.js';
+import {bindsNote,type MapRule} from './planner_rules.js';
 import {goalSentence} from './balance_goal.js';
 import {isOrder,catalogueEntryOf} from './forms.js';
 
@@ -62,18 +62,18 @@ export function rangeParts(min:NumberPart|null,max:NumberPart|null,target:Number
   return out;
 }
 /** The strengths of numbered parts: one when they agree (shown once, after them), else null (shown after each). */
-const oneLevel=(parts:NumberPart[])=>{const ls=[...new Set(parts.filter(x=>x.level!==undefined).map(x=>x.level))];return ls.length===1?{level:ls[0]}:ls.length?null:undefined;};
+const oneLevel=(parts:NumberPart[])=>{const ls=[...new Set(parts.filter(x=>x.level!=null).map(x=>x.level))];return ls.length===1?{level:ls[0]}:ls.length?null:undefined;};
 /** "≥ 11 · Mandatory", "≤ 6 duties per week · Mandatory", "2 – 5 mandatory → 4 advisory · medium": numbers (then
  *  what they count, `unit`) with their strength in words (titles, search, sentences). */
 export function partsText(parts:NumberPart[],unit=''):string{
   const one=oneLevel(parts),u=unit?' '+unit:'';
   if(one===undefined)return parts.map(x=>x.text).join('')+u;
   if(one)return parts.map(x=>x.text).join('')+u+' · '+levelWords(one.level);
-  return parts.map((x,i)=>x.level===undefined||!runEnds(parts,i)?x.text:`${x.text} ${levelWords(x.level).toLowerCase()}`).join('')+u;
+  return parts.map((x,i)=>x.level==null||!runEnds(parts,i)?x.text:`${x.text} ${levelWords(x.level).toLowerCase()}`).join('')+u;
 }
 /** Numbers that differ in strength: a strength is said once after each run of numbers that share it ("2 – 5
  *  mandatory → 4 advisory · medium"). */
-const runEnds=(parts:NumberPart[],i:number)=>{const next=parts.slice(i+1).find(x=>x.level!==undefined);return !next||next.level!==parts[i].level;};
+const runEnds=(parts:NumberPart[],i:number)=>{const next=parts.slice(i+1).find(x=>x.level!=null);return !next||next.level!==parts[i].level;};
 /** The strength as a small labelled badge (never a "!" to decode): solid accent for Mandatory, outline for Advisory. */
 /** What an advisory strength weighs in the schedule score (Configuration › Auto-schedule & scoring), once read. */
 let weights:Record<string,number>={};
@@ -91,7 +91,7 @@ export const levelBadge=(level:string|null|undefined)=>{const tip=levelTip(level
 export function numbersEl(parts:NumberPart[],from:(id:string)=>string=()=>'a broader line'):HTMLElement{
   if(!parts.length)return el('span',{class:'rule-num muted'},'—');
   const one=oneLevel(parts),num=(x:NumberPart)=>x.from?inheritedEl(x.text,from(x.from)):x.text;
-  return el('span',{class:'rule-num'},...parts.flatMap((x,i)=>one===null&&x.level!==undefined&&runEnds(parts,i)?[num(x),' ',levelBadge(x.level)]:[num(x)]),...(one?[' ',levelBadge(one.level)]:[]));
+  return el('span',{class:'rule-num'},...parts.flatMap((x,i)=>one===null&&x.level!=null&&runEnds(parts,i)?[num(x),' ',levelBadge(x.level)]:[num(x)]),...(one?[' ',levelBadge(one.level)]:[]));
 }
 const inheritedEl=(text:string,source:string)=>el('span',{class:'rc-inh','data-tip':`Inherited from ${source}`,'aria-label':`${text.replace('↰','')}, inherited from ${source}`},text);
 /** A checked copy's numbers (Which rule applies?): "≤ 5" and its strength. */
@@ -397,7 +397,8 @@ export function healthStrip(entry:MapRule,days:string[],fresh:boolean,people:num
   const why=(d:number)=>{const m=short.get(d)![3];return m&&m!==entry.name?` (${m})`:'';};
   const short=new Map((entry.short_days||[]).map(d=>[d[0],d]));
   const touched=entry.days.filter(d=>d<days.length);
-  const counts=people==null?'':` Counts ${plural(people,'person','people')} today.`;
+  const binds=bindsNote(entry.number,entry.binding_value);
+  const counts=(binds&&' '+binds)+(people==null?'':` Counts ${plural(people,'person','people')} today.`);
   if(!touched.length)return el('p',{class:'hint'},`It applies to no day of this draft.${counts}`);
   if(!fresh||entry.status.state==='unchecked')return el('p',{class:'hint'},`Not checked since the draft last changed: check the draft to see where it is met.${counts}`);
   const bars=el('div',{class:'rl-days'},...touched.map(d=>{const s=short.get(d);

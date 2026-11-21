@@ -15,7 +15,7 @@ from apps.api.services import conditional_reads
 from apps.api.services import bulk_selection
 from packages.contracts import schemas as s
 from .clock_support import freeze_clock
-from .test_backend_scale import scale_department
+from .test_backend_scale import measure, scale_department
 
 
 ACTOR = SimpleNamespace(identity_id="reader", department_id="department", person_id=None, roles={"coordinator"})
@@ -142,3 +142,10 @@ def test_department_scale_conditional_reads_have_zero_response_byte_budget(scale
         assert repeat.status_code == 304 and len(repeat.content) == 0
         observations.append((path, len(first.content), len(repeat.content)))
     print("Conditional byte budgets:", observations)
+
+    first = client.get("/api/requests/all")
+    assert first.status_code == 200
+    repeat, metrics = measure(h, "requests-validator", lambda: client.get(
+        "/api/requests/all", headers={"if-none-match": first.headers["etag"]}))
+    assert repeat.status_code == 304 and repeat.content == b""
+    assert metrics["sql"]["SELECT"] <= 12, metrics

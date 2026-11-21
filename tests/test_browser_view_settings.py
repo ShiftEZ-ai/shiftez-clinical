@@ -164,7 +164,7 @@ def test_calendar_rows_are_duties_or_people_and_people_group_by_rank(browser, li
         choose_radio(panel, "Cells show", "Duty codes")
         close_popover(page)
         group = toolbar(bar, "Group")
-        group.get_by_label("Group by", exact=True).select_option("rank")
+        group.get_by_role("menu", name="Group by", exact=True).get_by_role("menuitemradio", name=re.compile(r"^Rank\b")).click()
         close_popover(page)
         heads = page.locator("#schedule-view .tl-grid .pg-group-head")
         expect(heads.first).to_be_visible()

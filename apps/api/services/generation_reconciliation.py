@@ -6,10 +6,21 @@ from packages.domain.proposal_reconciliation import reconcile
 from packages.domain.generation_scope import selected_session_ids
 from apps.api import models as m
 from apps.api.errors import require
-from apps.api.snapshots import currency_hint, domain_snapshot, snapshot_hash
+from apps.api.snapshots import currency_hint, domain_snapshot, preparation_stamp, snapshot_hash, workspace_content
 from apps.api.input_changes import changed_facts, rules_changed
 from .common import scoped
 from .planning import draft
+
+
+class GenerationInputsChanged(Exception):
+    """Reacquire changed proposal inputs outside the global writer."""
+
+
+def refresh_inputs(db, actor, command, plan):
+    value = s.GenerationApply.model_validate(command.payload)
+    workspace = scoped(db, m.Workspace, value.workspace_id, actor)
+    current = domain_snapshot(db, workspace, own_shifts=workspace_content(db, workspace)['shifts'])
+    return {**plan, 'current_data': current, 'current_stamp': preparation_stamp(db, workspace)}
 
 
 def prepare(db, actor, command):
@@ -31,7 +42,10 @@ def prepare(db, actor, command):
         return selected
     ai, ri = indexes('additions', value.addition_indexes), indexes('removals', value.removal_indexes)
     require(ai or ri, 'NO_ADDITIONS', 'Choose at least one suggestion to apply')
-    current = domain_snapshot(db, workspace, mandatory_rules=True)
+    before = workspace_content(db, workspace)
+    current = domain_snapshot(db, workspace, own_shifts=before['shifts'])
+    captured = deepcopy(current)
+    stamp = preparation_stamp(db, workspace)
     frozen = job.input_snapshot
     selected = set(selected_session_ids(frozen))
     require(all(result['additions'][i]['shift_id'] in selected for i in ai)
@@ -74,6 +88,9 @@ def prepare(db, actor, command):
     if not plan['validation'].get('scope'):
         plan['validation'].update(score=schedule_score(plan['data'], plan['validation'], defaults),
             diagnostic_version=DIAGNOSTIC_VERSION, score_dependencies=score_dependencies(defaults))
+    from packages.domain.overlap import per_session_overlaps
+    flags = (per_session_overlaps(plan['data'], focus_ids=set(current['focus_ids'])),
+             per_session_overlaps(current, focus_ids=set(current['focus_ids'])))
     facts = changed_facts(db, job.input_snapshot, current, actor.department_id,
                           job.input_snapshot.get('audit_watermark', 0))
     receipt = {key: plan[key] for key in ('status', 'addition_indexes', 'removal_indexes', 'conflicting_placements',
@@ -88,7 +105,16 @@ def prepare(db, actor, command):
                    conflicting_placement_count=len(receipt['conflicting_placements']),
                    validation={key: plan['validation'].get(key) for key in ('valid', 'error_count', 'warning_count', 'score', 'fingerprint')})
     receipt['id'] = snapshot_hash(receipt)
+    summary_cache = {}
+    evaluated_at = m.now().isoformat()
+    if not plan['validation'].get('scope'):
+        from packages.domain.rota_summary import fix_list_context, remember_fix_list
+        plan['validation'].update(evaluated_at=evaluated_at, fix_list_context=fix_list_context(plan['data']),
+            input_manifest={key: plan['data']['input_manifest'][key] for key in ('format', 'token', 'components', 'dirty_hint')})
+        remember_fix_list(workspace.validation, plan['validation'], accepted_issues=workspace.accepted_issues or [],
+                          summary_cache=summary_cache)
     return {'receipt': receipt, 'assignment_ids': assignment_ids, 'result_hash': snapshot_hash({k: v for k, v in result.items() if k != 'reconciliation'}),
             'actor_id': actor.identity_id, 'department_id': actor.department_id, 'workspace_id': workspace.id,
             'validation': plan['validation'], 'data': plan['data'], 'population_contribution': contribution,
-            'currency_hint': currency_hint(db, workspace)}
+            'currency_hint': currency_hint(db, workspace), 'current_data': captured,
+            'current_stamp': stamp, 'overlap_flags': flags, 'summary_cache': summary_cache}

@@ -1,6 +1,5 @@
 """Demo blockers: prepared activation, idle workers and resolved offered-overtime audiences."""
 import time
-import sys
 import tracemalloc
 from datetime import date
 from types import SimpleNamespace
@@ -20,10 +19,22 @@ from tests.test_rule_templates import propose
 from tests.test_overtime_extra_cover import extra_type
 from tests.test_rule_catalogue_api import propose as catalogue_propose, line, person
 
-try:
-    import resource
-except ImportError:  # Windows CI has tracemalloc but no POSIX ru_maxrss.
-    resource = None
+def _rss_kib(field):
+    with open('/proc/self/status') as status:
+        return next(int(row.split()[1]) for row in status if row.startswith(field + ':'))
+
+
+def _start_peak_rss():
+    """Reset this process's peak RSS (Linux clear_refs 5) and return the resident size it restarts from.
+
+    ru_maxrss is the worker process's lifetime peak, so an earlier department-scale test in the same worker
+    would fail this per-request bound. None where /proc is unavailable; tracemalloc still bounds the request."""
+    try:
+        with open('/proc/self/clear_refs', 'w') as refs:
+            refs.write('5')
+        return _rss_kib('VmRSS')
+    except (OSError, StopIteration):
+        return None
 
 
 @pytest.mark.parametrize('checked', [False, True])
@@ -76,6 +87,7 @@ def test_activation_receipts_reuse_currency_without_building_snapshots(backend, 
             'reason': 'Independent stability review', 'check_job_ids': [receipt['id']]})
         monkeypatch.setattr(policies, 'feasibility_fingerprints',
                             lambda *args, **kwargs: pytest.fail('current activation receipt rebuilt a full snapshot'))
+        rss_start = _start_peak_rss()
         tracemalloc.start()
         try:
             evidence = policies.require_context_receipts(db, actor, [(policy, decision.reason)], [decision],
@@ -83,15 +95,13 @@ def test_activation_receipts_reuse_currency_without_building_snapshots(backend, 
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
+        rss_peak = _rss_kib('VmHWM') if rss_start is not None else None
     assert evidence and evidence[0]['check_job_id'] == receipt['id']
     # The pre-fix path reached ~6.2 GiB RSS in the shared 8 GiB cgroup.  Keep
     # the synchronous activation path below the owner's 1.5 GiB per-request
     # ceiling (8 GiB / 4 workers with interpreter and database headroom).
-    if resource is not None:
-        rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # Linux reports KiB and macOS reports bytes. The test remains portable
-        # for CI while the Mac runner is still prohibited for this task.
-        rss_bytes = rss_after * (1 if sys.platform == 'darwin' else 1024)
+    if rss_start is not None:
+        rss_bytes = (rss_peak - rss_start) * 1024
         assert rss_bytes < int(1.5 * 1024 * 1024 * 1024), f'activation receipt peak RSS: {rss_bytes}'
     assert peak < int(1.5 * 1024 * 1024 * 1024), f'activation receipt peak allocation: {peak}'
 

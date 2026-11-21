@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import object_session
 from apps.api import models as m
+from apps.api.snapshots import DRAFT_POLICY_BASIS, draft_policy_hint
 from packages.domain.input_manifest import digest
 from .planning import health
 from .conditional_reads import revision_etag
@@ -29,7 +30,7 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
     stamp = [workspace.revision, workspace.content_revision, workspace.status,
              validation_stamp, department.revision, department.catalogue_revision,
              department.leave_reason_display, organisation.revision,
-             organisation.input_revision, organisation.availability_revision]
+             organisation.input_revision, organisation.availability_revision, *draft_policy_hint(workspace).values()]
     if include_check_state:
         from .rota_summary import validation_job_stamp
         stamp.append(validation_job_stamp(db, workspace_id=workspace.id))
@@ -61,8 +62,9 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
 
 def workspace_list_etag(db, actor, representation):
     """Revision validator for the paged workspace menu before health projections run."""
-    department = db.get(m.Department, actor.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    department, organisation = db.execute(select(m.Department, m.Organisation).join(
+        m.Organisation, m.Organisation.id == m.Department.organisation_id).where(
+        m.Department.id == actor.department_id)).one()
     from .job_reads import job_stamp
     workspace_stamp = db.execute(select(
         func.count(m.Workspace.id), func.coalesce(func.sum(m.Workspace.revision), 0),
@@ -93,7 +95,7 @@ def workspace_list_etag(db, actor, representation):
                          (department.revision, department.catalogue_revision, organisation.revision,
                           organisation.input_revision, organisation.availability_revision,
                           today, tuple(workspace_stamp), job_stamp(db, department_id=actor.department_id), tuple(publication_stamp),
-                          tuple(change_stamp), tuple(fork_stamp)))
+                          tuple(change_stamp), tuple(fork_stamp), DRAFT_POLICY_BASIS))
 
 
 def summary_etag(db, actor, workspace, view, group_version_id):
@@ -121,7 +123,7 @@ def summary_etag(db, actor, workspace, view, group_version_id):
                          validation_job_stamp(db, workspace_id=workspace.id),
                          worker_state(db, m.now())['worker_liveness'],
                          workspace.rule_adjustments or [], workspace.target_overrides or [],
-                         workspace.accepted_issues or [])
+                         workspace.accepted_issues or [], *draft_policy_hint(workspace).values())
 
 
 def rule_map_etag(db, actor, workspace):
@@ -141,7 +143,7 @@ def rule_map_etag(db, actor, workspace):
         func.count(m.Policy.id), func.coalesce(func.sum(m.Policy.revision), 0),
         func.max(m.Policy.created_at), func.max(m.Policy.id)
     ).where(m.Policy.department_id == workspace.department_id, m.Policy.status == 'proposed')).one()
-    return revision_etag("workspace-rule-map", workspace.id, actor.identity_id, actor.person_id,
+    return revision_etag("workspace-rule-map-v2", workspace.id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), tuple(row), workspace.rule_adjustments or [],
                          workspace.target_overrides or [], tuple(proposals))
 
@@ -170,14 +172,22 @@ def check_projection(workspace, check):
         'health': health(SimpleNamespace(validation=check, accepted_issues=workspace.accepted_issues))}
 
 
-def check_stamp(db, workspace):
+def _stored_check_stamps(db, workspace_ids):
+    if not workspace_ids:
+        return {}
+    projection = m.WorkspaceReadProjection
+    return dict(db.execute(select(projection.workspace_id, projection.stamp).where(
+        projection.workspace_id.in_(workspace_ids), projection.audience == CANONICAL_AUDIENCE,
+        projection.kind == 'stored_check')).all())
+
+
+def check_stamp(db, workspace, *, stored_stamps=None):
     # Deferred collection reads must reuse the compact projection without hydrating
     # the full validation JSON; write listeners still include the changed value.
     if 'validation' not in workspace.__dict__:
-        stamp = db.scalar(select(m.WorkspaceReadProjection.stamp).where(
-            m.WorkspaceReadProjection.workspace_id == workspace.id,
-            m.WorkspaceReadProjection.audience == CANONICAL_AUDIENCE,
-            m.WorkspaceReadProjection.kind == 'stored_check'))
+        if stored_stamps is None:
+            stored_stamps = _stored_check_stamps(db, [workspace.id])
+        stamp = stored_stamps.get(workspace.id)
         if stamp is not None:
             return stamp
     return digest([source_identity(db), workspace.revision, workspace.accepted_issues,
@@ -186,6 +196,7 @@ def check_stamp(db, workspace):
 
 def stored_checks(db, workspaces):
     workspaces = {w.id: w for w in workspaces}
+    stamps = _stored_check_stamps(db, [wid for wid, w in workspaces.items() if 'validation' not in w.__dict__])
     def acquire(ids):
         result = {wid: check_projection(workspaces[wid], workspaces[wid].validation) for wid in ids
                   if 'validation' in workspaces[wid].__dict__}
@@ -197,7 +208,7 @@ def stored_checks(db, workspaces):
                 result[wid] = check_projection(workspaces[wid], check)
         return result
     return cached(db, workspaces, 'stored_check',
-                  {wid: check_stamp(db, w) for wid, w in workspaces.items()}, build_many=acquire)
+                  {wid: check_stamp(db, w, stored_stamps=stamps) for wid, w in workspaces.items()}, build_many=acquire)
 
 
 def store_check(_mapper, connection, workspace):

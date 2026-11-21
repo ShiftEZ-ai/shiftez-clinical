@@ -131,7 +131,7 @@ def test_empty_assignments_count_applicable_rules_without_earned_preference_or_f
     workspace = h.shift(h.workspace(), people=[])['workspace']
     source = h.snapshot(workspace)
     score = schedule_score(source, evaluate(source))
-    assert score['version'] == 'score-v11'
+    assert score['version'] == 'score-v12'
     assert score['score'] == 0 and score['raw'] == 0
     assert score['components']['coverage']['value'] == 0
     assert score['components']['rules']['value'] == 1

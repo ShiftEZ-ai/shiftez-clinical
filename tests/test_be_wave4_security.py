@@ -43,7 +43,7 @@ def test_link_reads_have_separate_per_link_and_high_address_backstops(h, monkeyp
         assert client.get("/api/account-links/invalid-0").status_code == 429
         with transaction(h.app.state.engine, write=True) as db:
             for _ in range(1000):
-                hit(db.connection(), "account-link-address", "testclient", 900, m.now())
+                hit(db.connection(), "account-link-address", auth.login_digest("peer:testclient", h.settings), 900, m.now())
         assert client.get("/api/account-links/unique-link").status_code == 429
 
 
@@ -133,7 +133,7 @@ def test_progressive_rotating_addresses_share_one_second_account_ceiling(h, monk
         return auth.password_login(h.app.state.engine, LoginInput(username=name, password=password), peer, settings)
     for index in range(3):
         assert attempt(f"attacker-{index}").status == 401
-    account = auth.login_keys(username, "unused")[0]
+    account = auth.login_keys(username, "unused", settings)[0]
     delay_key = auth.login_account_bucket_keys(username, settings)[1]
     with transaction(h.app.state.engine) as db:
         deadline = aware(db.get(m.RateLimit, delay_key).expires_at)
@@ -227,10 +227,11 @@ def test_cross_origin_and_transport_security_headers(h, monkeypatch, environment
         monkeypatch.delenv(flag, raising=False)
     users = tmp_path / 'users.yml'
     users.write_text('{"users": {}}', encoding='utf-8')
+    public_origin = 'https://rota.test'
     settings = replace(h.settings, environment=environment, identity_users_file=str(users), fmuc_data_key='01' * 32,
                        database_url='postgresql+psycopg://synthetic@localhost/unused',
-                       public_origin='https://rota.test', forwarded_allow_ips='192.0.2.17',
-                       oidc_issuer='https://idp.test', oidc_client_id='rota-test', oidc_client_secret='synthetic',
+                       public_origin=public_origin, forwarded_allow_ips='192.0.2.17',
+                       oidc_issuer=public_origin + "/authelia", oidc_client_id='rota-test', oidc_client_secret='synthetic',
                        oidc_redirect_uri='https://rota.test/auth/callback', oidc_allowed_hosts='idp.test')
     with TestClient(create_app(settings, h.app.state.engine), base_url=settings.public_origin) as client:
         response = client.get('/')

@@ -62,6 +62,9 @@ export interface WeekHooks {
   rota?:Row[];
   /** A rota check is running now: "Checking…" instead of "Not checked yet" (a check that failed or never ran is not). */
   checking?:boolean;
+  /** D59: only the window of a rota is in (its whole detail still loading): its marks are the last check's, so nothing
+   *  says a person passes every rule. */
+  kept?:boolean;
   /** The session panel's footer (S-09): Edit session (primary) and the ⋯ entries (close, cover, staffing) this person
    *  may use on this session; none for a reader. */
   sessionActions?:(shift:Row)=>{edit?:()=>void;more:MenuEntry[]}|undefined;
@@ -736,8 +739,10 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
   const inPeriod=(list:Row[])=>list.filter(s=>period.days.includes(dayOf(s))).length;
   const filtered=weekView.onlyOpen||weekView.onlyIssues||!!hooks.unfiltered&&inPeriod(hooks.unfiltered)!==inPeriod(visible);
   const time=(s:Row)=>dutyTime(s,zone);
-  const dayName=(day:string,style:'short'|'long'='short')=>new Intl.DateTimeFormat('en-GB',{weekday:style,timeZone:'UTC'}).format(new Date(day+'T12:00:00Z'));
-  const dayLabel=(day:string)=>`${dayName(day)} ${Number(day.slice(8))} ${new Intl.DateTimeFormat('en-GB',{month:'short',timeZone:'UTC'}).format(new Date(day+'T12:00:00Z'))}`;
+  const weekday=new Intl.DateTimeFormat('en-GB',{weekday:'short',timeZone:'UTC'});
+  const month=new Intl.DateTimeFormat('en-GB',{month:'short',timeZone:'UTC'});
+  const dayName=(day:string)=>weekday.format(new Date(day+'T12:00:00Z'));
+  const dayLabel=(day:string)=>`${dayName(day)} ${Number(day.slice(8))} ${month.format(new Date(day+'T12:00:00Z'))}`;
   // A clinic row's or a day's issues rolled up (D78): one marker; its popover lists ISSUE_LIST_LIMIT of them, then "Show
   // all M in Fix list" (a draft's Fix list; a published or read-only grid has none, so it says how many more).
   const fixList=hooks.editable&&!hooks.open&&w.status!=='published'?()=>{if(!hooks.fixList?.())ctx.navigate(routeHash('schedule',['issues'],{draft:w.id}).slice(1));}:undefined;
@@ -1166,6 +1171,7 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
     const tagText=((person?.tags||[]) as string[]).join(' · ');
     const rules=errs.length?line('err',errs.length>1?`${errs.length} broken rules`:'1 broken rule',errs.slice(0,2).map(f=>f.message).join(' · '))
       :!checked?line('na',hooks.checking?'Rules: checking…':'Rules: not checked yet')
+      :hooks.kept?line('na',warns.length?`${warns.length} warning${warns.length>1?'s':''} · from the last check`:'Rules: from the last check')
       :warns.length?line('warn',`Rules pass · ${warns.length} warning${warns.length>1?'s':''}`,warns[0].message):line('ok','Rules: all pass');
     // A double booking leads (both sides say it, S-07): rule checks of this one session cannot show it.
     const booked=clashesOf(s,p.person_id).map(c=>line('err','Double-booked',`also in ${c.other_session_name}`));

@@ -1,6 +1,6 @@
 {
     servers {
-        trusted_proxies static {$APP_TRUSTED_PROXIES}
+        trusted_proxies static {$ROTA_TRUSTED_PROXIES}
     }
 }
 :8080 {

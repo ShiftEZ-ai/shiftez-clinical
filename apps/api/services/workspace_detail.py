@@ -15,6 +15,15 @@ from .workspace_access import access_record
 from .workspace_reads import stored_checks
 
 
+def full_shifts(db, workspace_id):
+    shift = m.Shift
+    # Mapped columns retain workspace visibility criteria without creating Shift instances.
+    columns = [getattr(shift, key) for key in shift.__mapper__.column_attrs.keys()]
+    rows = db.execute(select(*columns).where(shift.workspace_id == workspace_id)
+                      .order_by(shift.start, shift.id)).mappings()
+    return shift_records(db, rows)
+
+
 def compact(db, actor, workspace):
     from apps.api.workspace_baselines import attach as attach_baseline
     check = stored_checks(db, [workspace])[workspace.id]
@@ -43,9 +52,7 @@ def compact(db, actor, workspace):
     return {'view': 'compact', 'workspace': metadata,
         'current_input_revision': org.input_revision, 'current_availability_revision': org.availability_revision,
         'current_fingerprint': current, 'health': health, 'summary': health.get('summary'),
-        # Only this read passes the canonical stored items; command authority still derives its own evidence.
-        'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current,
-                                                  current_review_items=check['review_items']),
+        'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current),
         'review_items': check['review_items'], 'reviewer_involved': reviews.contributed(db, workspace, actor.identity_id),
         'can_change_fixed': actor.permits('coordinator') and unrestricted(db, actor, access_record(db, workspace)),
         'can_redo': actor.permits('coordinator') and redo_available(db, actor, workspace),

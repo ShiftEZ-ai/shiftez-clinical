@@ -1,4 +1,5 @@
 """One-person moves and clearing selected sessions are atomic, validated, audited and undoable."""
+from tests.historical_staffing import retained_staffing
 from tests.legacy_lead import historical_type
 
 import uuid
@@ -28,6 +29,27 @@ def command(w, source, target):
     return {'kind': 'draft.move', 'expected_revision': w['revision'], 'payload': {
         'workspace_id': w['id'], 'assignment_id': source['participants'][0]['id'],
         'target_shift_id': target['id'], 'reason': REASON}}
+
+
+def edit_command(w, shift, participants):
+    return {'kind': 'shift.update', 'expected_revision': w['revision'], 'payload': {
+        'workspace_id': w['id'], 'shift_id': shift['id'], 'override_reason': REASON,
+        **{key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')},
+        'participants': [{key: row[key] for key in s.ParticipantInput.model_fields if key in row}
+                         for row in participants]}}
+
+
+def supervised_type(h):
+    trainee, supervisor = h.seed['people'][:2]
+    rank = h.configure('categories', {'name': 'Synthetic optional trainee rank', 'starts_on': '2020-01-01'})['record']
+    h.command('coordinator', 'membership.create', {'person_id': trainee, 'category_id': rank['id'],
+        'starts_on': '2020-01-01'})
+    with transaction(h.app.state.engine) as db:
+        capability = db.scalar(select(m.CapabilityGrant.capability_id).where(m.CapabilityGrant.person_id == supervisor))
+    typ = h.configure('assignment_types', {'name': 'Synthetic optional supervision', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1}], 'supervision': {'trainee_category_ids': [rank['id']],
+            'capability_id': capability, 'trainees_per_supervisor': 1, 'require_pairing': False}}})['record']['id']
+    return typ, trainee, supervisor
 
 
 def post(h, value, *, status=200, role='coordinator', key=None):
@@ -179,7 +201,7 @@ def test_move_preserves_unrelated_existing_overlap_and_its_resolution_actions(h,
     assert validation['valid'] is False
 
 
-def test_move_cannot_leave_a_new_missing_team_lead(h):
+def refuses_a_new_missing_team_lead(h, action):
     typ = historical_type(h, {'name': 'Synthetic lead duty', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 1}], 'lead': {'minimum': 1}}})
     first = h.shift(h.workspace(), *DAY, typ=typ['id'], people=[{'person_id': h.seed['people'][0],
@@ -188,31 +210,51 @@ def test_move_cannot_leave_a_new_missing_team_lead(h):
     w = second['workspace']
     rows = {row['id']: row for row in h.detail(w)['shifts']}
     before = state(h, w)
-    moved = post(h, command(w, rows[first['shift_id']], rows[second['shift_id']]))
-    assert any(f['code'] == 'LEAD_GAP' and f['severity'] == 'error' and f['shift_id'] == first['shift_id']
-               for f in moved['issues']['added'])
-    cause = next(c for c in moved['fix_list']['causes'] if any(
-        f['code'] == 'LEAD_GAP' and f['shift_id'] == first['shift_id'] for f in c['evidence']))
+    source = rows[first['shift_id']]
+    value = command(w, source, rows[second['shift_id']]) if action == 'move' else edit_command(w, source, [])
+    error = post(h, value, status=422)
+    assert error['error']['code'] == ('MOVE_INVALID' if action == 'move' else 'EDIT_INVALID')
+    assert any(f['code'] == 'LEAD_GAP' for f in error['error']['details']['findings'])
+    assert state(h, w) == before
+
+
+def test_move_cannot_leave_a_new_missing_team_lead(h):
+    refuses_a_new_missing_team_lead(h, 'move')
+
+
+def test_edit_cannot_leave_a_new_missing_team_lead(h):
+    refuses_a_new_missing_team_lead(h, 'edit')
+
+
+def test_existing_team_lead_gap_does_not_block_building_the_draft(h):
+    typ = historical_type(h, {'name': 'Synthetic incomplete lead duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1}], 'lead': {'minimum': 1}}})
+    created = h.shift(h.workspace(), *DAY, typ=typ['id'], people=[])
+    w = created['workspace']
+    shift = h.detail(w)['shifts'][0]
+    assert any(f['code'] == 'LEAD_GAP' for f in h.detail(w)['workspace']['validation']['findings'])
+    result = post(h, edit_command(w, shift, [{'person_id': h.seed['people'][0], 'start': DAY[0], 'end': DAY[1]}]))
+    detail = h.detail(result['workspace'])
+    assert detail['shifts'][0]['participants'][0]['person_id'] == h.seed['people'][0]
+    assert any(f['code'] == 'LEAD_GAP' and f['shift_id'] == shift['id']
+               for f in detail['workspace']['validation']['findings'])
+    w = result['workspace']
+    fix_list = h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")
+    cause = next(c for c in fix_list['causes'] if any(
+        f['code'] == 'LEAD_GAP' and f['shift_id'] == shift['id'] and f['severity'] == 'error' for f in c['evidence']))
     assert cause['level'] == 'must' and cause['safety'] is True and cause['acknowledgeable'] is False
-    assert moved['fix_list']['summary']['submit_blocked'] is True
-    after_move = state(h, w)
-    changed = {row['id']: row for row in after_move[0]['shifts']}
-    assert not changed[first['shift_id']]['participants']
-    assert changed[second['shift_id']]['participants'][0]['id'] == rows[first['shift_id']]['participants'][0]['id']
-    assert changed[second['shift_id']]['participants'][0]['team_lead'] is True
-    submit = {'kind': 'workspace.submit', 'target_id': w['id'],
-              'expected_revision': moved['workspace']['revision'], 'payload': {'reason': 'Review the missing team lead'}}
+    assert fix_list['summary']['submit_blocked'] is True
+    before = state(h, w)
+    submit = {'kind': 'workspace.submit', 'target_id': w['id'], 'expected_revision': w['revision'],
+              'payload': {'reason': 'Review the missing team lead'}}
     assert post(h, submit, status=422)['error']['code'] == 'VALIDATION_FAILED'
-    assert state(h, w) == after_move
-    assert after_move[0]['workspace']['status'] == 'draft'
+    assert state(h, w) == before
     submit['payload']['acknowledgements'] = [{'cause_id': cause['id'], 'reason': 'Try to acknowledge the safety gap'}]
     assert post(h, submit, status=409)['error']['code'] == 'SAFETY_RULE'
-    detail, counts = state(h, w)
-    assert detail == after_move[0]
-    assert counts == (after_move[1][0], after_move[1][1] + 1, after_move[1][2], after_move[1][3])
-    restored = h.command('coordinator', 'workspace.undo', {'reason': 'Restore the original team lead'},
-                         w['id'], moved['workspace']['revision'])
-    assert h.detail(restored['workspace'])['shifts'] == before[0]['shifts']
+    after, counts = state(h, w)
+    assert after == before[0] and after['workspace']['status'] == 'draft'
+    changes, audit, receipts, outbox = before[1]
+    assert counts == (changes, audit + 1, receipts, outbox)
 
 
 def test_move_refuses_full_lead_gap_target_as_no_open_place(h):
@@ -253,6 +295,43 @@ def test_move_cannot_leave_a_trainee_without_their_supervisor(h):
     before = state(h, w)
     error = post(h, command(w, source, rows[second['shift_id']]), status=422)
     assert error['error']['code'] == 'MOVE_INVALID' and state(h, w) == before
+
+
+@pytest.mark.parametrize('action', ['move', 'edit'])
+def test_move_cannot_create_a_new_supervision_gap(h, action):
+    typ, trainee, supervisor = supervised_type(h)
+    first = h.shift(h.workspace(), *DAY, typ=typ, people=[
+        {'person_id': supervisor, 'start': DAY[0], 'end': DAY[1], 'participation': 'supervisor'},
+        {'person_id': trainee, 'start': DAY[0], 'end': DAY[1], 'participation': 'trainee'}])
+    second = h.shift(first['workspace'], *NEXT, people=[])
+    w = second['workspace']
+    rows = {row['id']: row for row in h.detail(w)['shifts']}
+    source = rows[first['shift_id']]
+    source['participants'].sort(key=lambda p: p['person_id'] != supervisor)
+    before = state(h, w)
+    value = (command(w, source, rows[second['shift_id']]) if action == 'move'
+             else edit_command(w, source, source['participants'][1:]))
+    error = post(h, value, status=422)
+    assert error['error']['code'] == ('MOVE_INVALID' if action == 'move' else 'EDIT_INVALID')
+    assert any(f['code'] == 'SUPERVISION_GAP' for f in error['error']['details']['findings'])
+    assert state(h, w) == before
+
+
+def test_existing_supervision_gap_does_not_block_unrelated_move(h):
+    typ, trainee, _ = supervised_type(h)
+    gap = retained_staffing(h, h.workspace(), *DAY, typ=typ, people=[{'person_id': trainee,
+        'start': DAY[0], 'end': DAY[1], 'participation': 'trainee'}])
+    source = h.shift(gap['workspace'], '2026-10-06T08:00:00+03:00', '2026-10-06T12:00:00+03:00',
+        people=[h.seed['people'][2]])
+    target = h.shift(source['workspace'], '2026-10-07T08:00:00+03:00', '2026-10-07T12:00:00+03:00', people=[])
+    w = target['workspace']
+    rows = {row['id']: row for row in h.detail(w)['shifts']}
+    result = post(h, command(w, rows[source['shift_id']], rows[target['shift_id']]))
+    validation = h.detail(result['workspace'])['workspace']['validation']
+    assert any(f['code'] == 'SUPERVISION_GAP' and f['shift_id'] == gap['shift_id']
+               for f in validation['findings'])
+    moved = next(row for row in result['shifts'] if row['id'] == target['shift_id'])
+    assert moved['participants'][0]['person_id'] == h.seed['people'][2]
 
 
 @pytest.mark.parametrize('aggregation', ['assignment', 'service_group'])
