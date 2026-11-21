@@ -105,16 +105,11 @@ def test_draft_schedule_currency_discards_legacy_cached_verdict(h, monkeypatch):
     url = '/api/fairness/goals?workspace_id=' + workspace['id']
     current_schedule = fairness_service.schedule
 
-    def legacy_etag(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-        return fairness_service._dashboard_etag(db, actor, 'fairness-goals', workspace_id, who, starts_on, ends_on,
-                                                workspace_id=workspace_id)
-
     def legacy_tag(actor, workspace_id, who, starts_on, ends_on, inputs):
         # The goals read stores its projection under this tag; an older release stored it under the legacy one.
         return fairness_service._dashboard_tag('fairness-goals', actor, (workspace_id, who, starts_on, ends_on), inputs)
 
     with monkeypatch.context() as legacy:
-        legacy.setattr(fairness_service, 'goals_etag', legacy_etag)
         legacy.setattr(fairness_service, '_goals_tag', legacy_tag)
         legacy.setattr(fairness_service, 'schedule',
                        lambda db, row: {**current_schedule(db, row), 'fresh': False})
