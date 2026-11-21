@@ -399,11 +399,12 @@ def test_rule_review_polls_reuse_each_drafts_feasibility_inputs(backend, monkeyp
         return original(db, workspace, *args, **kwargs)
     monkeypatch.setattr(snapshots, 'domain_snapshot', counted)
     assert h.get('approver', path) == first and built == []
-    # A real input change of one draft rebuilds that draft's token only.
     h.shift(drafts[0], '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00')
     built.clear()
-    h.get('approver', path)
-    assert drafts[0]['id'] in built and drafts[1]['id'] not in built
+    review = h.get('approver', path)
+    assert built == []
+    assert {effect['workspace_id']: effect['status'] for effect in review['effect']} == {
+        draft['id']: 'not_checked' for draft in drafts}
 
 
 def test_department_workspace_list_batches_stored_check_stamps(backend):
