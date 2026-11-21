@@ -298,8 +298,8 @@ def _home_uncached(db, actor, *, max_days):
         E = m.Eligibility
         add(55, "no_eligibility", db.scalar(people.where(~m.Person.id.in_(select(E.person_id).where(current(E))))) or 0)
     if can("admin", "coordinator"):
-        from .people import current_people
-        add(56, "no_rank", current_people(db, actor)['people_without_current_rank'])
+        from .people import current_people_counts
+        add(56, "no_rank", current_people_counts(db, actor)['people_without_current_rank'])
     if can("admin"):
         add(57, "no_hours", count(m.Service, m.Service.active.is_(True), m.Service.calendar_id.is_(None)))
     if can(*PERMISSIONS["feedback.triage"]):
@@ -314,9 +314,11 @@ def _home_uncached(db, actor, *, max_days):
         add(5, "failed_notifications", count(m.Outbox, m.Outbox.state == "failed"))
         add(6, "failed_runs", count(m.Job, m.Job.status == "failed", m.Job.completed_at > now - timedelta(days=1)))
     recent = []
+    E = m.AuditEvent
+    # Audit readers count the department's self-approved decisions; anyone else their own (what /api/audit lets them read).
+    own = () if can(*PERMISSIONS["audit.read"]) else (E.actor_id == actor.identity_id,)
+    add(90, "self_approved", count(E, E.created_at > now - timedelta(days=30), E.detail["self_approved"].as_string().is_not(None), *own))
     if can(*PERMISSIONS["audit.read"]):
-        E = m.AuditEvent
-        add(90, "self_approved", count(E, E.created_at > now - timedelta(days=30), E.detail["self_approved"].as_string().is_not(None)))
         # Each command is one change, even when a batch writes one event per request. Separate later Undos of the
         # same batch by correlation; single-record events keep their own row. Count before taking the latest 40.
         group = (func.coalesce(E.detail["batch_id"].as_string(), E.id), E.correlation_id, E.actor_id)

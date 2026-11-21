@@ -1,4 +1,5 @@
 """Extra cover is optional headcount, filled automatically only as permitted overtime."""
+from tests.historical_staffing import retained_staffing
 import copy
 import uuid
 
@@ -393,10 +394,11 @@ def test_staffed_open_extra_cover_type_floors_stay_mandatory(h, generate, floor)
     duty_type = extra_type(h, **type_floor_definition(h, floor))
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
-        'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
-        'end': '2026-10-04T12:00:00+03:00', 'overtime': True,
-    }])
+    participants = [{'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
+                     'end': '2026-10-04T12:00:00+03:00', 'overtime': True}]
+    workspace = h.workspace()
+    result = (retained_staffing(h, workspace, typ=duty_type['id'], people=participants) if floor == 'lead'
+              else h.shift(workspace, typ=duty_type['id'], people=participants))
     workspace, check = result['workspace'], result['validation']
     assert not check['valid']
     assert any(f['code'] == {'capability': 'CAPABILITY_GAP', 'distinct_capabilities': 'DISTINCT_PERSON_GAP',
@@ -449,12 +451,13 @@ def test_staffed_open_extra_cover_keeps_type_floors_in_unoccupied_intervals(h, g
     duty_type = extra_type(h, **definition)
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
-        'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
+    participants = [{'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
         'end': '2026-10-04T12:00:00+03:00', 'overtime': True, 'team_lead': floor == 'lead',
         'segments': [{'start': '2026-10-04T08:00:00+03:00', 'end': '2026-10-04T09:00:00+03:00'},
-                     {'start': '2026-10-04T11:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'}],
-    }])
+                     {'start': '2026-10-04T11:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'}]}]
+    workspace = h.workspace()
+    result = (retained_staffing(h, workspace, typ=duty_type['id'], people=participants) if floor == 'lead'
+              else h.shift(workspace, typ=duty_type['id'], people=participants))
     assert not result['validation']['valid']
     assert any(f['code'] == ('LEAD_GAP' if floor == 'lead' else 'CAPABILITY_GAP')
                and f['severity'] == 'error' and f['start'] == '2026-10-04T06:00:00+00:00'
@@ -485,7 +488,7 @@ def test_open_extra_cover_never_relaxes_supervision(h, generate):
         'capability_id': h.seed['supervisor_capability'], 'trainees_per_supervisor': 1})
     person = h.seed['people'][0]
     h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
-    result = h.shift(h.workspace(), typ=duty_type['id'], people=[{
+    result = retained_staffing(h, h.workspace(), typ=duty_type['id'], people=[{
         'person_id': person, 'start': '2026-10-04T08:00:00+03:00',
         'end': '2026-10-04T12:00:00+03:00', 'overtime': True, 'participation': 'trainee',
     }])

@@ -12,6 +12,24 @@ VIEWS = [pytest.param({'width': 1440, 'height': 900}, 'light', id='1440-light'),
 REGISTRY = "async () => (await window.importBundle('config_kinds.js')).CONFIG_KINDS"
 
 
+def expect_coordinator_sections(page, h):
+    """Match every section to the server's edit permits, keeping settings admin-only."""
+    kinds = page.evaluate(REGISTRY)
+    registry = h.get('coordinator', '/api/contracts')['bulk_collections']
+    roles = set(h.get('coordinator', '/api/me')['roles'])
+    sections = {'setup', 'scheduling_groups', 'auto_schedule'}
+    for kind, spec in kinds.items():
+        actions = registry.get(kind, {}).get('actions', {})
+        edit = next((actions[name] for name in ('edit', 'update', 'update_dates', 'propose') if name in actions), {})
+        if spec.get('group') and not spec.get('settings') and roles.intersection(edit.get('roles', [])):
+            sections.add(kind)
+    nav = page.get_by_role('navigation', name='Configuration sections')
+    expect(nav.locator('[data-section]')).to_have_count(len(sections))
+    for kind in kinds:
+        expect(nav.locator(f'[data-section="{kind}"]')).to_have_count(int(kind in sections))
+    return {kind: spec for kind, spec in kinds.items() if kind in sections}
+
+
 @pytest.mark.parametrize('view,scheme', VIEWS)
 def test_sections_have_no_tagline_and_empty_lists_say_what_they_are_for(browser, live_server, h, view, scheme):
     context, page = sign_in(browser, live_server, 'admin', viewport=view)

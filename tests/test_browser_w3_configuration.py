@@ -9,6 +9,7 @@ from playwright.sync_api import expect
 
 from .governance_support import identity
 from .test_browser import auto_setup, browser, live_server, sign_in, navigate, open_config, open_scheduling  # noqa: F401
+from .test_browser_configuration_shell import expect_coordinator_sections
 from .test_browser_audit_date_units import stored_theme
 from .test_browser_cp_sat import cp_server  # noqa: F401 (one fixture: server and in-test worker both on CP-SAT)
 
@@ -290,8 +291,7 @@ def test_command_menu_jumps_to_configuration_sections(browser, live_server, h):
 
 @pytest.mark.parametrize('role', ['coordinator', 'approver', 'credentialer', 'programme_lead', 'auditor', 'staff'])
 def test_configuration_settings_are_admin_only(browser, live_server, h, role):
-    """Only admins change settings. A coordinator's Configuration is the setup guide, Scheduling groups and Tags (tags of
-    any kind for #tag lines); Access & approvals is open to those who use review routes."""
+    """Only admins change settings; coordinators also see every permitted record section and their score review."""
     if role == 'programme_lead':
         identity(h, 'programme_lead', ['programme_lead'])
     context, page = sign_in(browser, live_server, role)
@@ -299,12 +299,11 @@ def test_configuration_settings_are_admin_only(browser, live_server, h, role):
         expect(page.locator('#department-nav [data-route=configuration]')).to_have_count(1 if role == 'coordinator' else 0)
         expect(page.locator('#department-nav [data-route=access]')).to_have_count(0 if role in ('credentialer', 'staff') else 1)
         if role == 'coordinator':
-            navigate(page, 'configuration/setup')
+            navigate(page, 'configuration')
+            expect(page).to_have_url(re.compile(r'#configuration/setup$'))
             expect(page.locator('.setup-steps')).to_be_visible()
             nav = page.get_by_role('navigation', name='Configuration sections')
-            # Setup guide, Scheduling groups (D19, 6b6091020: who schedules whom, read by the Rota Coordinators), Tags, and
-            # Auto-schedule & scoring for its Score review (their rule proposals; its settings stay an admin's)
-            expect(nav.get_by_role('button')).to_have_count(4)
+            expect_coordinator_sections(page, h)
             expect(nav.get_by_role('button', name='Scheduling groups', exact=True)).to_be_visible()
             nav.get_by_role('button', name='Tags', exact=True).click()
             expect(page.locator('.config-pane').get_by_role('button', name='New tag', exact=True)).to_be_visible()  # header, or the empty state (C-03)
