@@ -108,7 +108,8 @@ def test_leave_fix_hints_do_not_disclose_private_reasons_or_other_people_to_staf
     policy = minimum(h, [absent], severity='advisory')
     h.command('coordinator', 'availability.record', {'person_id': absent, 'kind': 'recorded_leave',
         'leave_type': 'Annual leave', 'start': '2026-10-04T00:00:00+03:00',
-        'end': '2026-10-11T00:00:00+03:00', 'private_reason': private_reason})
+        # leave four of five working days so the rounded minimum remains one and the cause stays visible.
+        'end': '2026-10-08T00:00:00+03:00', 'private_reason': private_reason})
     workspace = h.shift(h.workspace(), people=[h.seed['people'][0]])['workspace']
     check = h.detail(workspace)['workspace']['validation']
     finding = next(f for f in check['findings'] if f['rule_id'] == policy['id'])

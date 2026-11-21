@@ -49,7 +49,7 @@ import {setupGuidePage,setupSteps,dataHealth,missingSetup,stepDone,setupCounts,t
 /** SW3-D-11: the last read of ranks sharing a short code (Data health and its nav count). */
 let rankCodeClashes:RankCodeClash[]=[];
 import {staffImportSection} from './staff_import.js';
-import {keptReads,forgetReads,probeWorkers,workersKnown,reprobeWorkers,serverChecking,oidcDepartments,oidcChoose,oidcCancel,get,rotaMeta,request,newest,background,leavePage,onUndone,undoInPlace,applyUndone,type Undone,command,READ_ONLY_COMMANDS,takeUndo,login,logout,instant,download,clearSessionState,readAfresh,ApiError,sessionChanged,sessionKey,savingNow,signingOutNow,readsDone,WITHDRAWN,knownRevision,onSessionReset,awaitingApproval,withdrawApprovals,identify,refreshSession,guardDraftEdits,awaitJob,ROTA_DECISIONS,redoDraft,undoRefused,serverHealth,automatic,ownSavingNow,confirmingNow,savingWords,updatingNow,UPDATING_WORDS,openingPage,applyWrote,APPLY_CONFIRMED} from './api.js';
+import {keptReads,forgetReads,probeWorkers,workersKnown,reprobeWorkers,serverChecking,oidcDepartments,oidcChoose,oidcCancel,get,rotaMeta,rotaWhole,request,newest,background,leavePage,onUndone,undoInPlace,applyUndone,type Undone,command,READ_ONLY_COMMANDS,takeUndo,login,logout,instant,download,clearSessionState,readAfresh,ApiError,sessionChanged,sessionKey,savingNow,signingOutNow,readsDone,WITHDRAWN,knownRevision,onSessionReset,awaitingApproval,withdrawApprovals,identify,refreshSession,guardDraftEdits,awaitJob,ROTA_DECISIONS,redoDraft,undoRefused,serverHealth,automatic,ownSavingNow,confirmingNow,savingWords,updatingNow,UPDATING_WORDS,openingPage,applyWrote,APPLY_CONFIRMED} from './api.js';
 import {brand,applyBranding,parseBranding,documentTitle} from './brand.js';
 import {brandingPanel} from './branding_settings.js';
 import {bulkSelection,setBulkContext,registry,editRoles,type BulkAction,type SelectionValue} from './bulk.js';
@@ -65,7 +65,7 @@ import {dataTable,conditionFilter,joinFilter,mentions as conditionsMention,holds
 import {peopleView,refreshPeople,findsPerson,PEOPLE_GROUPS,PEOPLE_SORTS} from './planner_people.js';
 import {RULE_KINDS,RULE_NUMBER_FIELD,RULE_TOPICS,ruleTopic,LINE_KINDS,lineField,lineLabel,lineWho,isOrder,perPersonEditor,SETTING_LABELS,MODE_LABELS,lineSetting,lineHasNumber,protectTimeForm,protectedTimeRule,calendarProtectionPanel,catalogueEntryOf,ruleConditionFields,activeOn,peopleChoices,colourSwatches,catalogueForm,workspaceForm,shiftForm,sessionsHeld,relationshipForm,programmeEligibilityForm,availabilityForm,availabilityFields,leaveTypePicker,LEAVE_RECORD_KINDS,policyForm,quotaLimits,quotaNumberLabel,exceptionForm,safetyRule,allowsException,staffNeeded,type Context} from './forms.js';
 import {recurringSessions,seriesGroups} from './recurring_sessions.js';
-import type {Me,Row,PersonRow,Catalogues,WorkspaceData,Evaluation,Finding,PublicData} from './types.js';
+import type {Me,Row,PersonRow,Catalogues,WorkspaceData,Evaluation,Finding,PublicData,PlannerSession} from './types.js';
 import {fillOptions} from './candidates.js';
 import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_delta.js';
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
@@ -138,6 +138,7 @@ import {moreWords} from './dom.js';  // the one "+N" and its words (UX › contr
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
 import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
+import {rotaOutdated} from './dom.js';  // one rota verdict
 
 applyTheme();
 const root=document.querySelector('#app')!;
@@ -261,7 +262,7 @@ const wholeSeen=new Set<string>(),wholeReads=new Map<string,{epoch:number;read:P
 function wholeRota(id:string,quiet=false,seen=true,reader:(path:string)=>Promise<WorkspaceData>=path=>get<WorkspaceData>(path,{quiet})):Promise<WorkspaceData>{
   const epoch=scheduleEpoch,going=wholeReads.get(id);if(seen)wholeSeen.add(id);if(going?.epoch===epoch)return going.read;
   // A read that started before an edit lands after its delta was applied: the newer copy held stays.
-  const read=reader('/api/workspaces/'+id).then(d=>{const held=scheduleCache.drafts.get(id);
+  const read=rotaWhole(id,reader).then(d=>{const held=scheduleCache.drafts.get(id);
     if(held&&!held.partial&&Number(held.workspace.revision)>Number(d.workspace.revision))return held;
     if(epoch===scheduleEpoch){scheduleCache.drafts.set(id,d);draftReadIn=schedView;}return d;})
     .finally(()=>{if(wholeReads.get(id)?.read===read)wholeReads.delete(id);});
@@ -287,7 +288,7 @@ function readAhead(boot=false){
   const dated=planDayFromRoute&&schedView!=='year'&&layerMode!=='side'&&!sourcePublication;
   const days=dated?periodNow(planDay,me!.organisation.week_start).days:null,range=days?`start=${days[0]}&end=${addDays(days.at(-1)!,1)}`:'';
   const quiet=<T,>(p:Promise<T>)=>{p.catch(()=>{});return p;};  // each is awaited (and its failure handled) where it is used
-  ahead={id,epoch:scheduleEpoch,range,list:boot&&!workspaceListOffset?quiet(reader<RotaList>('/api/workspaces?limit=50&offset=0')):null,meta:quiet(reader('/api/workspaces/'+encodeURIComponent(id)+'?view=compact')),
+  ahead={id,epoch:scheduleEpoch,range,list:boot&&!workspaceListOffset?quiet(reader<RotaList>('/api/workspaces?limit=50&offset=0')):null,meta:quiet(rotaMeta(id,reader)),
     window:range?quiet(reader<ScheduleWindow>('/api/schedule/sessions?'+range)):null};
   // Not yet "seen" whole: the Planner still draws the window first, while this read runs beside it, quietly (UX-FIX-A,
   // D59: the read behind a drawn week never lights the top bar).
@@ -314,7 +315,7 @@ async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[
   if(!shifts||!checks)return null;
   // The window's open places and filled counts (coverOf) come from its coverage rows, as the whole rota's do.
   const validation=meta.workspace.validation?{...meta.workspace.validation,findings:checks.items,coverage:checks.coverage}:meta.workspace.validation;
-  return {...(meta as unknown as WorkspaceData),shifts:shifts.items,workspace:{...meta.workspace,validation},partial:true};
+  return {...(meta as unknown as WorkspaceData),shifts:shifts.items as PlannerSession[],workspace:{...meta.workspace,validation},partial:true};
 }
 // A draft edit, forward or Undo, keeps what this visit read except the draft itself (see patchDraft): the Schedule
 // redraws reading only the draft. `inPlace`: every save since the last refresh was patched so (refreshOnce).
@@ -2434,7 +2435,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(mySerial!==renderSerial)return;
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
-  const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts,coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
+  const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
   const layer=sourceWindow||win;
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
@@ -2506,7 +2507,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Whoever created or last edited the rota cannot approve it; say so instead of offering a button that fails.
     const ownWork=!mayDecide(me!,'rota.approve',data?.reviewer_involved??[w.created_by,w.last_edited_by].includes(me!.identity_id));  // the server's contributor test
     // Submitted, but rules, people or availability changed since: approving or publishing would be refused.
-    const outdated=['submitted','approved'].includes(w.status)&&(data?!!data.review_progress?.stale_inputs:!!w.outdated);
+    // the window carries the compact detail's review_progress, so Week reads the same server field as the whole rota.
+    const outdated=rotaOutdated(w,draftData);
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
     // #1041: one opening of the review per rota; a second press, or a redraw's button, joins it (held, busy) until it opens.
     const approveLabel=w.base_publication_id?'Approve changes':'Approve rota',approveWords=busyLabel(approveLabel);
@@ -2538,10 +2540,14 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
-    if(['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR))workflow.append(outdated
+    // One predicate for Reopen: the note below shows exactly when the button does not.
+    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
+    // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
+    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
@@ -2765,7 +2771,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A published-only schedule's checks are the live check of what is published (publishedLive), current when read.
       const stored=!draftData?(shown.workspace.validation as unknown as Row|undefined):null;
       const live=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive.evaluation as unknown as Row:null;
-      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?w!.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,person});
+      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?draftData.workspace.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,kept:reading,person});
       const pub=String(s.publication_id||source?.publication.id||'');
       const published=!acts&&(s.context||!draftData)&&!!pub&&changeable(s);
       if(pubHooks&&published)publishedSession(dock,s,pub,pubHooks,summary);else body.append(summary());
@@ -2859,7 +2865,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
     const away=await myLeave().catch(()=>[] as Span[]);
     if(mySerial!==renderSerial)return;
-    visibleData.shifts=visibleData.shifts.map(s=>s.participants.some((p:Row)=>p.person_id===me!.person_id)&&away.some(a=>a.start<Date.parse(s.end)&&a.end>Date.parse(s.start))?{...s,leave_pending:true}:s);
+    visibleData.shifts=visibleData.shifts.map(s=>s.participants.some(p=>p.person_id===me!.person_id)&&away.some(a=>a.start<Date.parse(s.end)&&a.end>Date.parse(s.start))?{...s,leave_pending:true}:s);
   }
   if(sideBySide&&draftData){
     viewPanel.append(nav);
@@ -3109,7 +3115,7 @@ function filtersOf(p:Partial<PlannerSettings>|undefined):Record<string,string[]>
 }
 /** The Schedule's filters on its sessions: each field keeps any of its values (a place includes the places inside it;
  *  person facts (rank, programme, tag) are someone on the session's, on that day). */
-function filterSessions(list:Row[]){
+function filterSessions(list:PlannerSession[]){
   if(exportFound&&!exportFound.values.length)return [];  // a People search that finds nobody lists no session
   const own=joinFilter(schedFilters,schedConditions),tree=exportFound?{match:'all' as const,conditions:[...(own?[own]:[]),exportFound]}:own;if(!tree)return list;
   // A place holds its own id and every place it is inside ("Clinic A" keeps the rooms in it).
@@ -3120,7 +3126,7 @@ function filterSessions(list:Row[]){
   const facts=(kind:string,key:string)=>{const by=new Map<string,Row[]>();for(const m of rows(kind)){const own=by.get(m.person_id)||[];own.push(m);by.set(m.person_id,own);}
     return (person:string,day:string)=>(by.get(person)||[]).filter(m=>activeOn(m,day)).map(m=>m[key]);};
   const ranks=facts('memberships','category_id'),programmes=facts('programme_memberships','programme_id');
-  return list.filter(s=>{const day=toLocal(s.start,zone()).slice(0,10),ids=(s.participants as Row[]).map(p=>p.person_id as string);
+  return list.filter(s=>{const day=toLocal(s.start,zone()).slice(0,10),ids=s.participants.map(p=>p.person_id);
     // The same facts the server reads (schedule_view._schedule_holds); person facts are the person's on that day.
     const person=(field:string,id:string):unknown[]=>field==='person_ids'?[id]:field==='category_ids'?ranks(id,day):field==='programme_ids'?programmes(id,day):field==='tags'?tags.get(id)||[]:[];
     const own=(field:string):unknown[]=>field==='service_ids'?s.service_ids:field==='location_ids'?within(s.location_id):field==='assignment_type_ids'?[s.assignment_type_id]
@@ -3129,18 +3135,18 @@ function filterSessions(list:Row[]){
     return holdsForSomeone(tree,session,ids.map(id=>(field:string)=>[...own(field),...person(field,id)]));});
 }
 /** The search, for the renderers that do not filter by themselves (Timeline, Day). */
-function applyFilters(list:Row[]){
+function applyFilters(list:PlannerSession[]){
   return filterShifts(list,catalogues,{schema_version:1,mode:'week',search:schedSearch?'':searchText,location_id:null,assignment_type_id:null,person_id:null});
 }
 /** The session search with options (search.ts): over the sessions loaded for the days in view only, never a claim about
  *  other days (Schedule days have no server text search). Own text is the session's own (a closure reason); related
  *  are its duty type, place, clinics and people, each name on its own, or a picked one by id. */
-function searchSessions(list:Row[]){
+function searchSessions(list:PlannerSession[]){
   const m=schedView==='people'||!schedSearch?null:recordMatcher(searchText,schedSearch);if(!m)return list;
   const named=(kind:string)=>new Map(rows(kind).map(r=>[r.id,labelOf(r)])),places=named('locations'),clinics=named('services'),people=named('people');
   return list.filter(s=>m({own:()=>[s.cancellation_reason],id:s.id,
-    related:()=>[s.type_snapshot?.name,places.get(s.location_id),...(s.service_ids||[]).map((id:string)=>clinics.get(id)),...(s.participants||[]).map((x:Row)=>people.get(x.person_id))],
-    refs:()=>[s.assignment_type_id,s.location_id,...(s.service_ids||[]),...(s.participants||[]).map((x:Row)=>x.person_id)]}));
+    related:()=>[s.type_snapshot?.name,places.get(s.location_id),...(s.service_ids||[]).map((id:string)=>clinics.get(id)),...(s.participants||[]).map(x=>people.get(x.person_id))],
+    refs:()=>[s.assignment_type_id,s.location_id,...(s.service_ids||[]),...(s.participants||[]).map(x=>x.person_id)]}));
 }
 const merged=(list:Row[],extra?:Record<string,Row>)=>{if(!extra)return list;const have=new Set(list.map(r=>r.id));return [...list,...Object.values(extra).filter(r=>!have.has(r.id))];};
 /** Academic calendar entries in view: a labelled band above the People view (never behind an expander). */
@@ -3473,7 +3479,7 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   // A rota check changes nothing, so it runs at once when the stored one is outdated (the button reads "Checking…").
   if(w.validation?.fingerprint!==data.current_fingerprint&&w.status==='draft'){
     await command('workspace.validate',{reason:'Check before publishing'},w.id,w.revision);if(left())return;
-    data=await get<WorkspaceData>('/api/workspaces/'+w.id);w=data.workspace;}
+    data=await rotaWhole(w.id);w=data.workspace;}
   // A read that failed says so, with Retry, instead of the button going quiet (SW3-B-02).
   const read=await readRotaReview(data).catch(e=>{if(left()||sessionChanged(e))return null;
     notify(couldntLoad('the rota’s checks',e),'error',{label:'Retry',run:()=>publishDialog(data,opt)},e);return null;});
@@ -3698,7 +3704,7 @@ function fixActions(data:WorkspaceData,hints:FindingFixHint[]=[],done:()=>void,r
   if(!out.length&&!o.except)for(const id of rules.slice(0,2)){const rule=find('policies',id)?.name;if(rule)go(`Open ${rule}`,()=>void openRuleSource(id).catch(reportError));}
   return out;
 }
-const freshRota=(data:WorkspaceData)=>get<WorkspaceData>('/api/workspaces/'+data.workspace.id);
+const freshRota=(data:WorkspaceData)=>rotaWhole(data.workspace.id);
 /** "Add UCC sessions": the recurring-session form filled in from the cause (duty type, clinic, place, days, times and
  *  dates); once created, its sessions go into this draft through the usual reviewed Add recurring sessions. Someone
  *  who may not change recurring sessions (a coordinator) adds the same pattern to this rota only (patternSessions). */
@@ -3803,7 +3809,7 @@ function scoreCheckHooks(){
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
     choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
-    submit:(id:string)=>void get<WorkspaceData>('/api/workspaces/'+id).then(publishDialog).catch(reportError),
+    submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
     autoSchedule:(id:string)=>void rotaMeta(id).then(d=>autoSameSessions(id,d.workspace.revision))
       .then(r=>rotaMeta(r.workspace.id)).then(d=>openPaletteRota(d.workspace,true)).catch(reportError),
@@ -4056,7 +4062,8 @@ function rotaStatusPill(w:Row,outdated=false){
   // resubmitting", never also "Waiting for approval".
   const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
-  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'');
+  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
+    +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
 }
 /** The Fix list's top bar (A1): the rota switcher (another rota's Fix list, or this rota's schedule), its stage, and the
@@ -4166,7 +4173,7 @@ function fixAction(c:FixCause,id:string,data:WorkspaceData|null){
     // A session pattern does not depend on whose check asked for it: the same pattern for two people is one choice.
     const seen=new Map((sc.prefills||[]).map(p=>[a.kind==='add_sessions'?JSON.stringify({...p,person_id:null}):JSON.stringify(p),p]));
     const hints=[...seen.values()].map(prefill=>({action:a.kind,prefill})) as FindingFixHint[];
-    void (data?Promise.resolve(data):get<WorkspaceData>('/api/workspaces/'+encodeURIComponent(id))).then(d=>{
+    void (data?Promise.resolve(data):rotaWhole(id)).then(d=>{
       if(hints.length===1&&a.kind==='add_sessions')return newSeries(d,hints[0].prefill);
       const person=hints.length===1?hints[0].prefill.person_id:sc.person_ids?.length===1?sc.person_ids[0]:'',row=person?find('people',person):undefined;
       if(a.kind==='open_eligibility'&&(row||!hints.length)){if(row)personDetails(row);else navigate('people');return;}
@@ -4174,7 +4181,7 @@ function fixAction(c:FixCause,id:string,data:WorkspaceData|null){
   // TYPE_VERSION_CHANGED (SCHEDULING bcf0c3a64): the sessions take their duty type's current settings, through the same
   // reviewed bulk step as the Schedule's "Refresh type versions" (its impact, then the armed confirm, then Undo).
   if((a.kind as string)==='refresh_sessions'){const ids=causeShifts(c);if(!ids.length)return;
-    void (data?Promise.resolve(data):get<WorkspaceData>('/api/workspaces/'+encodeURIComponent(id))).then(d=>bulkImpactDialog(ctx(),d,ids,'refresh_types',()=>{})).catch(reportError);return;}
+    void (data?Promise.resolve(data):rotaWhole(id)).then(d=>bulkImpactDialog(ctx(),d,ids,'refresh_types',()=>{})).catch(reportError);return;}
   if(a.kind==='open_line'||a.kind==='review_targets'){const l=c.rule_lines[0];if(l)void openRuleSource(l.rule_id).catch(reportError);else navigate('rules');return;}
   if(a.kind==='choose_cover'){const s=data?.shifts.find(x=>sc.shift_ids?.includes(x.id));
     if(s){workspaceId=id;draftNone=false;queueFill(id,s.id);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}else open();return;}
@@ -4437,15 +4444,15 @@ function swapDialog(data:WorkspaceData,firstId='',secondId=''){
   // Each assignment once, grouped by day for the shared searchable picker. With the first side given (a drop, or the chip's
   // Exchange with…), the second lists only that week's other sessions (SR-14), not every assignment in the rota.
   const day=(s:Row)=>toLocal(s.start,zone()).slice(0,10),js=((me!.organisation.week_start??6)+1)%7;
-  const from=data.shifts.find(s=>s.participants.some((p:Row)=>p.id===firstId));
+  const from=data.shifts.find(s=>s.participants.some(p=>p.id===firstId));
   const weekOf=(d:string)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()-js+7)%7);return x.toISOString().slice(0,10);};
   const options=(near:boolean)=>data.shifts.filter(s=>!s.context&&!isClosed(s)&&!s.locked&&(!near||!from||s.id!==from.id&&weekOf(day(s))===weekOf(day(from))))
-    .sort((a,b)=>String(a.start).localeCompare(String(b.start))).flatMap(s=>s.participants.map((p:Row)=>({value:p.id,label:`${name('people',p.person_id)} · ${formatDay(s.start,zone())} · ${s.type_snapshot.name} ${formatTime(s.start,zone())}`,group:formatDay(s.start,zone())})));
+    .sort((a,b)=>String(a.start).localeCompare(String(b.start))).flatMap(s=>s.participants.map(p=>({value:p.id,label:`${name('people',p.person_id)} · ${formatDay(s.start,zone())} · ${s.type_snapshot.name} ${formatTime(s.start,zone())}`,group:formatDay(s.start,zone())})));
   // OD-17: an optional note. The impact is worked out as soon as both sides are chosen (SI-23): one Save, no second step.
   formDialog('Exchange two assignments','',form=>{
     const a=select('First assignment',options(false),firstId),b=select('Second assignment',options(true),secondId),reason=routineNote();form.append(a.wrap,b.wrap);
     // The picked name's date and time are in its label (H-03): one person can be on several sessions that week.
-    const shiftOf=(id:string)=>data.shifts.find(s=>s.participants.some((p:Row)=>p.id===id))?.id;
+    const shiftOf=(id:string)=>data.shifts.find(s=>s.participants.some(p=>p.id===id))?.id;
     const save=draftImpact(form,ctx(),()=>({kind:'draft.swap',expected_revision:data.workspace.revision,payload:{workspace_id:data.workspace.id,first_assignment_id:a.input.value,second_assignment_id:b.input.value,reason:routineReason(reason.input.value)}}),true,
       ()=>[shiftOf(a.input.value),shiftOf(b.input.value)].filter(Boolean) as string[]);
     form.append(reason.wrap);
@@ -4603,7 +4610,7 @@ async function departmentSettingsPage(target:HTMLElement){
   const calendarChoices=choices(rows('operating_calendars').filter(r=>r.active!==false||r.id===calendarNow));
   const workCalendar=select('Working days for prorated targets',calendarChoices,calendarNow,false,'Department weekend days');
   // F-C4: a plain explanation, so contextual help beside the label (as Recurring sessions' dates), not a paragraph.
-  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included.'},icon('help')));
+  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included. Days a person is away (leave or absence) are not working days for them.'},icon('help')));
   // Swaps: who approves them and which steps run by themselves (a dedicated route is set up under Review routes).
   // The saved choice is always an option (also when it is no longer active or the routes could not be read) and is sent
   // only when changed, so saving an unrelated setting neither resets swaps to the rota review route nor fails on a retired one.
@@ -5458,7 +5465,7 @@ async function programmesPage(target:HTMLElement){
 function plannerShortcuts(data:WorkspaceData,t:MenuTarget,draft:boolean):MenuEntry[]{
   const c=ctx(),s=t.shift,person=t.person_id?rows('people').find(p=>p.id===t.person_id):undefined,out:MenuEntry[]=[];
   // First: the rules that apply to what was pointed at (pins the rules panel).
-  const rt:RuleTarget|null=person&&s?{kind:'assignment',person:person.id,shift:s.id,day:t.day,label:fullNameOf(person),sub:s.type_snapshot.name}:person?{kind:'person',person:person.id,label:fullNameOf(person),shifts:data.shifts.filter(x=>x.participants.some((p:Row)=>p.person_id===person.id)).map(x=>x.id)}
+  const rt:RuleTarget|null=person&&s?{kind:'assignment',person:person.id,shift:s.id,day:t.day,label:fullNameOf(person),sub:s.type_snapshot.name}:person?{kind:'person',person:person.id,label:fullNameOf(person),shifts:data.shifts.filter(x=>x.participants.some(p=>p.person_id===person.id)).map(x=>x.id)}
     :s&&t.shifts&&t.shifts.length>1?{kind:'row',type:s.assignment_type_id,location:s.location_id,label:s.type_snapshot.name,shifts:t.shifts.map(x=>x.id)}:s?{kind:'session',shift:s.id,label:s.type_snapshot.name}
     :t.day?{kind:'day',day:t.day,days:[t.day],label:dayTitle(t.day),shifts:(t.shifts||[]).map(x=>x.id)}:null;
   if(rt)out.push({label:'Rules that apply here',icon:'rules',hint:'Which rule wins, and change it',run:()=>pinRules(rt,'rules')});
@@ -5692,7 +5699,7 @@ function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),r
         :d.fact?.person_id?button('Person quota or offer',()=>navigate(routeHash('people',[],{open:d.fact.person_id,tab:'facts',fact:d.id}).slice(1)),'link-button')
           :d.fact?.calendar_entry_id?button('Calendar protection',()=>{const entry=find('programme_calendar_entries',d.fact.calendar_entry_id);if(entry)calendarProtectionPanel(ctx(),entry);},'link-button'):'')
       ,button('Department proposal',()=>simplifyPanel(ctx(),refresh,policy._conversion_id),'link-button')));
-    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership, excluding external rotations. Whole sessions round ${rule.rounding}.`));
+    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership and the days a person is not away, excluding external rotations. Whole sessions round ${rule.rounding}.`));
     if(rule.supervisor_ids?.length)notes.push(note('Allocation preference applies with these named supervisors: '+rule.supervisor_ids.map((id:string)=>name('people',id)).join(', ')+'. Clinical supervision authority is checked separately.'));
     if(rule.leave_buffer_days)notes.push(note(`Applies only within ${rule.leave_buffer_days} calendar days before or after approved or recorded leave, on the selected weekdays. Private leave reasons are not disclosed.`));
     if(rule.kind==='allocation_preference'&&rule.balance_by&&rule.balance_by!=='none')notes.push(el('p',{},`${rule.balance_by==='service_mode'?`Target ${Math.round(rule.balance_target_share*10000)/100}% ${rule.balance_target_mode} duties`:`Prefer fewer ${rule.balance_by==='supervisor'?'duties with the same supervisor':rule.balance_by==='supervisor_group'?'duties with any selected supervisor':'matching duties'}`} per ${rule.balance_window==='rolling'?`${rule.balance_window_days} local days`:rule.balance_window==='rota'?'planning period':'configured calendar week'}. Balancing weight: ${rule.balance_weight}.`));
@@ -6944,7 +6951,7 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   // Use X: someone no rule stops (the schedule needed them elsewhere). Applies the proposal, checks X for the session
   // with the fill panel's own check, then adds X as an ordinary draft edit (Undo takes X off again).
   const use=(p:Row,shift:Row|undefined)=>{const free=(p.people||[]).find((x:Row)=>x.kind==='FREE');if(!o.panel||!o.editable||!shift||shift.locked||!free)return null;const who=name('people',free.person_id);
-    return button(`Apply, then add ${who}`,async()=>{await applyJob(job);const w=(await rotaMeta(job.workspace_id)).workspace,now=(await get<WorkspaceData>('/api/workspaces/'+w.id)).shifts.find(x=>x.id===shift.id)!;
+    return button(`Apply, then add ${who}`,async()=>{await applyJob(job);const w=(await rotaMeta(job.workspace_id)).workspace,now=(await rotaWhole(w.id)).shifts.find(x=>x.id===shift.id)!;
       const options=await fillOptions({workspace_id:w.id,shift_id:shift.id,expected_revision:w.revision});
       const c=options.candidates.find((x:Row)=>x.person_id===free.person_id);
       if(!c||c.status==='blocked'){await refresh();throw new Error(`The suggestions are applied, but ${who} can no longer take this session. Pick someone else.`);}
@@ -7098,7 +7105,7 @@ function runErrorNode(code:string,refusal:unknown,runId:string,close?:()=>void):
     e.action==='feedback'?el('div',{class:'actions'},button('Send feedback',()=>{close?.();openFeedback({error:`Reference: ${code}${runId?` · Run ${runId}`:''}`});},'secondary small')):'');
 }
 async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/'+job.id)).job;
-  const rota=await get<WorkspaceData>('/api/workspaces/'+result.workspace_id).catch(()=>null);
+  const rota=await rotaWhole(result.workspace_id).catch(()=>null);
   const currentDraft=!!rota&&rota.workspace.status==='draft'&&!rota.workspace.archived_at&&permits(CAPABILITY.COORDINATOR);
   const fits=rota?currency(result,rota.current_fingerprint):'unknown',editable=currentDraft&&currentGeneration(result,rota!);
   showDialog((result.kind==='validation'?TERMS.backgroundCheck:TERMS.autoSchedule)+(result.result?' results':' run details'),formatDate(result.created_at,zone())+' · '+formatTime(result.created_at,zone()),(body,close)=>{
@@ -7886,7 +7893,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}
@@ -8668,7 +8675,7 @@ async function onPulse(given?:Row){
     const editing=editingNow();
     // F-L2: roles compared as sets, and never from a pulse without them (a restarting server): an unchanged account must
     // not rebuild the app and drop an open form. A real change waits while a form is being edited (the server refuses
-    // whatever the new roles no longer permit), then rebuilds.
+    // whatever the new roles no longer permit), then rebuilds and says why.
     const rolesChanged=Array.isArray(pulse.roles)&&JSON.stringify([...me.roles].sort())!==JSON.stringify([...pulse.roles].sort());
     const stale=!!changes?.length||key!==loadedKey||moved||!connected||redrawOwed||opsWatch;
     // Revision-keyed caches (schedule windows, academic time) see the new revisions without reading the account.
@@ -8681,8 +8688,11 @@ async function onPulse(given?:Row){
       else{adopt();seenActivity=pulse.activity;const scopes=new Set(changes.map(c=>c.scope));
         // The Schedule's own edit: its check, once it lands, reads the counts (autoCheck settle), as the redraw did before.
         if(!(ownPulse&&view==='schedule'&&plannerMemo)&&Object.values(BADGE_SOURCES).some(b=>b.live.some(s=>scopes.has(s))))void loadNavBadges(true,[],scopes);}}
-    if(rolesChanged&&readerBusy())hold(pulse);
-    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};document.querySelectorAll('dialog').forEach(d=>d.remove());await boot();}
+    // Any dialog holds it, open or not: the browser closes a dialog with unsaved changes by itself (a repeated Escape)
+    // and showDialog opens it again a task later, so a restart in that instant would drop it unsaid. Every app dialog
+    // is removed when it closes (showDialog, palette, the sign-in shade on resuming), so none holds it for ever.
+    if(rolesChanged&&(readerBusy()||document.querySelector('dialog')))hold(pulse);
+    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};const was=me;await boot();if(me&&me!==was)notify('Your access changed.','info');}
     // Swaps and review routes redraw only when something moved (the activity counter covers swaps): an unconditional
     // redraw every 10 s took keyboard focus away. Operations follows the worker only while it has work (opsBusy);
     // imports run inside their command, so Imports redraws on a change like every other page.

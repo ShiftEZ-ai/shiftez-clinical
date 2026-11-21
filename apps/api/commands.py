@@ -2,6 +2,7 @@
 from . import input_changes
 import json
 import logging
+import pickle
 import re
 import time
 from sqlalchemy import select, text
@@ -956,12 +957,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
     # Publication performs its fresh safety validation at the final writer boundary.
+    group_queue = (command.kind == 'job.create' and command.payload.get('kind') == 'generation'
+                   and bool(command.payload.get('planning_group_version_id')))
     staged = (not assignment_reply and not background_merge and command.kind != 'workspace.publish'
-              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
+              and (group_queue or command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
               and (command.payload.get('rejected_review_item_ids') or
                    any(item.get('accept') is False for item in command.payload.get('decisions', []) if isinstance(item, dict)))))
     if staged:
         reader = engine.execution_options(isolation_level='REPEATABLE READ') if engine.dialect.name == 'postgresql' else engine
+        if group_queue and engine.dialect.name == 'postgresql':
+            reader = reader.execution_options(postgresql_readonly=True)
         planning_plan = {'seed': m.uid(), 'at': m.now(), 'checks': [], 'kind': command.kind}
         from . import db as database
         preparation_settings = reader.get_execution_options().get('rota_write_settings') or settings
@@ -969,7 +974,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         while True:
             try:
                 with transaction(reader, deadline=preparation_deadline) as db:
-                    if engine.dialect.name == 'sqlite':
+                    if engine.dialect.name == 'sqlite' and group_queue:
+                        db.execute(text('BEGIN'))
+                    elif engine.dialect.name == 'sqlite':
                         # Preparation flushes (then rolls back) writes. A deferred SQLite read cannot upgrade while another
                         # writer holds the lock (instant "database is locked" → 503), so wait for that writer within the
                         # command budget, as PostgreSQL's REPEATABLE READ preparation does.
@@ -994,11 +1001,20 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 # Rollback released row locks too: a check of this same rota cannot convoy other writers.
                 for key, compute in [*pending.pending, (pending.key, pending.compute)]:
                     database._remaining(preparation_deadline)
-                    planning_plan['checks'].append((key, compute()))
+                    computed = compute()
+                    if command.kind == 'shift.update':
+                        computed = pickle.dumps(computed, protocol=pickle.HIGHEST_PROTOCOL)
+                    planning_plan['checks'].append((key, computed))
                     database._remaining(preparation_deadline)
                 if pending.final:
                     break
             except planning_preparation.RollbackPreparation:
+                break
+            except Problem:
+                if not group_queue:
+                    raise
+                # Make the decision again under the writer if the preliminary read refuses.
+                planning_plan = None
                 break
             except OperationalError as error:
                 if getattr(error.orig, 'sqlstate', None) in {'40001', '40P01'}:

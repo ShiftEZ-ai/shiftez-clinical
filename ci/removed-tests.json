@@ -63,6 +63,16 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_finding_causes.py::test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero[case-mkicgenckemaiffgbhhkdkigkfdfjbccepiinhmngenmhgmnfbjdicnjpcpcfobg]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_partial_leave_keeps_unreachable_minimum_cause_and_privacy, which keeps all five cause, eligibility, fix hint and privacy assertions. Full leave now also runs in test_leave_and_full_away_rotation_prorate_commitment_to_zero[leave] and asserts zero proration."
+    },
+    {
+      "node": "tests/test_finding_causes.py::test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero[case-onblpepinfnbnkpfklipjnohhfglmkdoegaeicdlkeaodfbehnbckkackphkgndo]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_leave_and_full_away_rotation_prorate_commitment_to_zero[away], which keeps all three assertions for zero quota, zero working days and no below-minimum finding."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
@@ -123,6 +133,11 @@
       "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
     },
     {
+      "node": "tests/test_quota_working_day_proration.py::test_leave_does_not_reduce_partial_window_commitment",
+      "owner": "maintainer",
+      "reason": "Merged into test_validator_away_kinds_prorate_partial_window_minimum_and_finding[approved_leave], which keeps the exact amount and proration metadata assertions with three working days and an amount of four under leave-aware proration."
+    },
+    {
       "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
       "owner": "maintainer",
       "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
@@ -131,6 +146,11 @@
       "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
       "owner": "maintainer",
       "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
+    },
+    {
+      "node": "tests/test_solver_search_budget.py::test_stopped_resume_checks_incumbent_without_relabelling_unknown_solver_status",
+      "owner": "maintainer",
+      "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
     },
     {
       "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",

@@ -242,6 +242,10 @@ def archive(db, actor, command):
                           'allowed_actions': allowed_actions(db, actor, workspace)}}
 
 
+def _check_manifest(manifest):
+    return {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
+
+
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
                _overlap_witness=None, _incremental=None, reuse=False, acquired_data=None, _overlap_before=None,
                _overlap_output=None, final_compute=False, creation_before=None, mandatory_rules=True,
@@ -273,24 +277,34 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
     from .published_changes import validation_scope as published_scope
     amendment_scope = published_scope(db, workspace, data)
     checked = {**data, '_distribution_cache': {}, '_workload_normalization_cache': {},
-               '_scope_interval_cache': {}, '_policy_applies_cache': {}, '_allocation_match_cache': {},
+               '_workload_matches_cache': {}, '_scope_interval_cache': {}, '_policy_applies_cache': {},
+               '_allocation_match_cache': {},
                '_policy_applies_people': True}
     if _overlap_witness is not None:
         checked['_overlap_witness'] = _overlap_witness
     if check := db.info.get('_check_budget'):
         checked['_check_budget'] = check
+    preparation = db.info.get('_planning_preparation')
     if _incremental is not None and not amendment_scope:
         before, previous = _incremental
-        partial = assignment_validation_scope(data, before, previous)
+        # Rule reach is reusable only for the same complete before and after inputs.
+        scopes = preparation['validation_scopes'] if preparation and preparation.get('kind') == 'shift.update' else None
+        held = scopes.get(workspace.id) if scopes is not None else None
+        if held is not None and held[0] is previous and held[1] == before and held[2] == data:
+            partial = held[3]
+        else:
+            partial = assignment_validation_scope(data, before, previous)
+            if scopes is not None and not preparation['replay']:
+                scopes[workspace.id] = (previous, before, data, partial)
         if partial is not None:
             checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
     defaults = department.generation_defaults
-    preparation = db.info.get('_planning_preparation')
+    preparing = preparation is not None and not preparation['replay']
     previous_check = copy.deepcopy(preparation['validation_baselines'].get(
-        workspace.id, workspace.validation)) if preparation else None
-    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparation else []
+        workspace.id, workspace.validation)) if preparing else None
+    accepted_issues = copy.deepcopy(workspace.accepted_issues or []) if preparing else []
     evaluated_at = command_time(db).isoformat()
     def compute():
         checked['_supervision_commitments'] = supervision_commitments(data)
@@ -302,7 +316,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                 from packages.domain.score import score_dependencies
                 from packages.domain.rota_summary import fix_list_context, remember_fix_list
                 result.update(diagnostic_version=DIAGNOSTIC_VERSION, score_dependencies=score_dependencies(defaults),
-                    input_manifest={k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')},
+                    input_manifest=_check_manifest(data['input_manifest']),
                     evaluated_at=evaluated_at, fix_list_context=fix_list_context(data))
                 remember_fix_list(previous_check, result, accepted_issues=accepted_issues,
                                   summary_cache=preparation['summary_cache'])
@@ -357,10 +371,11 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
         result['score_dependencies'] = score_dependencies(department.generation_defaults)
-    result['input_manifest'] = {k: data['input_manifest'][k] for k in ('format', 'token', 'components', 'dirty_hint')}
+    result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
-    result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
+    if amendment_scope or not preparation or preparation.get('kind') != 'shift.update':
+        result['fix_list_context'] = fix_list_context(full_data if amendment_scope else data)
     remember_fix_list(workspace.validation, result, accepted_issues=workspace.accepted_issues or [],
                       summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     if reviewed_candidate and (workspace.validation or {}).get('review_item_decisions'):
@@ -686,7 +701,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                 current_manifest = manifest(data)
             require(current_manifest['token'] == data['fingerprint'], 'RECONCILIATION_MISMATCH',
                     'The saved batch differs from the reviewed plan; the proposal is retained', 409)
-            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': {k: current_manifest[k] for k in ('format', 'token', 'components', 'dirty_hint')}}
+            result = {**result, 'fingerprint': current_manifest['token'], 'evaluated_at': m.now().isoformat(), 'input_manifest': _check_manifest(current_manifest)}
             from packages.domain.rota_summary import fix_list_context, remember_fix_list
             result['fix_list_context'] = fix_list_context(data)
             remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
@@ -759,7 +774,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
     from packages.domain.rota_summary import rota_summary
-    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [],
+    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [], compact=True,
                            cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result, summary=summary),
             "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
@@ -921,7 +936,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False)
+        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1781,7 +1797,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
-    touched = [row for row in current if row['id'] not in old or shift_input(row) != shift_input(old[row['id']])]
+    touched = [row for row in current if row['id'] not in old or
+               (row != old[row['id']] and shift_input(row) != shift_input(old[row['id']]))]
     prior = [old[row['id']] for row in touched if row['id'] in old]
     open_places = []
     if staffing_gaps_only:
@@ -1898,6 +1915,14 @@ def save_shift(db, actor, command, update=False):
                            and previous.get(p.person_id, {}).get('supervisor_person_id')}
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
+    preparation = db.info.get('_planning_preparation') or {}
+    if update and preparation.get('kind') == 'shift.update' and not preparation['replay']:
+        # The preimage already has every other own session. Reacquire the edited row after
+        # the assignment write and automatic supervisor pairing, in canonical schedule order.
+        own = [shift for shift in before['shifts'] if shift['id'] != row.id]
+        own.extend(snapshots.shift_records(db, [row]))
+        own.sort(key=lambda shift: (aware(shift['start']), shift['id']))
+        db.info['_prepared_shift_edit'] = workspace.id, own
     admission = None
     if 'bulk' not in db.info and update:
         admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',
@@ -2654,24 +2679,26 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
                                  current=current[0] if current is not None else None)
         swaps.validate_publication(db, workspace)
-        workspace.validation = {**result, "wishes": data["wishes"]}
+        check = {**result, 'wishes': data['wishes']}
         from packages.domain.rota_summary import remember_fix_list
-        remember_fix_list(result, workspace.validation, submitted=True)
+        remember_fix_list(result, check, submitted=True)
         from .wishes import _applied_reasons
         receipt = _applied_reasons(db, workspace, data, data['wishes'])
         if receipt is not None:
-            workspace.validation = {**workspace.validation, 'wish_receipt': receipt}
+            check['wish_receipt'] = receipt
+        workspace.validation = check
         workspace.review_snapshot = reviews.resolve_route(db, workspace)
         workspace.submitted_at = m.now()
         workspace.status = "submitted"
         workspace.return_note = None
-        # Submission changes preference reservations, but no other scheduling facts.
-        # With no wishes, the writer-verified canonical inputs are already the submitted inputs.
-        workspace.submitted_fingerprint = (data['fingerprint'] if not data['wishes']
-                                           else fingerprint(db, workspace))
-        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint}
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
+        # Submission can change preference reservations. Preserve the checked inputs when there are none.
+        if data['wishes']:
+            data = domain_snapshot(db, workspace)
+        workspace.submitted_fingerprint = data['fingerprint']
+        workspace.validation = {**workspace.validation, 'fingerprint': workspace.submitted_fingerprint,
+                                'input_manifest': _check_manifest(data['input_manifest'])}
     elif action == "approve":
         require(workspace.status == "submitted", "WORKFLOW_STATE", "Only a submitted candidate can be approved", 409)
         fp = validation[1]['fingerprint'] if validation is not None else fingerprint(db, workspace)
@@ -2796,6 +2823,19 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .generation_resume import clear_generation_resume
         clear_generation_resume(db, workspace_id=workspace.id)
     db.flush()
+    if (action in {'submit', 'approve'} and (manifest := workspace.validation.get('input_manifest'))
+            and (hint := manifest.get('dirty_hint'))):
+        # The status write stamps currency. Amendment history also advances its department's catalogue revision.
+        organisation = db.get(m.Organisation, actor.organisation_id)
+        dirty = {**hint, 'input_revision': organisation.input_revision,
+                 'availability_revision': organisation.availability_revision}
+        if workspace.base_publication_id and 'department_revisions' in dirty:
+            department = db.get(m.Department, workspace.department_id)
+            dirty['department_revisions'] = [
+                [ident, revision, department.catalogue_revision if ident == department.id else catalogue]
+                for ident, revision, catalogue in dirty['department_revisions']]
+        if dirty != hint:
+            workspace.validation = {**workspace.validation, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
     if action == "approve" and workspace.status == "approved" and db.get(m.Department, workspace.department_id).swap_auto_publish:
         swap = db.scalar(select(m.SwapRequest).where(m.SwapRequest.workspace_id == workspace.id))
         if swap:

@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
 from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
-from packages.contracts.schemas import TypeDefinition, WORKLOAD_COUNT_KINDS, requirement_key, safety_rule, validate_attributes
+from packages.contracts.schemas import (
+    INTERNAL_CHECK_KEYS, TypeDefinition, WORKLOAD_COUNT_KINDS, requirement_key, safety_rule, validate_attributes,
+)
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
@@ -31,8 +33,6 @@ from .generation_scope import pooled_anchor, selected_session_ids
 ENGINE_VERSION = "manual-core-52"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
-
-INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 
 
 # Rule kinds the per-person rule loop of `evaluate` leaves to other checks (restrictions, quotas, cover, shapes...).
@@ -333,7 +333,8 @@ def effective_type_definition(data, shift):
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
-        effective = deepcopy((current if operational else issued) or {})
+        definition = (current if operational else issued) or {}
+        effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain both sources so their identities cannot be reused during this run.
@@ -445,14 +446,29 @@ def department_memberships(data, person_id, department_id, a, b):
             and m["category_id"] in categories_for(data, person_id, a, b)]
 
 
+def person_active_for_interval(data, person_id, a, b):
+    """Admit duties ending before the person's local inactive date begins."""
+    person = data.get('people', {}).get(person_id)
+    if not person or person.get('active', True):
+        return bool(person)
+    zone = data['organisation']['timezone']
+    inactive_from = person.get('inactive_from')
+    if inactive_from is None:
+        return False
+    elif isinstance(inactive_from, datetime):
+        inactive_from = inactive_from.date()
+    elif isinstance(inactive_from, str):
+        inactive_from = date.fromisoformat(inactive_from)
+    return aware(b) <= local_midnight(inactive_from, zone)
+
+
 def qualification_failures(data, person_id, shift, definition, a, b):
     """Canonical eligibility decisions, with references suitable for explanations.
 
     These are eligibility findings only, not a claim about availability or rest.
     No private person or absence fields are included.
     """
-    person = data["people"].get(person_id)
-    if not person or not person["active"]:
+    if not person_active_for_interval(data, person_id, a, b):
         return [{"code": "PERSON_INACTIVE", "person_id": person_id}]
     typ = data.get("types", {}).get(shift.get("assignment_type_id"))
     if typ is None:

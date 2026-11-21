@@ -63,7 +63,19 @@ UNAVAILABLE_OUTCOME: dict[str, Literal['definite', 'unknown']] = {
 LiveScope = Literal["workspace", "publication", "rules", "catalogue", "people", "availability", "requests", "swaps", "inbox", "jobs", "settings", "access", "feedback"]
 WorkerLiveness = Literal['running', 'not_responding', 'never_seen']
 JobStatus = Literal['queued', 'running', 'succeeded', 'failed', 'cancelled']
-WorkspaceDetailView = Literal['full', 'compact']
+WorkspaceDetailView = Literal['full', 'compact', 'schedule']
+
+INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
+JOB_PRIVATE_CHECK_FIELDS = (*sorted(INTERNAL_CHECK_KEYS), 'fix_list_context', 'fix_list_state', 'fix_list_delta',
+                            'input_manifest', 'score_dependencies', 'diagnostic_version')
+# What the Schedule's whole-rota read leaves out: fields no client path reads (Design ruling a′, 20 Nov 2026).
+SCHEDULE_DETAIL_FIELDS = {
+    'session': ('series_snapshot', 'series_revision', 'series_modified', 'series_id', 'occurrence_on', 'lineage_id',
+                'template_skipped', 'closure_reason', 'created_at', 'workspace_id'),
+    'participant': ('created_at', 'source', 'source_actor_id', 'source_run_id', 'source_at', 'shift_id', 'revision'),
+    'coverage': ('availability_basis',),
+    'check': (*JOB_PRIVATE_CHECK_FIELDS, 'goals'),
+}
 WorkspacePart = Literal['shifts', 'validation']
 
 # Draft edit replies are deliberately bounded.  A command that touches more than
@@ -1936,6 +1948,7 @@ class PersonInput(Schema):
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     active: bool = Field(default=True, json_schema_extra={"bulk": True})
+    inactive_from: date | None = Field(default=None, json_schema_extra={"bulk": True})
     title: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     work_email: Email | Literal[""] = ""
     work_phone: str = Field(default="", max_length=80, json_schema_extra={"bulk": True})
@@ -6329,6 +6342,33 @@ class SessionOverlapFlags(Schema):
     absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
 
 
+class ScheduleParticipant(ParticipantInput):
+    id: ID
+    override_reason: Reason | None
+    rank: str = ''
+    wish_effects: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ScheduleSession(InstantInterval):
+    id: ID
+    revision: int
+    assignment_type_id: ID
+    type_revision: int
+    type_snapshot: dict[str, Any]
+    location_id: ID
+    service_ids: list[ID]
+    participants: list[ScheduleParticipant]
+    attributes: dict[str, Any]
+    cancelled: bool
+    cancellation_reason: Reason | None
+    locked: bool
+    closed: bool = False
+    series_state_frozen: bool = False
+    usual_assignee_unavailability: list[dict[str, Any]] = Field(default_factory=list)
+    double_booking_conflicts: list[SeriesOverlapConflict] = Field(default_factory=list)
+    absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
+
+
 class SeriesOccurrenceCancel(Schema):
     occurrence_on: date
     reason: Reason
@@ -7698,13 +7738,14 @@ GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged':
 GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_limit': 'search time used up',
     'plateau': 'stopped when it stopped improving', 'gap': 'close enough to the best possible',
     'score': 'target score reached', 'clock': 'stop time reached', 'operator_stop': 'stopped with Stop and keep best',
-    'cancelled': 'cancelled', 'failed': 'stopped by an error', 'no_search': 'nothing to search',
+    'model_proven': 'search finished; checks changed the proposal', 'cancelled': 'cancelled',
+    'failed': 'stopped by an error', 'no_search': 'nothing to search',
     'conflict': 'rules conflict'}
 
 
 class GenerationSearchStop(Schema):
     """The typed reason a finished generation run stopped searching."""
-    reason: Literal['optimal', 'time_limit', 'plateau', 'gap', 'score', 'clock',
+    reason: Literal['optimal', 'model_proven', 'time_limit', 'plateau', 'gap', 'score', 'clock',
                     'operator_stop', 'cancelled', 'failed', 'no_search', 'conflict']
     search_seconds: float = Field(ge=0, allow_inf_nan=False)
     detail: str = ''

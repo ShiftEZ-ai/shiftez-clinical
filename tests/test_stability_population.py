@@ -8,7 +8,7 @@ from sqlalchemy import event
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services import jobs
-from apps.worker.main import process_one
+from apps.worker.main import claim_job, prepare_deferred_generation, process_one
 from packages.domain import cp_sat, generation
 from packages.domain.generation_scope import planning_population_people, union_population
 from packages.domain.input_manifest import manifest
@@ -215,6 +215,10 @@ def test_department_scale_population_apply_preserves_authorised_cover_gap_budget
     assert len(before_errors) == 5
     selected = people
     job = create(h, w, population, generation_options={'mode': 'rebalance'})
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    assert claim and claim['id'] == job['id']
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
     with transaction(h.app.state.engine, write=True) as db:
         row = db.get(m.Job, job['id'])
         target = added[0]

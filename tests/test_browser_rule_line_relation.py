@@ -168,7 +168,8 @@ def test_relax_for_a_person_applies_to_this_rota_with_a_justification(browser, l
         route.fulfill(json=reply)
     context, page = themed(browser, live_server, 'coordinator', width, theme)
     try:
-        page.route(f"**/api/workspaces/{w['id']}", h.route_json('coordinator', f"/api/workspaces/{w['id']}", with_finding))
+        detail = f"/api/workspaces/{w['id']}?view=schedule"
+        page.route(f'**{detail}', h.route_json('coordinator', detail, with_finding))
         page.route(f"**/api/policies/{rule['id']}/relax", lambda route: route.fulfill(json=seed))
         effects = []
 

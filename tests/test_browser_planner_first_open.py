@@ -33,7 +33,7 @@ def test_the_planner_draws_a_department_week_before_the_whole_rota_and_then_whol
         # The whole rota is read ahead side by side with the window (readAhead): when it lands first the page rightly
         # draws it whole with no window (app.ts schedulePage), so it is held until the window is on screen.
         held = []
-        whole_read = lambda url: urlsplit(url).path == f"/api/workspaces/{w['id']}" and not urlsplit(url).query
+        whole_read = lambda url: urlsplit(url).path == f"/api/workspaces/{w['id']}" and urlsplit(url).query == 'view=schedule'
         navigate(page, 'home')
         page.route(whole_read, lambda route: held.append(route))
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
@@ -54,14 +54,14 @@ def test_the_planner_draws_a_department_week_before_the_whole_rota_and_then_whol
         expect(page.get_by_text('Loading the whole rota…')).to_have_count(0)
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         before = [r for r in reads if r[0] <= first]
-        detail = [r for r in reads if r[1] == '/api/workspaces/{id}']
+        detail = [r for r in reads if r[1] == '/api/workspaces/{id}?view=schedule']
         by_route = Counter()
         for _, route, size in reads:
             by_route[route] += size
         print('FIRST_OPEN', json.dumps({'seconds_to_window': round(first - started, 2), 'seconds_to_whole': round(whole - started, 2),
             'bytes_to_window': sum(r[2] for r in before), 'bytes_to_whole': sum(r[2] for r in reads if r[0] <= whole),
             'reads': len(reads), 'by_route': dict(by_route.most_common(6))}))
-        assert not any(r[1] == '/api/workspaces/{id}' for r in before), [r[1] for r in before]
+        assert not any(r[1] == '/api/workspaces/{id}?view=schedule' for r in before), [r[1] for r in before]
         assert any(r[1] == '/api/workspaces/{id}?view=compact' for r in before), [r[1] for r in before]
         assert len(detail) == 1, [r[1] for r in reads]  # the whole rota is read once
     finally:
@@ -95,7 +95,7 @@ def test_the_window_draws_the_same_open_places_and_short_days_as_the_whole_rota(
     w = h.lifecycle(w, 'validate')['workspace']
     context, page = sign_in(browser, live_server, 'coordinator')
     held = []
-    whole_read = lambda url: urlsplit(url).path == f"/api/workspaces/{w['id']}" and not urlsplit(url).query
+    whole_read = lambda url: urlsplit(url).path == f"/api/workspaces/{w['id']}" and urlsplit(url).query == 'view=schedule'
     try:
         navigate(page, 'home')
         page.route(whole_read, lambda route: held.append(route))  # the whole rota waits until the window is read

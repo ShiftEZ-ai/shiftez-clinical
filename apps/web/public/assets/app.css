@@ -1366,7 +1366,7 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .wk-pair{display:block;color:var(--muted)}
 .wk-key{display:flex;align-items:center;gap:5px}
 /* The view key (legend() in dom.ts): one compact strip under every view, listing only what the view draws. */
-.view-legend{list-style:none;margin:0;padding:6px 2px;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
+.view-legend{list-style:none;margin:0;padding:6px 2px;max-inline-size:100%;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
 .view-legend[hidden]{display:none}
 /* An entry is as wide as its words (live check 6cea25859: "Day numbers…" lost to a 260 px cap), at most the key's width. */
 .view-legend li{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%}
@@ -1378,10 +1378,10 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media print{.view-legend{flex-wrap:wrap}.view-legend li[hidden]{display:flex}.view-legend .lg-more{display:none}}
 .view-legend .lg-words{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media print{.view-legend .lg-words{white-space:normal}}
-/* A swatch (an entry's first child, also inside a usable entry) takes its content's width and never shrinks, so it never
-   overlaps its words: a team box is a size container (its width ignores its content), which let the "Supervision team"
-   swatch's SUP/TR pills paint over its label (live, 12dc48a22). */
-.view-legend li>:first-child,.view-legend .lg-act>:first-child{flex:none;container-type:normal}
+/* A swatch (an entry's first child, also inside a usable entry and in the +N list) takes its content's width and never
+   shrinks, so it never overlaps its words: a team box is a size container (its width ignores its content), which let the
+   "Supervision team" swatch's SUP/TR pills paint over its label (live, 12dc48a22). */
+.view-legend li>:first-child,.view-legend .lg-act>:first-child,.lg-pop>:first-child,.lg-pop>.lg-act>:first-child{flex:none;container-type:normal}
 .lg-swatch[class*=duty-]{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:var(--duty-bg);box-shadow:inset 0 0 0 1.5px var(--duty)}
 .lg-swatch.lg-same{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:var(--sub);box-shadow:inset 0 0 0 1.5px var(--line-2)}
 .lg-swatch.lg-people{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:linear-gradient(90deg,var(--teal-c) 0 33%,var(--violet) 33% 66%,var(--amber) 66%)}
