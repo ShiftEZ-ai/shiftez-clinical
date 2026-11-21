@@ -83,7 +83,9 @@ def _apply(db, actor, items, reason, decision, batch_id, approval_context=None):
         db.add(m.AuditEvent(department_id=actor.department_id, actor_id=actor.identity_id,
                             action=command.kind, target_id=item.id, reason=reason,
                             detail={"batch_id": batch_id, "receipt_id": db.info.get("receipt_id"),
-                                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {})},
+                                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                                    **({"entered_on_behalf_by": sorted(enterers)}
+                                       if (enterers := db.info.pop("entered_on_behalf_by", None)) else {})},
                             correlation_id=db.info.get("correlation_id") or "bulk-preview"))
     return {"batch_id": batch_id, "records": records, "count": len(records), "affected_count": affected}, inputs_changed
 

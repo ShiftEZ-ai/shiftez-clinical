@@ -172,7 +172,9 @@ def test_leave_breach_opens_that_persons_leave(browser, live_server, h):
     absent = h.seed['people'][1]
     policy = minimum(h, [absent])
     h.command('coordinator', 'availability.record', {'person_id': absent, 'kind': 'recorded_leave', 'leave_type': 'Annual leave',
-        'start': '2026-10-04T00:00:00+03:00', 'end': '2026-10-11T00:00:00+03:00', 'private_reason': 'Synthetic leave'})
+        'start': '2026-10-04T00:00:00+03:00',
+        # leave four of five working days so the rounded minimum remains one and the cause stays visible.
+        'end': '2026-10-08T00:00:00+03:00', 'private_reason': 'Synthetic leave'})
     w = h.lifecycle(h.shift(h.workspace('Leave breach'), people=[h.seed['people'][0]])['workspace'], 'validate')['workspace']
     finding = next(f for f in h.detail(w)['workspace']['validation']['findings'] if f['rule_id'] == policy['id'])
     assert finding['cause']['code'] == 'person_unavailable'
