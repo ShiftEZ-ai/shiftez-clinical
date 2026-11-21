@@ -261,7 +261,7 @@ def test_a_lists_own_filter_is_not_on_and_the_popover_opens_on_its_rule(browser,
         button.click()
         pop = page.get_by_role('dialog', name='Filter')
         expect(pop.locator('.dt-filter-builder .cond-line')).to_have_count(1)  # the default rule, once, as a row
-        expect(pop.locator('.dt-active-list')).to_have_count(0)
+        expect(pop.locator('.dt-active-list')).to_have_count(0)  # not even an empty, hidden one: no second list of the rules
         expect(pop.get_by_role('button', name='Clear all filters')).to_be_visible()  # one click back to every row
         assert pop.evaluate("p => !!document.activeElement.closest('.dt-filter-builder')")
         # A change of the person's own lights it, and Clear all appears without a second list of the same rules.
@@ -492,17 +492,17 @@ def test_schedule_toolbar_controls_do_not_vanish_between_views(browser, live_ser
 
 
 def test_rules_uses_shared_view_settings(browser, live_server, h):
-    """FD-02: Rules' View settings is the shared Shown properties (show, hide and move), not a checklist of its own."""
+    """FD-02: Rules' View settings is the shared popover, not a checklist of its own. The Rules list is one row per
+    rule with no columns, so it has no Shown properties; its one setting is the Layout (open all or collapsed)."""
     from .test_browser_rule_catalogue import flag
     flag(h)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
         view = toolbar(page.locator('#main'), 'View settings')
-        props = view.get_by_role('list', name='Shown properties')
-        expect(props.locator('.dt-prop')).to_have_count(5)
-        props.get_by_role('button', name='Move Where down', exact=True).click()
-        expect(page.locator('#main thead th').nth(3)).to_contain_text('Numbers')
-        expect(view).to_be_visible()  # moving keeps the popover open, as on every collection
+        expect(view.get_by_role('list', name='Shown properties')).to_have_count(0)
+        expect(view.get_by_role('radiogroup', name='Layout')).to_be_visible()
+        expect(page.locator('#main thead')).to_have_count(0)
+        expect(view).to_be_visible()
     finally:
         context.close()

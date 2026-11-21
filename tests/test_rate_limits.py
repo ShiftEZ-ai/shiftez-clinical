@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import event, func, select, text
 from apps.api import models as m
 from apps.api import db
-from apps.api.auth import digest
+from apps.api.auth import digest, login_digest
 from apps.api.db import transaction
 from apps.api.errors import Problem
 from apps.api.rate_limit import counter_key, enforce
@@ -101,7 +101,7 @@ def test_account_link_address_limit_stops_fresh_tokens_creating_counters(backend
     freeze_clock(monkeypatch)
     engine = h.app.state.engine
     with transaction(engine, write=True) as db:
-        key, ends = counter_key("account-link-address", "testclient", 900, m.now())
+        key, ends = counter_key("account-link-address", login_digest("peer:testclient", h.settings), 900, m.now())
         db.add(m.RateLimit(key_hash=key, hits=990, expires_at=ends))
     with TestClient(h.app, base_url=h.settings.public_origin) as client:
         client.headers["origin"] = h.settings.public_origin

@@ -728,25 +728,30 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     if(savedBtn&&spec.saved){const name=spec.saved.name(),dirty=spec.saved.dirty();savedBtn.querySelector('.dt-tool-label')!.textContent=name||spec.saved.defaultName?.()||'Default view';savedBtn.querySelector('.dt-dirty')!.textContent=dirty?'•':'';
       // The view's row count is the footer's; the views menu lists each view's count.
       const warn=spec.saved.warn?.()||'';
-      const w=savedBtn.querySelector('.dt-view-warn')!;w.replaceChildren(...(warn?[icon('alert'),warn]:[]));
+      const w=savedBtn.querySelector('.dt-view-warn')!;w.replaceChildren(...(warn?[icon('alert'),el('span',{class:'dt-view-warn-words'},warn)]:[]));
       savedBtn.classList.toggle('on',!!name);savedBtn.setAttribute('aria-label',`Saved views${name||spec.saved.defaultName?.()?': '+(name||spec.saved.defaultName!()):''}${dirty?' (changed)':''}${warn?', '+warn:''}`);syncSaved?.();}
     paintStrip();
   };
   if(filterBtn){const f=spec.filter!;pop(filterBtn,'Filter',(panel,close)=>{
     // The popover starts with what is active: "Active · 9 of 43 people" and Clear all. Rules of the builder below are
     // its rows (each with its own ⋯ › Remove); only entries without a row (a link's filter) are listed with ×.
-    const head=el('div',{class:'dt-active'});
-    const changed=()=>{sync();const n=f.count(),act=(f.active?.()||[]).filter(a=>!a.row),on=n>0||!!f.any?.();head.hidden=!on;if(!on)return head.replaceChildren();
-      const clear=el('button',{type:'button',class:'button ghost small dt-clear','aria-label':'Clear all filters'},'Clear all');
-      clear.addEventListener('click',()=>{f.clear();draw();refocus();});
-      head.replaceChildren(el('div',{class:'dt-active-head'},el('span',{class:'dt-pop-label'},`Active · ${f.result?.()||n||''}`.replace(/ · $/,'')),clear),
-        ...(act.length?[el('ul',{class:'dt-active-list'},...act.map(a=>{
-          const x=el('button',{type:'button',class:'icon-button bare','aria-label':`Remove filter ${a.name}: ${a.value}`},icon('close'));
-          x.addEventListener('click',()=>{a.remove();draw();refocus();});
-          return el('li',{},el('span',{class:'truncate'},el('span',{class:'muted'},a.name+' '),a.value),x);}))]:[]));};
-    const draw=()=>{panel.replaceChildren(head);f.build(panel,changed,close);changed();};
+    // Clear all and the summary stay the same elements while the values are read again (a list polling its server), so a
+    // press on them lands; each is in the popover only while it applies, since a hidden one still takes the first focus.
+    const label=el('span',{class:'dt-pop-label'}),list=el('ul',{class:'dt-active-list'});
+    const clear=el('button',{type:'button',class:'button ghost small dt-clear','aria-label':'Clear all filters'},'Clear all');
+    const head=el('div',{class:'dt-active'},el('div',{class:'dt-active-head'},label,clear));
+    clear.addEventListener('click',()=>{f.clear();draw();refocus();});
+    const changed=()=>{sync();const n=f.count(),act=(f.active?.()||[]).filter(a=>!a.row),on=n>0||!!f.any?.();
+      if(!on){head.remove();return;}if(head.parentNode!==panel)panel.prepend(head);
+      label.textContent=`Active · ${f.result?.()||n||''}`.replace(/ · $/,'');
+      list.replaceChildren(...act.map(a=>{
+        const x=el('button',{type:'button',class:'icon-button bare','aria-label':`Remove filter ${a.name}: ${a.value}`},icon('close'));
+        x.addEventListener('click',()=>{a.remove();draw();refocus();});
+        return el('li',{},el('span',{class:'truncate'},el('span',{class:'muted'},a.name+' '),a.value),x);}));
+      if(act.length)head.append(list);else list.remove();};
+    const draw=()=>{panel.replaceChildren(...(head.parentNode===panel?[head]:[]));f.build(panel,changed,close);changed();};
     // New values redraw the builder's rows in place, unless a value list is open (it keeps what it offers until reopened).
-    f.watch?.(fields=>{if(!head.isConnected)return;if(!fields||document.querySelector('.picker'))return changed();const had=panel.contains(document.activeElement);if(f.refield){f.refield();changed();}else draw();if(had)refocus();});
+    f.watch?.(fields=>{if(!panel.isConnected)return;if(!fields||document.querySelector('.picker'))return changed();const had=panel.contains(document.activeElement);if(f.refield){f.refield();changed();}else draw();if(had)refocus();});
     // Focus stays in the popover when the control that had it goes away; never on Clear all, where Enter would wipe
     // every filter.
     const refocus=()=>((panel.querySelector('.dt-active-list button,.dt-filter-builder button,.dt-filter-builder input,.dt-filter-builder select')

@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.services import fairness as fairness_service
 from apps.api.services.fairness import backfill, rebuild
 from packages.contracts.schemas import PolicyDefinition
 from packages.domain.cp_sat import generate
@@ -272,6 +273,58 @@ def test_dashboard_reads_filters_and_permissions(h):
 
 
 @pytest.mark.parametrize('reverse', [False, True])
+def test_goals_cache_keeps_requested_periods_separate(h, monkeypatch, reverse):
+    a, b, _ = h.seed['people']
+    g = goal(h, aim='target', amount=1, period='rota', scope={'person_ids': [a, b]},
+             tolerance_units=0, tolerance_percent=0)
+    h.publish(session(h, h.workspace(), 4, [a, b]))
+    workspace = session(h, h.workspace(start='2026-10-11', end='2026-10-18'), 11, [a])
+    workspace = session(h, workspace, 12, [a])
+    h.publish(workspace)
+    client = h.client('coordinator')
+    calls, original = [], fairness_service._goals_uncached
+
+    def counted(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
+        calls.append((starts_on.isoformat(), ends_on.isoformat()))
+        return original(db, actor, workspace_id, who, starts_on, ends_on)
+
+    monkeypatch.setattr(fairness_service, '_goals_uncached', counted)
+    periods = [('2026-10-04', '2026-10-11', 100), ('2026-10-11', '2026-10-18', 0)]
+    if reverse:
+        periods.reverse()
+    tags, previous = {}, None
+    for first, last, score in [*periods, periods[0]]:
+        path = f'/api/fairness/goals?workspace_id={workspace["id"]}&starts_on={first}&ends_on={last}'
+        before = len(calls)
+        response = client.get(path)
+        assert response.status_code == 200, response.text
+        body, tag = response.json(), response.headers['etag']
+        assert len(calls) == before + 1
+        assert calls[-1] == (first, last)
+        assert body['workspace']['id'] == workspace['id']
+        card = next(report for report in body['goals'] if report['policy_id'] == g['id'])
+        # The named rota fixes current values; the requested period selects its published goal history.
+        assert {row['person_id']: (row['prior'], row['planned'], row['actual'], row['expected'])
+                for row in card['people']} == {a: (0, 2, 2, 1), b: (0, 0, 0, 1)}
+        assert card['score'] == 0
+        assert card['trend'] == [{'starts_on': first, 'score': score}]
+        assert tag != previous
+        assert tags.setdefault((first, last), tag) == tag
+        previous = tag
+        with transaction(h.app.state.engine) as db:
+            [cached] = list(db.scalars(select(m.WorkspaceReadProjection).where(
+                m.WorkspaceReadProjection.workspace_id == workspace['id'],
+                m.WorkspaceReadProjection.kind == 'fairness_goals')))
+            assert cached.stamp == tag
+            assert cached.value == body
+        repeat = client.get(path)
+        assert repeat.status_code == 200, repeat.text
+        assert repeat.headers['etag'] == tag
+        assert repeat.json() == body
+        assert len(calls) == before + 1
+
+
+@pytest.mark.parametrize('reverse', [False, True])
 def test_lead_turns_share_out_between_the_people_who_may_lead(h, reverse):
     a, b, c = h.seed['people']
     typ = historical_type(h, {'name': 'Led pair', 'starts_on': '2020-01-01', 'definition': {
@@ -345,10 +398,12 @@ def test_rebuild_equals_publish_time_rows_after_an_earlier_amendment_and_dashboa
     amendment = session(h, h.detail(h.workspace(base=p1['publication_id']))['workspace'], 6, [b])  # b gains a duty in week 1
     h.publish(amendment)
     published = sorted(map(repr, ledger(h)))
+    later_rows = sorted(map(repr, ledger(h, publication_id=p2['publication_id'])))
     assert (b, None, 'goal:' + g['id'], date(2026, 10, 11), 2.0) in [r[:5] for r in ledger(h)]  # week 2 reads the amended history
     with transaction(h.app.state.engine, write=True) as db:
         backfill(db)
     assert sorted(map(repr, ledger(h))) == published
+    assert sorted(map(repr, ledger(h, publication_id=p2['publication_id']))) == later_rows
 
 
 def test_a_goal_scores_100_when_everyone_is_inside_their_band(h):

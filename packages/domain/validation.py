@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .participation import presence_intervals
 from . import leadership
 from .time import configured_duration_matches, aware, duration_hours, local_midnight, local_stamp, overlaps, union_hours
-from packages.contracts.schemas import TypeDefinition, requirement_key, safety_rule, validate_attributes
+from packages.contracts.schemas import INTERNAL_CHECK_KEYS, TypeDefinition, requirement_key, safety_rule, validate_attributes
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
@@ -22,16 +22,15 @@ from .patterns import SHAPE_KINDS
 from .recurrence import inactive, series_definition, usual_assignee_ids, with_series_state
 from .overlap import evaluate_overlaps
 from .supervision_levelling import levelled_finding, session_spread_policies, spread_gap, spread_policy_key
+from .generation_scope import pooled_anchor, selected_session_ids
 
 # 47: bind rotation leave policies and actual-absence conflicts to validation results.
 # 48: invalidate stored checks for actionable, grouped session overlap findings.
 # 49: bind finding causes and working-day quota amounts to validation results.
 # 50: bind conflict-aware supervision and its trial-cache dependencies to validation results.
-ENGINE_VERSION = "manual-core-51"
+ENGINE_VERSION = "manual-core-52"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
-
-INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
 
 
 # Rule kinds the per-person rule loop of `evaluate` leaves to other checks (restrictions, quotas, cover, shapes...).
@@ -49,6 +48,10 @@ class PersonRowsIndex(dict):
 
 def finding_observations(validation):
     """Every checked constraint behind the visible issues, with the parent's finding context."""
+    findings = validation.get('findings', [])
+    if validation.get('_plain_findings'):
+        return iter(findings)
+
     def unpack(finding):
         detail = finding.get('detail') or {}
         children = detail.get('derived_findings', [])
@@ -56,8 +59,7 @@ def finding_observations(validation):
         for child in children:
             yield from unpack({**finding, **child})
 
-    for finding in validation.get('findings', []):
-        yield from unpack(finding)
+    return (observation for finding in findings for observation in unpack(finding))
 
 
 def policy_group_tiers(policies):
@@ -72,7 +74,9 @@ def policy_group_tiers(policies):
         if tier is None:
             scope = policy['definition']['scope']
             tier = 3 if named_people(scope) else 1 if person_free(scope) else 2
-        tiers[policy['id'], line.get('line'), line.get('slot')] = tier
+        source_id = (policy.get('_source_policy_id', policy['id'])
+                     if policy.get('_live_zero') or policy.get('_live_mandatory_recheck') else policy['id'])
+        tiers[source_id, line.get('line'), line.get('slot')] = tier
     return tiers
 
 
@@ -308,18 +312,29 @@ def effective_issued_definition(issued, current):
 
 
 def effective_type_definition(data, shift):
-    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values."""
-    issued = shift['type_snapshot']['definition'] or {}
-    if not data.get('operational'):
-        effective = deepcopy(issued)
+    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values.
+    Run-cached definitions are read-only.
+    """
+    issued = shift['type_snapshot']['definition']
+    operational = bool(data.get('operational'))
+    current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
+    published = _published_session(data, shift) if operational else False
+    cache = data.get('_line_index_cache')
+    if cache is not None:
+        definitions = cache.setdefault('effective_type_definitions', {})
+        key = id(issued), id(current), operational, published
+        entry = definitions.get(key)
+        if entry is not None and entry[0] is issued and entry[1] is current:
+            return entry[2]
+    if operational and published:
+        effective = effective_issued_definition(issued, current)
+    else:
+        effective = deepcopy((current if operational else issued) or {})
         effective['requirements'] = list(effective.get('requirements') or [])
-        return effective
-    current = data['types'][shift['assignment_type_id']]['definition'] or {}
-    if not _published_session(data, shift):
-        effective = deepcopy(current)
-        effective['requirements'] = list(effective.get('requirements') or [])
-        return effective
-    return effective_issued_definition(issued, current)
+    if cache is not None:
+        # Retain both sources so their identities cannot be reused during this run.
+        definitions[key] = issued, current, effective
+    return effective
 
 
 def trainee_intervals(data, shift, participant):
@@ -509,6 +524,12 @@ def person_free(scope):
     return not any(scope.get(k) for k in PERSON_SCOPE_KEYS) and not has_person_lines(scope_tree(scope))
 
 
+def _policy_scope_key(policy):
+    return (policy['status'], policy.get('active', True), policy['department_id'],
+            policy.get('starts_on'), policy.get('ends_on'),
+            json.dumps(policy['definition']['scope'], sort_keys=True, default=str))
+
+
 def policy_applies(data, policy, person_id, shift, a, b):
     cache = data.get('_policy_applies_cache')
     if cache is None:
@@ -520,9 +541,7 @@ def policy_applies(data, policy, person_id, shift, a, b):
         scope = policy['definition']['scope']
         # Matching ignores names, strength and rule numbers. Equal immutable matching inputs share one answer
         # while every policy retains its own identity entry and the canonical predicate below remains authoritative.
-        signature = ('policy_scope', policy['status'], policy.get('active', True), policy['department_id'],
-                     policy.get('starts_on'), policy.get('ends_on'),
-                     json.dumps(scope, sort_keys=True, default=str))
+        signature = ('policy_scope', *_policy_scope_key(policy))
         entry = cache[id(policy)] = (policy, person_free(scope), cache.setdefault(signature, {}))
     # A scheduling run (generation.py) also keeps answers per person: it asks about the same people on the same sessions
     # at every trial. The solver asks about everyone everywhere once, where keeping them would only cost memory.
@@ -937,18 +956,29 @@ def workload_matches(data, policy, person_id, shift, a, b):
 
 def workload_windows(a, b, rule, zone, week_start):
     """Canonical limit windows contributed by one reserved duty."""
-    if rule['window'] == 'rolling':
-        width = timedelta(days=rule['window_days'])
-        return {(a, a + width), (b - width, b)}
+    return _workload_windows(aware(a), aware(b), rule['window'], rule.get('window_days'), zone, week_start)
+
+
+def _focal_workload_windows(data, rule, selected, focal, zone):
+    windows = {window for _, _, a, b in selected
+               for window in workload_windows(a, b, rule, zone, data['organisation']['week_start'])}
+    return ((a, b) for a, b in sorted(windows) if any(overlaps(a, b, c, d) for _, _, c, d in focal))
+
+
+@lru_cache(maxsize=8192)
+def _workload_windows(a, b, window, window_days, zone, week_start):
+    if window == 'rolling':
+        width = timedelta(days=window_days)
+        return frozenset({(a, a + width), (b - width, b)})
     windows = set()
     day = a.astimezone(ZoneInfo(zone)).date()
     last_day = (b - timedelta(microseconds=1)).astimezone(ZoneInfo(zone)).date()
     while day <= last_day:
-        first = day if rule['window'] == 'day' else day - timedelta(days=(day.weekday() - week_start) % 7)
-        width_days = 1 if rule['window'] == 'day' else 7
+        first = day if window == 'day' else day - timedelta(days=(day.weekday() - week_start) % 7)
+        width_days = 1 if window == 'day' else 7
         windows.add((local_midnight(first, zone), local_midnight(first + timedelta(days=width_days), zone)))
         day += timedelta(days=1)
-    return windows
+    return frozenset(windows)
 
 
 def resource_sessions(data, shifts, resource_id, a, b):
@@ -1387,12 +1417,38 @@ def check_contracts():
     return {'block_quota': METRIC_VERSION, 'programmes': 'programmes-v1', 'cover_places': COVERAGE_CONTRACT}
 
 
+class TrialPresence(dict):
+    """Load presence only for the checked duties and the peers their checks read."""
+
+    def __init__(self, shifts):
+        super().__init__()
+        self.shifts = shifts
+
+    def load(self, shift):
+        invalid = []
+        for person in shift['participants']:
+            pid = person['person_id']
+            try:
+                intervals = presence_intervals(person)
+            except ValueError:
+                intervals = []
+                invalid.append(pid)
+            self[shift['id'], pid] = intervals
+        return invalid
+
+    def __missing__(self, key):
+        self.load(self.shifts[key[0]])
+        return dict.__getitem__(self, key)
+
+
 def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False, trial_cache=None) -> dict:
     """`session_cache`: private to assignment-copy trials on one otherwise immutable snapshot.
     Reuse unchanged sessions' checks; department reports remain fresh.
     Internal decision/score trials may omit cause/hint decoration; all constraint checks still run.
     `session_parts` records private session indices and person-rule findings for assignment-only edits.
     Complete partials retain other people's findings and refresh every cross-person report.
+    Greedy's private person-duty lookup belongs to an assignment-only trial. It needs only
+    mandatory personal rules, because advisory workload observations do not guide placements.
     `trial_cache` reuses personal rule checks and quota attribution for unchanged duties. Rebuild it after any fact,
     rule or session setup edit; participant edits and focus changes are checked by their complete signatures."""
     from .rule_lines import read_quality_for
@@ -1411,10 +1467,12 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     # check, or across the checks of one scheduling run that passes its own cache.
     # Immutable swap trials change participants only; their snapshot already projected recurring-session state.
     data = dict(data if '_active_policies' in data else with_series_state(data))
+    person_shifts = (data.get('_partial') or {}).get('person_shifts')
     policies = data.get('_active_policies')
     if policies is None:
         policies = active_rules(data['policies'], context=data, read_quality=read_quality)
     qualification_cache = {}
+    policies_by_id = {policy['id']: policy for policy in policies}
     data = {**data, "policies": policies,
             "_person_rows": data["_person_rows"] if "_series_state_cache" in data or "_active_policies" in data else index_person_rows(data),
             "_policy_applies_cache": data.get("_policy_applies_cache", {}),
@@ -1438,7 +1496,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
             "_candidate_absence_cache": {},
             "_categories_cache": data.get("_categories_cache", {}),
             "_capabilities_cache": data.get("_capabilities_cache", {}),
-            "_supervision_commitments": (data.get('_supervision_commitments')
+            "_supervision_commitments": ({} if person_shifts is not None else data.get('_supervision_commitments')
                                           if data.get('_reuse_supervision_commitments')
                                           else supervision_commitments(data))}
     from .date_sets import prepare_date_sets
@@ -1465,6 +1523,9 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     if partial and partial.get("complete") and partial["previous"].get("contracts") != check_contracts():
         partial = None
     complete_partial = partial is not None and partial.get('complete', False)
+    trial_people = partial['people'] if person_shifts is not None else None
+    checked_sessions = shifts if partial is None else [s for s in shifts if s['id'] in partial['shifts']]
+    setup_cache = partial.get('setup_cache') if partial is not None else None
     service_shifts = defaultdict(list)
     for shift in shifts:
         for service_id in shift['service_ids']:
@@ -1543,7 +1604,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
 
     def add(code, message, shift=None, person=None, a=None, b=None, severity="error", rule=None, extra=None,
             explanation=None):
-        policy = rule if isinstance(rule, dict) else None
+        policy = rule if isinstance(rule, dict) else policies_by_id.get(rule)
         if isinstance(rule, dict):
             line = rule.get('template_line') or {}
             extra = {**(extra or {}), 'rule_severity': rule['definition']['severity'],
@@ -1551,6 +1612,11 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                      **{k: line[k] for k in ('line', 'slot') if k in line},
                      **({'count_bucket': rule['count_bucket']} if 'count_bucket' in rule else {})}
             rule = rule['id']
+        if policy and (policy.get('_live_zero') or policy.get('_live_mandatory_recheck')):
+            rule = policy.get('_source_policy_id', policy['id'])
+        if policy and policy.get('_live_zero'):
+            message += f' (current department rule {rule})'
+            extra = {**(extra or {}), 'live_zero': True}
         leave_classification = (causes.leave_classification(person, shift)
                                 if code == 'UNAVAILABLE' and causes and person else {})
         if leave_classification:
@@ -1620,36 +1686,60 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
 
     findings.extend(rotation_leave_findings(data))
 
-    boundary_inputs = coverage_boundary_inputs(data)
+    boundary_inputs = (data['_trial_boundary_inputs'] if '_trial_boundary_inputs' in data else
+                       coverage_boundary_inputs(data)) if checked_sessions else None
     definitions = {}
-    for shift in shifts:
+    for shift in shifts if person_shifts is None else checked_sessions:
         definitions[shift["id"]] = effective_type_definition(data, shift)
 
     # Full envelopes remain the authority for conflicts, rest and reserved-hours
     # rules. Only qualified continuous coverage uses explicit presence segments.
-    presence = {}
     commitments = defaultdict(list)
-    # Swap trials change only person IDs: reservation times and planned presence stay immutable for the lookup.
-    participation_cache = data.get('_participation_cache')
-    for shift in shifts:
-        for person in shift["participants"]:
-            cached = participation_cache.get(person['id']) if participation_cache is not None else None
-            if cached is None:
-                a, b = aware(person['start']), aware(person['end'])
-                try:
-                    intervals = presence_intervals(person)
-                except ValueError:
-                    intervals = None
-                cached = a, b, intervals
-                if participation_cache is not None:
-                    participation_cache[person['id']] = cached
-            a, b, intervals = cached
-            commitments[person["person_id"]].append((shift, person, a, b))
-            key = (shift["id"], person["person_id"])
-            presence[key] = intervals or []
-            if intervals is None and shift["id"] in focus and (partial is None or shift["id"] in partial["shifts"]):
-                add("PARTICIPATION_INVALID", "Planned presence segments are invalid; no qualified cover is inferred",
-                    shift["id"], person["person_id"])
+    if person_shifts is not None:
+        presence = TrialPresence(shifts_by_id)
+        supervisors = set()
+        for shift in checked_sessions:
+            if shift['id'] in focus:
+                for pid in presence.load(shift):
+                    add("PARTICIPATION_INVALID", "Planned presence segments are invalid; no qualified cover is inferred",
+                        shift["id"], pid)
+            if definitions[shift['id']].get('supervision'):
+                supervisors.update(p['person_id'] for p in shift['participants'])
+        for pid in trial_people | supervisors:
+            for shift in person_shifts(pid):
+                if shift['id'] not in shifts_by_id:
+                    continue
+                for person in shift['participants']:
+                    if person['person_id'] != pid:
+                        continue
+                    a, b = aware(person['start']), aware(person['end'])
+                    if pid in trial_people:
+                        commitments[pid].append((shift, person, a, b))
+                    if pid in supervisors:
+                        data['_supervision_commitments'].setdefault(pid, []).append((shift['id'], a, b))
+    else:
+        presence = {}
+        # Swap trials change only person IDs: reservation times and planned presence stay immutable for the lookup.
+        participation_cache = data.get('_participation_cache')
+        for shift in shifts:
+            for person in shift["participants"]:
+                cached = participation_cache.get(person['id']) if participation_cache is not None else None
+                if cached is None:
+                    a, b = aware(person['start']), aware(person['end'])
+                    try:
+                        intervals = presence_intervals(person)
+                    except ValueError:
+                        intervals = None
+                    cached = a, b, intervals
+                    if participation_cache is not None:
+                        participation_cache[person['id']] = cached
+                a, b, intervals = cached
+                pid = person['person_id']
+                commitments[pid].append((shift, person, a, b))
+                presence[shift["id"], pid] = intervals or []
+                if intervals is None and shift["id"] in focus and (partial is None or shift["id"] in partial["shifts"]):
+                    add("PARTICIPATION_INVALID", "Planned presence segments are invalid; no qualified cover is inferred",
+                        shift["id"], pid)
 
     for pid, entries in commitments.items():
         entries.sort(key=lambda row: row[2])
@@ -1700,8 +1790,8 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         peer_cache[key] = staffing_peers(data, policy, a, b, shifts=shifts)
         return peer_cache[key]
 
-    for shift in shifts:
-        if (shift["id"] not in focus or partial is not None and shift["id"] not in partial["shifts"]
+    for shift in checked_sessions:
+        if (shift["id"] not in focus
                 or "_published_session_checks" in data and shift["id"] not in data["_published_session_checks"]):
             continue
         check()
@@ -1733,7 +1823,16 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
             add("DUPLICATE_PARTICIPATION", "A session cannot contain the same person twice", sid)
         typ = data["types"][shift["assignment_type_id"]]
         definition = definitions[sid]
-        validate_session_setup(data, shift, shifts, definition, add)
+        if setup_cache is None:
+            validate_session_setup(data, shift, shifts, definition, add)
+        else:
+            if sid not in setup_cache:
+                setup = []
+                validate_session_setup(data, shift, shifts, definition,
+                                       lambda *args, **kwargs: setup.append((args, kwargs)))
+                setup_cache[sid] = setup
+            for args, kwargs in setup_cache[sid]:
+                add(*args, **kwargs)
 
         bounds = {start, end}
         if definition.get('supervision'):
@@ -1853,8 +1952,10 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                                 severity='warning', rule=policy, extra=detail)
                     continue
                 peers = cover_peers(policy, a, b) if rule.get('aggregation') == 'service_group' else [shift]
-                affected = sorted(s['id'] for s in peers if s['id'] in (focus if partial is None else partial.get('coverage_focus', focus)))
-                if rule.get('aggregation') == 'service_group' and affected and sid != affected[0]:
+                coverage_focus = focus if partial is None else partial.get('coverage_focus', focus)
+                coverage_selected = set(selected_session_ids(data)) if partial is None else set(partial.get('coverage_focus', coverage_focus))
+                anchor = pooled_anchor([s['id'] for s in peers], coverage_selected, coverage_focus)
+                if rule.get('aggregation') == 'service_group' and anchor and sid != anchor:
                     continue
                 observations = staffing_counts(data, policy, shift, a, b, peers=peers, presence=presence, available=available)
                 if not observations:
@@ -2086,6 +2187,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     retained_people = (partial['previous'].get('_person_parts') if complete_partial else None)
     signatures = {pid: (frozenset(focus), tuple((id(s), repr(p)) for s, p, _, _ in entries))
                   for pid, entries in commitments.items()} if person_cache is not None else {}
+    maximum_hours = {}
     for policy_index, policy in enumerate(counted_policies):
         check()
         rule = policy["definition"]["rule"]
@@ -2093,16 +2195,30 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         if policy["status"] != "active" or kind in NOT_PERSON_RULES:
             continue  # shape rules: evaluate_shapes below
         severity = "error" if policy["definition"]["severity"] == "mandatory" else "warning"
+        if severity == 'warning' and person_shifts is not None:
+            continue
         only = data.get("person_rule_subjects") if partial is None or complete_partial else partial["people"]
         named = named_people(policy["definition"]["scope"])  # a rule naming people never applies to anyone else
+        hours_by_person = None
+        if kind == 'max_hours':
+            # One evaluation has fixed duties and focus. Equal counting inputs share observations,
+            # while each policy still applies its own threshold, exceptions and finding identity.
+            counting = json.dumps({key: value for key, value in rule.items() if key != 'hours'}, sort_keys=True,
+                                  default=str)
+            hours_by_person = maximum_hours.setdefault((_policy_scope_key(policy), counting), {})
+
         def check_person(pid, entries, add):
             # Applicability is anchored in the policy's department, but a person's
             # unscoped total/rest limit counts all their institutional commitments.
             # Moving a duty to another department cannot erase its hours or rest.
-            focal = [(s, p, a, b) for s, p, a, b in entries if s["id"] in focus
-                     and policy_applies(data, policy, pid, s, a, b)
-                     and (rule.get("include_overtime", True) or not p["overtime"])]
+            observed = hours_by_person.get(pid) if hours_by_person is not None else None
+            focal = observed[0] if observed is not None else [
+                (s, p, a, b) for s, p, a, b in entries if s["id"] in focus
+                and policy_applies(data, policy, pid, s, a, b)
+                and (rule.get("include_overtime", True) or not p["overtime"])]
             if not focal:
+                if hours_by_person is not None and observed is None:
+                    hours_by_person[pid] = (focal, (), ())
                 return
             if kind == 'forbidden_transition':
                 # Compare start dates, not elapsed rest or adjacent list entries.
@@ -2138,11 +2254,17 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                             add('EXTERNAL_CLASSIFICATION_UNKNOWN', 'External duty type is required to check the next-day combination',
                                 s['id'], pid, a, b, severity, policy)
                 return
-            scope = policy["definition"]["scope"]
             # Scope selects the duty that needs rest, not the work that can consume it.
             # The preceding/following duty can be a different type, day or programme,
             # or end immediately before this policy becomes effective.
-            selected, unknown_external = workload_selected(data, policy, pid, entries)
+            if observed is None:
+                selected, unknown_external = workload_selected(data, policy, pid, entries)
+                if hours_by_person is not None:
+                    hour_windows = [(a, b, workload_actual(rule, selected, a, b, zone)[0][1])
+                                    for a, b in _focal_workload_windows(data, rule, selected, focal, zone)]
+                    hours_by_person[pid] = focal, unknown_external, hour_windows
+            else:
+                _, unknown_external, hour_windows = observed
             for r in unknown_external:
                 # External commitments represent known work, not leave/attendance.
                 # Their precise service/location/OT classification is not supplied.
@@ -2171,40 +2293,37 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                     if gap['actual_hours'] < gap['required_hours']:
                         violation("MIN_REST" if kind == "min_rest" else "TRAVEL_BUFFER", policy["name"], gap['start'], gap['end'],
                                   t if t["id"] in focus else s, detail)
-            elif kind in {"max_hours", "max_duties"}:
-                per_supervisor = kind == 'max_duties' and rule.get('group_by') == 'supervisor'
-                windows = set()
-                for _, _, a, b in selected:
-                    windows.update(workload_windows(a, b, rule, zone, data['organisation']['week_start']))
-                for a, b in sorted(windows):
-                    if not any(overlaps(a, b, c, d) for _, _, c, d in focal):
-                        continue
-                    if kind == "max_hours":
-                        actual = workload_actual(rule, selected, a, b, zone)[0][1]
-                        limit = rule["hours"]
-                    else:
-                        if rule.get('group_by') == 'weekday':
-                            for weekday, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
-                                        and c.astimezone(ZoneInfo(zone)).weekday() == weekday for s, _, c, _ in selected):
-                                    violation('MAX_DUTIES', policy['name'], a, b,
-                                        detail={'actual': actual, 'maximum': rule['maximum'],
-                                                'weekday': weekday, 'group_by': 'weekday'})
-                            continue
-                        if per_supervisor:
-                            if any(a <= c < b and not p.get('supervisor_person_id') for _, p, c, d in selected):
-                                violation('SUPERVISOR_REQUIRED', 'Select a supervisor for matching duties to check this limit', a, b)
-                            for supervisor, actual in workload_actual(rule, selected, a, b, zone):
-                                if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
-                                        and p.get('supervisor_person_id') == supervisor for s, p, c, _ in selected):
-                                    violation('MAX_DUTIES', policy['name'], a, b,
-                                        detail={'actual': actual, 'maximum': rule['maximum'],
-                                                'supervisor_person_id': supervisor, 'group_by': 'supervisor'})
-                            continue
-                        actual = workload_actual(rule, selected, a, b, zone)[0][1]
-                        limit = rule["maximum"]
+            elif kind == "max_hours":
+                limit = rule["hours"]
+                for a, b, actual in hour_windows:
                     if actual > limit + 1e-9:
-                        violation("MAX_HOURS" if kind == "max_hours" else "MAX_DUTIES", policy["name"], a, b,
+                        violation("MAX_HOURS", policy["name"], a, b,
+                                  detail={"actual": round(actual, 4), "maximum": limit})
+            elif kind == "max_duties":
+                per_supervisor = rule.get('group_by') == 'supervisor'
+                for a, b in _focal_workload_windows(data, rule, selected, focal, zone):
+                    if rule.get('group_by') == 'weekday':
+                        for weekday, actual in workload_actual(rule, selected, a, b, zone):
+                            if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                    and c.astimezone(ZoneInfo(zone)).weekday() == weekday for s, _, c, _ in selected):
+                                violation('MAX_DUTIES', policy['name'], a, b,
+                                    detail={'actual': actual, 'maximum': rule['maximum'],
+                                            'weekday': weekday, 'group_by': 'weekday'})
+                        continue
+                    if per_supervisor:
+                        if any(a <= c < b and not p.get('supervisor_person_id') for _, p, c, _ in selected):
+                            violation('SUPERVISOR_REQUIRED', 'Select a supervisor for matching duties to check this limit', a, b)
+                        for supervisor, actual in workload_actual(rule, selected, a, b, zone):
+                            if actual > rule['maximum'] and any(s['id'] in focus and a <= c < b
+                                    and p.get('supervisor_person_id') == supervisor for s, p, c, _ in selected):
+                                violation('MAX_DUTIES', policy['name'], a, b,
+                                    detail={'actual': actual, 'maximum': rule['maximum'],
+                                            'supervisor_person_id': supervisor, 'group_by': 'supervisor'})
+                        continue
+                    actual = workload_actual(rule, selected, a, b, zone)[0][1]
+                    limit = rule["maximum"]
+                    if actual > limit + 1e-9:
+                        violation("MAX_DUTIES", policy["name"], a, b,
                                   detail={"actual": round(actual, 4), "maximum": limit})
             elif kind == 'max_consecutive_weekends':
                 for a, b, count in workload_weekend_violations(data, policy, pid, selected, focus):
@@ -2265,7 +2384,8 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         subjects = partial["people"] if data.get("quota_subjects") is None else partial["people"] & set(data["quota_subjects"])
         # Own-duty prechecks request no quotas; department reports cannot decide their overlap/rest/limit errors.
         quota_report = evaluate_quotas({**data, "quota_subjects": subjects}, add, ancestor_ids, exception_for,
-                                       explain=causes.quota if causes else None, contribution_cache=contribution_cache) if subjects else None
+                                       explain=causes.quota if causes else None, contribution_cache=contribution_cache,
+                                       **({'person_shifts': person_shifts} if person_shifts is not None else {})) if subjects else None
         # Which check each finding came from: the sessions' own checks, or the people's (overlaps, limits, quotas).
         return {"session_findings": grouped_rule_findings([f for f in findings[:session_found] if f["code"] != "TIME_OVERLAP"], data['policies'], tiers=data.get('_policy_group_tiers')),
                 "person_findings": grouped_rule_findings([f for f in findings[:session_found] if f["code"] == "TIME_OVERLAP"] + findings[session_found:], data['policies'], tiers=data.get('_policy_group_tiers')),

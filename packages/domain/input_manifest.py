@@ -163,7 +163,7 @@ def manifest(data, *, content_revision=None):
             continue
         value = project(row, ('id', 'revision', 'department_id', 'starts_on', 'ends_on', 'active', 'definition',
             'template_line', 'count_bucket', '_count_scope', '_quota_full_window', '_protected_interval',
-            '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
+            '_live_zero', '_legacy_own_lines', '_overtime_fact', '_overtime_request', '_overtime_source', '_overtime_dates',
             '_balance_sources', '_balance_people', '_balance_broad'))
         if row['id'] in bound_exceptions:
             value['exception_binding_revision'] = row.get('revision')
@@ -200,11 +200,24 @@ def manifest(data, *, content_revision=None):
                   'baseline': [(data.get('baseline') or {}).get('id'),
                                (data.get('baseline') or {}).get('snapshot_hash')
                                or (data.get('baseline') or {}).get('hash')]}
+    if basis := data.get('_draft_policy_basis'):
+        dirty_hint['draft_policy_basis'] = basis
     if data.get('_live_safety_departments') is not None:
         dirty_hint['department_revisions'] = sorted(
             [row.get('id'), row.get('revision'), row.get('catalogue_revision')]
             for row in data['_live_safety_departments'])
-    return {'format': FORMAT, 'components': hashes, 'token': digest({'format': FORMAT, **hashes}),
+    base = {'format': FORMAT, 'components': hashes, 'token': digest({'format': FORMAT, **hashes}),
             'dirty_hint': dirty_hint,
             'sources': sources, 'selection': {'workspace_id': period['id'], 'start': lo.isoformat(), 'end': hi.isoformat(),
                                             'department_ids': sorted(departments), 'person_ids': sorted(people)}}
+    return bind_generation_admission(base, data)
+
+
+def bind_generation_admission(base, data):
+    """Bind the group run while preserving the draft manifest used by checks."""
+    if 'planning_population' not in data or not base:
+        return base
+    admission = project(data, ('planning_group_versions', 'planning_context', 'planning_population',
+                               'generation_scope', 'lookahead'))
+    components = {**base['components'], 'generation_admission': digest(admission)}
+    return {**base, 'components': components, 'token': digest({'format': base['format'], **components})}

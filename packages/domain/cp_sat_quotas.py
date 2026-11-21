@@ -17,7 +17,7 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
     # Targets, rotation proration, overrides, subjects and context checks stay in
     # the reporting evaluator, including the canonical planning-population audience.
     # Empty work reveals targets without trial schedules.
-    empty = {**data, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
+    empty = {**data, '_quota_evaluation_ids': True, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
     findings = []
     def record(code, message, **detail):
         findings.append({'code': code, 'message': message, **detail})
@@ -141,7 +141,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
         tolerance = Fraction(1, 1_000_000_000)
         lower, upper = math.ceil((target - tolerance) * scale), math.floor((target + tolerance) * scale)
         if target_group and row['comparison'] in {'minimum', 'target'}:
-            target_group([(int(weight * scale), x, sources) for weight, x, sources in priority_terms], lower)
+            target_group([(int(weight * scale), x, sources) for weight, x, sources in priority_terms], lower,
+                         stage='mandatory_quota' if row['severity'] == 'mandatory' and row['comparison'] == 'minimum' else 'desired')
         diagnostic_minimum = row['severity'] == 'mandatory' and row['comparison'] == 'minimum' and diagnostic_domains is not None
         hard = row['severity'] == 'mandatory' and row['comparison'] != 'target' and not (
             (diagnostic_proposal or diagnostic_minimum) and row['comparison'] == 'minimum')

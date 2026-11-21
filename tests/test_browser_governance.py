@@ -12,7 +12,7 @@ import pytest
 from playwright.sync_api import expect
 from .governance_support import identity, swap_automation
 from .test_browser import department_tab, browser, live_server, sign_in, navigate, save_dialog, decide, TEST_PASSWORD
-from .test_browser import whole_list
+from .test_browser import whole_list, route_fetch, wait_held, reconnect
 
 pytestmark = pytest.mark.browser
 
@@ -586,6 +586,117 @@ def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme
         assert h.detail(own)['workspace']['status'] == 'approved'
         expect(page.locator('.review-strip').get_by_text('Self-approved', exact=True)).to_be_visible()
     finally:
+        context.close()
+
+
+@pytest.mark.parametrize('broken', [False, True], ids=['opens', 'fails-visibly'])
+def test_approve_rota_is_never_silent_for_a_sole_approver(browser, live_server, h, broken):
+    """A sole approver under a self-approval permission pressed Approve rota on their own submitted rota and nothing
+    happened: a failure while the dialog was built was an unhandled rejection. Every press now ends in the dialog or a
+    visible message, never a page error and never an orphaned closed dialog."""
+    identity(h, 'sole', ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': h.seed['identities']['sole'], 'actions': ['rota.approve'],
+              'starts_on': '2026-10-01', 'reason': 'Only one approver this quarter'})
+    own = h.command('sole', 'workspace.create', {'name': 'Sole built rota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'})['workspace']
+    own = h.shift(own)['workspace']
+    own = h.command('sole', 'workspace.submit', {'reason': 'Ready'}, own['id'], own['revision'])['workspace']
+    context, page = sign_in(browser, live_server, 'sole')
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        navigate(page, 'planner/' + own['id'])
+        approve = page.get_by_role('button', name='Approve rota', exact=True)
+        expect(approve).to_be_enabled()
+        expect(approve).not_to_have_attribute('aria-disabled', 'true')
+        if broken:  # the press's Fix list read answers without its summary: the dialog's build throws
+            def no_summary(route):
+                body = route_fetch(route).json()
+                body.pop('summary', None)
+                route.fulfill(json=body)
+            page.route(f"**/api/workspaces/{own['id']}/fix-list?*", no_summary, times=1)
+        approve.click()
+        if broken:
+            expect(page.locator('#toast-tray .toast.error')).to_be_visible()
+            expect(page.locator('dialog.dialog')).to_have_count(0)  # no closed, orphaned dialog left behind
+        else:
+            expect(page.locator('dialog[open]').or_(page.locator('#toast-tray .toast')).first).to_be_visible()
+            expect(page.get_by_role('dialog', name='Approve rota', exact=True)).to_be_visible()
+        assert errors == []
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
+        context.close()
+
+
+def held_review(page):
+    """The review's reads held (its overlaps read is the review's alone), each overlaps request counted, page errors kept."""
+    held, overlaps, errors = [], [], []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('request', lambda r: overlaps.append(r.url) if urlsplit(r.url).path == '/api/schedule/overlaps' else None)
+    page.route('**/api/schedule/overlaps?*', lambda route: held.append(route))
+    return held, overlaps, errors
+
+
+def release(page, held):
+    for route in held:  # released once each, before unroute (unroute continues whatever it still holds)
+        route.continue_()
+    page.unroute('**/api/schedule/overlaps?*')
+
+
+def test_approve_rota_opened_from_home_is_held_and_a_press_joins_it(browser, live_server, h):
+    """#1041: while Home's "Rota to review" (?approve=) reads the review, Approve rota is held and says it is busy; a
+    press joins that opening (one read, one dialog), never a second, stacked Approve dialog."""
+    w = h.lifecycle(h.shift(h.workspace('Held review rota'))['workspace'], 'submit')['workspace']
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        held, overlaps, errors = held_review(page)
+        navigate(page, 'schedule?approve=' + w['id'])
+        wait_held(page, held)
+        approve = page.get_by_role('button', name='Approving rota…', exact=True)
+        expect(approve).to_have_attribute('aria-disabled', 'true')
+        expect(approve).to_have_attribute('aria-busy', 'true')
+        approve.focus()  # aria-disabled keeps it focusable; pressing it says why (Playwright will not click it)
+        page.keyboard.press('Enter')
+        expect(page.locator('#toast-tray .toast').filter(has_text='Approving rota…')).to_be_visible()
+        assert len(overlaps) == 1  # the press started no second review
+        release(page, held)
+        expect(page.get_by_role('dialog', name='Approve rota', exact=True)).to_be_visible()
+        expect(page.locator('dialog[open]')).to_have_count(1)
+        assert len(overlaps) == 1
+        page.keyboard.press('Escape')
+        expect(page.get_by_role('button', name='Approve rota', exact=True)).not_to_have_attribute('aria-disabled', 'true')
+        assert errors == []
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
+        context.close()
+
+
+def test_approve_rota_pressed_stays_held_when_the_page_redraws_during_its_review(browser, live_server, h):
+    """#1041: a redraw while a press reads the review (the pulse refreshing the rota) draws Approve rota held and busy,
+    never a fresh enabled button that looks dead; the press still ends in one dialog."""
+    w = h.lifecycle(h.shift(h.workspace('Redrawn review rota'))['workspace'], 'submit')['workspace']
+    other = h.workspace('Another rota')
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, 'planner/' + w['id'])
+        approve = page.get_by_role('button', name='Approve rota', exact=True)
+        expect(approve).to_be_enabled()
+        held, overlaps, errors = held_review(page)
+        approve.click()
+        wait_held(page, held)
+        page.locator('button.keep-label').filter(has_text=re.compile('^Approv')).evaluate("b => { b.dataset.before = '1'; }")
+        h.shift(other)  # the pulse moves
+        reconnect(page)  # and the page refreshes in the background
+        expect(page.locator('button[data-before]')).to_have_count(0)  # redrawn
+        redrawn = page.get_by_role('button', name='Approving rota…', exact=True)
+        expect(redrawn).to_have_attribute('aria-disabled', 'true')
+        expect(redrawn).to_have_attribute('aria-busy', 'true')
+        release(page, held)
+        expect(page.get_by_role('dialog', name='Approve rota', exact=True)).to_be_visible()
+        expect(page.locator('dialog[open]')).to_have_count(1)
+        assert len(overlaps) == 1
+        assert errors == []
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
         context.close()
 
 
