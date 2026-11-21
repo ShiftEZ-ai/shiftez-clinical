@@ -74,6 +74,12 @@ def open_held(browser, live_server, w, *, scheme='light', viewport=DESKTOP):
         context.close()
 
 
+def loading_toast(page):
+    return page.get_by_role('region', name='Messages', exact=True).get_by_role('status').filter(
+        has_text=re.compile(rf'^{re.escape(LOADING)}$'),
+    )
+
+
 def open_session(page, session_chip):
     session_chip.click()
     panel = page.locator('.dock-panel').filter(has=page.get_by_role('heading', name='Checks', exact=True))
@@ -159,8 +165,9 @@ def test_search_and_filter_wait_and_a_chosen_view_draws_after_the_read(browser, 
 
 def test_next_week_keeps_the_drawn_sessions_until_the_whole_rota_arrives(browser, live_server, h):
     w, (first, second) = draft(h)
-    with open_held(browser, live_server, w) as (_, view, release):
-        view.get_by_role('button', name='Next week', exact=True).click()
+    with open_held(browser, live_server, w) as (page, view, release):
+        toolbar = page.get_by_role('group', name='Schedule', exact=True)
+        toolbar.get_by_role('button', name='Next week', exact=True).click()
         expect(view).to_have_attribute('aria-busy', 'true')
         expect(chip(view, first)).to_be_visible()
         expect(view.get_by_text('No sessions this week', exact=True)).to_have_count(0)
@@ -182,7 +189,8 @@ def test_held_writes_explain_the_wait_and_do_not_queue(browser, live_server, h, 
                 posts.append(request)
 
         page.on('request', record)
-        live = page.locator('#loading-live')
+        toast = loading_toast(page)
+        expect(toast).to_have_count(0)
         dialog = page.get_by_role('dialog')
         submit = page.get_by_role('button', name='Submit for review…', exact=True)
         for control in (
@@ -196,12 +204,13 @@ def test_held_writes_explain_the_wait_and_do_not_queue(browser, live_server, h, 
             control.focus()
             expect(control).to_be_focused()
             control.click(force=True)
-            expect(live).to_have_text(LOADING)
+            expect(toast).to_be_visible()
             expect(dialog).to_have_count(0)
             expect(page.locator('#auto-panel')).to_be_hidden()
             assert not posts, 'A held control sent a command'
             # Each press must explain itself, even when the previous press said the same thing.
-            live.evaluate('node => { node.textContent = ""; }')
+            toast.get_by_role('button', name='Dismiss message', exact=True).click()
+            expect(toast).to_have_count(0)
 
         release()
         expect(submit).to_be_enabled(timeout=PAGE_LOAD_MS)
@@ -256,9 +265,13 @@ def test_the_week_keeps_tab_and_arrow_focus(browser, live_server, h, viewport):
             page.keyboard.press('Tab')
             expect(held).to_be_focused()
             expect(held).to_have_attribute('aria-disabled', 'true')
+            toast = loading_toast(page)
+            expect(toast).to_have_count(0)
             page.keyboard.press('Enter')
-            expect(page.locator('#loading-live')).to_have_text(LOADING)
+            expect(toast).to_be_visible()
             expect(held).to_be_focused()
+            toast.get_by_role('button', name='Dismiss message', exact=True).click()
+            expect(toast).to_have_count(0)
         expect(page.locator('#schedule-view[inert]')).to_have_count(0)
 
         grid = view.get_by_role('grid')
