@@ -524,6 +524,10 @@ export const statusTone=(state:string):Tone=>STATUS_TONES[state]||'neutral';
  *  exception and a swap in review all read "Waiting for approval". Other states keep their own word. */
 const STATUS_LABELS:Record<string,string>={submitted:'Waiting for approval',proposed:'Waiting for approval',reviewing:'Waiting for approval',outdated:'Needs resubmitting'};
 export const statusLabel=(state:string)=>STATUS_LABELS[state]||state.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
+/** one verdict per rota. A detail read (compact, window or whole) carries the server's review_progress.stale_inputs
+ *  and decides; only a rota list row with no detail read falls back to the list's own `outdated`. */
+export const rotaOutdated=(w:Record<string,unknown>,detail?:{review_progress?:{stale_inputs?:boolean}|null}|null)=>
+  ['submitted','approved'].includes(String(w.status))&&(detail?.review_progress?!!detail.review_progress.stale_inputs:!!w.outdated);
 /** Labelled facts (a definition list): "Rules · 27 → 9". */
 export const ruleFacts=(facts:[string,Child][])=>el('dl',{class:'rule-facts'},...facts.map(([label,value])=>el('div',{},el('dt',{},label),el('dd',{},value))));
 /** A badge for a record's state, coloured from the one status palette; `label` overrides the wording. */

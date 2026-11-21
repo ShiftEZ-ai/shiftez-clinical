@@ -2,6 +2,7 @@
 from . import input_changes
 import json
 import logging
+import pickle
 import re
 import time
 from sqlalchemy import select, text
@@ -994,7 +995,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 # Rollback released row locks too: a check of this same rota cannot convoy other writers.
                 for key, compute in [*pending.pending, (pending.key, pending.compute)]:
                     database._remaining(preparation_deadline)
-                    planning_plan['checks'].append((key, compute()))
+                    computed = compute()
+                    if command.kind == 'shift.update':
+                        computed = pickle.dumps(computed, protocol=pickle.HIGHEST_PROTOCOL)
+                    planning_plan['checks'].append((key, computed))
                     database._remaining(preparation_deadline)
                 if pending.final:
                     break

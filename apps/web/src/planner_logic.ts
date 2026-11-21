@@ -1,6 +1,6 @@
 /** Pure planner projection functions. Server records remain the only authority. */
 import {labelOf,toLocal,WEEKEND_DAYS} from './dom.js';
-import type {Row,Catalogues} from './types.js';
+import type {Row,Catalogues,PlannerSession} from './types.js';
 import {PLANNER_LAYER_DEFAULTS,type PlannerViewDefinition,type PlannerLayers} from './generated.js';
 
 /** The Schedule's Layers before anyone changes them (the contract's PLANNER_LAYER_DEFAULTS): a draft shown (which one
@@ -73,15 +73,15 @@ export function pageOf(workspace:Row,range:PlanRange,day:string,weekStart=6){
   return 0;
 }
 
-export function filterShifts(shifts:Row[],catalogues:Catalogues,filters:PlannerViewDefinition):Row[]{
+export function filterShifts(shifts:PlannerSession[],catalogues:Catalogues,filters:PlannerViewDefinition){
   const label=(kind:string,id:string)=>labelOf((catalogues[kind]||[]).find(row=>row.id===id));
   const search=(filters.search||'').toLocaleLowerCase();
   return shifts.filter(shift=>(!filters.location_id||shift.location_id===filters.location_id)
     &&(!filters.assignment_type_id||shift.assignment_type_id===filters.assignment_type_id)
-    &&(!filters.person_id||shift.participants.some((p:Row)=>p.person_id===filters.person_id))
+    &&(!filters.person_id||shift.participants.some(p=>p.person_id===filters.person_id))
     &&(!search||[shift.type_snapshot.name,label('locations',shift.location_id),
       ...shift.service_ids.map((id:string)=>label('services',id)),
-      ...shift.participants.map((p:Row)=>label('people',p.person_id))].join(' ').toLocaleLowerCase().includes(search)));
+      ...shift.participants.map(p=>label('people',p.person_id))].join(' ').toLocaleLowerCase().includes(search)));
 }
 
 /** A session nobody works: closed by a coordinator (cancelled), or closed because every usual assignee of its recurring
