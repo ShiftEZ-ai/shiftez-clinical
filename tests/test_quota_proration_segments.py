@@ -54,6 +54,19 @@ def test_monthly_minimum_prorates_one_leave_day_without_dropping_month(cause_dat
     assert amount == math.ceil(16 * (21 - 1) / 21) == 16
 
 
+def test_monthly_minimum_prorates_approved_leave_days(cause_data):
+    data, pid = cause_data
+    _month(data)
+    data['availability'] = [{'id': 'approved-monthly-leave', 'person_id': pid, 'kind': 'approved_leave',
+                             'start': '2026-10-01T00:00:00+03:00', 'end': '2026-10-20T00:00:00+03:00'}]
+
+    amount, proration = window_proration(data, _minimum_policy(pid), pid, 16, {}, None)
+
+    assert proration['full_working_days'] == 21
+    assert proration['working_days'] == 8
+    assert amount == math.ceil(16 * 8 / 21) == 7
+
+
 def test_membership_end_date_limits_departmental_presence(cause_data):
     data, pid = cause_data
     _month(data)

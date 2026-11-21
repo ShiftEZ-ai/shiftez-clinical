@@ -17,7 +17,7 @@ from apps.api.snapshots import cheap_fingerprints, inactive_series_shift_ids
 from packages.contracts.schemas import PERMISSIONS
 from packages.domain.time import aware
 from packages.domain.finding_causes import DUTIES_DURING_APPROVED_LEAVE
-from . import availability, reviews, schedule, scheduling_facts, published_operational
+from . import availability, independence, reviews, schedule, scheduling_facts, published_operational
 from .independence import person_key, my_actions, active_permissions
 from .common import neutral_rota_name, rota_names
 from apps.api.settings import Settings
@@ -277,14 +277,15 @@ def _home_uncached(db, actor, *, max_days):
         add(65, "rules", proposed, sample=[{"name": proposal.name, "by": proposal.display_name}] if proposal else [],
             link_target="#rules?source=" + proposal.id if proposal else None)
         exceptions = (Pe.department_id == dept, Pe.status == "proposed",
-                      *(() if 'exception.approve' in self_actions else (Pe.created_by.not_in(my_ids),)))
+                      *(() if 'exception.approve' in self_actions else (independence.subject_independent(
+                          db, actor, (Pe.person_id,), Pe.created_by, sql=True),)))
         exception = db.execute(select(Pe.id, Pe.policy_id).where(*exceptions)
                                .order_by(Pe.created_at, Pe.seq).limit(1)).first()
         add(66, "exceptions", count(Pe, *exceptions[1:]),
             link_target=f"#rules?source={exception.policy_id}&exception={exception.id}" if exception else None)
     if can("coordinator"):
         AP = m.AvailabilityPattern
-        add(45, "patterns", count(AP, AP.status == "proposed", *availability.not_own(AP, actor)))
+        add(45, "patterns", count(AP, AP.status == "proposed", availability.decision_scope(db, actor, AP)))
         S = m.SwapRequest
         agreed = (S.status.in_(("accepted", "reviewing")), S.expires_at > now)
         add(50, "swaps_to_apply", count(S, *agreed), sample=swap_sample(db, dept, agreed))
