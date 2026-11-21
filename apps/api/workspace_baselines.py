@@ -5,7 +5,7 @@ import json
 import uuid
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import object_session
+from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
@@ -742,9 +742,12 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         live_policies = [projected if projected is policy else
                          _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
                          for policy, projected in filtered if projected is not None]
-        frozen_policies = [policy for policy in frozen_policies
-                           if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
-                               or _zero_limit_policy(policy) is not None)]
+        retained = [policy for policy in frozen_policies
+                    if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
+                        or _zero_limit_policy(policy) is not None)]
+        result["_mandatory_overlay_changed"] = len(retained) != len(frozen_policies) or any(
+            projected is not None and policy["id"] not in current_safety_ids for policy, projected in filtered)
+        frozen_policies = retained
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}
@@ -833,6 +836,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)
+    if include_mandatory and any(policy.get("_live_mandatory_recheck") for policy in merged):
+        result["_mandatory_overlay_changed"] = True
     from packages.domain.rule_lines import seeded_policies
     # Make migration defaults available to the zero projection without changing safety merging.
     saved_seeds = result.get("policy_seed_lines") or []
@@ -921,10 +926,12 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     return saved
 
 
-def latest(db, workspace_id):
-    return db.scalar(select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
-                    .order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
-                              m.WorkspaceBaseline.id.desc()).limit(1))
+def latest(db, workspace_id, *, include_payload=True):
+    query = select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
+    if not include_payload:
+        query = query.options(defer(m.WorkspaceBaseline.canonical_payload, raiseload=True))
+    return db.scalar(query.order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
+                                    m.WorkspaceBaseline.id.desc()).limit(1))
 
 
 def verify(row):
@@ -1071,7 +1078,7 @@ def baseline_reference(row):
 
 
 def attach(db, workspace, value, *, baseline=None):
-    row = latest(db, workspace.id) if baseline is None else baseline
+    row = latest(db, workspace.id, include_payload=False) if baseline is None else baseline
     if row is None:
         return value
     info = projection(row)

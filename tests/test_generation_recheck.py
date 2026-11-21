@@ -123,11 +123,12 @@ def test_every_trial_decides_as_a_whole_check_would(h, monkeypatch, seed):
         compared.append(1)
         return result
     monkeypatch.setattr(generation.Recheck, 'trial', trial)
-    first = generation.generate(data, 300)
+    # This compares greedy checks; the composed required-cover repair has separate integration coverage.
+    first = generation._generate_with_redistribution(data, 300)
     assert first['status'] in {'candidate_feasible', 'candidate_with_gaps'}, first['status']
     assert compared, 'no trial ran'
     # Same input, same proposal.
     monkeypatch.setattr(generation.Recheck, 'trial', original)
-    again = generation.generate(data, 300)
+    again = generation._generate_with_redistribution(data, 300)
     assert [(a['shift_id'], a['participant']['person_id']) for a in again['additions']] == \
         [(a['shift_id'], a['participant']['person_id']) for a in first['additions']]

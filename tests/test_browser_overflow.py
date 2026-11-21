@@ -33,7 +33,7 @@ ALLOW = {
                     'on a phone its 44 px target is a centred invisible ::after (app.css › Touch targets), not drawn'),
     '.app-footer :is(button,a[href])': 'on a phone its 44 px target is a centred invisible ::after (the footer stays one line)',
 }
-LONG = 'Dr Luca Irwin'
+LONG = "Dr Luca Irwin synthetic overflow fixture synthetic overflow fixture synthetic overflow fixture"
 ARABIC = 'د. عبدالودود بن النخلي بن عبدالقهار الرملي'
 WORD = 'Supercalifragilisticexpialidociousclinicname'  # one unbreakable word
 

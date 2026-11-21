@@ -49,14 +49,14 @@ from .version import __version__, build
 from .rate_limit import enforce, session_identity
 from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
-from .serialization import record, job_record, json_value
+from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
 from .settings import Settings
 from .read_io import IndependentFileResponse, IndependentStaticFiles, background_io
 from packages.web_assets import WEB, asset_url, available_bundle_version
 from .schema import supported_revision
 from .snapshots import (domain_snapshot,
-                        publication_snapshot, workspace_shifts, fingerprint, snapshot_hash)
+                        publication_snapshot, fingerprint, snapshot_hash)
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
@@ -326,6 +326,12 @@ def create_app(settings: Settings | None = None, engine=None):
         static = request.url.path.startswith("/assets/") and response.status_code < 400
         route = request.scope.get("route")
         cache_control = response.headers.get("Cache-Control", "no-cache" if static else "no-store")
+        # Server time (application and database) only on replies to a signed-in session, so a slow call can be split from
+        # its network path. Never on identity routes or any unauthenticated reply: separate timings there would sharpen
+        # account probing (OWASP information exposure).
+        if (getattr(request.state, "session_authenticated", False) and request.url.path.startswith("/api/")
+                and not request.url.path.startswith(("/api/account-links/", "/api/account/password"))):
+            response.headers["Server-Timing"] = f"app;dur={(time.monotonic() - started) * 1000:.1f}, db;dur={db_metrics['ms']:.1f}"
         response.headers.update({"X-Correlation-ID": correlation, "Cache-Control": cache_control, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
                                  "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
@@ -2349,7 +2355,7 @@ def create_app(settings: Settings | None = None, engine=None):
                       for p in shift["participants"]]
             return {"fresh": fresh, "checked": bool(validation), "people": people, "active_rules": len({p["id"] for p in policies})}
 
-    @app.get("/api/workspaces/{workspace_id}/rule-map")
+    @app.get("/api/workspaces/{workspace_id}/rule-map", response_model=s.RuleMapResponse)
     def workspace_rule_map(workspace_id: str, request: Request):
         """Which rules touch which sessions, people and days of this rota, and the marks that explain them
         (own numbers, overrides, exceptions, this rota's changes). Unchanged rules, people and sessions: 304."""
@@ -2382,7 +2388,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.read_projections import cached as cached_projection
             prepared = {}
             def build_map(_):
-                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False)
+                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False, rule_map_bindings=True)
                 prepared['data'] = data
                 return rule_map(data, originals)
             result = cached_projection(db, [workspace.id], 'rule_map', {workspace.id: tag},
@@ -2546,7 +2552,6 @@ def create_app(settings: Settings | None = None, engine=None):
             cached = conditional_response(request, fast_tag)
             if isinstance(cached, Response):
                 return cached
-            response.headers.update(cached)
             # The validator above reads only scalar metadata. Hydrate the large JSON
             # columns only for a 200 response that will actually project them.
             db.refresh(workspace, attribute_names=("validation", "review_snapshot"))
@@ -2611,13 +2616,12 @@ def create_app(settings: Settings | None = None, engine=None):
             from .snapshots import project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
-            own_shifts = None
             if canonical is not None and workspace.status == "draft":
                 focus = set(canonical.get("focus_ids") or ())
                 own_shifts = [row for row in canonical.get("shifts", ()) if row.get("id") in focus]
-            data["shifts"] = project_series_shifts(
-                                                   db, workspace,
-                                                   workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts,
+            else:
+                own_shifts = workspace_detail.full_shifts(db, workspace.id)
+            data["shifts"] = project_series_shifts(db, workspace, own_shifts,
                                                    external_out=external_context if data["wishes"] else None)
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
@@ -2636,7 +2640,9 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
-            return data
+        result = JSONResponse(projection_json_value(data))
+        result.headers.update(cached)
+        return result
 
     @app.get("/api/publications")
     def publications(request: Request):
@@ -4000,7 +4006,11 @@ def create_app(settings: Settings | None = None, engine=None):
         require(not fold or ordered, "INVALID_SORT", "Folded history uses newest changes first")
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            require_permission(actor, "audit.read")
+            # Without audit access a person reads only their own self-approved decisions (Home's row), not who else acted.
+            own = not actor.permits(*s.PERMISSIONS["audit.read"])
+            if own:
+                require(f["self_approved"], "FORBIDDEN", "Your current role does not permit this action", 403)
+                f, people = {**f, "actor_id": actor.identity_id}, False
             query, zone = audit_query(db, actor, f)
             if run_id:
                 query = audit_log.expand(query, run_id)
