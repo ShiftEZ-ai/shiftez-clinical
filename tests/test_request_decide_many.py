@@ -248,15 +248,29 @@ def test_permissions_are_checked_for_each_item_and_rollback_the_prefix(h, role, 
     assert state(h) == before
 
 
-@pytest.mark.parametrize("entered_by", ["staff", "own_reviewer"])
-def test_an_own_request_refuses_the_whole_batch(h, entered_by):
-    identity(h, "own_reviewer", ["coordinator", "approver"], h.seed["people"][0])
+@pytest.mark.parametrize("own_by", ["person", "submitter"])
+def test_an_own_request_refuses_the_whole_batch(h, own_by):
+    reviewer = identity(h, "own_reviewer", ["coordinator", "approver"],
+                        h.seed["people"][0] if own_by == "person" else None)
     other = request_row(h, "coordinator", h.seed["people"][1])
-    own = request_row(h, entered_by, h.seed["people"][0])
+    if own_by == "submitter":
+        on_behalf = request_row(h, "own_reviewer", h.seed["people"][1])
+        reply = decide(h, [other, on_behalf], role="own_reviewer")
+        assert reply["count"] == 2
+        assert [(row["id"], row["stage"]) for row in reply["records"]] == [
+            (other["id"], "approved"), (on_behalf["id"], "approved")]
+        event = next(e for e in h.get("auditor", "/api/audit")["events"]
+                     if e["action"] == "request.decide" and e["target_id"] == on_behalf["id"])
+        assert event["detail"]["entered_on_behalf_by"] == [reviewer]
+        assert "self_approved" not in event["detail"]
+        return
+
     h.client("own_reviewer")
-    before = state(h)
-    assert decide(h, [other, own], role="own_reviewer", status=403)["error"]["code"] == "SELF_APPROVAL"
-    assert state(h) == before
+    for entered_by in ("staff", "own_reviewer"):
+        own = request_row(h, entered_by, h.seed["people"][0])
+        before = state(h)
+        assert decide(h, [other, own], role="own_reviewer", status=403)["error"]["code"] == "SELF_APPROVAL"
+        assert state(h) == before
 
 
 def test_existing_self_approval_permission_still_requires_reason_and_is_audited(h):

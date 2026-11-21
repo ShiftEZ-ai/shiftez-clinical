@@ -112,7 +112,7 @@ def test_self_approval_permission_does_not_grant_approver_authority(h):
     assert refused["error"]["code"] == "FORBIDDEN"
 
 
-def test_fact_subject_needs_self_approval_for_someone_elses_proposal(h):
+def test_fact_subject_can_independently_approve_someone_elses_proposal_without_permission(h):
     reviewer = identity(h, "subject_approver", ["coordinator", "approver"], person=h.seed["people"][0])
     fact = h.command("coordinator", "person.workload.propose", workload(h))["fact"]
     assert_eligibility(h, fact, "subject_approver", False)
