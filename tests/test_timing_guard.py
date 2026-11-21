@@ -5,7 +5,7 @@ fixed waits are listed below with their count; a new one fails this test. When a
 under test (e.g. "nothing redraws during the next poll"), add it here with the count, in the same change. On every
 event CI retries failed non-cpu_budget nodes once in the same partition, retains both attempts and reports FLAKY.
 Skipped/missing retry results fail. Reviewed tests/quarantine.json entries still execute as expected failures;
-expired entries fail collection. See CONTRIBUTING.md, Flaky tests and timing budgets.
+expired entries stay active and are reported for triage.
 """
 import re
 from pathlib import Path

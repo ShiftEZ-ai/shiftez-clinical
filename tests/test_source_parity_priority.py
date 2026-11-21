@@ -80,6 +80,7 @@ def test_fill_stage_objective_never_improves_by_adding_surplus(monkeypatch, extr
     model.add(first == extra)
     model.minimize(sum(objective))
     solver = cp_model.CpSolver()
+    solver.parameters.num_workers = 1
     assert solver.solve(model) == cp_model.OPTIMAL
     assert solver.objective_value == 1000  # The kept person already meets the single required place.
 

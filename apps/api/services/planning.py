@@ -2,7 +2,7 @@ import copy
 from uuid import NAMESPACE_URL, uuid5
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import and_, delete, exists, func, insert, select, tuple_, update
+from sqlalchemy import and_, case, delete, exists, func, insert, select, tuple_, update
 from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.domain.recurrence import expand, inactive, series_state, stored_series_definition, with_series_state
@@ -602,12 +602,12 @@ def assignment_validation_scope(data, before, previous):
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
             external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
-            staffed_creation=False):
+            staffed_creation=False, generation_apply=False):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
     from .planning_groups import guard_changes
-    guard_changes(db, actor, workspace, before, review_rejection=review_rejection)
+    guard_changes(db, actor, workspace, before, review_rejection=review_rejection, generation_apply=generation_apply)
     from .issues import issue_key, issue_changes
     previous_validation = workspace.validation or {}
     previous = workspace.validation or {}
@@ -2116,11 +2116,15 @@ def move(db, actor, command):
     return result
 
 
-def latest_change(workspace, *columns):
+def latest_change(workspace, *columns, skip_single_sort=False):
     """The edit Undo puts back (or, after an Undo, the step Redo re-applies): the newest at the rota's content revision."""
+    revision = m.ChangeSet.before_snapshot['workspace']['revision'].as_integer()
+    if skip_single_sort:
+        # Extract the revision from the large snapshot only when it can affect the choice.
+        revision = case((func.count().over() > 1, revision))
     return (select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
                                    m.ChangeSet.resulting_content_revision == workspace.content_revision)
-            .order_by(m.ChangeSet.before_snapshot['workspace']['revision'].as_integer().desc()).limit(1))
+            .order_by(revision.desc()).limit(1))
 
 
 def put_back(db, actor, workspace, snapshot, current):
@@ -2185,7 +2189,7 @@ def redo_available(db, actor, workspace):
     if workspace.status != 'draft' or workspace.archived_at is not None:
         return False
     row = db.execute(latest_change(workspace, m.ChangeSet.actor_id,
-                                   m.ChangeSet.before_snapshot['_undo_of'].as_string())).first()
+                                   m.ChangeSet.before_snapshot['_undo_of'].as_string(), skip_single_sort=True)).first()
     return row is not None and row[1] is not None and row[0] == actor.identity_id
 
 

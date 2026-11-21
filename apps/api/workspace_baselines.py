@@ -5,7 +5,7 @@ import json
 import uuid
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import object_session
+from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
@@ -877,10 +877,12 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     return saved
 
 
-def latest(db, workspace_id):
-    return db.scalar(select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
-                    .order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
-                              m.WorkspaceBaseline.id.desc()).limit(1))
+def latest(db, workspace_id, *, include_payload=True):
+    query = select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
+    if not include_payload:
+        query = query.options(defer(m.WorkspaceBaseline.canonical_payload, raiseload=True))
+    return db.scalar(query.order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
+                                    m.WorkspaceBaseline.id.desc()).limit(1))
 
 
 def verify(row):
@@ -1027,7 +1029,7 @@ def baseline_reference(row):
 
 
 def attach(db, workspace, value, *, baseline=None):
-    row = latest(db, workspace.id) if baseline is None else baseline
+    row = latest(db, workspace.id, include_payload=False) if baseline is None else baseline
     if row is None:
         return value
     info = projection(row)

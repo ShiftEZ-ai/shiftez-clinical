@@ -115,7 +115,7 @@ def department_settings(db, actor, command, settings):
     require(value.generation_defaults is None or value.generation_defaults.weight_preset == 'department_defaults',
             'INVALID_OPTIONS', 'Named weight presets apply only to individual runs; save department defaults with '
             'weight_preset set to department_defaults')
-    department = db.get(m.Department, actor.department_id)
+    department = db.scalar(select(m.Department).where(m.Department.id == actor.department_id).with_for_update())
     organisation = db.get(m.Organisation, actor.organisation_id)
     expected(department, value.department_revision)
     expected(organisation, command.expected_revision)
@@ -245,9 +245,9 @@ def department_settings(db, actor, command, settings):
     if changed_department or changed_calendar or changed_generation or changed_display or changed_announcements or changed_events or changed_swaps or changed_bulk or changed_policy_approvals or changed_animation or changed_controls or changed_score_check:
         department.score_check_enabled = score_check_enabled
         department.name = value.department_name
-        department.generation_defaults = generation_defaults
         if changed_score_settings:
             score_settings.sync_projection(db, actor, department, generation_defaults, value.reason)
+        department.generation_defaults = generation_defaults
         department.wish_settings = wish_settings
         department.weekend_days = weekend
         department.operating_calendar_id = calendar_id
