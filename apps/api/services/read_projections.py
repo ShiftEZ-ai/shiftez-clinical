@@ -24,7 +24,7 @@ def source_identity(db):
     return held['source']
 
 
-def input_stamp(db, workspace):
+def input_stamp(db, workspace, *, for_feasibility=False):
     from apps.api.snapshots import draft_policy_hint
 
     # Keep strong references within this transaction (SQLAlchemy's identity map is weak).
@@ -41,8 +41,11 @@ def input_stamp(db, workspace):
     # Release preparation bumps the evaluator versions when their output
     # changes, so revision-keyed read work survives an API deploy safely.
     policy_basis = draft_policy_hint(workspace)
+    # Feasibility excludes run objectives. Retain its existing revision stamp
+    # so only the snapshot needs to read the draft baseline.
     return digest([org.input_revision, org.availability_revision,
-        workspace.revision, workspace.content_revision, workspace.status, workspace_generation_defaults(db, workspace, department),
+        workspace.revision, workspace.content_revision, workspace.status,
+        department.generation_defaults if for_feasibility else workspace_generation_defaults(db, workspace, department),
         digest(toolchain(quota_policy_limit())), *policy_basis.values()])
 
 

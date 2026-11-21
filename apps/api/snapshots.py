@@ -560,7 +560,7 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace) for wid, workspace in rows.items()}
+    stamps = {wid: input_stamp(db, workspace, for_feasibility=True) for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
