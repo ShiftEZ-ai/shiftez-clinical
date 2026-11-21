@@ -616,6 +616,7 @@ def undo(db, actor, command):
         for item in entry.get("people_created", []):
             row = db.get(m.Person, item["id"])
             if row is not None and row.revision == item["revision"] and row.active:
+                row.inactive_from = catalogue.person_inactive_from_transition(db, actor, row, False, None)
                 row.active = False
                 row.revision += 1
                 history(db, actor, "people", row, value.reason)
