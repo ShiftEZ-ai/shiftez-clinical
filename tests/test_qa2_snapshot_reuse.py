@@ -1,6 +1,6 @@
 """Operation-local external rows preserve fresh snapshots, checks and transactional rollback."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -108,11 +108,24 @@ def test_changed_organisation_revision_reloads_external_rows(database, revision,
 @pytest.mark.parametrize('database', DATABASES)
 def test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_rollback(database, request, monkeypatch):
     h = request.getfixturevalue(database)
+    tag = h.configure('tags', {'name': 'Event audience', 'labels': ['people']})['record']
+    h.command('coordinator', 'tag.members', {'add': [{'kind': 'people', 'id': h.seed['people'][0]}],
+        'reason': 'Synthetic tag membership'}, tag['id'], tag['revision'])
     occurrence = event_row(h, settings={'blocks_duties': True}, audience={'person_ids': [h.seed['people'][0]]},
                            start='2026-11-01T08:00:00+03:00', end='2026-11-01T09:00:00+03:00')
     w, prior, _ = context(h, False)
+    cap = h.policy({'kind': 'max_hours', 'hours': 80, 'window': 'week'})
+    absent = h.seed['people'][1]
+    h.command('coordinator', 'availability.record', {'person_id': absent, 'kind': 'recorded_leave',
+        'start': '2026-11-03T00:00:00+03:00', 'end': '2026-11-04T00:00:00+03:00',
+        'private_reason': 'Synthetic leave'})
+    eligibility_ids = sorted((m.uid(), m.uid()), reverse=True)
     with transaction(h.app.state.engine, write=True) as db:
         workspace = db.get(m.Workspace, w['id'])
+        created = datetime.fromisoformat('2026-10-01T00:00:00+00:00')
+        db.add_all(m.Eligibility(id=ident, department_id=workspace.department_id, person_id=absent,
+            service_id=service, starts_on=date(2020, 1, 1), ends_on=date(2021, 1, 1), created_at=created)
+            for ident, service in zip(eligibility_ids, h.seed['services']))
         add_own(db, h, workspace, 1)
         inputs = snapshots.snapshot_inputs(db, db.get(m.Organisation, h.seed['organisation_id']))
         source = snapshots.domain_snapshot(db, workspace, shared_inputs=inputs)
@@ -126,22 +139,27 @@ def test_reused_inputs_keep_event_protection_fresh_after_change_and_savepoint_ro
             return real(db, rows)
         monkeypatch.setattr(snapshots, 'shift_records', read_rows)
 
-        def check(blocked):
+        def check(blocked, *, reload_external=False):
             fresh = snapshots.domain_snapshot(db, workspace)
             reads.clear()
             reused = snapshots.domain_snapshot(db, workspace, external_snapshot=source, shared_inputs=inputs)
             assert reused == fresh
+            assert 'tag_members' not in reused
+            assert reused['tags'][tag['id']]['members'] == {'people': [h.seed['people'][0]]}
+            assert any(row['id'] == cap['id'] for row in reused['policies'])
+            assert any(row['person_id'] == absent for row in reused['availability'])
+            assert [row['id'] for row in reused['eligibilities'] if row['id'] in eligibility_ids] == eligibility_ids
             assert any(r.get('event_occurrence_id') == occurrence['id'] for r in reused['scheduling_facts']) == blocked
             assert any(f['code'] == 'RESTRICTION' and f.get('person_id') == h.seed['people'][0]
                        for f in evaluate(reused)['findings']) == blocked
-            assert not any(prior['id'] in ids for ids in reads)
+            assert any(prior['id'] in ids for ids in reads) == reload_external
             assert source == original and inputs == original_inputs
 
         check(True)
         savepoint = db.begin_nested()
         db.get(m.EventOccurrence, occurrence['id']).cancelled = True
         db.flush()
-        check(False)
+        check(False, reload_external=True)
         savepoint.rollback()
         check(True)
 
