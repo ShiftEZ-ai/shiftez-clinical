@@ -823,6 +823,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                      actor.department_id, workspace_check[3])})
 
     workspace_check = None
+    submission_check = None
     if command.kind in {'workspace.validate', 'workspace.submit', 'workspace.approve', 'workspace.publish'}:
         # Freeze a coherent read snapshot without taking the application writer lock.
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
@@ -843,12 +844,20 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
                 if command.kind != 'workspace.publish':
-                    captured = []
-                    checked = planning.revalidate(db, workspace, store=False, data_out=captured,
-                        reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True, include_internal=True)
+                    if command.kind == 'workspace.submit':
+                        submission_check = planning.review_gate_check(db, workspace, reuse=True)
+                        checked, data, current = submission_check
+                        if current is not None:
+                            checked, data = current
+                    else:
+                        captured = []
+                        checked = planning.revalidate(db, workspace, store=False, data_out=captured,
+                            reuse=command.kind != 'workspace.validate' or command.payload.get('automatic') is True,
+                            include_internal=True)
+                        data = captured[0]
                     context = (actor.identity_id, actor.department_id, workspace.content_revision,
-                               workspace.status, workspace.archived_at, captured[0]['fingerprint'])
-                    workspace_check = (context, checked, captured[0], input_changes.watermark(db, actor.department_id),
+                               workspace.status, workspace.archived_at, data['fingerprint'])
+                    workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
                                        planning.validation_stamp(db, workspace))
 
     generation_plan = None
@@ -1050,7 +1059,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             expected(workspace, command.expected_revision)
             check_context(db, actor, workspace, workspace_check[2])
             reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
-                if command.kind == 'workspace.validate' else (workspace_check[1], workspace_check[2])))
+                if command.kind == 'workspace.validate' else submission_check or (workspace_check[1], workspace_check[2])))
         else:
             reply = dispatch(db, actor, command, settings, github_check=github_check, github_export=github_export)
         if planning_plan is not None:
@@ -1109,7 +1118,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if command.kind == 'rotation.swap' or command.kind == 'timeline.rotation' and result.get('status') == 'submitted':
             reason = 'Rotation change requested'
         # A configuration create names the record it made, and every configuration change its list (an enum, never
-        # private text). Other creates keep no target: their histories add "created" themselves (requests, swaps).
+        # private text). Requests and swaps add their "created" entries in their own histories.
         fact = result.get("fact") if isinstance(result.get("fact"), dict) else {}
         made = (result.get("record") or {}) if command.kind.startswith(("catalogue.", "date_set.", "rule.catalogue.", "rule.migrate_to_catalogue")) else fact
         if command.kind == "catalogue.bulk_update" and command.payload.get("catalogue") == "programmes" and result.get("removed_ids"):
@@ -1139,9 +1148,14 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
+            if command.kind == 'rule.propose':
+                target_id = result['record']['id']
+            elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
+                target_id = made.get('id')
+            else:
+                target_id = command.target_id or made.get('id')
             db.add(audit_envelope(db, command, result, m.AuditEvent(department_id=actor.department_id, actor_id=actor.identity_id,
-                                action=event_action(command.kind, result), target_id=(made.get("id") if command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings'))
-                                                              else command.target_id or made.get("id")),
+                                action=event_action(command.kind, result), target_id=target_id,
                                 reason=reason, detail={**subject_detail(db, command.kind, result, department_id=actor.department_id),
                                                       "receipt_id": receipt_id, 'input_changes': list(db.info.get('_input_changes', {}).values()), "payload_fields": sorted(
                                     key for key in command.payload if key != "token" or command.kind != "integration.github.connect"),
@@ -1216,7 +1230,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
-                    current_data = planning.domain_snapshot(db, workspace)
+                    current_data = planning.domain_snapshot(db, workspace, mandatory_rules=submission_check is None,
+                                                            current_mandatory=submission_check is not None)
                     check_context(db, actor, workspace, current_data)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})

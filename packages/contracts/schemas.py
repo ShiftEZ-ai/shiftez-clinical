@@ -2100,6 +2100,9 @@ class GenerationOptions(Schema):
     overtime_penalty: int = Field(default=1, ge=1, le=MAX_SCORE_INPUT, strict=True)
     balance_measure: Literal['duties', 'reserved_hours'] = 'reserved_hours'
     allocation_order: Literal['weighted', 'tiered'] = 'weighted'
+    fill_tier_time_share: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False,
+        title='Fill-priority time share (0–1)',
+        description='Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.')
     pair_limit_max_opportunities: int = Field(default=50000, ge=1, le=1000000, strict=True)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
 
@@ -4933,8 +4936,14 @@ class RuleInForce(Schema):
     safety: bool
 
 
+class RuleLineReplacement(Schema):
+    replaced_line_id: ID
+    numbers: list[str]
+
+
 class RuleCatalogueInForceEntry(Schema):
     also_in_force: list[RuleInForce]
+    line_replaces: dict[ID, list[RuleLineReplacement]] = Field(default_factory=dict)
 
 
 class RuleCatalogueCounts(Schema):
@@ -5693,7 +5702,7 @@ class CatalogueUpdating(Schema):
 
 class RuleProposalInput(Decision):
     """A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):
-    on or off, its settings and every line. Lines that give way to more specific ones are acknowledged by line id."""
+    on or off, its settings and every line. Ordered overrides need no acknowledgement."""
     legacy_lead_conversion: LegacyLeadConversion | None = None
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 1
@@ -5704,7 +5713,23 @@ class RuleProposalInput(Decision):
     balance_between_people: bool = Field(default=True, strict=True, json_schema_extra={"bulk": True})
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=8, json_schema_extra={"bulk": True})
     lines: list[RuleLine] = Field(default_factory=list, max_length=2000, json_schema_extra={"bulk": True})
-    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, json_schema_extra={"writeOnly": True})
+    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, description='Ignored legacy input; ordered overrides need no acknowledgement.', json_schema_extra={"writeOnly": True})
+
+
+class RuleMapCatalogueLine(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+
+
+class RuleMapEntry(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+    lines: list[RuleMapCatalogueLine | PersonAmount]
+
+
+class RuleMapResponse(Schema):
+    model_config = ConfigDict(extra='allow')
+    rules: list[RuleMapEntry]
 
 
 class RuleMapProposal(Schema):

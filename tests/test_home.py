@@ -71,6 +71,36 @@ def test_roles_see_only_their_work(h):
     assert 'requests' in {i['key'] for i in admin} and {i['key'] for i in admin} & {'unchecked', 'blocking'}
 
 
+def test_self_approved_row_opens_decisions_the_reader_may_read(h):
+    """The owner and administrators hold no audit role, yet Home's Self-approved decisions row is theirs: it counts their
+    own decisions and the self-approved view lists exactly those; audit readers keep the department's; nobody else's."""
+    def grant(**subject):
+        return h.command('admin', 'self_approval.grant', {'actions': ['rule.activate', 'rota.approve'], 'starts_on': '2026-01-01',
+                         'ends_on': '2027-01-01', 'reason': 'Only one approver this quarter', **subject})['permission']
+    grant(identity_id=h.seed['identities']['admin'])  # the only admin granting themselves: self-approved
+    identity(h, 'owner', ['coordinator', 'approver', 'admin'])
+    grant(identity_id=h.seed['identities']['owner'])
+    rule = h.command('owner', 'policy.create', {'name': 'Own rest rule', 'owner': 'QA', 'source': 'Home self-approval test',
+        'starts_on': '2020-01-01', 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}})['record']
+    h.command('owner', 'policy.activate', {'reason': 'Reviewed with the clinical lead by phone'}, rule['id'], rule['revision'])
+    everyone = {e['id']: e['actor_id'] for e in h.get('auditor', '/api/audit?self_approved=true')['events']}
+    assert sorted(everyone.values()) == sorted([h.seed['identities']['admin'], h.seed['identities']['owner']])
+    for who in ('admin', 'owner'):
+        assert counts(h.get(who, '/api/home'))['self_approved'] == 1
+        reply = h.get(who, '/api/audit?self_approved=true')
+        assert [e['actor_id'] for e in reply['events']] == [h.seed['identities'][who]] and reply['people'] == []
+        # Naming someone else does not widen it; the rest of the audit log stays with audit readers.
+        other = h.seed['identities']['owner' if who == 'admin' else 'admin']
+        assert h.get(who, f'/api/audit?self_approved=true&actor_id={other}')['events'] == h.get(who, '/api/audit?self_approved=true')['events']
+        assert h.client(who).get('/api/audit').status_code == 403
+        assert h.client(who).get('/api/audit.csv?self_approved=true').status_code == 403
+    assert counts(h.get('auditor', '/api/home'))['self_approved'] == 2
+    # A role that decided nothing for itself is told nothing and reads nothing.
+    assert 'self_approved' not in keys(h.get('coordinator', '/api/home'))
+    assert h.get('coordinator', '/api/audit?self_approved=true')['events'] == []
+    assert h.client('staff').get('/api/audit').status_code == 403
+
+
 def test_home_cache_is_scoped_to_the_actor(h):
     leave_type = h.get('staff', '/api/leave-types')['leave_types'][0]['id']
     request = h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': 'leave',
@@ -414,6 +444,26 @@ def assert_department_home(result):
 
 def test_department_scale_is_fast_and_right(department_home_scale):
     assert_department_home(department_home_scale)
+
+
+def test_department_scale_home_rank_count_avoids_full_people_projection(department_home_scale, monkeypatch):
+    from apps.api.services import people, read_projections
+
+    h, *_ = department_home_scale
+    materialized = []
+    project = people.current_people
+
+    def count_people(*args, **kwargs):
+        result = project(*args, **kwargs)
+        materialized.append(len(result['people']))
+        return result
+
+    monkeypatch.setattr(people, 'current_people', count_people)
+    monkeypatch.setattr(read_projections, 'cached_department',
+                        lambda db, actor, kind, stamp, build, **kwargs: build())
+
+    assert counts(h.get('coordinator', '/api/home'))['no_rank'] == 5
+    assert sum(materialized) <= 5, materialized
 
 
 @pytest.mark.cpu_budget

@@ -167,17 +167,44 @@ def test_cpu_budgets_never_retry(wrapper, monkeypatch, tmp_path, job, properties
 
 
 def entry(node="tests/test_sample.py::test_fail"):
-    return dict(nodeid=node, reason="#525: recovered on retry 3 times", owner="maintainer", added="2026-11-01", expires="2026-11-15")
+    return dict(nodeid=node, reason="#525: recovered on retry 3 times", owner="maintainer", added="2026-11-01", expires="2026-11-15",
+                issue=525, blocker=False)
 
 
 @pytest.mark.parametrize("rows,today", [([entry()], date(2026, 11, 15)), ([entry()], date(2026, 10, 31)),
     ([entry(), entry()], date(2026, 11, 1)), ([{**entry(), "owner": ""}], date(2026, 11, 1)),
-    ([{**entry(), "expires": "bad-date"}], date(2026, 11, 1)), ({}, date(2026, 11, 1))])
+    ([{**entry(), "expires": "bad-date"}], date(2026, 11, 1)), ({}, date(2026, 11, 1)),
+    ([{k: v for k, v in entry().items() if k != "issue"}], date(2026, 11, 1)), ([{**entry(), "issue": True}], date(2026, 11, 1)),
+    ([{**entry(), "issue": 0}], date(2026, 11, 1)), ([{**entry(), "recovered_runs": "123"}], date(2026, 11, 1)),
+    ([{**entry(), "recovered_runs": []}], date(2026, 11, 1)), ([{**entry(), "blocker": "no"}], date(2026, 11, 1)),
+    ([{k: v for k, v in entry().items() if k != "blocker"}], date(2026, 11, 1)), ([{**entry(), "blocker": None}], date(2026, 11, 1)),
+    ([{**entry(), "milestone": ""}], date(2026, 11, 1)), ([{**entry(), "unknown": 1}], date(2026, 11, 1))])
 def test_quarantine_invalid_duplicate_and_expired_entries_fail(tmp_path, rows, today):
     path = tmp_path / "quarantine.json"
     path.write_text(json.dumps(rows))
-    with pytest.raises(ValueError):
-        entries(path, today)
+    if today == date(2026, 11, 15):
+        assert entries(path, today) == {rows[0]["nodeid"]: rows[0]}
+    else:
+        with pytest.raises(ValueError):
+            entries(path, today)
+
+
+def test_quarantine_accepts_the_optional_review_fields(tmp_path):
+    path = tmp_path / "quarantine.json"
+    path.write_text(json.dumps([{**entry(), "recovered_runs": ["123"], "milestone": "v0.2.0", "blocker": True}]))
+    assert set(entries(path, date(2026, 11, 1))) == {entry()["nodeid"]}
+
+
+def test_a_malformed_quarantine_stops_the_session_instead_of_emptying_it(tmp_path, monkeypatch):
+    import tests.quarantine as plugin
+
+    bad = tmp_path / "quarantine.json"
+    bad.write_text(json.dumps([{**entry(), "issue": "525"}]))
+    monkeypatch.setattr(plugin, "QUARANTINE_FILE", bad)
+    config = type("Config", (), {})()
+    with pytest.raises(pytest.UsageError, match="^Invalid quarantine.json: quarantine issue must be an integer"):
+        plugin.pytest_configure(config)
+    assert not hasattr(config, "_quarantine_entries")
 
 
 def test_quarantine_runs_failures_and_passes_without_hiding_other_failures(tmp_path, wrapper):
@@ -209,6 +236,7 @@ def test_blocking():
     (tmp_path / "quarantine.json").write_text(json.dumps(rows))
     (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers = cpu_budget\n")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CI_CASE_", "PYTEST_")) and k != "FMUC_CLOUD_TEST_REPORTS"}
+    env["PYTHONPATH"] = str(Path(__file__).parents[1])
     command = [sys.executable, "-m", "pytest", "-p", "quarantine", "-c", "pytest.ini", "-q", "tests", "-n", "2", "--basetemp=" + str(tmp_path / "nested")]
     result = subprocess.run([*command, "-k", "not blocking", "--junitxml=quarantined.xml"], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -290,21 +318,21 @@ def test_cpu():
 
 
 def test_expired_quarantine_does_not_abort_unrelated_pytest_sessions(tmp_path):
-    import datetime
     shutil.copyfile(Path(__file__).with_name('quarantine.py'), tmp_path / 'quarantine.py')
     tests = tmp_path / 'tests'
     tests.mkdir()
     stale = {**entry(), 'added': '2000-01-01', 'expires': '2000-01-02'}
     (tmp_path / 'quarantine.json').write_text(json.dumps([stale]))
     (tmp_path / 'conftest.py').write_text('pytest_plugins = ["quarantine"]')
-    (tests / 'test_sample.py').write_text('def test_unrelated(): pass')
+    (tests / 'test_sample.py').write_text('def test_unrelated(): pass\ndef test_fail(): assert False\n')
     validity = tests / 'test_validity.py'
-    validity.write_text("from pathlib import Path\nfrom datetime import date\nfrom quarantine import entries\ndef test_validity(): entries(Path(__file__).parents[1] / 'quarantine.json', date(2026, 10, 3))\n")
+    validity.write_text("from pathlib import Path\nfrom datetime import date\nfrom quarantine import entries\ndef test_validity():\n    registry = entries(Path(__file__).parents[1] / 'quarantine.json', date(2026, 10, 3))\n    assert 'tests/test_sample.py::test_fail' in registry\n")
     env = {**os.environ, 'PYTHONPATH': os.pathsep.join((str(tmp_path), str(Path(__file__).parents[1])))}
     result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', str(tests)], cwd=tmp_path,
                             env=env, capture_output=True, text=True, timeout=30)
-    assert result.returncode == 1 and '1 failed, 1 passed' in result.stdout
-    assert 'expired or future quarantine' in result.stdout and 'UsageError' not in result.stdout
+    assert result.returncode == 0 and '2 passed, 1 xfailed' in result.stdout
+    assert 'Expired quarantine (still active)' in result.stdout and 'UsageError' not in result.stdout
+    assert "tests/test_sample.py::test_fail: expired 2000-01-02, issue 525" in result.stdout
 
 
 def test_repeated_wrapper_runs_do_not_duplicate_repo_path(wrapper, monkeypatch, tmp_path):

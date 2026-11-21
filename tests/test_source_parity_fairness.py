@@ -4,7 +4,7 @@ import math
 from datetime import date, timedelta
 from fractions import Fraction
 import time
-from unittest.mock import patch
+from types import SimpleNamespace
 
 import pytest
 from ortools.sat.python import cp_model
@@ -34,9 +34,10 @@ def test_generic_share_uses_nested_conditions_and_frozen_published_history():
     selected, other = uid(20), uid(21)
     data = world([duty(1, 15, [A], [other])], '2026-10-15', '2026-10-22')
     goal = configured(data, 'share', period='month', target_share=.5, within=tree('service_ids', [selected]))
-    published = world([duty(2, 5, [A], [selected])])
-    with patch.object(service, 'published_snapshots', return_value=[('publication', {'shifts': published['shifts']})]):
-        data['fairness_history'] = service.history(None, data, [goal])
+    published = SimpleNamespace(id=uid(300), starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 15),
+        effective_until=None, snapshot={'shifts': [duty(2, 5, [A], [selected])]})
+    db = SimpleNamespace(scalar=lambda _query: published.starts_on, scalars=lambda _query: iter([published]))
+    data['fairness_history'] = service.history(db, data, [goal])
     [row] = f.goal_report(data, goal)['people']
     assert (row['prior'], row['planned'], row['actual'], row['expected'], row['cost']) == (1, 0, 1, 1, 0)
     assert f.goal_report(data, goal)['history'] is True

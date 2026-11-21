@@ -136,16 +136,6 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
     score_baseline = publication_score_baseline(db, workspace, workspace_shifts(db, workspace.id))
     if score_baseline is not None:
         snapshot['score_baseline'] = score_baseline
-    if value.generation_scope is not None:
-        scoped = domain_snapshot(db, workspace, include_fairness=False,
-                                 include_objectives=False, include_fairness_history=False)
-        try:
-            scoped['generation_scope'] = value.generation_scope.model_dump(mode='json')
-            scoped['generation_session_ids'] = value.session_ids or scoped['focus_ids']
-            require(has_population(scoped), 'INVALID_SCOPE',
-                    'No people match this group during the selected duties; change the population or duty selection', 422)
-        finally:
-            del scoped
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
                 kind='generation', input_fingerprint=request_token, input_snapshot=snapshot,
                 search_control={'minutes': options.search_minutes, 'stop': False, 'spent_seconds': 0},
@@ -218,7 +208,7 @@ def create_job(db, actor, command, settings):
                 'DIAGNOSTIC_ENGINE_REQUIRED', 'Diagnostic proposals require the CP-SAT scheduler')
         require_generation_sessions_in_scope(value.session_ids, db=db, workspace=workspace)
         from .planning_groups import guard_generation
-        group_metadata = guard_generation(db, actor, workspace, None, value, enqueue=True)
+        group_metadata = guard_generation(db, actor, workspace, None, value)
         if group_metadata:
             identity = identity or catalogue_proof_identity()
             require(identity is not None, 'BUILD_IDENTITY_REQUIRED',
@@ -581,7 +571,7 @@ def continue_generation(db, actor, command, settings):
     value = s.GenerationContinue.model_validate(command.payload)
     previous = scoped(db, m.Job, command.target_id, actor)
     require_latest_run(db, previous)
-    from .planning_groups import guard_job_control
+    from .planning_groups import guard_frozen_generation, guard_job_control
     guard_job_control(db, actor, previous)
     checkpoint_candidate = has_generation_checkpoint(previous)
     resumable_result = (previous.result or {}).get('status') in RESUMABLE_GENERATION_RESULTS
@@ -639,6 +629,7 @@ def continue_generation(db, actor, command, settings):
                                 'previous_search_seconds': previous_spent,
                                 'search_seconds': 0,
                                 'total_search_seconds': previous_spent}
+    guard_frozen_generation(db, actor, workspace, snapshot)
     expired = resume_expired(previous, settings.generation_resume_days)
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
         kind='generation', input_fingerprint=previous.input_fingerprint, input_snapshot=snapshot,
@@ -710,7 +701,7 @@ def apply_generation(db, actor, command):
     from apps.api.snapshots import preparation_stamp
     if plan.get('writer_current_inputs'):
         # Repeated changes retain the existing current-input reply instead of introducing a new error.
-        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'], mandatory_rules=True)
+        current_data = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     else:
         if not currency_match(plan['current_stamp'], preparation_stamp(db, workspace)):
             raise GenerationInputsChanged()
@@ -795,7 +786,8 @@ def apply_generation(db, actor, command):
                'population_people': plan['population_contribution'], 'applied_at': m.now().isoformat()}
     retain_job_reconciliation(job, receipt, result=job.result, interim=True)
     db.info['_command_overlap_flags'] = plan['overlap_flags']
-    result = changed(db, actor, workspace, before, value.reason, prepared=(plan['validation'], plan['data']))
+    result = changed(db, actor, workspace, before, value.reason, prepared=(plan['validation'], plan['data']),
+                     generation_apply=True)
     receipt = {**receipt, 'applied_content_revision': workspace.content_revision}
     result['reconciliation'] = receipt
     job.progress = job_progress_record(job.progress)
