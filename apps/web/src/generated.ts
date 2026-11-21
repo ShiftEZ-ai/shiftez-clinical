@@ -4846,6 +4846,22 @@ export type ScheduleEventRow = {
   "in_audience": boolean;
 };
 
+export type ScheduleParticipant = {
+  "start": string;
+  "end": string;
+  "fixed"?: boolean;
+  "participation"?: "staff" | "trainee" | "supervisor";
+  "overtime"?: boolean;
+  "supervisor_person_id"?: string | null;
+  "team_lead"?: boolean;
+  "segments"?: Array<InstantInterval>;
+  "person_id": string;
+  "id": string;
+  "override_reason": string | null;
+  "rank"?: string;
+  "wish_effects"?: Array<Record<string, unknown>>;
+};
+
 export type ScheduleScore = {
   "version": string;
   "score": number | null;
@@ -4863,6 +4879,28 @@ export type ScheduleScore = {
   "contributions": Array<Record<string, unknown>>;
   "coverage_fraction": number | null;
   "rule_weights": Array<Record<string, unknown>>;
+};
+
+export type ScheduleSession = {
+  "start": string;
+  "end": string;
+  "id": string;
+  "revision": number;
+  "assignment_type_id": string;
+  "type_revision": number;
+  "type_snapshot": Record<string, unknown>;
+  "location_id": string;
+  "service_ids": Array<string>;
+  "participants": Array<ScheduleParticipant>;
+  "attributes": Record<string, unknown>;
+  "cancelled": boolean;
+  "cancellation_reason": string | null;
+  "locked": boolean;
+  "closed"?: boolean;
+  "series_state_frozen"?: boolean;
+  "usual_assignee_unavailability"?: Array<Record<string, unknown>>;
+  "double_booking_conflicts"?: Array<SeriesOverlapConflict>;
+  "absence_reports"?: Array<PublishedAbsenceReport>;
 };
 
 export type SchedulingFactApproval = {
@@ -6359,6 +6397,8 @@ export type WorkspaceSubmitInput = {
 };
 
 export const APP_VERSION = "0.1.0-rc.1";
+export type WorkspaceDetailView = "full" | "compact";
+export const SCHEDULE_DETAIL_FIELDS = {"session": ["series_snapshot", "series_revision", "series_modified", "series_id", "occurrence_on", "lineage_id", "template_skipped", "closure_reason", "created_at", "workspace_id"], "participant": ["created_at", "source", "source_actor_id", "source_run_id", "source_at", "shift_id", "revision"], "coverage": ["availability_basis"], "check": ["_person_parts", "_session_parts", "fix_list_context", "fix_list_state", "fix_list_delta", "input_manifest", "score_dependencies", "diagnostic_version", "goals"]} as const;
 export const ROLE_NAMES = ["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator"] as const;
 export type JobCurrency = "current" | "revalidation_required" | "unknown" | "preparing" | "superseded";
 export const RUN_SUPERSEDED = "RUN_SUPERSEDED" as const;
