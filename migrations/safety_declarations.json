@@ -669,5 +669,10 @@
     "class": "destructive",
     "sha256": "331f10adaefe17a9c9c8a00cbc87387a767604a3c103e38db8b5c8dabfee53d2",
     "review": "The source checker cannot prove these PostgreSQL storage settings. They change only analyze thresholds and leave every row intact. Take the verified pre-deploy backup. Downgrade resets both settings to database defaults."
+  },
+  "0150_person_inactive_from": {
+    "class": "additive",
+    "sha256": "01a652a04135c8ad00eed71c665f12235d49025ecfed49d7e26d797d6eaa5590",
+    "review": "Adds a nullable deactivation date to people and preserves all existing values without a backfill."
   }
 }
