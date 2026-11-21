@@ -1902,6 +1902,14 @@ def save_shift(db, actor, command, update=False):
                            and previous.get(p.person_id, {}).get('supervisor_person_id')}
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
+    preparation = db.info.get('_planning_preparation') or {}
+    if update and preparation.get('kind') == 'shift.update' and not preparation['replay']:
+        # The preimage already has every other own session. Reacquire the edited row after
+        # the assignment write and automatic supervisor pairing, in canonical schedule order.
+        own = [shift for shift in before['shifts'] if shift['id'] != row.id]
+        own.extend(snapshots.shift_records(db, [row]))
+        own.sort(key=lambda shift: (aware(shift['start']), shift['id']))
+        db.info['_prepared_shift_edit'] = workspace.id, own
     admission = None
     if 'bulk' not in db.info and update:
         admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',

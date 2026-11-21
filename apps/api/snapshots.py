@@ -961,6 +961,28 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
     return publications, query
 
 
+def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, limit, previous, current):
+    # A shift update writes only its own draft. Each preparation transaction holds a consistent
+    # read of issued sessions, even while the edited shift and workspace revision change.
+    import pickle
+    preparation = db.info.get('_planning_preparation') or {}
+    shared = (preparation.get('kind') == 'shift.update' and not preparation['replay'] and previous is None)
+    if shared:
+        memo = db.info.setdefault('_prepared_external_schedule', {})
+        key = (workspace.id, workspace.base_publication_id, workspace.replaces_publication_id, workspace.starts_on,
+               tuple(department_ids), lo, hi, zone, limit)
+        if key in memo:
+            publications, rows = memo[key]
+            return publications, pickle.loads(rows)
+    publications, query = external_schedule(db, workspace, department_ids, lo, hi, zone)
+    external = _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit)
+    if external is None:
+        external = shift_records(db, db.scalars(query if limit is None else query.limit(limit)))
+    if shared:
+        memo[key] = publications, pickle.dumps(external, protocol=pickle.HIGHEST_PROTOCOL)
+    return publications, external
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1274,7 +1296,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     from .services.schedule import in_force_shifts
     from packages.contracts.schemas import GenerationOptions
     scoring = GenerationOptions.model_validate(department_settings.get('generation_defaults') or {}).scoring
-    own = workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts
+    own = own_shifts
+    if own is None:
+        edited = db.info.get('_prepared_shift_edit')
+        own = edited[1] if edited is not None and edited[0] == workspace.id else workspace_shifts(db, workspace.id)
     if own_publication is not None and own_publication.effective_until:
         # A published rota partly replaced by a later one: only the days it is still in force.
         own = in_force_shifts(own_publication, own, org.timezone)
@@ -1294,12 +1319,9 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         if wishes != result["wishes"]:
             score_context["wishes"] = wishes
     result["focus_ids"] = [s["id"] for s in own]
-    publications, query = external_schedule(db, workspace, department_ids, lo, hi, org.timezone)
-    if quota_policies:
-        query = query.limit(MAX_SHIFTS + 1)
-    external = _unchanged_external_shifts(db, workspace, external_snapshot, result, lo, hi, MAX_SHIFTS + 1 if quota_policies else None)
-    if external is None:
-        external = shift_records(db, db.scalars(query))
+    publications, external = _snapshot_external_schedule(
+        db, workspace, department_ids, lo, hi, org.timezone, MAX_SHIFTS + 1 if quota_policies else None,
+        external_snapshot, result)
     if own_publication is not None:
         own = frozen_series_states(own, own_publication)
     published = {p.workspace_id: p for p in publications}
