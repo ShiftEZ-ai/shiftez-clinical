@@ -64,6 +64,18 @@ LiveScope = Literal["workspace", "publication", "rules", "catalogue", "people", 
 WorkerLiveness = Literal['running', 'not_responding', 'never_seen']
 JobStatus = Literal['queued', 'running', 'succeeded', 'failed', 'cancelled']
 WorkspaceDetailView = Literal['full', 'compact']
+
+INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
+JOB_PRIVATE_CHECK_FIELDS = (*sorted(INTERNAL_CHECK_KEYS), 'fix_list_context', 'fix_list_state', 'fix_list_delta',
+                            'input_manifest', 'score_dependencies', 'diagnostic_version')
+# What the Schedule's whole-rota read leaves out: fields no client path reads (Design ruling a′, 20 Nov 2026).
+SCHEDULE_DETAIL_FIELDS = {
+    'session': ('series_snapshot', 'series_revision', 'series_modified', 'series_id', 'occurrence_on', 'lineage_id',
+                'template_skipped', 'closure_reason', 'created_at', 'workspace_id'),
+    'participant': ('created_at', 'source', 'source_actor_id', 'source_run_id', 'source_at', 'shift_id', 'revision'),
+    'coverage': ('availability_basis',),
+    'check': (*JOB_PRIVATE_CHECK_FIELDS, 'goals'),
+}
 WorkspacePart = Literal['shifts', 'validation']
 
 # Draft edit replies are deliberately bounded.  A command that touches more than
@@ -6325,6 +6337,33 @@ class SeriesOverlapBatchPreview(Schema):
 
 
 class SessionOverlapFlags(Schema):
+    double_booking_conflicts: list[SeriesOverlapConflict] = Field(default_factory=list)
+    absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
+
+
+class ScheduleParticipant(ParticipantInput):
+    id: ID
+    override_reason: Reason | None
+    rank: str = ''
+    wish_effects: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ScheduleSession(InstantInterval):
+    id: ID
+    revision: int
+    assignment_type_id: ID
+    type_revision: int
+    type_snapshot: dict[str, Any]
+    location_id: ID
+    service_ids: list[ID]
+    participants: list[ScheduleParticipant]
+    attributes: dict[str, Any]
+    cancelled: bool
+    cancellation_reason: Reason | None
+    locked: bool
+    closed: bool = False
+    series_state_frozen: bool = False
+    usual_assignee_unavailability: list[dict[str, Any]] = Field(default_factory=list)
     double_booking_conflicts: list[SeriesOverlapConflict] = Field(default_factory=list)
     absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
 
