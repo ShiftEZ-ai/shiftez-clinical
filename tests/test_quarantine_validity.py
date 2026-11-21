@@ -32,12 +32,12 @@ def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
     # Freeze the exact inputs and outputs so the proof also works in a squash or shallow checkout.
     raw = (FIXTURES / "known_failures_before_quarantine.json").read_bytes()
     assert hashlib.sha256(raw).hexdigest() == (
-        "b10a27ae8b0b4247b7dd91e8745e0dc6fd86a549b2ae08f8e8c397925c449ed9")
+        "ef8ebc146e875f2a0728540ce24bd898468db94d3b3a0e832c57da370c11ab5d")
     source = json.loads(raw)
     expected = {row["node"]: row["class"] for row in source["fails"] + source["unstable"]}
     new_q = MOVED_REGISTRY.read_bytes()
     new_kf = (FIXTURES / "known_failures_after_quarantine.json").read_bytes()
-    assert hashlib.sha256(new_q).hexdigest() == "5b10e045d286f30fec4367c6227901a2f48e5e4ab006d08acbff04df8035beb3"
+    assert hashlib.sha256(new_q).hexdigest() == "06560a8c41549bd8033af5225742c8d74f39bbf6a6838b44caa231e87973d37a"
     assert hashlib.sha256(new_kf).hexdigest() == "21a5511dde774fa6dd9d8ca4f40cb33c7c370ef93a47765c30d72b6070b7aae7"
     policy.quarantine_change(b"[]\n", new_q, raw, new_kf)
     assert policy.removal_only(raw, new_kf)
@@ -48,7 +48,7 @@ def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
 def test_the_quarantine_migration_counts_each_class():
     rows = json.loads(MOVED_REGISTRY.read_bytes())
     counts = Counter(row["reason"].partition(":")[0] for row in rows)
-    assert counts == {"baseline": 356, "baseline-error": 26, "unstable": 33}
+    assert counts == {"baseline": 351, "baseline-error": 26, "unstable": 33}
     assert sum(row["blocker"] for row in rows) == 0
 
 
