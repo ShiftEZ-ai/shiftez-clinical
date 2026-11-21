@@ -926,17 +926,26 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     return saved
 
 
-def _latest(workspace_id):
-    return (select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
-            .order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
-                      m.WorkspaceBaseline.id.desc()).limit(1))
+def _latest_ordering():
+    B = m.WorkspaceBaseline
+    return B.workspace_revision.desc(), B.created_at.desc(), B.id.desc()
 
 
 def latest(db, workspace_id, *, include_payload=True):
-    query = _latest(workspace_id)
+    query = select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
     if not include_payload:
         query = query.options(defer(m.WorkspaceBaseline.canonical_payload, raiseload=True))
-    return db.scalar(query)
+    return db.scalar(query.order_by(*_latest_ordering()).limit(1))
+
+
+def latest_many(db, workspace_ids):
+    """Read only the latest baseline identity and hash for each workspace."""
+    B = m.WorkspaceBaseline
+    ranked = select(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
+        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')
+    ).where(B.workspace_id.in_(workspace_ids)).subquery()
+    rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
+    return {row.workspace_id: row for row in rows}
 
 
 def workspace_generation_defaults(db, workspace, department, *, frozen_settings=None):
