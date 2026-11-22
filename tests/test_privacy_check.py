@@ -1,7 +1,9 @@
 """Pipeline regression: the public-pattern privacy check finds every shape it names and never prints a value."""
 import json
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,7 @@ PLANTED = {
 EXTRA_HITS = {
     "github-token": "github" + "_pat_" + "A" * 22 + "_" + "b" * 59,
     "ipv4": "see http://" + "192." + "168.1.20/ or " + "10.1." + "2.3.",
+    "wildcard-dns-host": "node.tail1234" + ".ts" + ".net",
     "private-tld": "printer.office" + ".home" + ".arpa",
     "env-host-port": "staging database at db" + ".example" + ".com:5432",
 }
@@ -93,9 +96,9 @@ def test_event_mode_reads_title_and_body(tmp_path):
     assert run("--event", str(event)).returncode == 0
 
 
-def git(repo, *args):
-    subprocess.run(["git", "-c", "user.name=ci", "-c", "user.email=ci@example.invalid", "-c", "commit.gpgsign=false",
-                    *args], cwd=repo, check=True, capture_output=True)
+def git(repo, *args, data=None):
+    return subprocess.run(["git", "-c", "user.name=ci", "-c", "user.email=ci@example.invalid", "-c", "commit.gpgsign=false",
+                           *args], cwd=repo, check=True, capture_output=True, input=data).stdout
 
 
 @pytest.fixture
@@ -113,14 +116,64 @@ def test_diff_mode_scans_only_added_lines_and_new_names(repo):
                                   encoding="utf-8")
     (repo / "moved").mkdir()
     git(repo, "mv", "moved.txt", "moved/" + PLANTED["ipv4"].split()[-1] + ".txt")
+    # Raw blobs are scanned whatever they hold: a NUL byte no longer makes a file "binary" and unscanned.
     (repo / "binary.bin").write_bytes(b"\0" + PLANTED["ipv4"].encode())
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "head")
     result = run("HEAD~1", "HEAD", cwd=repo)
     assert result.returncode == 1
-    assert sorted(result.stdout.splitlines()) == ["moved/***.txt:0: ipv4", "old.txt:3: env-host-port"]
+    assert sorted(result.stdout.splitlines()) == [
+        "binary.bin:1: ipv4", "moved/***.txt:0: ipv4", "old.txt:3: env-host-port"]
     assert "20.30.40" not in result.stdout
     assert run("HEAD", "HEAD", cwd=repo).returncode == 0
+
+
+IP = "10." + "20.30.40"
+ENV_HOST = "produc" + "tion-db" + ":5432"
+# Each case hides a host from a patch-text parser in a different way; the tree comparison must still see it.
+BYPASSES = {
+    "added line starting with ++": ({}, {"a.txt": b"++ note\n" + IP.encode() + b"\n"}, "", r"a\.txt:2: ipv4"),
+    "file name with a tab and a quote": ({}, {'a\tb".cfg': IP.encode()}, "", r'a\tb"\.cfg:1: ipv4'),
+    "form feed before the value": ({}, {"a.txt": b"ok\fleak " + IP.encode()}, "", r"a\.txt:1: ipv4"),
+    "gitattributes -diff mark": ({}, {".gitattributes": b"h/*.cfg -diff\n", "h/x.cfg": ENV_HOST.encode()}, "",
+                                 r"h/x\.cfg:1: env-host-port"),
+    "symlink turned into a file": ({"link": ("120000", b"target")}, {"link": IP.encode()}, "", r"link:1: ipv4"),
+    "user at address": ({}, {"a.sh": b"ssh user@" + IP.encode()}, "", r"a\.sh:1: ipv4"),
+    "address in a database URL": ({}, {"a.env": b"postgresql://u:pw@" + IP.encode() + b":5432/db"}, "",
+                                  r"a\.env:1: ipv4"),
+    "scp target": ({}, {"a.sh": b"scp f deploy@" + IP.encode() + b":/srv"}, "", r"a\.sh:1: ipv4"),
+    "production host and port": ({"a.txt": b"one\n"}, {"a.txt": b"one\n" + ENV_HOST.encode()}, "",
+                                 r"a\.txt:2: env-host-port"),
+    "commit message": ({}, {"a.txt": b"clean"}, "Point at " + IP, r"commit [0-9a-f]{12}:1: ipv4"),
+}
+
+
+def commit(repo, files, message):
+    for path, value in files.items():
+        mode, data = value if isinstance(value, tuple) else ("100644", value)
+        sha = git(repo, "hash-object", "-w", "--stdin", data=data).decode().strip()
+        # Index plumbing needs no checkout, so names a Windows file system refuses still work.
+        git(repo, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", f"{mode},{sha},{path}")
+    git(repo, "commit", "-q", "--allow-empty", "-m", message or "change")
+
+
+@pytest.mark.parametrize("case", sorted(BYPASSES))
+def test_diff_mode_sees_what_a_patch_parser_misses(tmp_path, case):
+    base, head, message, expected = BYPASSES[case]
+    git(tmp_path, "init", "-q")
+    commit(tmp_path, base, "base")
+    commit(tmp_path, head, message)
+    result = run("HEAD~1", "HEAD", cwd=tmp_path)
+    assert result.returncode == 1
+    assert [line for line in result.stdout.splitlines() if re.fullmatch(expected, line)], result.stdout
+    assert "20.30.40" not in result.stdout + result.stderr
+
+
+def test_a_long_line_scans_in_linear_time():
+    line = ("-" * 10 + "QUJD" * 10) * 4000
+    started = time.perf_counter()
+    assert ids(line) == []
+    assert time.perf_counter() - started < 1
 
 
 def test_all_mode_scans_every_tracked_file_at_head(repo):
@@ -133,6 +186,10 @@ def test_usage_errors_exit_two():
     assert run().returncode == 2
     assert run("HEAD").returncode == 2
     assert run("--all", "HEAD~1", "HEAD").returncode == 2
+
+
+def test_a_bad_revision_fails(repo):
+    assert run("no-such-revision", "HEAD", cwd=repo).returncode != 0
 
 
 def test_the_checker_and_its_tests_pass_their_own_check():
