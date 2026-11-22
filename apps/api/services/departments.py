@@ -16,10 +16,10 @@ from .independence import person_key, today
 
 
 def require_test_deployment(settings):
-    # DEV deliberately runs strict ROTA_ENV=production with ROTA_DEPLOYMENT=dev.
-    allowed = settings.deployment == 'dev' or (
+    # DEV and STG deliberately run strict ROTA_ENV=production with ROTA_DEPLOYMENT=dev or stg; production stays refused.
+    allowed = settings.deployment in {'dev', 'stg'} or (
         settings.environment in {'development', 'test'} and settings.deployment in {'development', 'test'})
-    require(allowed, 'TEST_DEPLOYMENT_REQUIRED', 'Test departments can only be created on DEV or test deployments', 403)
+    require(allowed, 'TEST_DEPLOYMENT_REQUIRED', 'Test departments can only be created on DEV, STG or test deployments', 403)
 
 
 def require_test_administrator(identity):
