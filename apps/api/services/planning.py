@@ -2600,27 +2600,21 @@ def _publication_approval(db, workspace, fp):
 
 
 def review_gate_check(db, workspace, *, reuse=False):
-    """Check current mandatory rules and retain the frozen basis for review and publication evidence."""
-    current = []
-    result = revalidate(db, workspace, data_out=current, include_internal=True, reuse=reuse, store=False,
-                        mandatory_rules=False, current_mandatory=True)
-    if not current[0].get('_mandatory_overlay_changed'):
-        return result, current[0], None
-    frozen = []
-    checked = revalidate(db, workspace, data_out=frozen, include_internal=True, reuse=reuse, store=False,
-                         mandatory_rules=False)
-    return checked, frozen[0], (result, current[0])
+    """Use one evaluation and fingerprint for review and publication evidence."""
+    acquired = []
+    result = revalidate(db, workspace, data_out=acquired, include_internal=True, reuse=reuse, store=False,
+                        current_mandatory=True)
+    return result, acquired[0]
 
 
-def _lock_review_check_inputs(db, actor, *snapshots):
+def _lock_review_check_inputs(db, actor, data):
     # Refresh under a row lock before any review writes can advance these counters.
     organisation = db.get(m.Organisation, actor.organisation_id, populate_existing=True,
                           with_for_update={'key_share': True})
     revisions = organisation.input_revision, organisation.availability_revision
-    for data in snapshots:
-        hint = data['input_manifest']['dirty_hint']
-        require(revisions == (hint['input_revision'], hint['availability_revision']), 'STALE_INPUTS',
-                'Scheduling inputs changed during the check. Check the rota and try again.', 409, {'recoverable': True})
+    hint = data['input_manifest']['dirty_hint']
+    require(revisions == (hint['input_revision'], hint['availability_revision']), 'STALE_INPUTS',
+            'Scheduling inputs changed during the check. Check the rota and try again.', 409, {'recoverable': True})
     return organisation
 
 
@@ -2688,12 +2682,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         has_session = db.scalar(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id).limit(1)) is not None
         if prerequisite := submission_prerequisite(int(has_session)):
             require(False, prerequisite['code'], prerequisite['message'], 422, prerequisite)
-        result, data, current = review_gate_check(db, workspace, reuse=True) if validation is None else validation
+        result, data = review_gate_check(db, workspace, reuse=True) if validation is None else validation
         acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
-                                 current=current[0] if current is not None else None)
+                                 changed_rules=frozenset(data.get('_changed_department_rules', ())))
         swaps.validate_publication(db, workspace)
-        review_data = (data,) if current is None else (data, current[1])
-        review_organisation = _lock_review_check_inputs(db, actor, *review_data)
+        review_organisation = _lock_review_check_inputs(db, actor, data)
         check = {**result, 'wishes': data['wishes']}
         from packages.domain.rota_summary import remember_fix_list
         remember_fix_list(result, check, submitted=True)
@@ -2753,8 +2746,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # Publication mutates duties, availability and ledgers, never these raw configuration rows.
         # Each transaction acquires them independently; post-publication snapshots still read current history.
         # The writer flushes pending writes before revalidating current mandatory rules.
-        # shortcut: a late mandatory rule can require two checks under the writer; upgrade: reuse complete frozen evidence when its inputs still match.
-        checked, acquired, current = review_gate_check(db, workspace)
+        checked, acquired = review_gate_check(db, workspace)
         fp = acquired['fingerprint']
         result = {key: value for key, value in checked.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
@@ -2768,9 +2760,6 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 raise
             approval_error = error
         try:
-            if current is not None:
-                live_result = {key: value for key, value in current[0].items() if key not in INTERNAL_CHECK_KEYS}
-                acknowledged_gaps.require_accepted(workspace, live_result, reviewed=True)
             acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
         except Problem as error:
             if error.code == 'VALIDATION_FAILED' and approval_error is not None:
