@@ -1518,7 +1518,9 @@ def incremental_edit_scope(data, before, previous, rule_sources):
 
     focus = set(data['focus_ids'])
     prior_ids = {shift['id'] for shift in before['shifts']}
-    if {row['shift_id'] for row in previous.get('coverage', ())} != prior_ids:
+    # A stored check without its coverage rows (older stored shape) cannot be merged; check in full.
+    coverage = previous.get('coverage')
+    if not isinstance(coverage, list) or {row['shift_id'] for row in coverage} != prior_ids:
         return None
     own = [shift for shift in data['shifts'] if shift['id'] in focus]
     others = [shift for shift in data['shifts'] if shift['id'] not in focus]
