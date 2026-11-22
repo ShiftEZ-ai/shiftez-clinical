@@ -180,3 +180,26 @@ def test_bulk_diagnostic_approval_rechecks_preserve_deadlines(h, monkeypatch, en
     assert calls == 2
     with transaction(h.app.state.engine) as db:
         assert [db.get(m.Membership, row["id"]).revision for row in before] == [row["revision"] for row in before]
+
+
+@pytest.mark.parametrize("raised, message", [
+    (KeyError("synthetic_internal_column"), "A value is not valid for this request"),
+    (ValueError("The end date must follow the start date"), "The end date must follow the start date"),
+    (ValueError("invalid literal for int() with base 10: 'synthetic_input'"), "A value is not valid for this request"),
+])
+def test_bulk_preview_row_exception_text_is_screened(h, monkeypatch, raised, message):
+    value, before = change(h)
+    original = commands.dispatch
+
+    def broken(db, actor, command, settings, *args, **kwargs):
+        if command.kind == "membership.update_dates" and command.target_id == before[1]["id"]:
+            raise raised
+        return original(db, actor, command, settings, *args, **kwargs)
+
+    monkeypatch.setattr(commands, "dispatch", broken)
+    response = request(h, "preview", value)
+    assert response.status_code == 200, response.text
+    row = response.json()["items"][1]
+    assert row["result"] == "problem"
+    assert [(issue["code"], issue["message"]) for issue in row["issues"]] == [("VALIDATION_ERROR", message)]
+    assert "synthetic_" not in response.text

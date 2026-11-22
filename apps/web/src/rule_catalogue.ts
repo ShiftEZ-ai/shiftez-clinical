@@ -394,8 +394,9 @@ export function wire(lines:RuleLine[],saved:RuleLine[]):RuleLine[]{
 /** Propose a new version of a catalogue rule. A more specific line winning over a broader one is the rule working as
  *  meant: nothing to acknowledge (the server keeps acknowledged_overlaps only as an ignored legacy field). */
 /** A line proposed from the line panel (relax or promote): the rule's other lines with it, and the rule's own on or off,
- *  settings and balance as the draft holds them. Adding a line never switches the rule on or off. */
-export const lineProposal=(draft:Draft,lines:RuleLine[]):Body=>({on:draft.on,lines,settings:draft.settings,balance:draft.balance,seen:draft.seen});
+ *  settings and balance as the draft holds them. Adding a line never switches a rule in force on or off; the first line
+ *  of a rule never in force (no version yet) turns it on. */
+export const lineProposal=(draft:Draft,lines:RuleLine[]):Body=>({on:draft.on||draft.baseId===null&&lines.length>0,lines,settings:draft.settings,balance:draft.balance,seen:draft.seen});
 export async function propose(e:Entry,body:Body,reason:string):Promise<Row>{
   const payload={catalogue_id:e.id,catalogue_version:e.catalogue_version,expected_policy_id:e.rule?.id??null,expected_revision:e.rule?.revision??null,on:body.on,settings:body.settings??settingsOf(e),balance_between_people:body.balance??balanceOf(e),
     expected_line_ids:body.seen??linesOf(e).map(l=>l.id),lines:wire(body.lines,linesOf(e)),acknowledged_overlaps:[],reason};
@@ -539,7 +540,7 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   const rows:LineRow[]=[];
   // The draft's changes are worked out once per change (changed() moves the version), not per number cell: every cell
   // asked, each comparing every line (a 331-line rule took 3 s to open and 3 s per Keep change).
-  let draftVersion=0,known=-1,count=0;
+  let draftVersion=0,known=-1,count=0,lineCount=draft.lines.length;
   const changes=()=>{if(!editable)return 0;if(known!==draftVersion){count=changesIn(e,draft);known=draftVersion;}return count;};
   // A saved line's text, once: whether a line still reads as the saved one is asked per cell.
   const savedJSON=new Map(saved.map(l=>[l.id,JSON.stringify(l)]));
@@ -596,7 +597,12 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     if(blocked||refusedWhy)disabledWhy(proposeBtn,blocked||refusedWhy,openIt());else disabledWhy(proposeBtn,n?'':TERMS.nothingToPropose);
     status.textContent=[n?`${plural(n,'change')} not yet proposed`:''].filter(Boolean).join(' · ');};
   /** After any change: the draft is kept (it counts on the Rules page too), the table, the check and the panel follow. */
-  const changed=(keep=true)=>{draftVersion++;if(keep&&editable)keepDraft(e,draft);found=null;recheck();rows.splice(0,rows.length,...draft.lines.map((line,n)=>({entry:e,line,n})),...proposedRows);table.refresh();paint();summary();panel.sync();};
+  const changed=(keep=true)=>{draftVersion++;
+    // The first line of a rule never in force turns it on (switch it off to keep it off); its last line removed turns
+    // it back off, so an empty draft proposes nothing. The Rules list's New line opens its line here too.
+    const had=lineCount>0,has=draft.lines.length>0;lineCount=draft.lines.length;
+    if(!e.rule&&had!==has&&draft.on!==has){draft.on=has;showOn();}
+    if(keep&&editable)keepDraft(e,draft);found=null;recheck();rows.splice(0,rows.length,...draft.lines.map((line,n)=>({entry:e,line,n})),...proposedRows);table.refresh();paint();summary();panel.sync();};
   // B5: lines a waiting proposal adds sit in the table as "Proposed" (clock: waiting for someone); they open its decision.
   const proposedAll=(e.proposed?.definition?.rule?.lines||[]) as RuleLine[],proposedIds=new Set(proposedAll.filter(l=>!saved.some(x=>x.id===l.id)).map(l=>l.id));
   const proposedRows:LineRow[]=proposedAll.flatMap((line,n)=>proposedIds.has(line.id)?[{entry:e,line,n}]:[]);
@@ -695,6 +701,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     bulk:editable?ids=>bulkActions(e,ids,draft,changed,refresh):undefined});
   const add:HTMLButtonElement|null=editable?button('+ New line',()=>newLinePicker(ctx,e,add!,draft,changed,id=>panel.open(id)),'',{class:'rc-new-line','aria-label':'New line: a person, rank, clinic or #tag'}):null;
   const onText=el('b',{},draft.on?'On':'Off'),headFacts=el('span',{class:'muted'});
+  let onBox:HTMLInputElement|null=null;
+  const showOn=()=>{onText.textContent=draft.on?'On':'Off';if(onBox)onBox.checked=draft.on;};
   const settingsBtn:HTMLButtonElement=button('Settings',()=>settingsPopover(ctx,e,settingsBtn,draft.settings,editable,(value,balance)=>{draft.settings=value;if(balance!==undefined)draft.balance=balance;changed();},
     draft.lines.filter(l=>ownSettings(l,e)).length,balances(e)?draft.balance:undefined,
     value=>checkLines(e,{on:draft.on,lines:draft.lines,settings:value}).then(r=>settingIssues(r,'rule.catalogue.settings.'))),'secondary');
@@ -747,8 +755,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   function draftSwitch(){
     // A reader who cannot propose reads On / Off (the word beside it), not a switch they cannot use.
     if(!canEdit)return '';
-    const box=el('input',{type:'checkbox',role:'switch',class:'switch','aria-label':`${e.name} on or off`,checked:draft.on,disabled:!editable}) as HTMLInputElement;
-    box.addEventListener('change',()=>{draft.on=box.checked;onText.textContent=draft.on?'On':'Off';
+    const box=onBox=el('input',{type:'checkbox',role:'switch',class:'switch','aria-label':`${e.name} on or off`,checked:draft.on,disabled:!editable}) as HTMLInputElement;
+    box.addEventListener('change',()=>{draft.on=box.checked;showOn();
       // Turning on a rule with no lines starts it from its usual first line (then edit it before proposing).
       if(draft.on&&!draft.lines.length&&Object.keys(e.default_line?.numbers||{}).length){const l=newLine(e);draft.lines.push(l);changed();panel.open(l.id);return;}
       changed();});return box;}
