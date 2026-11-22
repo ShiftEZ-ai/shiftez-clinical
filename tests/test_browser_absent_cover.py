@@ -15,17 +15,23 @@ def test_the_only_assignee_on_leave_leaves_the_day_short(browser, live_server, h
     w = h.shift(h.workspace('Leave after the check rota'), people=[person])['workspace']
     w = h.lifecycle(w, 'validate')['workspace']
     w = h.lifecycle(w, 'submit')['workspace']
+    detail = h.detail(w)
+    shift, = detail['shifts']
+    need = max(r.get('places_needed', r['required']) for r in detail['workspace']['validation']['coverage']
+               if r['shift_id'] == shift['id'])
+    assert need >= 1  # the session needs its one assignee: before the leave its day reads filled
     h.command('coordinator', 'availability.record', {'person_id': person, 'kind': 'recorded_leave',
         'leave_type': 'Annual leave', 'start': '2026-10-04T00:00:00+03:00', 'end': '2026-10-05T00:00:00+03:00',
         'private_reason': 'Synthetic leave'})
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
-        expect(page.locator('#schedule-view .pchip.absent')).to_have_count(1)  # struck through as absent
-        day = page.get_by_role('columnheader', name=re.compile(r'0 of 1 places filled'))
+        # Struck through as absent (the grid's key adds its own sample chip, .lg-mark).
+        expect(page.locator('#schedule-view .pchip.absent:not(.lg-mark)')).to_have_count(1)
+        day = page.get_by_role('columnheader', name=re.compile(rf'\b0 of {need} places filled'))
         expect(day).to_have_count(1)
         expect(day).to_have_class(re.compile(r'\bshort\b'))
-        expect(day.locator('.wk-cov')).to_have_text('0/1')
-        expect(page.get_by_role('columnheader', name=re.compile(r'1 of 1 places filled'))).to_have_count(0)
+        expect(day.locator('.wk-cov')).to_have_text(f'0/{need}')
+        expect(page.get_by_role('columnheader', name=re.compile(rf'\b1 of {need} places filled'))).to_have_count(0)
     finally:
         context.close()
