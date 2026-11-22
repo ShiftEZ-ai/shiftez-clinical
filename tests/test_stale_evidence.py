@@ -38,6 +38,7 @@ def evidence(tmp_path, monkeypatch):
         "report": {"run_id": "123", "sha": DEV, "nodes": [NODE]},
         "diff": b"packages/domain/score.py\0",
         "downloads": [],
+        "run_queries": [],
         "other_runs": [],
     }
 
@@ -55,8 +56,8 @@ def evidence(tmp_path, monkeypatch):
         resource = command[-1].removeprefix(prefix)
         runs = [packet["run"], *packet["other_runs"]]
         if resource.startswith("workflows/ci.yml/runs?event="):
-            rows = [run for run in runs if f"event={run['event']}&" in resource
-                    and ("&branch=" not in resource or f"&branch={run['head_branch']}&" in resource)]
+            packet["run_queries"].append(resource)
+            rows = [run for run in runs if f"event={run['event']}&" in resource]
             return json.dumps({"workflow_runs": rows}).encode()
         for run in runs:
             artifact_id = run["id"] + 333
@@ -190,6 +191,8 @@ def test_default_main_reads_main_nightly_evidence(tmp_path, monkeypatch, evidenc
     evidence["run"].update(event="schedule", head_branch="main", conclusion="failure")
     assert evaluate(tmp_path, monkeypatch, scope=set(), branch="main", default="main")
     assert evidence["downloads"] == ["artifacts/456/zip"]
+    assert [query for query in evidence["run_queries"] if "event=schedule" in query] == [
+        "workflows/ci.yml/runs?event=schedule&status=completed&branch=main&per_page=100&page=1"]
 
 
 @pytest.mark.parametrize("nightly_time", ["2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z"],

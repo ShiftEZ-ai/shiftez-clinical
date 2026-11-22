@@ -351,6 +351,10 @@ class TwoObservationGateTests(unittest.TestCase):
         for (branch, default), expected in cases.items():
             with self.subTest(branch=branch, default=default):
                 self.assertEqual(trusted_ci.quarantine_revision(branch, default, "base", "candidate"), expected)
+        # The shard retry path must use the helper with the trusted default, not its own branch test.
+        source = Path(trusted_ci.__file__).read_text(encoding="utf-8")
+        self.assertIn('quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"])', source)
+        self.assertNotIn('base if branch == "main" else candidate', source)
 
     def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):
         import trusted_ci
