@@ -5,9 +5,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from apps.api import models as m
+from apps.api import models as m, snapshots
 from apps.api.db import transaction
 from apps.api.services import reviews
+from apps.api.services.read_projection_warming import warm_all
+from apps.api.services.read_projections import CANONICAL_AUDIENCE
 from apps.worker.main import process_one
 from packages.domain.workspace_merge import plan, overlay
 from packages.domain.validation import evaluate
@@ -40,6 +42,67 @@ def test_return_resubmit_approve_is_not_contribution_and_home_uses_step_authorit
         workspace = db.get(m.Workspace, w['id'])
         assert not reviews.contributed(db, workspace, h.seed['identities']['approver'])
         assert reviews.contributed(db, workspace, h.seed['identities']['coordinator'])
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_amendment_review_on_home_uses_stored_fingerprint(h, monkeypatch):
+    def submit(kind, target, revision):
+        # Read Home before a workspace detail request can warm the fingerprint.
+        response = h.client('coordinator').post('/api/commands', headers={'idempotency-key': str(uuid4())}, json={
+            'kind': kind, 'target_id': target, 'expected_revision': revision, 'payload': {'reason': REASON}})
+        assert response.status_code == 200, response.text
+        return response.json()['workspace']
+
+    identity(h, 'programme_lead', ['programme_lead'])
+    pub, shifts = issued(h)
+    result = change(h, pub, shifts[0])
+    w = submit('publication.changes.submit', pub, result['workspace']['revision'])
+
+    def no_snapshot(*args, **kwargs):
+        pytest.fail('Home must use the stored scheduling fingerprint')
+
+    def review_items(role):
+        with monkeypatch.context() as guard:
+            guard.setattr(snapshots, 'domain_snapshot', no_snapshot)
+            return [item for item in h.get(role, '/api/home')['attention'] if item['key'] == 'reviews']
+
+    assert [item['rota_id'] for item in review_items('approver')] == [w['id']]
+    w = h.lifecycle(w, 'reopen', role='approver')['workspace']
+    assert not review_items('approver')
+    w = submit('workspace.submit', w['id'], w['revision'])
+    items = review_items('approver')
+    assert [(item['rota_id'], item['amendment']['changes']) for item in items] == [(w['id'], 1)]
+    assert not review_items('programme_lead')
+    assert not review_items('coordinator')
+    assert h.lifecycle(w, 'approve', role='programme_lead', status=403)['error']['code'] == 'REVIEW_STEP_ROLE'
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_home_hides_amendment_with_stale_worker_fingerprint(h):
+    pub, shifts = issued(h)
+    made = change(h, pub, shifts[0])
+    # Submit without the harness's detail read, which can warm the fingerprint.
+    response = h.client('coordinator').post('/api/commands', headers={'idempotency-key': str(uuid4())}, json={
+        'kind': 'publication.changes.submit', 'target_id': pub, 'expected_revision': made['workspace']['revision'],
+        'payload': {'reason': REASON}})
+    assert response.status_code == 200, response.text
+    w = response.json()['workspace']
+    engine = h.app.state.engine
+    key = (w['id'], CANONICAL_AUDIENCE, 'fingerprint')
+    with transaction(engine) as db:
+        assert db.get(m.WorkspaceReadProjection, key) is None
+    warm_all(engine)
+    with transaction(engine) as db:
+        saved = db.get(m.WorkspaceReadProjection, key)
+        assert saved is not None and saved.value == w['submitted_fingerprint']
+
+    def review_ids():
+        return [item['rota_id'] for item in h.get('approver', '/api/home')['attention'] if item['key'] == 'reviews']
+
+    assert w['id'] in review_ids()
+    h.policy({'kind': 'min_rest', 'hours': 11})
+    assert w['id'] not in review_ids()
+    assert h.lifecycle(w, 'approve', role='approver', status=409)['error']['code'] == 'STALE_INPUTS'
 
 
 def test_groups_refuse_missing_department_coordinator_and_default_existing_and_new_rotas(h):
