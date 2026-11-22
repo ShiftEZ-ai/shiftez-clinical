@@ -74,7 +74,8 @@ def test_draft_schedule_currency_matches_the_check_gate(h, changed_input):
         row = db.get(m.Workspace, workspace['id'])
         stored = row.validation
         department = db.get(m.Department, row.department_id)
-        assert complete_check(stored, domain_snapshot(db, row), department.generation_defaults) is True
+        source = domain_snapshot(db, row)
+        assert complete_check(stored, source, source['department']['generation_defaults']) is True
         if changed_input == 'session':
             shift = db.get(m.Shift, created['shift_id'])
             shift.end += timedelta(hours=1)
@@ -91,12 +92,17 @@ def test_draft_schedule_currency_matches_the_check_gate(h, changed_input):
             grant.revoked = True
             grant.revision += 1
             db.get(m.Organisation, department.organisation_id).input_revision += 1
-    assert h.get('coordinator', url)['schedule']['fresh'] is False
+    # A later scoring change leaves the draft's captured settings and check current.
+    expected_fresh = changed_input == 'scoring'
+    assert h.get('coordinator', url)['schedule']['fresh'] is expected_fresh
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Workspace, workspace['id'])
-        department = db.get(m.Department, row.department_id)
-        assert complete_check(row.validation, domain_snapshot(db, row), department.generation_defaults) is False
+        source = domain_snapshot(db, row)
+        assert complete_check(row.validation, source, source['department']['generation_defaults']) is expected_fresh
         assert row.validation == stored
+    if changed_input == 'scoring':
+        h.refresh_draft_baseline(workspace)
+        assert h.get('coordinator', url)['schedule'] is None
 
 
 def test_draft_schedule_currency_discards_legacy_cached_verdict(h, monkeypatch):

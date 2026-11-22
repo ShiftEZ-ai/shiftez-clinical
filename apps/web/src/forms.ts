@@ -270,10 +270,16 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       const aliasList=()=>[...new Set(aliases.input.value.split('\n').map(a=>a.trim()).filter(Boolean))];
       aliases.input.addEventListener('input',()=>{const list=aliasList();
         aliases.input.setCustomValidity(list.length>30?'Up to 30 other names.':list.some(a=>a.length>160)?'Each name up to 160 characters.':'');});
-      form.append(part('Who they are','',name.wrap,code.wrap,title.wrap,tags.wrap,rotaName.wrap,aliases.wrap,colour.wrap,active.wrap),
+      // Inactive from (PersonInput.inactive_from, the date the API and staff import write): duties before it still count.
+      // Empty: the server dates a new deactivation today and keeps a saved date; a saved date can be moved, not blanked.
+      const off=(row?.configured_active??row?.active)===false,dated=off&&!!row?.inactive_from;  // the saved switch, not today's state
+      const inactiveFrom=field(dated?'Inactive from':'Inactive from (optional)','date',off?row?.inactive_from||'':'',{required:dated});
+      const syncInactive=()=>{inactiveFrom.wrap.hidden=inactiveFrom.input.disabled=active.input.checked;};
+      active.input.addEventListener('change',syncInactive);syncInactive();
+      form.append(part('Who they are','',name.wrap,code.wrap,title.wrap,tags.wrap,rotaName.wrap,aliases.wrap,colour.wrap,active.wrap,inactiveFrom.wrap),
         part('Directory & contact','',section.wrap,order.wrap,phone.wrap,extension.wrap,pager.wrap,number.wrap));
       value=()=>({colour:colour.input.value,display_name:name.input.value,active:active.input.checked,title:title.input.value,directory_section:section.input.value,work_phone:phone.input.value,work_extension:extension.input.value,staff_number:number.input.value,pager:pager.input.value,directory_order:Number(order.input.value),short_code:code.input.value,tags:tags.values(),
-        rota_name:rotaName.input.value.trim(),rota_aliases:aliasList()});
+        rota_name:rotaName.input.value.trim(),rota_aliases:aliasList(),...(!active.input.checked&&inactiveFrom.input.value?{inactive_from:inactiveFrom.input.value}:{})});
     }else if(kind==='programme_calendar_entries'){
       const programme=select('Programme',options(all(ctx,'programmes')),row?.programme_id||'');
       const entryKind=select('Entry type',[{value:'academic_block',label:'Academic block'},{value:'break',label:'Break'},{value:'notice',label:'Notice'}],row?.kind||'academic_block');

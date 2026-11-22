@@ -144,8 +144,8 @@ def _record(db, actor, person, workspace, publication, limit, offset):
                          and not inactive(row) and not row['locked']), key=lambda row: (row['start'], row['id']))
         total = min(max(0, len(shifts) - offset), limit)
         index = people_index(data)
-        options = dict(db.get(m.Department, actor.department_id).generation_defaults or {})
-        if issued.get('settings'):
+        options = dict(data['department'].get('generation_defaults') or {})
+        if publication and issued.get('settings'):
             options['scoring'] = issued['settings']
         baseline_check, session_cache = None, {}
         has_eligibility = db.scalar(select(m.Eligibility.id).where(
