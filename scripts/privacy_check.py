@@ -39,14 +39,15 @@ PATTERNS = {
     "secret-assignment": re.compile(
         r"(?i)(?:password|passwd|secret|token|api[_-]?key)[\w-]{0,64}[\"']?[ \t]{0,40}[:=][ \t]{0,40}[bru]{0,2}[\"']"
         r"([A-Za-z0-9+/=_.~-]{20,256})[\"']"),
-    "ipv4": re.compile(r"(?<![\w.-])(\d{1,3}(?:\.\d{1,3}){3})(?![\w-]|\.\d)"),
+    # ASCII digits only (other scripts' digits would crash ipaddress); "a.b.c.d-e.f.g.h" is a range, so both ends count.
+    "ipv4": re.compile(r"(?<![\w.])(?<![A-Za-z]-)([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![\w]|\.[0-9]|-[A-Za-z])"),
     "wildcard-dns-host": re.compile(r"(?i)\b(?:sslip|nip|xip)\.io\b|\.ts\.net\b|\b(?:duckdns\.org|ddns\.net)\b"),
     # These two find their literal tail first; HOST_BEFORE then checks the host in front of it (fast on big trees).
-    "private-tld": re.compile(rf"\.{_TLD}(?![\w-]|\.\w|\()"),
+    "private-tld": re.compile(rf"(?i)\.{_TLD}(?![\w-]|\.\w|\()"),
     "env-host-port": re.compile(r"(?<=[A-Za-z0-9]):\d{2,5}\b"),
 }
 HOST_BEFORE = {
-    "private-tld": re.compile(rf"(?<![\w.$-]){_HOST}(?:\.{_HOST})*$"),
+    "private-tld": re.compile(rf"(?i)(?<![\w.$-]){_HOST}(?:\.{_HOST})*$"),
     "env-host-port": re.compile(
         rf"(?i)(?:(?<![\w.-])(?:{_HOST}\.)*(?:[a-z0-9]+-)*{_ENV}(?:-[a-z0-9]+)*(?:\.{_HOST})*"
         rf"|\b{_ENV}\b[^\n]{{0,40}}?(?<![\w.-]){_HOST}(?:\.{_HOST})+)$"),
@@ -56,7 +57,11 @@ HOST_BEFORE = {
 WELL_KNOWN = {"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "93.184.216.34"}
 DOC_NETWORKS = [ipaddress.ip_network(n) for n in ("127.0.0.0/8", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")]
 # No "@": it would clear user@host, scp targets and DSN hosts, and a four-part package version after "@" is rare.
-VERSION_CONTEXT = re.compile(r"(?i)(?:\bv|\bversion|\bver|\brelease|==|>=|<=|~=|\^|~|\bpython|\bnode|\bpostgres(?:ql)?|(?-i:\b[A-Z][a-z]+/))\s*[\"':=]*\s*$")
+# Version markers and pins only. Tool and product words (python, node, postgres, release, "Name/") are not: they
+# also precede real hosts. A "Name/a.b.c.d" product token counts as a version only when it ends in .0, as host
+# addresses almost never do.
+VERSION_CONTEXT = re.compile(r"(?i)(?:\bv|\bversion|\bver|==|>=|<=|~=)\s*[\"':=]*\s*$")
+PRODUCT_CONTEXT = re.compile(r"\b[A-Z][A-Za-z]+/$")
 PLACEHOLDER = re.compile(r"(?i)example|placeholder|changeme|dummy|redacted|fake|test|sample|fixture|your[_-]|xxxx")
 PROSE = re.compile(r"[a-z]{7,}")  # a random literal rarely holds 7 lowercase letters in a row; a word does
 LOOPBACK_HOST = re.compile(r"(?i)^(?:localhost|127\.0\.0\.1|0\.0\.0\.0)$")
@@ -75,7 +80,8 @@ def hit_start(pattern_id, match, prefix):
             return None
         address = ipaddress.ip_address(match.group(1))
         if (str(address) in WELL_KNOWN or address.is_unspecified or address.is_link_local or address.is_multicast
-                or address.is_reserved or any(address in net for net in DOC_NETWORKS) or VERSION_CONTEXT.search(prefix)):
+                or address.is_reserved or any(address in net for net in DOC_NETWORKS) or VERSION_CONTEXT.search(prefix)
+                or (PRODUCT_CONTEXT.search(prefix) and octets[-1] == "0")):
             return None
     if pattern_id == "secret-assignment":
         value = match.group(1)

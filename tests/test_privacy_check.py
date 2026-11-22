@@ -71,6 +71,30 @@ def test_clean_samples_pass(line):
     assert ids(line) == []
 
 
+HOST = "10." + "4.5.6"
+TOOL_WORD_HITS = ["postgres:" + HOST, "POSTGRES=" + HOST, "node: " + HOST, "python " + HOST, "release " + HOST,
+                  "Upstream/" + HOST, "~" + HOST, "^" + HOST]
+
+
+@pytest.mark.parametrize("line", TOOL_WORD_HITS)
+def test_tool_and_product_words_do_not_hide_an_address(line):
+    assert ids(line) == ["ipv4"]
+
+
+def test_both_ends_of_an_address_range_hit():
+    hits = [hit for hit in privacy_check.matches(HOST + "-" + "10." + "4.5.9") if hit[1] == "ipv4"]
+    assert len(hits) == 2
+
+
+def test_other_script_digits_neither_crash_nor_print():
+    fullwidth = "".join(chr(0xFF10 + int(c)) if c.isdigit() else c for c in HOST)
+    assert ids("host " + fullwidth) == []
+
+
+def test_private_names_match_in_any_case():
+    assert ids("SQL01.CO" + "RP.LO" + "CAL") == ["private-tld"]
+
+
 def test_text_mode_reports_location_and_id_never_the_value(tmp_path):
     body = tmp_path / "body.md"
     body.write_text("clean first line\n" + "\n".join(PLANTED.values()) + "\n", encoding="utf-8")
