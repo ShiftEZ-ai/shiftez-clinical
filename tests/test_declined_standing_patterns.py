@@ -12,7 +12,7 @@ from packages.domain.validation import evaluate
 from packages.domain.wish_reasons import declined_wishes
 from tests.test_pattern_wishes import CASES, month, pattern_wish
 from tests.test_staff_wishes import wish
-from tests.test_standing_wishes import configure, standing
+from tests.test_standing_wishes import standing
 
 
 @pytest.mark.parametrize('kind,limit,broken,compliant', CASES)
@@ -108,8 +108,14 @@ def test_applied_receipt_is_not_carried_after_reopen_or_input_change(h, monkeypa
         with transaction(h.app.state.engine) as db:
             assert db.get(m.Workspace, workspace['id']).validation is None
     else:
-        configure(h, wish_debt_cap=2)
+        with transaction(h.app.state.engine) as db:
+            location = db.get(m.Location, h.seed['locations'][0])
+            identity, revision = location.id, location.revision
+            value = {'name': 'Synthetic changed check input', 'location_type_id': location.location_type_id,
+                     'starts_on': location.starts_on.isoformat()}
+        h.configure('locations', value, identity, revision)
         result = h.lifecycle(submitted, 'validate')['workspace']
+        assert result['validation']['fingerprint'] != submitted['validation']['fingerprint']
         assert 'wish_receipt' not in result['validation']
 
 
@@ -122,6 +128,8 @@ def test_replacement_recomputes_pattern_breaches_and_keeps_original_reasons(h):
     publication_id = h.publish(workspace)['publication_id']
     original = h.get('coordinator', '/api/publications/' + publication_id)['snapshot']
     assert original['wishes'][0]['outcome'] == 'declined' and original['wishes'][0]['outcome_reasons']
+    with transaction(h.app.state.engine) as db:
+        stored_original = copy.deepcopy(db.get(m.Publication, publication_id).snapshot)
     replacement = h.command('coordinator', 'workspace.create', {'name': 'Replace after one work day',
         'starts_on': '2026-10-05', 'ends_on': '2026-10-11', 'replaces_publication_id': publication_id})['workspace']
     replacement = h.shift(replacement, start='2026-10-05T08:00:00+03:00',
@@ -131,4 +139,4 @@ def test_replacement_recomputes_pattern_breaches_and_keeps_original_reasons(h):
     [trimmed] = prior['wishes']
     assert trimmed['id'] == saved['id'] and trimmed['outcome'] == 'granted' and trimmed['outcome_reasons'] == []
     with transaction(h.app.state.engine) as db:
-        assert db.get(m.Publication, publication_id).snapshot == original
+        assert db.get(m.Publication, publication_id).snapshot == stored_original
