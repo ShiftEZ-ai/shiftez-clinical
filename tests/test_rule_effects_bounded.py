@@ -67,8 +67,18 @@ def test_review_effect_work_is_bounded_at_46_overlapping_drafts(h, monkeypatch):
                }
 
 
-def test_review_current_receipt_effect_matches_the_saved_effect(h):
+def test_review_current_receipt_effect_matches_the_saved_effect(h, monkeypatch):
+    from apps.api.services import read_projections
+
     h, workspace, policy, job = checked_approval(h)
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, workspace['id'])
+        snapshots.feasibility_fingerprints(db, [row])
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('Reading the feasibility projection should skip scoring settings')
+
+    monkeypatch.setattr(read_projections, 'workspace_generation_defaults', unexpected)
     review = h.get('approver', f"/api/policies/{policy['id']}/review")
     stored = h.get('approver', f"/api/jobs/{job['id']}")['job']['result']['effect']
     row = next(effect for effect in review['effect'] if effect['workspace_id'] == workspace['id'])
