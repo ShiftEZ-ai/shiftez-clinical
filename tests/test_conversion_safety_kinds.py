@@ -4,8 +4,11 @@ import pytest
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.rule_catalogue import CATALOGUE_MAPPING, NEVER_OVERRIDDEN, RULE_CATALOGUE
+from packages.domain.rule_catalogue_migration import after_snapshot, plan_v2
+from packages.domain.rule_migration_proof import strict_expanded
 from tests.test_rule_catalogue_api import approve, line, propose
 from tests.test_rule_catalogue_v2_api import preview, proposed
+from tests.test_rule_catalogue_v2_proof import source as legacy_source, uid
 from tests.test_rule_safety_audit import safety_settings
 
 
@@ -51,8 +54,32 @@ def test_advisory_safety_conversion(h, kind):
 
     source = h.policy(rule, severity='advisory')
     assert source['definition']['severity'] == 'advisory'
+    if kind == 'minimum_cover':
+        # Under #144, advisory cover maps to the advisory-only target, which is not a safety number.
+        before = {'policies': [source]}
+        plan = plan_v2(before['policies'], department_id=source['department_id'])
+        assert not plan['blocked'], plan['blocked']
+        after = after_snapshot(before, plan)
+        [converted] = after['policies'][0]['definition']['rule']['lines']
+        assert converted['numbers'] == {'target': {'value': rule['minimum'], 'level': 'medium'}}
+        assert strict_expanded(before, after)['equal']
+        return
     reason = "'spread_evenly'" if kind == 'spread_evenly' else SAFETY_REVIEW_REASON
     assert_refused(h, source, reason)
+
+
+def test_legacy_advisory_cover_converts_per_person_rows_and_inherited_default():
+    source = legacy_source(6701, {'kind': 'minimum_cover', 'minimum': 2}, severity='advisory', strength='high',
+                           listed_only=True, per_person=[{'person_id': uid(12), 'amount': 3},
+                                                         {'person_id': uid(13), 'amount': None}])
+    before = {'policies': [source]}
+    plan = plan_v2(before['policies'], department_id=source['department_id'])
+    assert not plan['blocked'], plan['blocked']
+    after = after_snapshot(before, plan)
+    explicit, inherited = after['policies'][0]['definition']['rule']['lines']
+    assert explicit['numbers'] == {'target': {'value': 3, 'level': 'high'}}
+    assert inherited['numbers'] == {'target': {'value': None, 'level': 'high'}}
+    assert strict_expanded(before, after)['equal']
 
 
 @pytest.mark.parametrize('entry_id,key,slot', V1_SAFETY_NUMBERS)

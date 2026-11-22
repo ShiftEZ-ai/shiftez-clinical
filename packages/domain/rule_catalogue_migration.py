@@ -905,12 +905,6 @@ def plan_v2(policies, held=None, week_start=0, department_id=None, *, tag_ids=()
             if cutoff:
                 material = [(n, line) for n, line in material
                             if line_validity(projected, line, cutoff)['effective'] != 'ended']
-            if material and (
-                original['kind'] in NEVER_OVERRIDDEN and d.get('severity') == 'advisory'
-                or any(_line_safety(entry_id, version, old_rule, candidate, mandatory=False)
-                       for _, line in material for candidate in (line, line.get('source_default')) if candidate)
-            ):
-                raise Kept('Review this safety rule and approve a mandatory version before conversion')
             if original['kind'] != 'catalogue' and d.get('listed_only') and field is not None and any(
                     d['per_person'][n].get('amount') is None for n, _ in material):
                 inherited_indexes = [index for index, _ in material if d['per_person'][index].get('amount') is None]
@@ -924,6 +918,9 @@ def plan_v2(policies, held=None, week_start=0, department_id=None, *, tag_ids=()
                             item['source_default'] = deepcopy(base)
                 else:
                     material[0][1]['source_default'] = base
+            if any(_line_safety(entry_id, version, old_rule, candidate, mandatory=False)
+                   for _, line in material for candidate in (line, line.get('source_default')) if candidate):
+                raise Kept('Review this safety rule and approve a mandatory version before conversion')
             target_id = CATALOGUE_MAPPING.get(entry_id, entry_id)
             for n, line in material:
                 source_line_id = line['id']
