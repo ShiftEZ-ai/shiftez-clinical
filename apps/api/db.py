@@ -245,7 +245,9 @@ def _unread_status_change(session, row, changed):
     from datetime import timedelta
     from types import SimpleNamespace
     from . import models as m
-    if not isinstance(row, m.Workspace) or set(changed) != {'status'}:
+    # A reflected DML row loads only scope columns; without its dates, advance (fail safe) rather than load more.
+    if (not isinstance(row, m.Workspace) or set(changed) != {'status'}
+            or {'starts_on', 'ends_on'} & inspect(row).unloaded):
         return False
     from .services.wishes import period_of, scoring
     from .workspace_baselines import latest_many
