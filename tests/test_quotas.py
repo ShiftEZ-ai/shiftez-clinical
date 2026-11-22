@@ -59,8 +59,10 @@ def test_fractional_rate_target_caps_the_calculated_amount_and_preserves_overrid
         comparison='target', metric='session_units', amount=1.25,
         prorate_department_days=True, reference_days=7, rounding='nearest')
     if override is not None:
+        _, target = checked_row(data)
         data['workspace']['target_overrides'] = [{'policy_id': policy['id'], 'policy_revision': policy['revision'],
-            'person_id': pid, 'amount': override, 'reason': 'Synthetic exact target adjustment'}]
+            'person_id': pid, 'amount': override, 'reason': 'Synthetic exact target adjustment',
+            'rule_fingerprints': [target['target_calculation']['rule_fingerprint']]}]
     _, row = checked_row(data)
     assert row['amount'] == expected
     assert row['target_calculation']['calculated_amount'] == 2.5

@@ -3,7 +3,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, save_dialog, decide, wait_held
+from .test_browser import browser, live_server, sign_in, navigate, save_dialog, decide, wait_held, planner_tool
 
 pytestmark = pytest.mark.browser
 
@@ -148,3 +148,42 @@ def test_quota_proposal_activation_publication_and_personal_report(browser, live
         assert not errors and h.detail(w)["workspace"]["status"] == "published"
     finally:
         for context in contexts: context.close()
+
+
+def test_duties_target_override_keeps_cents_after_reload(browser, live_server, h):
+    check_cent_target_override_after_reload(browser, live_server, h, 'duties')
+
+
+def test_lead_turns_target_override_keeps_cents_after_reload(browser, live_server, h):
+    check_cent_target_override_after_reload(browser, live_server, h, 'lead_turns')
+
+
+def check_cent_target_override_after_reload(browser, live_server, h, metric):
+    # Count targets carry two decimals (quota_target_amount): the override field accepts 4.57 and the rota keeps it.
+    w = h.shift(h.workspace("Cent target override"))["workspace"]
+    h.policy({'kind': 'block_quota', 'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'metric': metric,
+              'comparison': 'target', 'amount': 2, 'prorate_department_days': True, 'reference_days': 28}, severity='advisory')
+    h.refresh_draft_baseline(h.detail(w)["workspace"])
+    context, page = sign_in(browser, live_server, "coordinator")
+    try:
+        navigate(page, f"planner/{w['id']}")
+        planner_tool(page, "Workload targets for this rota")
+        sheet = page.get_by_role("region", name="Workload targets for this rota")
+        sheet.get_by_role("button", name="Adjust workload target", exact=True).click(timeout=20000)
+        adjustment = page.get_by_role("dialog", name="Adjust workload target")
+        amount = adjustment.get_by_label("Override target", exact=True)
+        expect(amount).to_have_attribute("step", "0.01")
+        adjustment.get_by_label("Employee and target", exact=True).select_option(index=1)
+        expect(amount).to_have_attribute("step", "0.01")
+        amount.fill("4.57")
+        adjustment.get_by_label("Adjustment reason", exact=True).fill("Synthetic cent target")
+        save_dialog(adjustment, "Save target adjustment")
+        expect(adjustment).to_have_count(0)
+        assert [r["amount"] for r in h.detail(w)["workspace"]["target_overrides"]] == [4.57]
+        page.reload()
+        navigate(page, f"planner/{w['id']}")
+        planner_tool(page, "Workload targets for this rota")
+        saved = page.get_by_role("region", name="Workload targets for this rota").get_by_role("heading", name="Saved target adjustments", exact=True).locator("..")
+        expect(saved).to_contain_text(" · 4.57")
+    finally:
+        context.close()
