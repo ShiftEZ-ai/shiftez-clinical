@@ -116,13 +116,16 @@ def _home_uncached(db, actor, *, max_days):
         W = m.Workspace
         rotas = count(W, W.archived_at.is_(None))
         # Live rotas only (a handful); their stored check says what is left without loading any session.
+        # Drafts near today; a rota waiting for review or publishing whatever its month (the Schedule offers it too).
+        # ponytail: rotas left submitted or approved are read without a date bound; cap them if a department keeps dozens.
         near_since = today - timedelta(days=max_days)
         near_until = today + timedelta(days=max_days)
         live = list(db.scalars(select(W).options(load_only(W.id, W.name, W.status, W.starts_on, W.ends_on,
             W.revision, W.content_revision, W.base_publication_id, W.submitted_fingerprint, W.submitted_at, W.review_snapshot,
             W.return_note,
             W.archived_at, W.department_id, W.accepted_issues)).where(W.department_id == dept, W.archived_at.is_(None),
-            W.status.in_(schedule.LIVE), W.ends_on > near_since, W.starts_on < near_until)
+            W.status.in_(schedule.LIVE), or_(W.status.in_(('submitted', 'approved')),
+                                              and_(W.ends_on > near_since, W.starts_on < near_until)))
             .order_by(W.starts_on, W.id)))
         drafts = [w for w in live if w.status == "draft"]
         names = rota_names(db, actor.roles, actor.person_id, {w.id: w.name for w in live})
