@@ -34,7 +34,7 @@ def _home_stamp(db, actor, now):
         m.AuditEvent.department_id == actor.department_id))
     row = db.execute(select(m.Department.revision, m.Department.catalogue_revision,
                             m.Organisation.revision, m.Organisation.input_revision,
-                            m.Organisation.availability_revision)
+                            m.Organisation.availability_revision, m.Organisation.timezone)
                     .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
                     .where(m.Department.id == actor.department_id)
                     ).one()
@@ -42,7 +42,8 @@ def _home_stamp(db, actor, now):
     # stamp process-independent so the durable Home projection is shared by
     # every API worker after a deploy.
     from .rota_summary import validation_job_stamp
-    return (*row, latest_audit, now.date(), validation_job_stamp(db, department_id=actor.department_id))
+    day = now.astimezone(ZoneInfo(row.timezone)).date()
+    return (*row, latest_audit, day, validation_job_stamp(db, department_id=actor.department_id))
 
 
 def rota_strip(db, actor, start, end, limit, offset):
@@ -294,13 +295,15 @@ def _home_uncached(db, actor, *, max_days):
             .order_by(C.name, C.id).limit(2))] if pending_acknowledgements else [])
 
     current = lambda cls: and_(cls.department_id == dept, cls.starts_on <= today, or_(cls.ends_on.is_(None), cls.ends_on > today))
-    people = select(func.count()).select_from(m.Person).where(m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True))
     if can("admin", "credentialer"):
+        from .people import active_people_on
+        people = select(func.count()).select_from(m.Person).where(
+            m.Person.organisation_id == actor.organisation_id, active_people_on(today))
         E = m.Eligibility
         add(55, "no_eligibility", db.scalar(people.where(~m.Person.id.in_(select(E.person_id).where(current(E))))) or 0)
     if can("admin", "coordinator"):
         from .people import current_people_counts
-        add(56, "no_rank", current_people_counts(db, actor)['people_without_current_rank'])
+        add(56, "no_rank", current_people_counts(db, actor, today)['people_without_current_rank'])
     if can("admin"):
         add(57, "no_hours", count(m.Service, m.Service.active.is_(True), m.Service.calendar_id.is_(None)))
     if can(*PERMISSIONS["feedback.triage"]):

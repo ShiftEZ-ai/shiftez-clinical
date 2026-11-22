@@ -674,5 +674,10 @@
     "class": "additive",
     "sha256": "01a652a04135c8ad00eed71c665f12235d49025ecfed49d7e26d797d6eaa5590",
     "review": "Adds a nullable deactivation date to people and preserves all existing values without a backfill."
+  },
+  "0151_job_candidate_evidence": {
+    "class": "additive",
+    "sha256": "333896cba437ee34a83da6920f9d42e38841d017e3727ad2ab20f0e9730d938c",
+    "review": "Adds job-owned candidate evidence storage and a lookup index while preserving all existing rows."
   }
 }

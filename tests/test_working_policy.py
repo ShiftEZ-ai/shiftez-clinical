@@ -28,7 +28,7 @@ import canary_evidence as canaries
 import re
 import xml.etree.ElementTree as ET
 
-# The refusal only the pre-code-owner guard has; ci.yml's Checks step selects dev's old wrapper on it.
+# The refusal only the pre-code-owner guard had; it must not come back.
 LEGACY_ROUTE = "Tier 1 control changes require the audited maintenance route"
 
 import pytest
@@ -374,9 +374,11 @@ def pytest_runtest_makereport(item, call):
                            "unresolved_executable_references": list(unresolved)})
             return report
         def read(rev, name):
-            if files and name in files and rev in {base, candidate}:
-                value = files[name][rev == candidate]
-                return value if isinstance(value, bytes) else json.dumps(value).encode()
+            if files and name in files and (rev in {base, candidate} or branch == "main" and rev == source):
+                value = files[name][rev != base]
+                return value if value is None or isinstance(value, bytes) else json.dumps(value).encode()
+            if name == policy.QUARANTINE_RETIRED:
+                return b"[]"
             if name == ".github/CODEOWNERS":
                 if rev == candidate and after_codeowners is not None:
                     return after_codeowners
@@ -496,10 +498,8 @@ def pytest_runtest_makereport(item, call):
         self.assertIn("python -I .github/scripts/working_policy.py guard", [step.get("run") for step in standalone_steps])
         self.assertEqual(next(s for s in standalone_steps if s.get("name") == "Enforce target policy without executing PR code")["env"], guard_env)
         self.assertEqual(standalone["jobs"]["policy"].get("permissions", standalone["permissions"]), {"contents": "read"})
-        run = guard["run"].splitlines()
-        self.assertEqual(run[0], "if grep -qF '%s' .github/scripts/working_policy.py; then" % LEGACY_ROUTE)
-        self.assertEqual(run[-3:], ["else", '  "${{ steps.policy-python.outputs.python }}" -I .github/scripts/working_policy.py guard',
-                                    "fi"])
+        self.assertEqual(guard["run"],
+                         '"${{ steps.policy-python.outputs.python }}" -I .github/scripts/working_policy.py guard')
 
     def run_checks_guard_step(self, guard_source, branch="dev", tier1_path=".github/workflows/ci.yml"):
         import yaml
@@ -513,33 +513,6 @@ def pytest_runtest_makereport(item, call):
             env = {key: value for key, value in os.environ.items() if key != "TRUSTED_BOOTSTRAP"}
             env.update(GITHUB_STEP_SUMMARY=str(Path(trusted) / "summary"), STUB_BRANCH=branch, STUB_TIER1=tier1_path)
             return subprocess.run(["bash", "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
-
-    def test_checks_runs_dev_wrapper_while_dev_has_the_old_guard(self):
-        old_guard = (
-            "import os, sys\n"
-            "KNOWN = 'ci/known-failures.json'\n"
-            "def read_file(sha, path):\n    return b'[]'\n"
-            "def renewal_only(old, new):\n    return False\n"
-            "def findings_report(*args):\n"
-            "    path = os.environ['STUB_TIER1']\n"
-            "    return {'branch': os.environ['STUB_BRANCH'], 'tier1': [{'path': path}] if path else [],\n"
-            "            'target_sha': 'base', 'candidate_tree': 'head'}\n"
-            "def guard():\n"
-            "    if findings_report()['tier1']:\n"
-            "        raise ValueError(%r)\n"
-            "if sys.argv[1:] == ['guard']:\n    print('bare guard'); guard()\n" % LEGACY_ROUTE)
-        allowed = self.run_checks_guard_step(old_guard)
-        self.assertEqual(allowed.returncode, 0, allowed.stderr)
-        self.assertEqual(allowed.stdout.splitlines(), [LEGACY_ROUTE])
-        outside = self.run_checks_guard_step(old_guard, branch="main")
-        self.assertNotEqual(outside.returncode, 0)
-        self.assertIn("Working policy refused: " + LEGACY_ROUTE, outside.stderr)
-        self.assertNotIn("bare guard", outside.stdout)
-        known = self.run_checks_guard_step(old_guard, tier1_path="ci/known-failures.json")
-        self.assertNotEqual(known.returncode, 0)
-        self.assertIn("Known-failures changes must only remove entries or renew expiry through review", known.stderr)
-        clean = self.run_checks_guard_step(old_guard, tier1_path="")
-        self.assertEqual((clean.returncode, clean.stdout), (0, ""))
 
     def test_checks_runs_the_code_owner_guard_once_dev_has_it(self):
         new_guard = "import sys\nprint('code-owner guard', sys.argv[1:])\n"
@@ -767,6 +740,93 @@ def pytest_runtest_makereport(item, call):
             with self.subTest(message=message, entry=entry):
                 self.assert_quarantine_refused(message, [entry])
         self.assert_quarantine_refused("entries need one unique nodeid each", [self.FLAKE, self.FLAKE])
+
+    def retired_case(self, before, after, *, registry_before=None, registry_after=None):
+        registry = [self.MOVED, self.FLAKE] if registry_before is None else registry_before
+        changed = policy.QUARANTINE_RETIRED
+        if registry_after is not None:
+            changed += "\0" + policy.QUARANTINE
+        return self.run_guard(changed, files={
+            policy.QUARANTINE: (registry, registry if registry_after is None else registry_after),
+            policy.QUARANTINE_RETIRED: (before, after),
+        })
+
+    def test_guard_accepts_an_unowned_retired_append(self):
+        first, second = self.FLAKE["nodeid"], self.QUARANTINE_NODE
+        for failure_class in ("baseline", "baseline-error"):
+            with self.subTest(failure_class=failure_class):
+                row = {**self.MOVED, "reason": failure_class + ": measured"}
+                report = self.retired_case([first], [first, second], registry_before=[row, self.FLAKE])
+                self.assertEqual(report["tier1"], [])
+                self.assertEqual(report["tier2"], [])
+
+    def test_guard_refuses_retiring_a_release_blocker(self):
+        with self.assertRaisesRegex(ValueError, "release blockers may not be retired"):
+            self.retired_case([], [self.QUARANTINE_NODE], registry_before=[{**self.MOVED, "blocker": True}])
+
+    def test_guard_refuses_retiring_an_unstable_entry(self):
+        with self.assertRaisesRegex(ValueError, "only baseline or baseline-error entries may be retired"):
+            self.retired_case([], [self.FLAKE["nodeid"]])
+
+    def test_guard_refuses_readding_a_still_retired_node(self):
+        node = self.QUARANTINE_NODE
+        flake = {**self.FLAKE, "nodeid": node, "blocker": True}
+        # Base retired, candidate list emptied: the check must read the BASE list.
+        files = {policy.QUARANTINE: ([], [flake]), policy.QUARANTINE_RETIRED: ([node], [])}
+        with self.assertRaisesRegex(ValueError, "may not re-add a retired entry: " + re.escape(node)):
+            self.run_guard(policy.QUARANTINE, files=files)
+        files[policy.QUARANTINE_RETIRED] = ([], [])
+        report = self.run_guard(policy.QUARANTINE, files=files)
+        self.assertEqual([row["path"] for row in report["tier1"]], [policy.QUARANTINE])
+
+    def test_guard_refuses_a_retired_entry_edit(self):
+        node = self.QUARANTINE_NODE
+        edited = b'["\\u0074' + node[1:].encode() + b'"]'
+        with self.assertRaisesRegex(ValueError, "existing entries must stay byte-unchanged"):
+            self.retired_case([node], edited)
+
+    def test_guard_refuses_a_retired_entry_removal_without_registry_removal(self):
+        with self.assertRaisesRegex(ValueError, "append-only; remove the same nodes"):
+            self.retired_case([self.QUARANTINE_NODE], [])
+        with self.assertRaisesRegex(ValueError, "append-only; remove the same nodes"):
+            self.retired_case([self.QUARANTINE_NODE], [], registry_after=[self.MOVED])
+
+    def test_guard_refuses_retired_entry_reordering(self):
+        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
+        with self.assertRaisesRegex(ValueError, "byte-unchanged and in order"):
+            self.retired_case([first, second], [second, first])
+
+    def test_guard_refuses_a_retired_node_absent_from_the_base_registry(self):
+        with self.assertRaisesRegex(ValueError, "new entry is absent from the base"):
+            self.retired_case([], ["tests/test_other.py::test_other"])
+
+    def test_guard_refuses_a_duplicate_retired_node(self):
+        node = self.QUARANTINE_NODE
+        with self.assertRaisesRegex(ValueError, "duplicate retired nodeid"):
+            self.retired_case([node], [node, node])
+
+    def test_guard_accepts_retired_compaction_with_owned_registry_removal(self):
+        first, second = self.QUARANTINE_NODE, self.FLAKE["nodeid"]
+        report = self.retired_case([first, second], [second], registry_after=[self.FLAKE])
+        self.assertEqual([row["path"] for row in report["tier1"]], [policy.QUARANTINE])
+
+    def test_guard_accepts_retired_compaction_after_prior_registry_removal(self):
+        report = self.retired_case([self.QUARANTINE_NODE], [], registry_before=[self.FLAKE])
+        self.assertEqual(report["tier1"], [])
+        self.assertEqual(report["tier2"], [])
+
+    def test_guard_allows_an_absent_retired_list_only_before_activation(self):
+        script = ".github/scripts/working_policy.py"
+        for branch in ("dev", "main"):
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(branch=branch, kind=kind):
+                    files = {policy.QUARANTINE_RETIRED: (None, None), script: (b"import json", b"import json")}
+                    report = self.run_guard("apps/ordinary.py", branch=branch, kind=kind, files=files)
+                    self.assertEqual(report["branch"], branch)
+                    active = b"from quarantine_registry import QUARANTINE_RETIRED"
+                    files[script] = (active, active)
+                    with self.assertRaisesRegex(ValueError, "retired list is missing"):
+                        self.run_guard("apps/ordinary.py", branch=branch, kind=kind, files=files)
 
     def test_unowned_known_failures_still_allow_only_removals(self):
         # The base CODEOWNERS leaves ci/known-failures.json without an owner; the guard keeps it removal-only.
@@ -1057,6 +1117,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 if isinstance(quarantine_input, Exception):
                     raise quarantine_input
                 return json.dumps(quarantine_rows).encode() if quarantine_rows else quarantine_input
+            if name == policy.QUARANTINE_RETIRED:
+                return b"[]"
             if name == 'ci/removed-tests.json':return b'{"schema":2,"removed":[],"removed_nodes":[]}'
             return json.dumps({"origin": revision}).encode()
         def fake_git(*args):
@@ -1115,8 +1177,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
-            def compare(*, runs, evidence, product_errors, quarantine, release, **stale_options):
+            def compare(*, runs, evidence, product_errors, quarantine, release, quarantine_registry, **stale_options):
                 self.assertEqual(quarantine, {row["nodeid"]: row for row in quarantine_rows})
+                self.assertEqual(quarantine_registry, quarantine)
                 self.assertEqual(release, branch == "main")
                 if release and quarantine:
                     actual_reader.evaluate(None, None, runs, quarantine=quarantine, release=release)
@@ -1166,10 +1229,12 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             if expired_summary:
                 self.assertIn(expired_summary + "\n", step_summary.read_text(encoding="utf-8"))
             self.assertEqual(summaries, [True])
-            self.assertEqual({revision for revision, name in reads if name == policy.QUARANTINE},
-                             {base} if branch == "main" else {base, candidate})
+            quarantine_paths = {policy.QUARANTINE, policy.QUARANTINE_RETIRED}
+            for path in quarantine_paths:
+                self.assertEqual({revision for revision, name in reads if name == path},
+                                 {base} if branch == "main" else {base, candidate})
             self.assertTrue(all(revision == base for revision, name in reads
-                                if name not in {policy.KNOWN, policy.QUARANTINE, 'ci/removed-tests.json'}))
+                                if name not in quarantine_paths | {policy.KNOWN, 'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
             return fetched.call_args_list
 

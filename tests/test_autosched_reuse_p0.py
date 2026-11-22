@@ -21,6 +21,7 @@ def followup():
     engine = create_engine('sqlite://')
     m.ReadProjectionWarmCursor.__table__.create(engine)
     m.Job.__table__.create(engine)
+    m.ReadProjectionWarmCursor.__table__.create(engine)
     now = datetime(2026, 10, 3, 6, tzinfo=timezone.utc)
     snapshot = {'fingerprint': 'frozen-inputs', 'workspace': {'id': 'workspace'},
                 'generation_engine': 'cp_sat', 'compiler_version': COMPILER_VERSION,

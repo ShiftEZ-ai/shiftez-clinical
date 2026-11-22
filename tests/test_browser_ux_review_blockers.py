@@ -279,6 +279,7 @@ def test_rule_detail_says_no_duties_yet_for_an_empty_draft(browser, live_server,
         navigate(page, 'rules')
         sheet = open_rule(page, rule['name'])
         section = sheet.locator('.rl-sec').filter(has_text='In Only empty')
+        section.get_by_role('button', name='Show effect in Only empty', exact=True).click()
         expect(section).to_contain_text('No duties yet.')
         expect(section.locator('.rl-health-count')).to_have_count(0)
     finally:
