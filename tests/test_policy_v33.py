@@ -64,6 +64,20 @@ class V33Tests(unittest.TestCase):
             for path in (name, 'x/' + name.upper()):
                 with self.subTest(path=path),self.assertRaisesRegex(ValueError,'private agent'):
                     policy.tier(path,None,b'private',self.inventory)
+    def test_only_the_root_public_agent_files_are_public(self):
+        self.assertEqual(len(policy.PUBLIC_AGENT_FILES), 2)
+        self.assertIn('AGENTS.md', policy.PUBLIC_AGENT_FILES)
+        self.assertEqual({name.casefold() for name in policy.PUBLIC_AGENT_FILES} - names.AGENT_FILES, set())
+        for path in sorted(policy.PUBLIC_AGENT_FILES):
+            with self.subTest(path=path):
+                self.assertFalse(policy.private_agent_path(path))
+                policy.tier(path, None, b'# Rules', self.inventory)
+        refused = set(names.AGENT_FILES) | {directory + '/settings.json' for directory in names.AGENT_DIRECTORIES}
+        for name in policy.PUBLIC_AGENT_FILES:
+            refused.update(('docs/' + name, 'x/' + name, './' + name, name.lower(), name.upper()))
+        for path in sorted(refused):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'private agent'):
+                policy.tier(path, None, b'private', self.inventory)
     def test_every_tracked_ignore_variant_refuses_private_patterns(self):
         patterns = set(names.AGENT_FILES) | set(names.AGENT_SPECIAL_FILES)
         patterns.update(directory + '/' for directory in names.AGENT_DIRECTORIES)

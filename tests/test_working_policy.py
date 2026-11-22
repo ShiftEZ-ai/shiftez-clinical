@@ -527,7 +527,7 @@ def pytest_runtest_makereport(item, call):
         addition["fails"].append({**addition["fails"][0], "node": "tests/test_new.py::test_case"})
         cases = [
             (policy.KNOWN, {"after_known": addition}, "Known-failures changes"),
-            ("AGENTS.md", {}, "private agent instructions"),
+            ("docs/AGENTS.md", {}, "private agent instructions"),
             ("apps/example.py", {"after_python": b"x = ("}, "syntax error"),
             (".github/workflows/ci.yml", {"preview_history": True}, "Preview merge history"),
         ]
