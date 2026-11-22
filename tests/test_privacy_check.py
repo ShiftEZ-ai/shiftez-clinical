@@ -207,6 +207,22 @@ def test_every_commit_is_scanned_not_only_the_net_diff(tmp_path):
     assert "20.30.40" not in result.stdout + result.stderr
 
 
+def test_a_merge_adds_only_what_no_parent_holds(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "trunk")
+    commit(tmp_path, {"a.txt": b"clean\n"}, "base")
+    git(tmp_path, "checkout", "-q", "-b", "side")
+    commit(tmp_path, {"side.txt": IP.encode() + b"\n"}, "side")
+    side = git(tmp_path, "rev-parse", "HEAD").decode()[:12]
+    git(tmp_path, "checkout", "-q", "trunk")
+    commit(tmp_path, {"b.txt": b"other\n"}, "trunk")
+    git(tmp_path, "merge", "-q", "--no-ff", "--no-commit", "side")
+    commit(tmp_path, {"merge.txt": ENV_HOST.encode() + b"\n"}, "merge")
+    merge = git(tmp_path, "rev-parse", "HEAD").decode()[:12]
+    lines = run("HEAD~1~1", "HEAD", cwd=tmp_path).stdout.splitlines()
+    # The side value hits at its own commit, not again at the merge; a value the merge itself adds hits there.
+    assert sorted(lines) == sorted([f"{side}:side.txt:1: ipv4", f"{merge}:merge.txt:1: env-host-port"])
+
+
 def test_author_and_committer_are_scanned(tmp_path):
     git(tmp_path, "init", "-q")
     commit(tmp_path, {"a.txt": b"clean"}, "base")
