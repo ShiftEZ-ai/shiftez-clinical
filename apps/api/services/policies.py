@@ -345,11 +345,12 @@ def override_checks(db, actor, definition):
                 "within the people, duties, days and hours that rule covers")
 
 
-def people_data(db, actor, day):
+def people_data(db, actor, day, *, last=None):
     """What the people side of a rule reads (dated ranks, skills, programmes, rotations, cohorts, clinics they can
     work at) for people in the department on `day`, its retained duty contexts, and that day's local bounds."""
-    from datetime import timedelta
     from packages.domain.time import local_midnight
+    from packages.domain.validation import person_active_on
+    last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
     rows = lambda cls: [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))]
@@ -359,12 +360,19 @@ def people_data(db, actor, day):
                       "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
                       "services": m.Service, "locations": m.Location}.items():
         data[name] = {r["id"]: r for r in rows(cls)}
-    members = {r["person_id"] for r in data["memberships"] if r["starts_on"] <= day.isoformat() and (not r.get("ends_on") or day.isoformat() < r["ends_on"])}
-    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(m.Person.id.in_(list(members) or [""]), m.Person.active.is_(True)))}
+    day_key, last_key = day.isoformat(), last.isoformat()
+    first_membership = {}
+    for row in data["memberships"]:
+        if row["starts_on"] < last_key and (not row.get("ends_on") or day_key < row["ends_on"]):
+            first = max(day, date.fromisoformat(row["starts_on"]))
+            pid = row["person_id"]
+            first_membership[pid] = min(first, first_membership.get(pid, first))
+    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(m.Person.id.in_(first_membership)))
+                      if person_active_on(p.active, p.inactive_from, first_membership[p.id])}
     data["tags"] = tag_data(db, [actor.department_id])
     from apps.api.snapshots import scheduling_inputs
     data.update(scheduling_inputs(db, [actor.department_id]))
-    return with_tags(data), local_midnight(day, zone), local_midnight(day + timedelta(days=1), zone)
+    return with_tags(data), local_midnight(day, zone), local_midnight(last, zone)
 
 
 def people_now(db, actor, scope, people=None):
@@ -377,14 +385,8 @@ def people_now(db, actor, scope, people=None):
 
 def people_period(db, actor, first, last):
     """Dated membership union, shared by saved and unsaved line previews."""
-    from packages.domain.time import local_midnight
     require(first < last, 'REACH_PERIOD', 'The end date must be after the start date', 422)
-    data, a, _ = people_data(db, actor, first)
-    members = {r['person_id'] for r in data['memberships'] if r['starts_on'] < last.isoformat()
-               and (not r.get('ends_on') or first.isoformat() < r['ends_on'])}
-    data['people'] = {p.id: record(p) for p in db.scalars(select(m.Person).where(
-        m.Person.id.in_(members or {''}), m.Person.active.is_(True)))}
-    return data, a, local_midnight(last, data['organisation']['timezone'])
+    return people_data(db, actor, first, last=last)
 
 
 def rules_for_person(db, actor, person_id, day):
@@ -392,11 +394,13 @@ def rules_for_person(db, actor, person_id, day):
     of a rule template, the rule's conditions, or another rule that replaces it for them."""
     from packages.domain.conditions import active_rules
     from packages.domain.quotas import MAX_SUBJECT_CONTEXTS
-    from packages.domain.validation import index_person_rows, within_dates
+    from packages.domain.validation import index_person_rows, person_active_for_interval, within_dates
     require_catalogue_read(actor, 'policies')
     person = scoped(db, m.Person, person_id, actor)
     data, a, b = people_data(db, actor, day)
     data["people"][person.id] = record(person)
+    if not person_active_for_interval(data, person.id, a, b):
+        return {"person_id": person.id, "day": day.isoformat(), "rules": []}
     zone = data["organisation"]["timezone"]
     policies = [record(p) for p in db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id))]
     data["policies"] = [p for p in policies if not p["definition"].get("workspace_id")]

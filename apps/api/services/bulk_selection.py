@@ -465,6 +465,9 @@ def _status_column(cls, day, zone):
     ended = [getattr(cls, flag).is_(True) for flag in ("revoked", "retracted") if hasattr(cls, flag)]
     if hasattr(cls, "status"):
         status = cls.status
+    elif cls is m.Person:
+        from .people import active_people_on
+        status = case((active_people_on(day), "active"), else_="inactive")
     elif cls is m.Identity:
         status = case((cls.disabled.is_(True), "disabled"), else_="enabled")
     elif cls is m.Notification:
@@ -512,6 +515,11 @@ def _status_tree(collection, tree):
 
 def _project_records(db, actor, collection, source):
     records = [json_value(dict(row)) for row in source]
+    if collection == "people":
+        for row in records:
+            if actor.permits('admin', 'coordinator'):
+                row['configured_active'] = row['active']
+            row['active'] = row['status'] == 'active'
     if collection in {"policies", "policy_lines"}:
         from .scoring_defaults import seeded_rows
         records = seeded_rows(db, records)
@@ -660,6 +668,9 @@ def _records(db, actor, selection, depth=0, *, sample_only=False):
             query = query.where(_status_column(cls, day, db.get(m.Organisation, actor.organisation_id).timezone).in_(values))
         elif field in cls.__table__.columns and field not in private:
             column = _read_column(cls, field)
+            if cls is m.Person and field == 'active':
+                from .people import active_people_on
+                column = active_people_on(day or today(db, actor.department_id))
             convert = aware if isinstance(column.type, DateTime) else date.fromisoformat if isinstance(column.type, Date) else lambda v: v
             if isinstance(value, dict):
                 require(bool(value) and set(value) <= {"gte", "gt", "lte", "lt"} and isinstance(column.type, (Date, DateTime)),
@@ -750,7 +761,7 @@ def _records(db, actor, selection, depth=0, *, sample_only=False):
     columns.append(_status_column(cls, day, db.get(m.Organisation, actor.organisation_id).timezone).label("status"))
     source = list(db.execute(query.with_only_columns(*columns).order_by(cls.id).limit(MAX_CANDIDATES + 1)).mappings())
     require(len(source) <= MAX_CANDIDATES, "BULK_SELECTION_LIMIT", "More than 5,000 candidates; narrow the filter", 422)
-    if collection in {"wishes", "policies"}:
+    if collection in {"people", "wishes", "policies"}:
         source = _project_records(db, actor, collection, source)
     if not tree and not deferred and not parent_field and collection not in {"policy_lines", "issues", "sessions", "events"} \
             and not (where.get("q") and deferred_search) \
