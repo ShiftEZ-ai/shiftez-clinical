@@ -13,7 +13,11 @@ from packages.domain.solver_diagnostics import explain_conflict
 
 @pytest.mark.parametrize('confirmed', [cp_model.FEASIBLE, cp_model.UNKNOWN, cp_model.INFEASIBLE])
 def test_generation_reports_only_confirmed_infeasibility(h, monkeypatch, confirmed):
-    h.policy({'kind': 'restriction'}, severity='mandatory' if confirmed == cp_model.INFEASIBLE else 'advisory')
+    # Safety kinds are always mandatory. Keep a scored workload cap in the feasible cases.
+    if confirmed == cp_model.INFEASIBLE:
+        h.policy({'kind': 'restriction'})
+    else:
+        h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     data['generation_options'] = {'shortlist_width': 0, 'on_conflict': 'report'}
     original, calls = SolverControl._solve_once, []

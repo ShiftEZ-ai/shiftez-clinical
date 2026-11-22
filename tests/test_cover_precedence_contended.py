@@ -6,7 +6,7 @@ from packages.domain.validation import finding_observations
 from tests.test_template_scheduler_audit import use_cp_sat
 
 
-def contended_cover(h, minimum=1, severity='mandatory'):
+def contended_cover(h, minimum=1, *, advisory=False):
     clinic = h.configure('services', {'name': 'Contended service', 'starts_on': '2020-01-01'})['record']
     h.seed['services'].append(clinic['id'])
     h.command('credentialer', 'eligibility.create', {
@@ -19,7 +19,11 @@ def contended_cover(h, minimum=1, severity='mandatory'):
         'name': 'Long desired cover', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 0, 'target': 1, 'maximum': 1}]},
     })['record']['id']
-    h.policy({'kind': 'minimum_cover', 'minimum': minimum}, {'assignment_type_id': short_type}, severity)
+    scope = {'assignment_type_id': short_type}
+    if advisory:
+        h.cover_target(minimum, scope)
+    else:
+        h.policy({'kind': 'minimum_cover', 'minimum': minimum}, scope)
     workspace = h.shift(h.workspace(), end='2026-10-04T09:00:00+03:00',
                         people=[], service=2, typ=short_type)['workspace']
     workspace = h.shift(workspace, end='2026-10-04T14:00:00+03:00',
@@ -58,7 +62,7 @@ def test_infeasible_required_cover_stays_visible_and_keeps_reachable_cover(h):
 
 
 def test_advisory_shortfall_is_named_when_long_desired_cover_wins(h):
-    _, snapshot, short, long = contended_cover(h, severity='advisory')
+    _, snapshot, short, long = contended_cover(h, advisory=True)
     result = direct(snapshot)
     assert result['status'] == 'candidate_feasible'
     assert [a['shift_id'] for a in result['additions']] == [long]

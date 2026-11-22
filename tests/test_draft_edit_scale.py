@@ -35,11 +35,14 @@ def department_draft(h, people_count=150, per_day=16, days=31, person_rules=40, 
                            ({'kind': 'max_duties', 'maximum': 5, 'window': 'week'}, 'mandatory'),
                            ({'kind': 'max_hours', 'hours': 40, 'window': 'week'}, 'mandatory'),
                            ({'kind': 'max_consecutive_days', 'maximum': 4}, 'mandatory'),
-                           ({'kind': 'max_duties', 'maximum': 3, 'window': 'week'}, 'advisory'), ({'kind': 'min_rest', 'hours': 16}, 'advisory')):
+                           ({'kind': 'max_duties', 'maximum': 3, 'window': 'week'}, 'advisory'), ({'kind': 'max_hours', 'hours': 6, 'window': 'day'}, 'advisory')):
         h.policy(rule, severity=severity)
     for i in range(person_rules):
-        h.policy({'kind': 'restriction', 'weekdays': [i % 7], 'start_time': '00:00', 'end_time': '12:00'},
-                 {'person_id': people[(3 + i) % people_count]}, severity='advisory' if i % 2 else 'mandatory')
+        scope = {'person_id': people[(3 + i) % people_count], 'weekdays': [i % 7], 'start_time': '00:00', 'end_time': '12:00'}
+        if i % 2:
+            h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, scope, severity='advisory')
+        else:
+            h.policy({'kind': 'restriction'}, scope)
         h.policy({'kind': 'max_hours', 'hours': 30 + i % 10, 'window': 'week'}, {'person_id': people[(60 + i) % people_count]}, severity='advisory')
     w = h.workspace('Department October', first.isoformat(), (first + timedelta(days=days)).isoformat())
     with transaction(h.app.state.engine, write=True) as db:

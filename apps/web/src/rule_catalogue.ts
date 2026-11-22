@@ -137,6 +137,10 @@ export const changedRules=(entries:Entry[])=>entries.filter(e=>changesOf(e)>0);
 
 // ---- Words for a line (one place: the Rules database, Needs attention and the rule page) ----
 type Num={value?:number|null;level?:string|null};
+type LineNumbers=Pick<RuleLine,'numbers'>&{mandatory_reasons?:Record<string,string>};
+const displayedStrength=(line:LineNumbers|undefined,key:string,level:string|null|undefined)=>{
+  const reason=line?.mandatory_reasons?.[key];return {level:reason?'mandatory':level??null,reason};
+};
 /** Blank inherits: each number a line leaves blank, the value it takes from a broader
  *  line and that line (the server's `inherited`). */
 export type Inherited=Record<string,Num&{from:string}>;
@@ -146,18 +150,18 @@ const shown=numberText;
 /** A line's numbers in parts: "2 – 5 → 4" (min – max → target), "≥ 2", "≤ 3", "→ 4", "applies", "priority 3"
  *  (`rangeParts`, the one style), each with its strength (`level`). A blank number taken from a broader line is marked
  *  "↰" (`inherited`); an explicit None is no number. */
-export function numberParts(line:Pick<RuleLine,'numbers'>|undefined,inh?:Inherited,applies='applies'):NumberPart[]{
+export function numberParts(line:LineNumbers|undefined,inh?:Inherited,applies='applies'):NumberPart[]{
   const own=(line?.numbers||{}) as Record<string,Num>;
-  const get=(k:string):NumberPart|null=>{const o=own[k],i=inh?.[k];if(o)return o.value==null&&k!=='apply'?null:{text:shown(o),level:o.level??i?.level??null};
-    return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,level:i.level??null}:null;};
+  const get=(k:string):NumberPart|null=>{const o=own[k],i=inh?.[k];if(o)return o.value==null&&k!=='apply'?null:{text:shown(o),...displayedStrength(line,k,o.level??i?.level)};
+    return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,...displayedStrength(line,k,i.level)}:null;};
   const out=rangeParts(get('min'),get('max'),get('target'));
   for(const [k,x] of Object.entries(own)){if(['min','max','target'].includes(k)||x.value==null&&k!=='apply')continue;
-    out.push(...(out.length?[{text:' · '}]:[]),{text:k==='apply'?applies:`${k.replace('_',' ')} ${shown(x)}`,level:x.level??null});}
+    out.push(...(out.length?[{text:' · '}]:[]),{text:k==='apply'?applies:`${k.replace('_',' ')} ${shown(x)}`,...displayedStrength(line,k,x.level)});}
   return out;
 }
-export const numbersText=(line:Pick<RuleLine,'numbers'>|undefined,inh?:Inherited,applies?:string,unit='')=>{const p=numberParts(line,inh,applies);return p.length?partsText(p,unit):'';};
+export const numbersText=(line:LineNumbers|undefined,inh?:Inherited,applies?:string,unit='')=>{const p=numberParts(line,inh,applies);return p.length?partsText(p,unit):'';};
 /** The same, drawn in the one style (`numbersEl`): an inherited number muted, its tooltip naming the line it comes from. */
-export const numbersNode=(line:Pick<RuleLine,'numbers'>,inh:Inherited|undefined,from:(id:string)=>string,applies?:string,key?:RuleViewKey):HTMLElement=>{
+export const numbersNode=(line:LineNumbers,inh:Inherited|undefined,from:(id:string)=>string,applies?:string,key?:RuleViewKey):HTMLElement=>{
   const n=numbersEl(numberParts(line,inh,applies),from);return key?key.numbers(n):n;};
 /** A prohibition is distinct from a zero workload quota. */
 /** A line's reach in a table cell: a count, "—" when not known, or flagged when the line reaches no one today. Reach is
@@ -300,7 +304,7 @@ export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:b
 // shortcut: a blank (inherited) strength reads as the rule's fallback level, not the broader line it inherits from, so a badge
 // can show the fallback where the effective level differs; upgrade when the catalogue sends each line's effective level (a server field), then read that.
 export function ruleLevels(e:RuleCatalogueEntry,lines:readonly RuleLine[]):string[]{
-  const all=[...new Set(lines.flatMap(l=>Object.entries(l.numbers||{}).map(([k,n])=>(n as {level?:string|null}|undefined)?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
+  const all=[...new Set(lines.flatMap((l:LineNumbers)=>Object.entries(l.numbers||{}).map(([k,n])=>l.mandatory_reasons?.[k]?'mandatory':n?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
   return all.length<=1?all:[...new Set(all.map(v=>v==='mandatory'?'mandatory':'advisory'))];
 }
 /** The days a line holds on: none set (or an empty list) is every day, as the server reads it. */
@@ -381,7 +385,7 @@ const COUNTED=['metric','window','window_days','window_alignment','window_anchor
  *  when changed (they then replace what those settings counted), so the stored settings stay the one representation. */
 export function wire(lines:RuleLine[],saved:RuleLine[]):RuleLine[]{
   const was=new Map(saved.map(l=>[l.id,l]));
-  return lines.map(l=>{const {mode:_mode,measure,period,...rest}=l,old=was.get(l.id);
+  return lines.map((l:RuleLine&LineNumbers)=>{const {mandatory_reasons:_reasons,mode:_mode,measure,period,...rest}=l,old=was.get(l.id);
     if(!measure||!period||'apply' in (l.numbers||{})||old&&JSON.stringify([old.measure,old.period,Object.keys(old.numbers).sort()])===JSON.stringify([measure,period,Object.keys(l.numbers).sort()]))return rest as RuleLine;
     const settings=Object.fromEntries(Object.entries(rest.settings||{}).map(([k,v]):[string,Record<string,unknown>]=>[k,COUNT_KINDS.includes(k)?Object.fromEntries(Object.entries(v).filter(([f])=>!COUNTED.includes(f))):v])
       .filter(([k,v])=>Object.keys(v).length||k==='block_quota'));
@@ -1126,8 +1130,8 @@ export function amountWords(e:RuleCatalogueEntry,l:RuleLine,inh?:Inherited,rule:
   // A number the line leaves blank is the broader line's (blank inherits); None is no number.
   const own=(k:string)=>l.numbers?.[k],n=(k:string)=>own(k)?own(k)!.value??null:inh?.[k]?.value??null;
   const min=n('min'),max=n('max'),target=n('target'),main=max??min??target,key=max!=null?'max':min!=null?'min':'target';
-  const level=strengthOf(e,key,own(key),inh);
-  if(main==null)return {main:null,level:l.numbers?.apply?strengthOf(e,'apply',l.numbers.apply,inh):undefined,text:l.numbers?.apply?(e.modes?.includes('no_duties')?'no duties':`${e.name.toLowerCase()} applies ${goalUnit(e,l,rule)}`.trim()):`${e.name.toLowerCase()} ${numbersText(l)||'— no number yet'}`.trim()};
+  const level=strengthOf(e,key,l,inh);
+  if(main==null)return {main:null,level:l.numbers?.apply?strengthOf(e,'apply',l,inh):undefined,text:l.numbers?.apply?(e.modes?.includes('no_duties')?'no duties':`${e.name.toLowerCase()} applies ${goalUnit(e,l,rule)}`.trim()):`${e.name.toLowerCase()} ${numbersText(l)||'— no number yet'}`.trim()};
   // A maximum counted over a run says the run ("60 hours in any 14 days"), not the rule's name ("per period").
   const lower=e.name.toLowerCase(),unit=e.unit||'',window=key==='max'?windowText(e,l,rule):'',rest=window||(unit&&lower.startsWith(unit)?lower.slice(unit.length).trim():lower);
   // A Workload line counts its measure over its period; elapsed rest is hours between duties.
@@ -1166,7 +1170,7 @@ function lineSays(e:RuleCatalogueEntry,l:RuleLine,names:Namer,links:{who:Node|st
   const few=(t:Conditions)=>valuesOf(t).length<=3&&!t.conditions.some(c=>'conditions' in c);
   const a=amountWords(e,l,inh,rule),who=l.who?.conditions.length?links.who||treeText(l.who,names,'everyone'):'everyone',where=l.where?.conditions.length?(few(l.where)?treeText(l.where,names,''):links.where||treeText(l.where,names,'')):'all clinics';
   const at=l.where?.conditions.length?placeWord(l.where):'at';
-  const levels=Object.entries({...inh,...l.numbers}).filter(([k,v])=>v.value!=null||k==='apply').map(([k])=>({key:k,level:strengthOf(e,k,l.numbers?.[k],inh)}));
+  const levels=Object.entries({...inh,...l.numbers}).filter(([k,v])=>v.value!=null||k==='apply').map(([k])=>({key:k,level:strengthOf(e,k,l,inh)}));
   const strengths=new Set(levels.map(v=>v.level)).size>1?` (${levels.map(v=>`${(LONG_LABELS[v.key]||numberLabel(e,v.key)).toLowerCase()} ${strength(v.level).slice(2,-1)}`).join('; ')})`:strength(a.level);
   // Rest between duties: which duty types may not (or should not) follow which.
   const avoid=modeText(e,l,rule)===words(e.modes?.[2]||''),kind=avoid?'shift_succession':'forbidden_transition';
@@ -1196,10 +1200,15 @@ const mandatoryNumber=(e:RuleCatalogueEntry,k:string)=>e.levels.includes('mandat
 /** A blank strength with no broader line to take it from: what the server applies (rule_lines._levels' fallback). */
 const fallbackLevel=(e:RuleCatalogueEntry,k:string)=>mandatoryNumber(e,k)?'mandatory':'medium';
 /** A number's strength as it applies: its own, else the broader line's, else the fallback (null: the broader line's is blank too). */
-function strengthOf(e:RuleCatalogueEntry,k:string,own:{level?:string|null}|undefined,inh?:Inherited):string|null{
-  return own?.level??(inh?.[k]?inh[k].level??null:fallbackLevel(e,k));
+function strengthOf(e:RuleCatalogueEntry,k:string,line:RuleLine,inh?:Inherited):string|null{
+  return displayedStrength(line,k,line.numbers?.[k]?.level??(inh?.[k]?inh[k].level:fallbackLevel(e,k))).level;
 }
-const defaultNumberLevel=(e:RuleCatalogueEntry,k:string)=>e.levels.includes('medium')?'medium':mandatoryNumber(e,k)?'mandatory':e.levels[0];
+const hardSafetyNumber=(e:RuleCatalogueEntry,k:string,line?:RuleLine)=>{
+  const slots=(e.numbers[k]||[]) as Array<RuleCatalogueEntry['numbers'][string][number]&{mandatory_reason?:string}>;
+  const chosen=line&&slots.find(s=>s.kind in (line.settings||{})),candidates=chosen?[chosen]:slots;
+  return candidates.every(s=>s.mandatory_reason)?candidates[0]?.mandatory_reason:undefined;
+};
+const defaultNumberLevel=(e:RuleCatalogueEntry,k:string)=>hardSafetyNumber(e,k)?'mandatory':e.levels.includes('medium')?'medium':mandatoryNumber(e,k)?'mandatory':e.levels[0];
 /** K1f Numbers: one row of fields (Minimum | Maximum | Target, or the rule's own numbers), each with its strength as a
  *  "!" chip beside it, the table's own notation: solid "!" mandatory, outline "!" advisory, "↰" taken from the broader
  *  line. The chip opens the shared menu of the strengths that number may have (Mandatory, Advisory · low … critical,
@@ -1216,8 +1225,8 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
     // The strengths this number may have: the rule's levels (mandatory only where its slots allow), and Inherit.
     const options=[...e.levels.filter(v=>v!=='mandatory'||mandatoryNumber(e,k)).map(v=>({key:v,label:v==='mandatory'?'Mandatory':v==='off'?'Off · not applied':`Advisory · ${v}`})),
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
-    const taken=broader?.(k);
-    let level:string|null=own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
+    const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
+    let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
     const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
@@ -1226,7 +1235,8 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
-    const strength=options.length>1&&(editable||!!own&&(k==='apply'||own.value!=null))?chip:null;
+    const hasNumber=editable||!!own&&(k==='apply'||own.value!=null);
+    const strength=!hasNumber?null:safety?levelBadge('mandatory',safety):options.length>1?chip:null;
     if(k==='apply'){
       const c=check(label,!!own);c.input.disabled=!editable||!!w.source_bindings?.[k];
       return {node:el('div',{class:'rc-lp-num rc-lp-num-apply'},el('div',{class:'rc-lp-num-box'},c.wrap,strength)),read:()=>c.input.checked?{value:null,level}:null,k};
@@ -1602,7 +1612,8 @@ export const NUMBER_LABELS:Record<string,string>={min:'Min',max:'Max',target:'Ta
 /** One number of a line: its own ("3!"), "None", inherited ("2↰") or "—". */
 /** One number of a line in a table cell: its own ("3"), "None", inherited ("2↰") or "—", with its strength. */
 const numberPart=(l:RuleLine,k:string,inh?:Inherited):NumberPart|null=>{const n=l.numbers?.[k],i=inh?.[k];
-  return n?{text:k==='apply'?'Yes':shown(n),level:n.value==null&&k!=='apply'?undefined:n.level??i?.level??null}:i&&i.value!=null?{text:shown(i)+'↰',from:i.from,level:i.level??null}:null;};
+  if(n)return n.value==null&&k!=='apply'?{text:shown(n)}:{text:k==='apply'?'Yes':shown(n),...displayedStrength(l,k,n.level??i?.level)};
+  return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,...displayedStrength(l,k,i.level)}:null;};
 const shownNumber=(l:RuleLine,k:string,inh?:Inherited)=>{const x=numberPart(l,k,inh);return x?partsText([x]):'—';};
 // One number per column (Min, Max…): its strength and ↰ are marks, the min – max → target notation is not drawn here.
 const numberCell=(l:RuleLine,k:string,inh:Inherited|undefined,from:(id:string)=>string,key:RuleViewKey)=>{const x=numberPart(l,k,inh);
@@ -1913,13 +1924,13 @@ function changeTable(ctx:Context,e:RuleCatalogueEntry,changes:Change[],unchanged
 // ---- Cell editors (anchored to the cell; Enter saves, Esc cancels) ----
 function numberEditor(e:RuleCatalogueEntry,k:string,l:RuleLine,finish:(save:boolean,move?:1|-1)=>void){
   if(Object.keys(l.source_bindings||{}).length&&!l.source_bindings?.[k])return {node:note('This converted line keeps its source numeric slots. Add a new line for a different obligation.'),read:()=>null};
-  const n=l.numbers?.[k],mandatory=mandatoryNumber(e,k);
-  let level:string|null=n?n.level??null:defaultNumberLevel(e,k);
+  const n=l.numbers?.[k],mandatory=mandatoryNumber(e,k),safety=hardSafetyNumber(e,k,l);
+  let level:string|null=safety?'mandatory':n?n.level??null:defaultNumberLevel(e,k);
   const input=el('input',{type:'number',step:'any','aria-label':NUMBER_LABELS[k]||k,value:n?.value??''}) as HTMLInputElement;
   input.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();finish(true);}if(ev.key==='Tab'){ev.preventDefault();finish(true,ev.shiftKey?-1:1);}});
   const kinds=[['mandatory','Mandatory'],['medium','Advisory'],...(tier(l)>1||level===null?[['','Inherit']]:[])].filter(([v])=>v==='mandatory'?mandatory:v==='medium'?e.levels.some(x=>x!=='mandatory'):true);
   // Advisory keeps the line's own advisory level (high, medium, low); choosing it fresh is medium.
-  const levels=segmented('Strength',kinds.map(([v,label])=>[v,label]),level===null?'':level==='mandatory'?'mandatory':'medium',
+  const levels=safety?levelBadge('mandatory',safety):segmented('Strength',kinds.map(([v,label])=>[v,label]),level===null?'':level==='mandatory'?'mandatory':'medium',
     v=>{level=v===''?null:v==='mandatory'?'mandatory':level&&level!=='mandatory'?level:'medium';});
   const node=el('div',{class:'rc-number-edit'},...(k==='apply'?[]:[input]),levels,el('small',{class:'muted'},k==='apply'?'Esc cancels':'Enter saves · Esc cancels · Tab to the next cell · empty removes it'));
   return {node,read:()=>k==='apply'?{value:null,level}:{value:input.value===''?null:Number(input.value),level}};
@@ -2216,7 +2227,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
         defaults:{wrap:['name','effect']},
         columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
           {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)},
-          {key:'level',label:'Level',text:p=>p.definition.severity,cell:p=>p.definition.severity==='mandatory'?'Mandatory':'Advisory'},
+          {key:'level',label:'Level',text:p=>p.effective_severity??p.definition.severity,cell:p=>levelBadge(p.effective_severity??p.definition.severity,p.severity_reason)},
           {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
     'secondary'),'layers'):null;
   if(!pending.length)return context;

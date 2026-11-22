@@ -7,7 +7,7 @@ from fractions import Fraction
 import json
 
 from pydantic import ValidationError
-from packages.contracts.schemas import PolicyDefinition, GenerationOptions, GENERATION_SCOPE_CAPABILITY
+from packages.contracts.schemas import ALWAYS_MANDATORY_KINDS, PolicyDefinition, GenerationOptions, GENERATION_SCOPE_CAPABILITY
 from .rule_serialization import stored_definition
 
 # Bump when translation semantics change; receipts and proposals bind this version.
@@ -87,6 +87,7 @@ def capability_catalogue():
     mapping = schema['properties']['rule']['discriminator']['mapping']
     return {'compiler_version': COMPILER_VERSION,
             'rule_kinds': sorted(SUPPORTED_RULES.intersection(mapping)),
+            'always_mandatory_kinds': sorted(ALWAYS_MANDATORY_KINDS),
             'definition_schema': schema,
             'generation_defaults': GenerationOptions().model_dump(mode='json'),
             'precision_denominator_limits': {

@@ -67,7 +67,7 @@ def test_score_completion_expiry_is_bounded_reported_and_resumes_to_public_valid
 
 @pytest.mark.parametrize('later_result', ['solve', 'unknown', 'error'])
 def test_completed_solver_is_released_before_next_search_without_changing_results(h, monkeypatch, later_result):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     snapshot = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     snapshot['shifts'][0]['type_snapshot']['definition']['requirements'][0].update(minimum=0, target=1, maximum=1)
     snapshot['generation_options'] = {'shortlist_width': 0, 'diagnostic_seconds': 2}

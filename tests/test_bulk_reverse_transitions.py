@@ -170,14 +170,19 @@ def test_bulk_checked_reverse_restores_original_row_and_can_itself_be_undone(h, 
         assert getattr(db.get(model, row["id"]), state) != row[state]
 
 
-def checked_rest_review(h, severity):
+def checked_rule_review(h, severity):
     from tests.outbox_support import process_one_after_undo as process_one
     from .test_contextual_feasibility import use_checked_activation
     use_checked_activation(h)
     workspace = h.shift(h.workspace(), start="2026-10-04T16:00:00+03:00", end="2026-10-05T00:00:00+03:00")["workspace"]
     workspace = h.shift(workspace, start="2026-10-05T16:00:00+03:00", end="2026-10-05T20:00:00+03:00")["workspace"]
-    policy = proposal(h, definition={"severity": severity, "scope": {"person_id": h.seed["people"][0]},
-                                     "rule": {"kind": "min_rest", "hours": 24}})
+    scope = {"person_id": h.seed["people"][0]}
+    rule = {"kind": "min_rest", "hours": 24}
+    if severity == "advisory":
+        # Safety kinds are always mandatory. Produce a workload warning on the second duty instead.
+        rule = {"kind": "max_duties", "maximum": 0, "window": "day"}
+        scope["weekdays"] = [0]
+    policy = proposal(h, definition={"severity": severity, "scope": scope, "rule": rule})
     job = h.command("approver", "job.create", {"workspace_id": workspace["id"], "kind": "feasibility",
         "rule_changes": [{"policy_id": policy["id"], "expected_revision": policy["revision"]}]},
         revision=workspace["revision"])["job"]
@@ -196,13 +201,13 @@ def activation_payload(policy, checked):
 @pytest.mark.parametrize('mode', ['single', 'bulk'])
 def test_real_advisory_findings_already_allow_single_and_bulk_activation(h, mode):
     from .test_bulk import preview
-    policy, checked = checked_rest_review(h, "advisory")
+    policy, checked = checked_rule_review(h, "advisory")
     assert 'findings' not in checked['result']['checks']['proposed']
     result = h.get('approver', '/api/jobs/' + checked['id'] + '?full=true')['job']['result']
     with transaction(h.app.state.engine) as db:
         stored = db.get(m.Job, checked['id']).result
     assert result['checks']['proposed']['findings'] == stored['checks']['proposed']['findings']
-    assert any(f["code"] == "MIN_REST" and f["severity"] == "warning"
+    assert any(f["code"] == "MAX_DUTIES" and f["severity"] == "warning"
                for f in result["checks"]["proposed"]["findings"])
     assert result["no_new_problems"] and result["new_or_worse_findings"] == []
     check = preview(h, "approver", activation_payload(policy, checked))
@@ -223,7 +228,7 @@ def test_real_advisory_findings_already_allow_single_and_bulk_activation(h, mode
 def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_references(h):
     from copy import deepcopy
     from .test_bulk import preview
-    policy, checked = checked_rest_review(h, "advisory")
+    policy, checked = checked_rule_review(h, "advisory")
     with transaction(h.app.state.engine, write=True) as db:
         job = db.get(m.Job, checked["id"])
         result = deepcopy(job.result)
@@ -262,7 +267,7 @@ def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_
 def test_mandatory_or_unknown_findings_never_offer_apply_anyway(h, case):
     from copy import deepcopy
     from .test_bulk import preview
-    policy, checked = checked_rest_review(h, "mandatory" if case == "mandatory" else "advisory")
+    policy, checked = checked_rule_review(h, "mandatory" if case == "mandatory" else "advisory")
     if case != "mandatory":
         with transaction(h.app.state.engine, write=True) as db:
             job = db.get(m.Job, checked["id"])
