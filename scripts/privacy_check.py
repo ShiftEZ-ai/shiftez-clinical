@@ -1,0 +1,184 @@
+"""Public-pattern privacy check: secret shapes and host shapes in added lines, file names and PR text.
+
+Usage:
+  python scripts/privacy_check.py <base> <head> [--event PATH] [--text FILE ...]
+  python scripts/privacy_check.py --all [--text FILE ...]
+  python scripts/privacy_check.py --text FILE [--text FILE ...]
+
+Each hit prints as `path:line: <pattern-id>`; the matched value is never printed. Exit 1 on any hit, 0 when clean.
+Only public, generic patterns live here; any private name list is checked elsewhere.
+"""
+import argparse
+import bisect
+import ipaddress
+import json
+import math
+import re
+import subprocess
+import sys
+
+# Built from parts so this file does not match its own patterns.
+_TLD = r"(?:lan|internal|local|corp|home\.arpa)"
+_ENV = r"(?:dev|stg|staging|prod)"
+_HOST = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+
+PATTERNS = {
+    "private-key": re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"),
+    # The documented shapes: classic tokens carry 36 characters, fine-grained ones 22 + 59.
+    "github-token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59})\b"),
+    "aws-access-key": re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[0-9A-Z]{16}\b"),
+    "slack-token": re.compile(r"\bxox[abposr]-[0-9A-Za-z-]{10,}|hooks\.slack\.com/services/T[0-9A-Z]+/B[0-9A-Z]+/\w+"),
+    "google-api-key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])"),
+    "secret-assignment": re.compile(
+        r"(?i)\b[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*[\"']?[ \t]*[:=][ \t]*[bru]{0,2}[\"']([A-Za-z0-9+/=_.~-]{20,})[\"']"),
+    "ipv4": re.compile(r"(?<![\w.-])(\d{1,3}(?:\.\d{1,3}){3})(?![\w-]|\.\d)"),
+    "wildcard-dns-host": re.compile(r"(?i)\b(?:sslip|nip|xip)\.io\b"),
+    # These two find their literal tail first; HOST_BEFORE then checks the host in front of it (fast on big trees).
+    "private-tld": re.compile(rf"\.{_TLD}(?![\w-]|\.\w|\()"),
+    "env-host-port": re.compile(r"(?<=[A-Za-z0-9]):\d{2,5}\b"),
+}
+HOST_BEFORE = {
+    "private-tld": re.compile(rf"(?<![\w.$-]){_HOST}(?:\.{_HOST})*$"),
+    "env-host-port": re.compile(
+        rf"(?i)(?:(?<![\w.-])(?:{_HOST}\.)*(?:[a-z0-9]+-)*{_ENV}(?:-[a-z0-9]+)*(?:\.{_HOST})*"
+        rf"|\b{_ENV}\b[^\n]{{0,40}}?(?<![\w.-]){_HOST}(?:\.{_HOST})+)$"),
+}
+
+# Well-known public addresses that tests use as "some public host"; they reveal no deployment.
+WELL_KNOWN = {"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "93.184.216.34"}
+DOC_NETWORKS = [ipaddress.ip_network(n) for n in ("127.0.0.0/8", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")]
+VERSION_CONTEXT = re.compile(r"(?i)(?:\bv|\bversion|\bver|\brelease|==|>=|<=|~=|\^|~|@|\bpython|\bnode|\bpostgres(?:ql)?|(?-i:\b[A-Z][a-z]+/))\s*[\"':=]*\s*$")
+PLACEHOLDER = re.compile(r"(?i)example|placeholder|changeme|dummy|redacted|fake|test|sample|fixture|your[_-]|xxxx")
+PROSE = re.compile(r"[a-z]{7,}")  # a random literal rarely holds 7 lowercase letters in a row; a word does
+LOOPBACK_HOST = re.compile(r"(?i)^(?:localhost|127\.0\.0\.1|0\.0\.0\.0)$")
+
+
+def entropy(value):
+    counts = {c: value.count(c) for c in set(value)}
+    return -sum(n / len(value) * math.log2(n / len(value)) for n in counts.values())
+
+
+def hit_start(pattern_id, match, prefix):
+    """Where the hit starts, or None for the generic false positives each pattern is known for."""
+    if pattern_id == "ipv4":
+        octets = match.group(1).split(".")
+        if any(int(o) > 255 or (len(o) > 1 and o[0] == "0") for o in octets):
+            return None
+        address = ipaddress.ip_address(match.group(1))
+        if (str(address) in WELL_KNOWN or address.is_unspecified or address.is_link_local or address.is_multicast
+                or address.is_reserved or any(address in net for net in DOC_NETWORKS) or VERSION_CONTEXT.search(prefix)):
+            return None
+    if pattern_id == "secret-assignment":
+        value = match.group(1)
+        classes = sum(bool(re.search(p, value)) for p in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"))
+        if PLACEHOLDER.search(value) or PROSE.search(value) or classes < 3 or entropy(value) < 3.5:
+            return None
+    if pattern_id in HOST_BEFORE:
+        host = HOST_BEFORE[pattern_id].search(prefix[-80:])
+        if not host or LOOPBACK_HOST.match(host.group(0).split()[-1]):
+            return None
+        return match.start() - len(host.group(0))
+    return match.start()
+
+
+def matches(text):
+    """Yield (line number, pattern id, start, end) for each hit; whole-text search keeps it fast."""
+    starts = [0] + [m.end() for m in re.finditer(r"\n", text)]
+    for pattern_id, pattern in PATTERNS.items():
+        for match in pattern.finditer(text):
+            number = bisect.bisect_right(starts, match.start())
+            start = hit_start(pattern_id, match, text[starts[number - 1]:match.start()])
+            if start is not None:
+                yield number, pattern_id, start, match.end()
+
+
+def findings(text):
+    """(line number, pattern id) once per hit line, in line order."""
+    order = list(PATTERNS)
+    return sorted({hit[:2] for hit in matches(text)}, key=lambda hit: (hit[0], order.index(hit[1])))
+
+
+def redact(text):
+    hidden = [False] * len(text)
+    for _, _, start, end in matches(text):
+        hidden[start:end] = [True] * (end - start)
+    return re.sub(r"\0+", "***", "".join("\0" if gone else c for c, gone in zip(text, hidden)))
+
+
+def scan_text(where, text, hits, first=1):
+    hits.extend(f"{redact(where)}:{number + first - 1}: {pattern_id}" for number, pattern_id in findings(text))
+
+
+def git(*args):
+    return subprocess.run(["git", "-c", "core.quotepath=off", *args], check=True, capture_output=True).stdout
+
+
+def scan_diff(base, head, hits):
+    names = git("diff", "--name-status", "-z", "-M", "--diff-filter=AR", base, head).split(b"\0")
+    fields = iter(n.decode("utf-8", "replace") for n in names if n)
+    for status in fields:
+        if status.startswith("R"):
+            next(fields)
+        path = next(fields)
+        scan_text(path, path, hits, first=0)
+    patch = git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U0", "-M", "--diff-filter=AMR", base, head)
+    path, number = None, 0
+    for raw in patch.decode("utf-8", "replace").splitlines():
+        if raw.startswith("+++ "):
+            # shortcut: git C-quotes names with control characters or quotes; such a name is reported quoted.
+            path = raw[6:] if raw.startswith("+++ b/") else None
+        elif raw.startswith("@@ "):
+            number = int(re.match(r"@@ -\S+ \+(\d+)", raw).group(1))
+        elif raw.startswith("+") and path is not None:
+            scan_text(path, raw[1:], hits, first=number)
+            number += 1
+
+
+def scan_all(hits):
+    entries = [e.decode("utf-8", "replace") for e in git("ls-tree", "-r", "-z", "HEAD").split(b"\0") if e]
+    blobs = [(meta.split()[2], path) for meta, path in (e.split("\t", 1) for e in entries) if meta.split()[1] == "blob"]
+    with subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE) as batch:
+        for sha, path in blobs:
+            batch.stdin.write(sha.encode() + b"\n")
+            batch.stdin.flush()
+            size = int(batch.stdout.readline().split()[2])
+            content = batch.stdout.read(size)
+            batch.stdout.read(1)
+            scan_text(path, path, hits, first=0)
+            if b"\0" not in content[:8000]:
+                scan_text(path, content.decode("utf-8", "replace"), hits)
+        batch.stdin.close()
+    if batch.returncode:
+        raise SystemExit("git cat-file failed")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("revisions", nargs="*", metavar="base head")
+    parser.add_argument("--text", action="append", default=[], metavar="FILE")
+    parser.add_argument("--event", metavar="PATH")
+    parser.add_argument("--all", action="store_true")
+    args = parser.parse_args(argv)
+    if len(args.revisions) not in (0, 2) or (args.all and args.revisions) or not (args.revisions or args.all or args.text or args.event):
+        parser.error("give <base> <head>, --all, --text or --event")
+    hits = []
+    if args.revisions:
+        scan_diff(*args.revisions, hits)
+    if args.all:
+        scan_all(hits)
+    for name in args.text:
+        with open(name, encoding="utf-8", errors="replace") as handle:
+            scan_text(name, handle.read(), hits)
+    if args.event:
+        with open(args.event, encoding="utf-8") as handle:
+            pull_request = json.load(handle).get("pull_request") or {}
+        for field in ("title", "body"):
+            scan_text("pull_request." + field, pull_request.get(field) or "", hits)
+    for hit in hits:
+        print(hit)
+    print(f"privacy check: {len(hits)} hit(s)", file=sys.stderr)
+    return 1 if hits else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

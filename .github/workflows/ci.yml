@@ -537,6 +537,25 @@ jobs:
         persist-credentials: false
         submodules: false
         lfs: false
+    - name: Privacy check of added lines, new file names and pull-request text
+      if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+      run: |
+        if test "$EVENT_NAME" = pull_request; then
+          set -- "$PR_BASE" HEAD --event "$GITHUB_EVENT_PATH"
+        else
+          set -- "$GROUP_BASE" "$GROUP_HEAD"
+        fi
+        if test -f "$GITHUB_WORKSPACE/.trusted-controls/scripts/privacy_check.py"; then
+          python3 -I "$GITHUB_WORKSPACE/.trusted-controls/scripts/privacy_check.py" "$@"
+        else
+          # shortcut: transitional until the pull request that adds the checker lands; remove in the next CI window.
+          python3 -I scripts/privacy_check.py "$@"
+        fi
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: ci-dependencies-${{ needs.checks.outputs.artifact_attempt }}
