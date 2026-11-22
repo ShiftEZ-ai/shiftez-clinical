@@ -194,6 +194,59 @@ def test_summary_cache_checks_actual_findings_and_acceptances_and_returns_detach
     assert rota_summary(updated, cache=cache) == frozen
 
 
+@pytest.mark.parametrize('change_proposal', [False, True])
+def test_apply_keeps_the_complete_proposal_guard(harness, monkeypatch, change_proposal):
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.services import generation_reconciliation, jobs
+
+    h = harness
+    workspace = h.shift(h.workspace(), people=[])['workspace']
+    shift = h.detail(workspace)['shifts'][0]
+    job = completed_proposal(h, workspace, [{'shift_id': shift['id'], 'participant': {
+        'person_id': h.seed['people'][0], 'start': shift['start'], 'end': shift['end']}}])
+    original_prepare = generation_reconciliation.prepare
+    original_hash = generation_reconciliation.snapshot_hash
+    original_copy = generation_reconciliation.deepcopy
+    proposal_hashes = []
+    proposal_copies = []
+
+    def track_hash(value):
+        if isinstance(value, dict) and 'additions' in value and 'status' in value:
+            proposal_hashes.append(value)
+        return original_hash(value)
+
+    def track_copy(value):
+        if isinstance(value, dict) and 'additions' in value and 'status' in value:
+            proposal_copies.append(1)
+        return original_copy(value)
+
+    def prepared(db, actor, command):
+        plan = original_prepare(db, actor, command)
+        if change_proposal:
+            with transaction(h.app.state.engine, write=True) as write:
+                row = write.get(m.Job, job['id'])
+                # Change retained evidence alone, leaving the revision and selected placements intact.
+                row.result = {**row.result, 'candidate_evidence': [{'shift_id': shift['id']}]}
+        return plan
+
+    monkeypatch.setattr(generation_reconciliation, 'prepare', prepared)
+    monkeypatch.setattr(generation_reconciliation, 'snapshot_hash', track_hash)
+    monkeypatch.setattr(generation_reconciliation, 'deepcopy', track_copy)
+    monkeypatch.setattr(jobs, 'snapshot_hash', track_hash)
+    result = post(h, 'generation.apply', {'workspace_id': workspace['id'], 'job_id': job['id'],
+                  'reason': 'Apply with current proposal evidence'}, revision=workspace['revision'])
+    if change_proposal:
+        assert result['proposal_retained'] and result['reconciliation']['status'] == 'revalidation_required'
+        assert not h.detail(workspace)['shifts'][0]['participants']
+        assert proposal_hashes
+    else:
+        assert result['reconciliation']['status'] == 'applied'
+        if h.app.state.engine.dialect.name == 'postgresql':
+            assert not proposal_hashes
+    assert not proposal_copies
+
+
 def test_apply_reacquires_stale_inputs_outside_writer_and_retains_proposal(harness, monkeypatch):
     from apps.api import models as m
     from apps.api.db import transaction
