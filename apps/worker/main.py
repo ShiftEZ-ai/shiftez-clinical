@@ -715,6 +715,32 @@ def claim_job(db, *, recovering_worker=None):
             "search_control": job.search_control, "progress": job.progress}
 
 
+def check_inputs_unchanged(db, workspace, stamp):
+    """True when the inputs a check read are provably the writer's, so its manifest needs no rebuild.
+
+    Mirrors the API writer (commands.py): equal input revisions under the writer, plus the compact
+    currency (draft baseline and the date recurring blocking events depend on), plus the same
+    recurring projections at the check's start and now. Anything else takes the full rebuild.
+    """
+    if stamp is None:
+        return False
+    from apps.api.services import events
+    from apps.api.services.planning import validation_stamp
+    from apps.api.snapshots import currency_match, snapshot_department_ids, snapshot_window
+    since, revisions, hint = stamp
+    current = currency_hint(db, workspace)
+    if validation_stamp(db, workspace) != revisions or not currency_match(current, hint):
+        return False
+    if 'event_local_date' not in current:
+        return True
+    # Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
+    organisation = db.get(m.Organisation, db.get(m.Department, workspace.department_id).organisation_id)
+    lo, hi = snapshot_window(workspace, organisation.timezone)
+    department_ids = snapshot_department_ids(db, organisation.id)
+    return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
+            == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
+
+
 def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
     require_current_schema(db)
     # Feasibility completion needs current authority and lease state, not the frozen department graph.
@@ -764,7 +790,9 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         if (workspace.status != 'draft' or workspace.archived_at is not None
                 or ('previous_check' in claim
                     and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
-                or (current_manifest := domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
+                or (current_manifest := result['input_manifest']
+                    if 'input_manifest' in result and check_inputs_unchanged(db, workspace, claim.get('check_stamp'))
+                    else domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
             # The same inputs can have newer counters after an access change.
@@ -1647,8 +1675,12 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     db.info['_check_budget'] = check_cancelled
                     # Fix-list receipts depend on the evidence and acknowledgements seen by this check.
                     claim['previous_check'] = (workspace.validation, workspace.accepted_issues)
+                    since = m.now()
                     result = revalidate(db, workspace, store=False, include_internal=True)
                     check_cancelled()
+                    # Read in this same snapshot, so the finish writer can skip rebuilding unchanged inputs.
+                    from apps.api.services.planning import validation_stamp
+                    claim['check_stamp'] = (since, validation_stamp(db, workspace), currency_hint(db, workspace))
         except Exception as exc:
             error = error or (getattr(exc, 'code', type(exc).__name__)
                               if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
