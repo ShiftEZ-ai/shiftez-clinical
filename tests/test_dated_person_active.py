@@ -472,7 +472,7 @@ def _person_form_value(person, **changes):
     """What the person edit form sends: every field it shows, plus the dated deactivation when Active is off."""
     keys = ('display_name', 'colour', 'title', 'directory_section', 'work_phone', 'work_extension', 'staff_number',
             'pager', 'directory_order', 'short_code', 'tags', 'rota_name', 'rota_aliases')
-    return {**{key: person[key] for key in keys}, 'active': person['active'], **changes}
+    return {**{key: person[key] for key in keys if key in person}, 'active': person['active'], **changes}
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
