@@ -27,18 +27,21 @@ import type {Row} from './types.js';
  *  the strict phase's history; `strict_status` is kept as evidence only. */
 export type GenerationOutcome={status:'OPTIMAL'|'FEASIBLE'|'INFEASIBLE'|'UNKNOWN';candidate:'valid'|'with_gaps'|'none';strict_status:'INFEASIBLE'|null;optimality_proven:boolean};
 export interface RunFacts{scoreDelta:number|null;before:FixSummary|null;after:FixSummary|null;beforeCauses:FixCause[];afterCauses:FixCause[];changesByCause:Row[];
-  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null}
+  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null;/** The server's words when the run's Fix list was not prepared. */fixListMissing:string}
 export function runFacts(job:Row):RunFacts{
   const r:Row=job.result||{},s:Row=r.summary||{};
   type Listed={summary?:FixSummary;causes?:FixCause[]};
   const list=(x:Row|undefined):Listed|null=>x?(x.summary&&typeof x.summary==='object'?x as Listed:'must' in x?{summary:x as unknown as FixSummary}:null):null;
-  const before=list(r.fix_list_before??s.fix_list_before),after=list(r.fix_list_after??s.fix_list_after);
+  // #1160: a fallback (rota_summary.generation_fix_lists_fallback: a stopped run, or wording that failed) copies the
+  // rota's list into both sides, so the run's own Fix list is unknown: no before/after, never "nothing must be fixed".
+  const missing=typeof r.fix_list_fallback==='string'?r.fix_list_fallback:'';
+  const before=missing?null:list(r.fix_list_before??s.fix_list_before),after=missing?null:list(r.fix_list_after??s.fix_list_after);
   const conflict=r.conflict??((r.diagnostics||[]) as Row[]).find(d=>d?.strict_status==='INFEASIBLE')??null;
   // maintenance: open places and the uncapped score change travel beside the Fix lists.
   const num=(x:unknown)=>x==null?undefined:Number(x),ob=num(r.open_places_before),oa=num(r.open_places_after);
   return {scoreDelta:r.score_delta??null,before:before?.summary?{...before.summary,...(ob!=null?{places_open:ob}:{})}:null,after:after?.summary?{...after.summary,...(oa!=null?{places_open:oa}:{})}:null,beforeCauses:(before?.causes||[]) as FixCause[],afterCauses:(after?.causes||[]) as FixCause[],
-    changesByCause:Array.isArray(r.changes_by_cause??s.changes_by_cause)?(r.changes_by_cause??s.changes_by_cause):[],
-    conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null};
+    changesByCause:!missing&&Array.isArray(r.changes_by_cause??s.changes_by_cause)?(r.changes_by_cause??s.changes_by_cause):[],
+    conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null,fixListMissing:missing};
 }
 
 /** The immutable solver receipt shown on both the run card and its result dialog. The status is the proposal's final

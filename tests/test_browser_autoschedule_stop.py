@@ -11,12 +11,16 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.api import models as m
-from apps.api.db import transaction
-from apps.worker.main import process_one
+from apps.api.db import retry_write, transaction
+from apps.worker.main import claim_job, finish_job, heartbeat_job, prepare_deferred_generation, process_one
+from packages.contracts.rule_catalogue import FIX_LIST_WORDS
 from packages.contracts.schemas import GENERATION_CONFLICT_CHOICES, GENERATION_STOP_REASONS
+from packages.domain.rota_summary import generation_fix_lists
 from .test_browser import auto_setup, open_rota, open_scheduling, wait_run_created, browser, live_server  # noqa: F401
+from .test_browser_autoschedule_budget import confirm
+from .test_browser_autoschedule_live import STEP, rota, seen_done
 from .test_browser_cp_sat import cp_server  # noqa: F401
-from .test_browser_autoschedule_review import _open, FOUR, TWO
+from .test_browser_autoschedule_review import _open, DESKTOP, FOUR, TWO
 
 pytestmark = pytest.mark.browser
 
@@ -51,6 +55,64 @@ def _clean(h, w):
     for job in h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs']:
         if job['status'] in ('queued', 'running'):  # left for no later test's worker
             h.command('coordinator', 'job.cancel', {'reason': 'Browser test clean-up'}, job['id'], job['revision'])
+
+
+def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server, h):
+    assigned, extra = h.seed['people'][:2]
+    w, (shift_id,) = rota(h, [(5, 8, [assigned])], name='Stop during a rota check')
+    engine = h.app.state.engine
+    check = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'validation'},
+                      revision=w['revision'])['job']
+    assert retry_write(engine, claim_job)['id'] == check['id']
+    job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'},
+                    revision=w['revision'])['job']
+    claim = retry_write(engine, claim_job)
+    assert claim['id'] == job['id']
+    prepare_deferred_generation(engine, claim, engine.get_execution_options()['rota_write_settings'])
+    assert retry_write(engine, lambda db: heartbeat_job(db, claim, {'stage': 'finding'}))
+
+    context, page, panel = _open(browser, cp_server, h, w, DESKTOP, 'light')
+    try:
+        strip = page.locator('.app-footer .asl-strip')
+        expect(strip.locator(STEP)).to_have_text('3/5 Searching')
+        panel.get_by_role('button', name='Stop and keep best', exact=True).click()
+        stopped = confirm(page, 'Stop and keep best', 'Stop and keep best', 'Keep the best schedule found')['job']
+        assert stopped['id'] == job['id'] and stopped['search_control']['stop']
+
+        # Hold finalisation until the footer has seen Scoring, with the rota check still running.
+        assert retry_write(engine, lambda db: heartbeat_job(db, claim, {'stage': 'scoring'}))
+        expect(strip.locator(STEP)).to_have_text('4/5 Scoring')
+        shift = h.detail(w)['shifts'][0]
+        result = {
+            'status': 'candidate_feasible', 'solver_status': 'FEASIBLE', 'input_fingerprint': claim['input_fingerprint'],
+            'stop_reason': 'operator_stop', 'search_stop': {'reason': 'operator_stop'},
+            'score': None, 'score_completed': False,
+            'validation': {'valid': True, 'error_count': 0, 'warning_count': 0, 'findings': [], 'coverage': []},
+            'summary': {'required_places': 1, 'filled_places': 1,
+                        'score_saved': {'score': 80, 'score_completed': False}},
+            'additions': [{'shift_id': shift_id, 'participant': {
+                'person_id': extra, 'start': shift['start'], 'end': shift['end']}}], 'removals': [],
+        }
+        result.update(generation_fix_lists(claim['input'], result))
+        assert result['fix_list_before']['summary']['must'] == result['fix_list_after']['summary']['must'] == 0
+        assert retry_write(engine, lambda db: finish_job(db, claim, result, None))
+        assert seen_done(page)['step'] == '5/5 Done'
+        expect(strip).to_have_count(0)
+        assert h.get('coordinator', '/api/jobs/' + check['id'])['job']['status'] == 'running'
+
+        panel.get_by_role('button', name='Review latest result', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Auto-schedule results', exact=True)
+        review = dialog.get_by_role('region', name='Review', exact=True)
+        sentence = review.get_by_text(FIX_LIST_WORDS['generation_fallback'], exact=True)
+        expect(sentence).to_be_visible()
+        expect(sentence).to_have_count(1)
+        expect(review).not_to_contain_text(re.compile('Nothing must be fixed', re.IGNORECASE))
+        stats = review.get_by_role('group', name='Result')
+        expect(stats.get_by_text('Score now', exact=True)).to_be_visible()
+        expect(stats.get_by_text('Score', exact=True)).to_have_count(0)
+    finally:
+        context.close()
+        _clean(h, w)
 
 
 @pytest.mark.parametrize('view,scheme', FOUR)

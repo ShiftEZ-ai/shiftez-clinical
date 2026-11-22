@@ -348,6 +348,14 @@ export function coverOf(data:WorkspaceData){
     out.set(r.shift_id,c);
   }
   for(const c of out.values()){if(c.scheduled===Infinity)c.scheduled=0;if(c.available===Infinity)c.available=0;}
+  // Someone absent now (leave or a rotation found after the check, a reported Can't make it) is struck through on the
+  // grid, so they fill no place either: never more places filled than the people on the session who are not absent.
+  // A check that already knew of the absence counted it, and the smaller of the two counts it once.
+  for(const s of data.shifts||[]){const c=out.get(s.id);if(!c)continue;
+    const away=absentFrom(s,[]),present=s.participants.filter(p=>!away.has(p.person_id)).length;
+    if(present>=c.available)continue;
+    c.available=present;const open=Math.max(0,c.required-present);
+    if(open>c.open){c.open=open;c.gap=true;}c.basic=Math.max(c.basic,open);}
   return out;
 }
 /** Puts a person's new row in a group of a people grid (Timeline, Counts) in name order: the live auto-schedule view adds

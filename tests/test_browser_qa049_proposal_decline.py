@@ -225,3 +225,53 @@ def test_the_panel_checks_two_drafts_at_a_time_and_none_after_it_closes(browser,
                 except Exception:
                     pass
         context.close()
+
+
+def test_a_press_on_approve_while_the_effect_loads_says_why_then_activates(browser, live_server, h):
+    """Issue 1157: a press on Approve and activate while the effect is still read was lost with nothing said. The button is
+    held (aria-disabled, its reason in the tip), so a press, by pointer or by key, says why; once the effect is known
+    the next press activates the change."""
+    rule, proposed = proposal(h)
+    held = []
+
+    def review(route):
+        if held:
+            route.continue_()
+        else:
+            held.append(route)
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        page.route(re.compile(rf".*/api/policies/{proposed['id']}/review$"), review)
+        navigate(page, 'rules/days_in_a_row')
+        page.locator('#main').get_by_role('button', name='Review and approve', exact=True).click()
+        panel = page.locator('.rc-line-panel')
+        approve = panel.locator('.rc-lp-foot .button.primary')
+        wait_held(page, held)
+        expect(approve).to_be_disabled()
+        expect(approve).to_have_attribute('aria-busy', 'true')
+        expect(approve).to_have_attribute('data-tip', 'Waits until the effect of this change is known')
+        why = page.locator('#toast-tray .toast', has_text='Waits until the effect of this change is known')
+        approve.click(force=True)  # a real press on the held button, not waiting for it
+        expect(why).to_be_visible()
+        approve.focus()
+        page.keyboard.press('Enter')
+        expect(why.first).to_be_visible()
+        entry = next(e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['id'] == 'days_in_a_row')
+        assert entry['proposed'] is not None  # nothing was activated while the effect was unknown
+        with page.expect_response(lambda r: r.url == held[0].request.url):
+            held[0].continue_()
+        expect(approve).to_be_enabled(timeout=15000)  # the real review, once released
+        expect(approve).not_to_have_attribute('aria-disabled', 'true')
+        approve.click()
+        expect(page.locator('#toast-tray .toast', has_text='Days in a row: the change is active.')).to_be_visible()
+        expect(panel).to_have_count(0)
+        entry = next(e for e in h.get('coordinator', '/api/rules/catalogue')['entries'] if e['id'] == 'days_in_a_row')
+        assert entry['proposed'] is None
+    finally:
+        for route in held:
+            if not route.request.failure:
+                try:
+                    route.abort()
+                except Exception:
+                    pass
+        context.close()
