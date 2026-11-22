@@ -2894,7 +2894,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
   weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
   // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
-  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
+  // Read from the page, never `workflow`: a closure here holding this render's footer chains every older render (SC-01).
+  weekHooks.edited=()=>{for(const b of document.querySelectorAll<HTMLButtonElement>('.planner-bar .rota-decisions > button:not([aria-disabled=true])'))notYet(b,waitingWord('queued'));};
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
