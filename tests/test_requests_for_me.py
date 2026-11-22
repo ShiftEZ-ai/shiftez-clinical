@@ -6,6 +6,7 @@ import pytest
 from apps.api import models as m
 from apps.api.db import transaction
 
+from .governance_support import identity
 from .test_scheduling_facts_api import workload
 from .test_staff_swaps import accepted, ordered_clock
 
@@ -32,6 +33,30 @@ def submit(h, role, person, day, kind="leave"):
     })["record"]
 
 
+@pytest.mark.parametrize("database", ["h", pytest.param("pg", marks=pytest.mark.postgres)])
+def test_self_approval_request_is_in_waiting_queue_badge_and_home(request, database):
+    h = request.getfixturevalue(database)
+    reviewer = identity(h, "self_request_reviewer", ["coordinator", "approver"], person=h.seed["people"][0])
+    other = submit(h, "coordinator", h.seed["people"][1], 10)
+    own = submit(h, "self_request_reviewer", h.seed["people"][0], 11)
+
+    def waiting():
+        page = read(h, "self_request_reviewer", for_me=1, limit=100)
+        home = {item["key"]: item for item in h.get("self_request_reviewer", "/api/home")["attention"]}
+        return page, home["requests"]["count"]
+
+    page, home_count = waiting()
+    assert {item["id"] for item in page["items"]} == {other["id"]}
+    assert page["counts"]["to_decide"] == home_count == 1
+
+    h.command("admin", "self_approval.grant", {"identity_id": reviewer, "actions": ["request.decide"],
+        "starts_on": "2026-01-01", "ends_on": "2027-01-01", "reason": "Explicit synthetic request permission"})
+    page, home_count = waiting()
+    assert {item["id"] for item in page["items"]} == {own["id"], other["id"]}
+    assert page["counts"]["to_decide"] == home_count == 2
+    assert next(item for item in read(h, "self_request_reviewer")["items"] if item["id"] == own["id"])["can_decide"]
+
+
 def test_for_me_is_the_count_queue_with_paging_stage_counts_and_exclusions(h):
     me, other = h.seed["people"][:2]
     submitted = [submit(h, "staff", me, 10), submit(h, "coordinator", other, 11)]
@@ -43,9 +68,10 @@ def test_for_me_is_the_count_queue_with_paging_stage_counts_and_exclusions(h):
     })["pattern"]
     fact = h.command("coordinator", "person.workload.propose", workload(h))["fact"]
     with transaction(h.app.state.engine, write=True) as db:
-        excluded = m.RequestRecord(department_id=h.seed["department_id"], person_id=me, kind="leave",
+        db.get(m.Identity, h.seed["identities"]["approver"]).person_id = h.seed["people"][2]
+        excluded = m.RequestRecord(department_id=h.seed["department_id"], person_id=h.seed["people"][2], kind="leave",
             start=datetime(2026, 10, 12, tzinfo=timezone.utc), end=datetime(2026, 10, 13, tzinfo=timezone.utc),
-            private_reason="Synthetic self-authored request", status="submitted",
+            private_reason="Synthetic request about the reviewer", status="submitted",
             created_by=h.seed["identities"]["approver"])
         db.add(excluded)
 

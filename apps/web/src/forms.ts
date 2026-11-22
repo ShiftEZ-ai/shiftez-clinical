@@ -232,7 +232,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
     const start=field(notice?'First day shown':'Effective from','date',preset?.starts_on||row?.starts_on||today(ctx),{required:true});
     const end=field(notice?'Last day shown (optional)':kind==='mentorships'?'Last day (included, optional)':'Effective until (included)','date',preset?.ends_on||row?.ends_on||'');lastDayIncluded(end.input);
     const dates=dateRange('Dates',start,end);
-    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??row?.active!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
+    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??(row?.configured_active??row?.active)!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
     const reason=field('Change reason','text','',{maxlength:500,placeholder:'Optional note, e.g. new clinic from October'});
     // Records that belong to one person (mentorship, programme membership, rotation) are created for many people at
     // once: pick them all, and one record is saved for each. Editing a saved record keeps its one person.
@@ -736,7 +736,8 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
     form.append(name.wrap,dateRange('Dates',start,end),fit);if(base)form.append(urgency.wrap,urgentReason.wrap);
     else form.append(setup.wrap,source.wrap,people.wrap,allTemplates.wrap,templates.wrap,automate.wrap);
     form.append(baseline);
-    return async()=>{if(!base&&setup.input.value==='patterns'&&!templateIds().length)throw new Error('Choose at least one recurring session.');
+    // "Use all" with none active is an empty rota, never a choice to make; only a hand-picked empty list asks for one.
+    return async()=>{if(!base&&setup.input.value==='patterns'&&!allTemplates.input.checked&&!templates.values().length)throw new Error('Choose at least one recurring session.');
       const fits=choice?.value();
       if(fits?.choice==='amend'){const p=(await get<{publications:Row[]}>('/api/publications')).publications.find(x=>x.id===fits.publication_id);if(p){form.closest('dialog')?.remove();return workspaceForm(ctx,p);}}
       const custom=customScope.input.checked,sources=scopeChecks.filter(f=>f.input.checked).map(f=>f.input.value);

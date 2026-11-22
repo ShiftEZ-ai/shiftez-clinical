@@ -1879,7 +1879,9 @@ def save_shift(db, actor, command, update=False):
     if not update and 'session_creation' in db.info.get('bulk', {}):
         from .bulk import create_session
         return create_session(db, actor, workspace, value)
-    before = workspace_content(db, workspace)
+    before = snapshots.take_precondition(db, workspace).get('content') if update else None
+    if before is None or before['workspace']['revision'] != workspace.revision:
+        before = workspace_content(db, workspace)
     existing = db.get(m.Shift, value.shift_id) if update else None
     if update:
         require(existing is not None and existing.workspace_id == workspace.id, "NOT_FOUND", "Session not found", 404)

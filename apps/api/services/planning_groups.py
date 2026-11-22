@@ -419,7 +419,7 @@ def _generation_group_context(db, actor, workspace, value):
 
 
 def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
-    from packages.domain.generation_scope import has_population, selected_session_ids
+    from packages.domain.generation_scope import has_population, population_candidates, selected_session_ids
 
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
     enqueue = snapshot is None
@@ -434,13 +434,19 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
              if default_scope else value.generation_scope)
     requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None}
     selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
+    candidates = None
+    if enqueue and selected_group:
+        from .planning_preparation import command_compute
+        state = db.info.get('_planning_preparation') or {}
+        candidates = command_compute(db, 'generation_population', snapshot,
+            lambda: population_candidates(requested, selected), final=True, refresh_on_replay=True,
+            input_token=state.get('generation_snapshot_key'), options=(requested['generation_scope'], sorted(selected)))
     if versions is not None:
-        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope)
+        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope,
+                                            candidates=candidates)
     if check_nonempty:
         requested['generation_session_ids'] = selected
-        if selected_group:
-            requested['planning_population'] = population
-        require(has_population(requested), 'INVALID_SCOPE',
+        require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',
                 'No people match this group during the selected duties; change the population or duty selection', 422)
     if selected_group:
         metadata['planning_context']['selected_session_ids'] = sorted(selected)
@@ -453,7 +459,7 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
     return metadata
 
 
-def _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope):
+def _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope, *, candidates=None):
     from packages.domain.generation_scope import population_allows
 
     resolver = GroupResolver(snapshot, versions)
@@ -463,9 +469,9 @@ def _generation_population(snapshot, requested, selected, versions, actor, selec
         if shift['id'] not in selected or shift.get('cancelled'):
             continue
         population[shift['id']] = []
-        for pid in snapshot['people']:
-            if not population_allows(requested, shift, pid):
-                continue
+        people = (candidates[shift['id']] if candidates is not None else
+                  (pid for pid in snapshot['people'] if population_allows(requested, shift, pid)))
+        for pid in people:
             primary = resolver.primary(pid, shift)
             if selected_group is not None and (default_scope or admin) and (
                     primary is None or primary['group_id'] != selected_group['group_id']):

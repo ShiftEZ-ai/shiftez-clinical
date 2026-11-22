@@ -825,6 +825,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
 
     workspace_check = None
     submission_check = None
+    checked_decisions = None
     if command.kind in {'workspace.validate', 'workspace.submit', 'workspace.approve', 'workspace.publish'}:
         # Freeze a coherent read snapshot without taking the application writer lock.
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
@@ -860,6 +861,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                workspace.status, workspace.archived_at, data['fingerprint'])
                     workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
                                        planning.validation_stamp(db, workspace))
+                    checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
     if command.kind == 'generation.apply':
@@ -957,12 +959,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
     # Publication performs its fresh safety validation at the final writer boundary.
+    group_queue = (command.kind == 'job.create' and command.payload.get('kind') == 'generation'
+                   and bool(command.payload.get('planning_group_version_id')))
     staged = (not assignment_reply and not background_merge and command.kind != 'workspace.publish'
-              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
+              and (group_queue or command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
               and (command.payload.get('rejected_review_item_ids') or
                    any(item.get('accept') is False for item in command.payload.get('decisions', []) if isinstance(item, dict)))))
     if staged:
         reader = engine.execution_options(isolation_level='REPEATABLE READ') if engine.dialect.name == 'postgresql' else engine
+        if group_queue and engine.dialect.name == 'postgresql':
+            reader = reader.execution_options(postgresql_readonly=True)
         planning_plan = {'seed': m.uid(), 'at': m.now(), 'checks': [], 'kind': command.kind}
         from . import db as database
         preparation_settings = reader.get_execution_options().get('rota_write_settings') or settings
@@ -970,7 +976,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         while True:
             try:
                 with transaction(reader, deadline=preparation_deadline) as db:
-                    if engine.dialect.name == 'sqlite':
+                    if engine.dialect.name == 'sqlite' and group_queue:
+                        db.execute(text('BEGIN'))
+                    elif engine.dialect.name == 'sqlite':
                         # Preparation flushes (then rolls back) writes. A deferred SQLite read cannot upgrade while another
                         # writer holds the lock (instant "database is locked" → 503), so wait for that writer within the
                         # command budget, as PostgreSQL's REPEATABLE READ preparation does.
@@ -1004,6 +1012,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     break
             except planning_preparation.RollbackPreparation:
                 break
+            except Problem:
+                if not group_queue:
+                    raise
+                # Make the decision again under the writer if the preliminary read refuses.
+                planning_plan = None
+                break
             except OperationalError as error:
                 if getattr(error.orig, 'sqlstate', None) in {'40001', '40P01'}:
                     # A stored background check also updates the workspace row. Reacquire all
@@ -1025,6 +1039,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         require_current_schema(db)
         changed_department.clear()
         db.info.pop("self_approved", None)  # a retried attempt starts clean
+        db.info.pop("entered_on_behalf_by", None)
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
@@ -1065,6 +1080,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             # revision is still identical under the writer; never rebuild history here.
             expected(workspace, command.expected_revision)
             check_context(db, actor, workspace, workspace_check[2])
+            # Recorded approval evidence: a step that recorded decisions during the check is never overwritten.
+            require((workspace.validation or {}).get('review_item_decisions') == checked_decisions, 'STALE_INPUTS',
+                    'Review decisions were recorded during the check; the completed check is retained here.', 409,
+                    {'current_revision': workspace.revision, 'validation': workspace_check[1], 'recoverable': True})
             reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
                 if command.kind == 'workspace.validate' else submission_check or (workspace_check[1], workspace_check[2])))
         else:
@@ -1193,6 +1212,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                                                        **({"entered_on_behalf_by": sorted(enterers)}
+                                                           if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),
                                                        **({'assignment_override_blockers': override_blockers}
                                                           if override_blockers else {})},
                                 correlation_id=correlation_id)))

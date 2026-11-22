@@ -26,7 +26,7 @@ def rule_opportunities(data):
     from .patterns import SHAPE_KINDS
     from .score import SESSION_KINDS, rule_copy_key
     from .time import aware
-    from .validation import department_memberships, index_person_rows, named_people, policy_applies, session_scope, within_dates
+    from .validation import department_memberships, index_person_rows, named_people, person_active_end, policy_applies, session_scope, within_dates
 
     check = data.get('_check_budget', lambda: None)
     data = {**data, '_person_rows': data.get('_person_rows') or index_person_rows(data),
@@ -42,7 +42,9 @@ def rule_opportunities(data):
                 and within_dates(p, first, last, data['organisation']['timezone'])]
     departments = {data['types'][s['assignment_type_id']]['department_id'] for s in shifts}
     members = {row['person_id'] for row in data.get('memberships', []) if row['department_id'] in departments}
-    people = [pid for pid, person in data['people'].items() if person.get('active', True) and pid in members]
+    zone = data['organisation']['timezone']
+    active_ends = {pid: end for pid, person in data['people'].items() if pid in members
+                   and (end := person_active_end(person, last, zone)) is not None and first < end}
     instances = {}
     for policy in counting_views(data, relevant):
         check()
@@ -55,6 +57,8 @@ def rule_opportunities(data):
         def matches(scoped, pid, s):
             check()
             a, b = aware(s['start']), aware(s['end'])
+            if pid is not None and b > active_ends[pid]:
+                return False
             department = data['types'][s['assignment_type_id']]['department_id']
 
             def member(lo, hi):
@@ -73,7 +77,7 @@ def rule_opportunities(data):
             subjects = [s['id'] for s in shifts if matches(scoped, None, s)]
         else:
             named = named_people(policy['definition']['scope'])
-            subjects = [pid for pid in people if (named is None or pid in named)
+            subjects = [pid for pid in active_ends if (named is None or pid in named)
                         and any(matches(policy, pid, s) for s in shifts)]
         instances.update({(rule_copy_key(policy), subject): policy for subject in subjects})
     return instances

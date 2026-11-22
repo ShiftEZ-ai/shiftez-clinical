@@ -55,7 +55,13 @@ def test_fix_list_uses_the_home_leave_classification_and_offers_cover(database):
         'private_reason': 'Confidential synthetic reason'})['record']
     h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Independent test decision'},
               request['id'], request['revision'])
-    w = h.shift(h.workspace('Fix list approved leave'), people=[person])['workspace']
+    start, end = '2026-10-04T08:00:00+03:00', '2026-10-04T12:00:00+03:00'
+    # Exercise the zero-cover fallback with recorded unavailability for each replacement.
+    for peer in h.seed['people'][1:]:
+        h.command('coordinator', 'availability.record', {'person_id': peer, 'kind': 'recorded_leave',
+            'leave_type': 'Annual leave', 'start': start, 'end': end,
+            'private_reason': 'Synthetic fixture unavailability'})
+    w = h.shift(h.workspace('Fix list approved leave'), start, end, people=[person])['workspace']
     checked = h.lifecycle(w, 'validate')['workspace']
     fix = h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")
     leave = [cause for cause in fix['causes'] if cause['sentence'] == 'Duties during approved leave']

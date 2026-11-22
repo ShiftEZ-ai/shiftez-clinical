@@ -386,7 +386,7 @@ def test_limited_catalogues_preserve_visible_independent_defaults_and_source_row
         assert len(list(db.scalars(select(m.Policy)))) == 5
 
 
-def test_initial_seed_template_replaces_visible_default_without_losing_workload(migrated):
+def test_initial_seed_template_replaces_visible_default_without_losing_workload(migrated, synthetic_initial_seed):
     from sqlalchemy import select
     from apps.api import models as m
     from apps.api.db import make_engine, transaction
@@ -1639,7 +1639,7 @@ def test_both_deploy_paths_rebuild_the_fairness_ledger_only_after_a_successful_m
     assert script.count('manage.py rebuild-fairness') == 2  # the step and the operator hint in its failure message
     guard = script.rindex('if [ "$pending" != 0 ]; then', 0, rebuild)
     assert script.index('\nfi\n', guard) > rebuild and 'exit 1' in script[rebuild:script.index('\nfi\n', guard)]
-    local = (ROOT / 'tests/fixtures/guards/local-deploy.py').read_text()
+    local = (ROOT / 'tests/fixtures/guards/local-deploy.py.txt').read_text()
     branch = local[local.index('if args.migrate and head != current:'):local.index('for role in ("api", "worker"):')]
     assert branch.index('"scripts/manage.py", "migrate"') < branch.index('database-roles.sql') < branch.index('"rebuild-fairness"')
 

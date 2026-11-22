@@ -1,5 +1,7 @@
 """One visible gate for malformed reviewed quarantines."""
+from collections import Counter
 from datetime import date, datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -11,12 +13,43 @@ from ci.quarantine_registry import decode_registry, expired_entries
 
 from tests.quarantine import entries
 
+FIXTURES = Path(__file__).with_name("fixtures")
+MOVED_REGISTRY = FIXTURES / "quarantine_after_migration.json"
+
 
 def test_reviewed_quarantine_is_valid_and_current():
     today = datetime.now(timezone.utc).date()  # real clock: quarantine expiry is wall-clock policy
     registry = entries(Path(__file__).with_name("quarantine.json"), today)
     for row in expired_entries(registry, today):
         print(f"Expired quarantine remains active: {row['nodeid']}, issue {row['issue']}")
+
+
+def test_the_quarantine_migration_is_an_accepted_move(monkeypatch):
+    root = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(str(root / ".github/scripts"))
+    import working_policy as policy
+
+    # Freeze the exact inputs and outputs so the proof also works in a squash or shallow checkout.
+    raw = (FIXTURES / "known_failures_before_quarantine.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == (
+        "26c560ab7d6351edb6935c2e5628914f6a7506534023749aa093934488b28cb5")
+    source = json.loads(raw)
+    expected = {row["node"]: row["class"] for row in source["fails"] + source["unstable"]}
+    new_q = MOVED_REGISTRY.read_bytes()
+    new_kf = (FIXTURES / "known_failures_after_quarantine.json").read_bytes()
+    assert hashlib.sha256(new_q).hexdigest() == "b4c0f560339d4cccf48d3d6e0bac59ff8cf321e746fceee34a7db6c6b3ec5431"
+    assert hashlib.sha256(new_kf).hexdigest() == "21a5511dde774fa6dd9d8ca4f40cb33c7c370ef93a47765c30d72b6070b7aae7"
+    policy.quarantine_change(b"[]\n", new_q, raw, new_kf)
+    assert policy.removal_only(raw, new_kf)
+    assert {row["nodeid"]: row["reason"].partition(":")[0] for row in json.loads(new_q)} == expected
+    assert json.loads(new_kf) == {**source, "fails": [], "unstable": []}
+
+
+def test_the_quarantine_migration_counts_each_class():
+    rows = json.loads(MOVED_REGISTRY.read_bytes())
+    counts = Counter(row["reason"].partition(":")[0] for row in rows)
+    assert counts == {"baseline": 346, "baseline-error": 26, "unstable": 33}
+    assert sum(row["blocker"] for row in rows) == 0
 
 
 def registry_row(name, issue, *, expires="2000-01-02", kind="baseline", blocker=False):

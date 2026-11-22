@@ -72,6 +72,8 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
+    # `validation` stamps only when a settled rota's stored `wishes` reservation
+    # changes (db._wish_reservation_changes); other check saves do not.
     ('workspaces', m.Workspace, 'general', 'department', None, frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
         'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
@@ -855,7 +857,7 @@ def event_local_date_for_hint(db, workspace, organisation, *, now=None):
     """Return the local date only when recurring blocking-event facts depend on today.
 
     ``blocking_occurrences`` clamps recurring projections to ``m.now()``'s local
-    date and drops starts before that instant.  Stored occurrences do not use the
+    date and drops occurrences that ended before that instant.  Stored occurrences do not use the
     clock, so an unaffected draft keeps the same compact hint across midnight.
     """
     timezone = (organisation.get('timezone') if isinstance(organisation, Mapping)
@@ -1049,8 +1051,13 @@ def _draft_catalogue_refs(db, workspace):
 def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_overrides,
                       current_scheduling, mandatory_rules, current_mandatory, shared_inputs,
                       scope_interval_cache, rule_map_bindings, draft_inputs=None, draft_refs=None, reuse_catalogue=False):
-    department = db.get(m.Department, workspace.department_id)
-    org = db.get(m.Organisation, department.organisation_id)
+    if current_scheduling:
+        department, org = db.execute(select(m.Department, m.Organisation)
+            .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
+            .where(m.Department.id == workspace.department_id)).one()
+    else:
+        department = db.get(m.Department, workspace.department_id)
+        org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
     mandatory_overlay_changed = False
     baseline = None
@@ -1127,6 +1134,7 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
         from .workspace_baselines import frozen_department_settings
         department_settings = {**department_settings, **frozen_department_settings(
             result, workspace.department_id, baseline.included_sources)}
+        result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
@@ -1552,7 +1560,7 @@ def domain_snapshot(db, workspace, *args, **kwargs):
                                          'include_fairness', 'include_objectives', 'include_fairness_history',
                                          'include_manifest'} or value is None
                                  for key, value in kwargs.items())
-    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
+    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo', 'job.create'}:
         db.flush()
         index = state['next_snapshot']
         state['next_snapshot'] += 1
@@ -1560,10 +1568,17 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         workspace_record = record(workspace, exclude=('validation',))
         key = snapshot_hash({'workspace': workspace_record, 'options': kwargs, 'stamp': stamp})
         cached = state['prepared_snapshots'].get(index)
-        if (cached and cached[0] == key and currency_match(stamp, stamp)
-                and _prepared_event_currency_matches(db, cached[2])):
+        resolved = currency_match(stamp, stamp)
+        if cached and cached[0] == key and resolved:
+            # Recurring occurrences follow the clock; a prepared graph is current only if they still match.
+            resolved = _prepared_event_currency_matches(db, cached[2])
+        if state['kind'] == 'job.create':
+            state['generation_snapshot_key'] = key if resolved or not state['replay'] else 'unresolved'
+        if cached and cached[0] == key and resolved:
             restored = state.get('restored_snapshots') or {}
             return restored.pop(index) if index in restored else pickle.loads(cached[1])
+        if state['replay'] and state['kind'] == 'job.create':
+            return _domain_snapshot(db, workspace, *args, **kwargs)
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
