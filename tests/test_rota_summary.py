@@ -321,8 +321,8 @@ def test_summary_rechecks_stale_legacy_and_incomplete_checks_read_only(h, monkey
         elif change == 'quota_incomplete': check['quota_report'] = {'complete': False}
         elif change == 'empty_coverage': check['coverage'] = []
         elif change == 'balance_options':
-            department = db.get(m.Department, row.department_id)
-            department.generation_defaults = {**(department.generation_defaults or {}), 'balance_measure': 'duties'}
+            # An older check may have used the live options instead of the draft's.
+            check['score_dependencies']['options']['balance_measure'] = 'duties'
         elif change.startswith('missing_'): check.pop(change.removeprefix('missing_'))
         else: check['scope'] = 'published_changes' if change == 'published_scope' else 'swap'
         row.validation = check
