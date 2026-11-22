@@ -280,7 +280,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added, smoke_file}),
                                  trusted_ci.PR_SMOKE | {shared_owner, added})
             # A PR into the default branch never runs the whole suite: each former full-run trigger maps to its owners (or the smoke
-            # files when none is mapped) plus its class tests. Only another base or full-ci runs the full suite.
+            # files when none is mapped) plus its class tests. Only another base, full-ci or a removed test file runs the full suite.
             pipeline, contract, migration = {pipeline_test}, {contract_test}, {migration_test}
             selections = {"scripts/tool.py": set(), ".github/workflows/ci.yml": pipeline, "ci/settings.json": pipeline,
                           "tools/control.py": pipeline, "requirements/test.lock": set(), "package-lock.json": set(),
@@ -298,7 +298,7 @@ class TwoObservationGateTests(unittest.TestCase):
                       (owner, [], "dev", False, {owner}),
                       (owned, ["full-ci"], "dev", False, None), (owned, [], "main", False, None),
                       (owned, [], "dev", True, {owner}), (unknown, [], "dev", True, set()),
-                      (owner, [], "dev", True, {owner})]
+                      (owner, [], "dev", True, None)]  # a removed test file runs in full (base census)
             events = [("pull_request", *case) for case in cases]
             events += [(event, owned, [], "dev", False, None)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]

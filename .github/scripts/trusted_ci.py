@@ -104,11 +104,16 @@ def quarantine_revision(branch, default, base, candidate):
 
 
 def pr_scope(data, git, candidate):
-    """Changed paths of a PR into the default branch; None (the full suite) only off it or with the full-ci label."""
+    """Changed paths of a PR into the default branch; None (the full suite) off it, with the full-ci label or when a test file is removed."""
     pr = data["pull_request"]
     if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
-    return pr_changed_files(policy.commit(pr["base"]["sha"]), candidate, git)
+    changed = pr_changed_files(policy.commit(pr["base"]["sha"]), candidate, git)
+    # A removed or renamed test file needs the full base census, so its removal-ledger rows can be verified.
+    if any(path.startswith("tests/") and path.rsplit("/", 1)[-1].startswith("test_") and path.endswith(".py")
+           and policy.read_file(candidate, path) is None for path in changed):
+        return None
+    return changed
 
 
 def trigger_tests(changed, base, candidate, trusted_sha, files):
