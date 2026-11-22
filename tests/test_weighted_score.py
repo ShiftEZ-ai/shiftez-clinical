@@ -365,11 +365,11 @@ def test_workload_audience_ignores_eligibility_only_on_excluded_sessions(exclude
 @pytest.mark.parametrize('inactive_flag', ['cancelled', 'closed'])
 @pytest.mark.parametrize('measure', ['duties', 'reserved_hours'])
 def test_inactive_duty_never_dilutes_rule_or_workload_loss(inactive_flag, measure):
-    from tests.test_schedule_score import policy
+    from tests.test_rule_catalogue_guard import catalogue, line
 
     sessions = [shift(f's{i}', i + 4, [pid]) for i, pid in enumerate('aaab')]
-    rule = policy('cover')
-    rule['definition']['rule'] = {'kind': 'minimum_cover', 'minimum': 2}
+    rule = catalogue('people_per_session', line(numbers={'target': {'value': 2, 'level': 'medium'}}))
+    rule['department_id'] = 'd'
     snapshot = data(sessions, [rule])
     snapshot['people'] = {pid: snapshot['people'][pid] for pid in 'ab'}
     validation = {'coverage': [], 'findings': [{'code': 'SCOPED_COVERAGE_GAP', 'severity': 'warning',

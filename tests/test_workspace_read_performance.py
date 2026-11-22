@@ -352,6 +352,36 @@ def test_a_slow_read_never_holds_a_projection_row_that_a_writer_needs(pg, monkey
     assert h.detail(w)['workspace']['name'] == 'Renamed while a summary is read'
 
 
+def test_home_reads_use_worker_fingerprints_without_building_snapshots(backend, monkeypatch):
+    from apps.api.services import planning
+    from apps.api.services.read_projection_warming import warm_all
+
+    h = backend
+    engine = h.app.state.engine
+    workspace = h.lifecycle(h.shift(h.workspace())['workspace'], 'submit')['workspace']
+    warm_all(engine)
+    # An input revision can invalidate the hint while leaving the resolved token unchanged.
+    with transaction(engine, write=True) as db:
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Home attempted scheduling work')
+
+    def review_ids():
+        with monkeypatch.context() as guard:
+            guard.setattr(snapshots, 'domain_snapshot', forbidden)
+            guard.setattr(planning, 'domain_snapshot', forbidden)
+            guard.setattr(planning, 'evaluate', forbidden)
+            guard.setattr(service, 'domain_snapshot', forbidden)
+            guard.setattr(service, 'evaluate', forbidden)
+            guard.setattr(main, 'evaluate', forbidden)
+            return [item['rota_id'] for item in h.get('approver', '/api/home')['attention'] if item['key'] == 'reviews']
+
+    assert review_ids() == []
+    warm_all(engine)
+    assert review_ids() == [workspace['id']]
+
+
 def test_review_reads_reuse_resolved_currency_without_changing_command_checks(backend, monkeypatch):
     from apps.api.services import reviews
     h = backend

@@ -89,8 +89,10 @@ def test_scoped_cover_lines_keep_strictest_gate_and_advisory_score(pg, severity)
     h = pg
     rank = {'conditions': [{'field': 'category_ids', 'values': [h.seed['category']]}]}
     level = 'mandatory' if severity == 'mandatory' else 'medium'
-    lines = [line(numbers={'min': {'value': 2, 'level': level}}),
-             line(who=rank, numbers={'min': {'value': 1, 'level': level}})]
+    # Safety kinds are always mandatory. For advisory staffing, compare scored targets.
+    slot = 'min' if severity == 'mandatory' else 'target'
+    lines = [line(numbers={slot: {'value': 2, 'level': level}}),
+             line(who=rank, numbers={slot: {'value': 1, 'level': level}})]
     policy = approve(h, propose(h, 'people_per_session', lines)['record'])
     w = h.shift(h.workspace(), people=[])['workspace']
     data = h.snapshot(w)

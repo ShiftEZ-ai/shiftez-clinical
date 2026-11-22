@@ -3766,11 +3766,14 @@ class CatalogueRule(Schema):
                     raise ValueError(f"Line {n}: {entry['name']} has no {key.replace('_', ' ')} number")
                 if key == 'apply' and number.value is not None:
                     raise ValueError(f'Line {n}: this rule has no number')
-                if number.level is not None and (number.level not in entry['levels'] or number.level == 'mandatory' and all(s['advisory'] for s in slots)):
-                    raise ValueError(f"Line {n}: the {key.replace('_', ' ')} cannot be {number.level}")
                 chosen = slot_for_number(entry, key, {'settings': self.settings},
                                          {'settings': line.settings, 'source_bindings': {k: v.model_dump() for k, v in line.source_bindings.items()}},
                                          line.numbers)
+                if (number.level not in (None, 'mandatory') and chosen['kind'] in ALWAYS_MANDATORY_KINDS
+                        and not chosen['advisory'] and not (info.context or {}).get('historical')):
+                    raise ValueError(f'Line {n}: {SAFETY_MANDATORY_REASON}')
+                if number.level is not None and (number.level not in entry['levels'] or number.level == 'mandatory' and all(s['advisory'] for s in slots)):
+                    raise ValueError(f"Line {n}: the {key.replace('_', ' ')} cannot be {number.level}")
                 if self.catalogue_version == 2 and number.level == 'mandatory' and chosen['advisory']:
                     raise ValueError(f"Line {n}: the {key.replace('_', ' ')} here is a preference, not mandatory")
                 if self.catalogue_version == 2 and chosen['field'] and number.value is not None:
@@ -3869,8 +3872,15 @@ def line_rule(rule, row, field):
     return out
 
 
-# Rules that keep people safe: never replaced by another rule, whatever the severity.
-NEVER_OVERRIDDEN = frozenset({'restriction', 'min_rest', 'forbidden_transition', 'supervision_limit', 'minimum_cover', 'maximum_participants', 'team_lead_requirement', 'spread_evenly'})
+# Hard safety slots always bind. Advisory-only slots are scored separately by the catalogue.
+ALWAYS_MANDATORY_KINDS = frozenset({
+    'restriction', 'min_rest', 'forbidden_transition', 'supervision_limit',
+    'minimum_cover', 'maximum_participants', 'team_lead_requirement',
+})
+SAFETY_MANDATORY_REASON = 'Safety rules are always mandatory'
+
+# Override protection extends the mandatory set to spread-evenly, which may stay advisory.
+NEVER_OVERRIDDEN = ALWAYS_MANDATORY_KINDS | {'spread_evenly'}
 
 # Numeric safety limits are combined when a frozen and live revision describe
 # the same obligation.  The direction belongs to the primitive kind, not to
@@ -4102,10 +4112,10 @@ class PolicyDefinition(Schema):
             workload_counts(self.scope.conditions)
         if isinstance(self.rule, MinimumCover) and self.rule.aggregation == 'service_group' and not (self.scope.service_id or self.scope.service_ids or self.scope.chosen_services()):
             raise ValueError('Pooled coverage requires an explicit clinic/service scope')
-        if isinstance(self.rule, MaximumParticipants) and self.rule.overflow_maximum and self.severity != 'mandatory':
-            raise ValueError('Permitted overflow needs a mandatory overall capacity limit')
-        if isinstance(self.rule, (SupervisionLimit, TeamLeadRequirement)) and self.severity != 'mandatory':
-            raise ValueError('Supervision limits are mandatory and cannot grant person exceptions')
+        context = info.context or {}
+        if (self.rule.kind in ALWAYS_MANDATORY_KINDS and self.severity != 'mandatory'
+                and not (context.get('historical') or context.get('advisory_catalogue_slot'))):
+            raise ValueError(SAFETY_MANDATORY_REASON)
         if isinstance(self.rule, SHAPE_RULES) and (self.severity != 'advisory' or self.exception_allowed):
             raise ValueError('Run, days-off, weekend, succession and together/apart rules are advisory preferences')
         if isinstance(self.rule, (AllocationPreference, AllocationOvertime)) and (self.severity != "advisory" or self.exception_allowed):

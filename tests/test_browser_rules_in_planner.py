@@ -550,13 +550,13 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
                         {'conditions': {'match': 'all', 'conditions': [{'field': 'capability_ids', 'op': 'any', 'values': [skill_id]}]}},
                         name='Sign-off hours'))
     activate(h, propose(h, {'kind': 'restriction', 'weekdays': list(range(7)), 'start_time': '00:00', 'end_time': '24:00', 'leave_buffer_days': 1},
-                        name='Rest next to leave', severity='advisory'))
+                        name='Rest next to leave'))
     h.command('coordinator', 'availability.record', {'person_id': a, 'kind': 'recorded_leave', 'start': '2026-10-07T00:00:00+03:00',
                                                      'end': '2026-10-08T00:00:00+03:00', 'private_reason': 'Synthetic'})
     w = h.workspace('Exact rules')
     w = h.shift(w, *MON, people=[a])['workspace']                                                                  # Continuity clinic
     w = h.shift(w, '2026-10-05T13:00:00+03:00', '2026-10-05T17:00:00+03:00', people=[a], service=1)['workspace']   # Review clinic
-    w = h.shift(w, *TUE, people=[a, b])['workspace']                                                               # the day before the leave
+    w = h.shift(w, *TUE, people=[a, b], seed_restricted=True)['workspace']                                                               # the day before the leave
     shifts = {s['id']: s for s in h.detail(w)['shifts']}
     context, page = sign_in(browser, live_server, 'coordinator'); errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))

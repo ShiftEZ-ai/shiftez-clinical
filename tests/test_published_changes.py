@@ -122,6 +122,27 @@ def test_change_list_shared_hidden_review_publish_diff_and_undo(h):
     assert issued_rows[1]['participants'][0]['person_id'] == h.seed['people'][1]
 
 
+def test_amendment_submit_refuses_stale_review_counters(h, monkeypatch):
+    pub, shifts = issued(h)
+    draft = change(h, pub, shifts[0])
+    lifecycle = published_changes.planning.lifecycle
+
+    def move_revision_after_check(db, actor, command):
+        result = lifecycle(db, actor, command)
+        # Inject drift in this transaction because the input row is already locked.
+        db.get(m.Organisation, actor.organisation_id).availability_revision += 1
+        db.flush()
+        return result
+
+    monkeypatch.setattr(published_changes.planning, 'lifecycle', move_revision_after_check)
+    reply = h.command('coordinator', 'publication.changes.submit', {'reason': 'Review published cover'},
+                      target=pub, revision=draft['workspace']['revision'], status=409)
+    assert reply['error']['code'] == 'STALE_INPUTS'
+    assert reply['error']['details']['recoverable']
+    pending = h.get('coordinator', f'/api/publications/{pub}/pending-changes')
+    assert [(row['id'], row['status']) for row in pending['changes']] == [(draft['change']['id'], 'draft')]
+
+
 def test_urgent_not_offered_until_versioned_route_is_activated(h):
     pub, shifts = issued(h)
     result = change(h, pub, shifts[0])
@@ -533,12 +554,12 @@ def test_narrowing_legacy_rule_checks_every_context_without_changing_publication
     from tests.test_rule_templates import propose
 
     rule = {'kind': 'minimum_cover', 'minimum': 1}
-    source = h.policy(rule, scope={'weekdays': [0, 1, 2, 3, 6]}, severity='advisory')
+    source = h.policy(rule, scope={'weekdays': [0, 1, 2, 3, 6]})
     pub, shifts = issued(h)
     pending = change(h, pub, shifts[0])['workspace']
     draft = h.shift(h.workspace(start='2026-10-11', end='2026-10-18'),
                     start='2026-10-15T08:00:00+03:00', end='2026-10-15T12:00:00+03:00')['workspace']
-    proposal = propose(h, rule, scope={'weekdays': [0, 1, 2, 6]}, severity='advisory', replaces_id=source['id'])
+    proposal = propose(h, rule, scope={'weekdays': [0, 1, 2, 6]}, replaces_id=source['id'])
     before_shifts = {w['id']: h.detail(w)['shifts'] for w in (draft, pending)}
     with transaction(h.app.state.engine) as db:
         frozen = record(db.get(m.Publication, pub))
