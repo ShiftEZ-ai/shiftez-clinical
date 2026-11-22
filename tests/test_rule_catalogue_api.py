@@ -188,6 +188,13 @@ def test_checks_name_duplicates_overlaps_warnings_and_issues(h):
     assert h.client('staff').post('/api/rules/catalogue/duties_per_week/check', json={'lines': []}).status_code == 403
 
 
+def test_a_line_with_an_empty_list_is_refused_in_plain_words(h):
+    for bad, words in (({'weekdays': []}, 'Choose at least one day'), ({'numbers': {}}, 'Give the line a number')):
+        issues = h.client('coordinator').post('/api/rules/catalogue/duties_per_week/check', json={'lines': [{**line(numbers={'max': {'value': 5}}), **bad}]}).json()['issues']
+        assert [x['message'] for x in issues] == [words], issues
+        assert 'lines.0.' in issues[0]['field']  # still the line's own issue, as the editor places it
+
+
 def test_proposals_wait_for_another_person_and_retiring_brings_back_the_version_before(h):
     w, _, _ = world(h)
     a = h.seed['people'][0]
@@ -263,8 +270,8 @@ def catalogue_check_measurement(scale_harness):
     from apps.api.services.rule_catalogue import check
     real = policies.people_data
 
-    def department(db, actor, day):  # the department at scale: 150 people
-        data, a, b = real(db, actor, day)
+    def department(db, actor, day, *, last=None):  # the department at scale: 150 people
+        data, a, b = real(db, actor, day, last=last)
         return {**data, 'people': {**data['people'], **{str(uuid.uuid4()): {'active': True} for _ in range(147)}}}, a, b
     from datetime import date, timedelta
     people = h.seed['people']

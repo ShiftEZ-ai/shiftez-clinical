@@ -3,7 +3,9 @@ from sqlalchemy import Integer, JSON, case, cast, column, func, literal, select,
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 
 from apps.api import models as m
-from apps.api.serialization import effective_input_fingerprint, job_read_metadata, job_result_projection
+from apps.api.errors import require
+from apps.api.serialization import (CANDIDATE_EVIDENCE_REF, candidate_evidence_count, effective_input_fingerprint,
+                                    job_read_metadata, job_result_projection)
 from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation
 
 
@@ -190,9 +192,10 @@ def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
     rows = [*diagnostics, diagnostic_index, 'candidates'] if diagnostic_index is not None else [*path, 'candidate_evidence']
     group = [*diagnostics, diagnostic_index] if diagnostic_index is not None else [*path, 'candidate_evidence']
     stats_path = [*group, *(['shifts', shift_id] if shift_id else ['all'])]
-    if job.read_metadata is None:
+    top_level = job.kind == 'generation' and phase is None and diagnostic_index is None
+    raw = (job.result or {}) if job.read_metadata is None else None
+    if raw is not None and not (top_level and CANDIDATE_EVIDENCE_REF in raw):
         # Legacy null projections page the same loaded payload their counts came from, without a second read.
-        raw = job.result or {}
         source = (job_result_projection(job.kind, raw) or {}).get('evidence', {})
         for key in path:
             source = source.get(key, {})
@@ -211,9 +214,12 @@ def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
     stats = m.Job.result_summary['evidence', *stats_path]
     fallback = m.Job.result_summary['evidence', *group, 'shift_id'].as_string() if diagnostic_index is not None else literal(None)
     count = func.json_array_length(m.Job.result_summary['evidence', *diagnostics]) if diagnostic_index is not None else literal(0)
-    summary = select(stats.label('stats'), fallback.label('evidence_shift'), count.label('diagnostic_count')).where(
-        m.Job.id == job.id).cte('metadata')
-    if db.bind.dialect.name == 'sqlite':
+    # The same statement picks the format and reads its rows, including during worker completion.
+    reference = m.Job.result[CANDIDATE_EVIDENCE_REF] if top_level else literal(None, JSON)
+    summary = select(stats.label('stats'), fallback.label('evidence_shift'), count.label('diagnostic_count'),
+                     reference.label('reference')).where(m.Job.id == job.id).cte('metadata')
+    sqlite = db.bind.dialect.name == 'sqlite'
+    if sqlite:
         json_path = '$' + ''.join(f'[{part}]' if isinstance(part, int) else '.' + part for part in rows)
         entries = func.json_each(m.Job.result, json_path).table_valued('key', column('value', JSON))
         candidate, ordinal, first = entries.c.value, cast(entries.c.key, Integer), 0
@@ -231,14 +237,39 @@ def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
         page = page.where(candidate_shift == shift_id).offset(offset)
     else:
         page = page.where(ordinal >= offset + first, ordinal < offset + limit + first)
-    page = page.order_by(ordinal).limit(limit).subquery()
-    aggregate = (func.json_group_array(func.json(page.c.candidate)) if db.bind.dialect.name == 'sqlite'
-                 else func.coalesce(func.json_agg(aggregate_order_by(page.c.candidate, page.c.ordinal)), literal([], JSON)))
-    candidates = select(type_coerce(aggregate, JSON)).select_from(page).scalar_subquery()
+
+    def page_payload(page):
+        page = page.limit(limit).subquery()
+        aggregate = (func.json_group_array(func.json(page.c.candidate)) if sqlite
+                     else func.coalesce(func.json_agg(aggregate_order_by(page.c.candidate, page.c.ordinal)),
+                                        literal([], JSON)))
+        return select(type_coerce(aggregate, JSON)).select_from(page).scalar_subquery()
+
+    candidates = page_payload(page.order_by(ordinal))
+    artifact_present = literal(True)
+    if top_level:
+        evidence = m.JobCandidateEvidence
+        saved = select(evidence.payload.label('candidate'), evidence.ordinal).where(evidence.job_id == job.id)
+        if shift_id:
+            saved = saved.where(evidence.shift_id == shift_id).offset(offset)
+        else:
+            saved = saved.where(evidence.ordinal >= offset)
+        external = summary.c.reference['version'].as_integer().is_not(None)
+        candidates = case((external, page_payload(saved.order_by(evidence.ordinal))), else_=candidates)
+        first_row = select(evidence.ordinal).where(evidence.job_id == job.id, evidence.ordinal == 0).exists()
+        artifact_present = case((external, first_row), else_=artifact_present)
     # Counts, diagnostic context and candidate rows share one PostgreSQL READ COMMITTED statement snapshot.
-    stats, count, candidates = db.execute(select(summary.c.stats, summary.c.diagnostic_count, candidates)).one()
-    return {**(stats or {'total': 0, 'eligible': 0, 'reasons': {}}),
-            'candidates': candidates, 'diagnostic_count': count or 0}
+    stats, count, reference, candidates, artifact_present = db.execute(select(
+        summary.c.stats, summary.c.diagnostic_count, summary.c.reference,
+        type_coerce(candidates, JSON), artifact_present)).one()
+    stats = stats or {'total': 0, 'eligible': 0, 'reasons': {}}
+    if reference is not None:
+        row_count = candidate_evidence_count(reference)
+        require(row_count is not None and (row_count == 0 or artifact_present)
+                and (shift_id is not None or stats['total'] == row_count)
+                and len(candidates) == min(limit, max(0, stats['total'] - offset)),
+                'EVIDENCE_NOT_FOUND', 'This explanation is unavailable', 404)
+    return {**stats, 'candidates': candidates, 'diagnostic_count': count or 0}
 
 
 def reconciliation_page(db, job_id, section, offset, limit):

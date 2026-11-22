@@ -616,7 +616,9 @@ def matched_paths(tree, holds, key=None):
     check_count_bucket_budget(tree)
     out = []
     constrained = has_each(tree)
-    if key is not None and key not in bucket_keys(tree, holds):
+    if key == () and not constrained:
+        key = None  # An aggregate path needs only the ordinary condition match.
+    elif key is not None and key not in bucket_keys(tree, holds):
         return out
     def visit(node, path, required):
         if 'conditions' in node:
@@ -834,8 +836,9 @@ def rule_holds(data, person_id, shift, a, b, *, rotation_at=None):
             return {o['id'] for o in selector_policies(data, values, person_id=person_id) if valid_dates(o, a, b, zone)}
         if field == OUTRANKED:
             by_person, others = _winners(data, values)
-            return {c['key'] for c in (*by_person.get(person_id, ()), *others) if valid_dates(c, a, b, zone)
-                    and scope_matches_throughout(data, c['definition']['scope'], person_id, shift, a, b, rotation_at=rotation_at)}
+            return {key for key, c, level in (*by_person.get(person_id, ()), *others) if valid_dates(c, a, b, zone)
+                    and scope_matches_throughout(data, c['definition']['scope'], person_id, shift, a, b, rotation_at=rotation_at)
+                    and (level is None or _inherited_level(data, level, person_id, a, b, shift=shift))}
         if field == INHERITED_LEVEL:
             return {value for value in values if _inherited_level(data, value, person_id, a, b, shift=shift)}
         if field == OVERRIDDEN:
@@ -894,6 +897,8 @@ def source_index(policies, cache=None):
         for p in policies:  # a reader holding stored catalogue rules (not yet read as copies) still finds their lines
             by_id.setdefault(p['id'], []).append(p)
             by_owner.setdefault((p['id'], (p.get('template_line') or {}).get('person_id')), []).append(p)
+            for line in p.get('_legacy_own_lines', ()):
+                by_owner.setdefault((p['id'], line['template_line']['person_id']), []).append(line)
             if '_catalogue_sources' not in p and p['definition']['rule']['kind'] != 'catalogue':
                 continue
             sources = source_lines(p)
@@ -910,8 +915,9 @@ def selector_policies(data, values, *, person_id=None):
     """Internal selectors inspect their referenced copies, not every expanded rule for every duty."""
     policies, cache = data.get('policies', []), data.get('_line_index_cache')
     if cache is None:
-        return (p for p in policies if p['id'] in values and (person_id is None or
-                (p.get('template_line') or {}).get('person_id') == person_id))
+        return (row for p in policies if p['id'] in values
+                for row in ((p, *p.get('_legacy_own_lines', ())) if person_id is not None else (p,))
+                if person_id is None or (row.get('template_line') or {}).get('person_id') == person_id)
     entry = source_index(policies, cache)
     return (p for value in values for p in (entry[7].get(value, ()) if person_id is None
             else entry[8].get((value, person_id), ())))
@@ -925,14 +931,20 @@ def _winners(data, values):
     if found is None or found[0] is not values:
         by_person, others = {}, []
         for i in values:
-            copy = entry[1].get(i)
+            source, guard = outranking_source(i)
+            copy = entry[1].get(source)
             named = None if copy is None else named_people(copy['definition']['scope'])
             if copy is not None and named is None:
-                others.append(copy)
+                others.append((i, copy, guard))
             for p in named or ():
-                by_person.setdefault(p, []).append(copy)
+                by_person.setdefault(p, []).append((i, copy, guard))
         found = entry[3][id(values)] = (values, by_person, others)
     return found[1], found[2]
+
+
+def outranking_source(value):
+    """The source line and its optional inherited-level selector."""
+    return (level_selector(value)[0], value) if '#' in value else (value, None)
 
 
 def level_selector(value):
@@ -979,7 +991,7 @@ def selector_sources(policies, tree, cache=None):
     found = entry[5].get(id(tree)) if entry is not None and entry[0] is policies and entry[2] == len(policies) else None
     if found is not None and found[0] is tree:
         return found[1]
-    refs, inherited, policy_refs = set(), [], set()
+    refs, inherited, policy_refs, owner_refs = set(), [], set(), set()
     def visit(t):
         for c in (t or {}).get('conditions') or []:
             if 'conditions' in c:
@@ -988,24 +1000,31 @@ def selector_sources(policies, tree, cache=None):
                 for value in absolute_values(c) or []:
                     visit(_bucket_descriptor(value)[0])
             elif c['field'] == OUTRANKED:
-                refs.update(absolute_values(c) or [])
-            elif c['field'] in {OVERRIDDEN, OWN_LINE}:
+                for value in absolute_values(c) or []:
+                    key, guard = outranking_source(value)
+                    refs.add(key)
+                    if guard:
+                        inherited.append((key, level_selector(guard)[1]))
+            elif c['field'] == OVERRIDDEN:
                 policy_refs.update(absolute_values(c) or [])
+            elif c['field'] == OWN_LINE:
+                owner_refs.update(absolute_values(c) or [])
             elif c['field'] == INHERITED_LEVEL:
                 for value in absolute_values(c) or []:
                     key, number, _, _ = level_selector(value)
                     refs.add(key)
                     inherited.append((key, number))
     visit(tree)
-    if not refs and not policy_refs:
+    if not refs and not policy_refs and not owner_refs:
         return []
     entry = source_index(policies, cache)
     index = entry[1]
     for key, number in inherited:
         refs.update(index.get(key, {}).get('inherit', {}).get(number, {}).get('sources', ()))
     sources = [index[key] for key in sorted(refs) if key in index]
-    if policy_refs:
-        sources.extend(p for p in policies if p['id'] in policy_refs)
+    if policy_refs or owner_refs:
+        sources.extend(p for p in policies if p['id'] in policy_refs or p['id'] in owner_refs)
+        sources.extend(line for p in policies if p['id'] in owner_refs for line in p.get('_legacy_own_lines', ()))
     entry[5][id(tree)] = (tree, sources)
     return sources
 
@@ -1523,21 +1542,30 @@ def _copies(p, replaced_by, line_field, line_rule):
     out = []
     d = p['definition']
     rows = d.get('per_person') or []
+    shadows = p.get('_legacy_shadow_rows') or []
     template_people = p.get('_quota_template_people')
     quota_indices = p.get('_quota_line_indices') if p.get('_v2_source_lines') is None else None
-    if not rows and not template_people and not d.get('overrides') and p['id'] not in replaced_by:
+    if not rows and not shadows and not template_people and not d.get('overrides') and p['id'] not in replaced_by:
         return [p]
-    if template_people is not None or quota_indices is not None:
-        p = {key: value for key, value in p.items() if key not in ('_quota_template_people', '_quota_line_indices')}
+    if shadows or template_people is not None or quota_indices is not None:
+        p = {key: value for key, value in p.items()
+             if key not in ('_legacy_shadow_rows', '_quota_template_people', '_quota_line_indices')}
     replaced = [{'field': OVERRIDDEN, 'op': 'none', 'values': replaced_by[p['id']]}] if p['id'] in replaced_by else []
     # A quota line is that person's block, so listed people follow only their lines; a nonsafety limit's line replaces
     # the rule's number on the line's dates, and the rule's own number still holds for them on other dates.
     # A rule for its listed people only has no copy for anyone else.
-    listed = template_people if template_people is not None else sorted({r['person_id'] for r in rows if r.get('person_id')})
+    listed = (template_people if template_people is not None
+              else sorted({r['person_id'] for r in [*rows, *shadows] if r.get('person_id')}))
     others = ([] if not listed or safety_rule(d) else [{'field': 'person_ids', 'op': 'none', 'values': listed}] if d['rule']['kind'] == 'block_quota'
               else [{'field': OWN_LINE, 'op': 'none', 'values': [p['id']]}])
     if not d.get('listed_only'):
         default = _narrowed(p, replaced + others)
+        if shadows:
+            selectors = [_narrowed(p, [], starts_on=r.get('starts_on'), ends_on=r.get('ends_on')) for r in shadows]
+            default['_legacy_own_lines'] = [
+                {**{key: item[key] for key in ('id', 'starts_on', 'ends_on', 'active') if key in item},
+                 'template_line': {'person_id': row['person_id']}, 'definition': {'scope': {'person_id': row['person_id']}}}
+                for item, row in zip(selectors, shadows, strict=True)]
         if p.get('_v2_base_variants'):
             default['_v2_base_exclusions'] = replaced + others
         out.append(default)

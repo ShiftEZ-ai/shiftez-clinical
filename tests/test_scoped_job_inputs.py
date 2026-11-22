@@ -199,12 +199,23 @@ def test_coupled_quota_selects_joint_subset(h):
     w=h.shift(h.workspace(),people=[])['workspace']
     w=h.shift(w,start='2026-10-05T08:00:00+03:00',end='2026-10-05T12:00:00+03:00',people=[])['workspace']
     pid=h.seed['people'][0]
-    job,_,_=proposal(h,w,[pid,pid])
+    job,_,original=proposal(h,w,[pid,pid])
     h.policy({'kind':'max_duties','maximum':1,'window':'week'},{'person_id':pid})
     w=h.refresh_draft_baseline(w)
     before=h.snapshot(w)
-    applied=apply(h,w,job)
-    assert len(applied['reconciliation']['addition_indexes'])==1,applied['reconciliation']
+    reply = apply(h,w,job)
+    receipt = reply['reconciliation']
+    assert receipt['status'] == 'revalidation_required'
+    assert reply['proposal_retained'] is True
+    assert receipt['addition_indexes'] == receipt['removal_indexes'] == []
+    assert receipt['conflicting_placement_count'] == 1
+    conflict, = receipt['conflicting_placements']
+    index, = conflict['addition_indexes']
+    assert index in (0, 1)
+    assert conflict['shift_id'] == original['additions'][index]['shift_id']
+    assert conflict['person_ids'] == [pid]
+    assert conflict['code'] == 'MANDATORY_CONFLICT'
+    assert h.snapshot(w) == before
     assert comparison(evaluate(before),evaluate(h.snapshot(w)))['no_new_problems']
 
 

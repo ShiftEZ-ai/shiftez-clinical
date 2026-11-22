@@ -38,6 +38,12 @@ def test_missing_origin_dev_falls_back_to_local_dev(tmp_path, monkeypatch):
     assert selector.changed_files("origin/dev") == []
 
 
+def test_missing_origin_dev_falls_back_to_main_after_the_rename(tmp_path, monkeypatch):
+    monkeypatch.setattr(selector, "ROOT", _repo(tmp_path, "main"))
+    assert selector.resolve_base("origin/dev") == "main"
+    assert selector.changed_files("origin/dev") == []
+
+
 def test_missing_base_stops_with_one_clear_line(tmp_path, monkeypatch):
     import pytest
     monkeypatch.setattr(selector, "ROOT", _repo(tmp_path))

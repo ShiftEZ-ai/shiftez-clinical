@@ -55,9 +55,7 @@ def _503_codes():
                 codes.add(code.value)
             else:
                 dynamic.append((path.relative_to(ROOT).as_posix(), node.lineno, ast.unparse(code)))
-    # score_check validates the provider error before forwarding its one isolation code.
-    assert dynamic == [('apps/api/services/score_check.py', 68, 'error.code')]
-    codes.add('SCORE_ISOLATION_UNAVAILABLE')
+    assert not dynamic, dynamic
     return codes
 
 

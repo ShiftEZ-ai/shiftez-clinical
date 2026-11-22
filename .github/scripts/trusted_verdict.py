@@ -9,14 +9,15 @@ import sys
 import tempfile
 
 TRUSTED = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(TRUSTED / "ci")]
 import working_policy as policy
 import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, require_pr_merge, settings
-from latest_reports import validate_selected_reports
+from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, require_pr_merge, settings
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
+from latest_reports import earlier_reports, validate_selected_reports
 import stale_evidence
 
 
@@ -32,9 +33,9 @@ def policy_context(data, kind, candidate):
     if kind == "schedule":
         if candidate != git("rev-parse", "HEAD").decode().strip():
             raise ValueError("Nightly evidence must use the pinned dev source")
-        return "dev", candidate
+        return policy.default_branch(data), candidate
     branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
-    return branch, policy.commit(data["before"]) if kind == "push" and branch == "dev" else candidate
+    return branch, policy.commit(data["before"]) if kind == "push" and branch == policy.default_branch(data) else candidate
 
 
 def assert_inventory(plan, raw_inventory, counts, scope=None):
@@ -75,7 +76,16 @@ def required_producers(raw):
         raise ValueError("Every producer must run and succeed")
 
 
-def pr_stale_evidence(nodes, *, repository, base, candidate, scope):
+def verify_canaries(reports, *, allow_product_errors, **options):
+    canary_evidence.verify_directory(reports, allow_product_errors=allow_product_errors, **options)
+    archive = earlier_reports(reports)
+    if archive.is_symlink():
+        raise ValueError("Invalid earlier shard artifact directory")
+    if any(archive.rglob("shard-receipt.json")):
+        canary_evidence.verify_directory(archive, allow_product_errors=True, **options)
+
+
+def pr_stale_evidence(nodes, *, repository, branch, base, candidate, scope):
     if not os.getenv("GH_TOKEN"):
         return {}
     try:
@@ -85,17 +95,18 @@ def pr_stale_evidence(nodes, *, repository, base, candidate, scope):
         untouched = {node for node in nodes if node.split("::", 1)[0] not in changed}
         if not untouched:
             return {}
-        tip = policy.fetch("refs/heads/dev")
-        return stale_evidence.confirmed_nodes(repository, git, tip, base, untouched)
+        tip = policy.fetch("refs/heads/" + branch)
+        return stale_evidence.confirmed_nodes(repository, git, tip, base, untouched, branch)
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
 
 
 def stale_options(kind, branch, data, base, candidate, scope):
-    if kind == "pull_request" and branch == "dev":
+    default = policy.default_branch(data)
+    if kind == "pull_request" and branch == default:
         return {"stale_lookup": partial(pr_stale_evidence, repository=data["repository"]["full_name"],
-                                        base=base, candidate=candidate, scope=scope)}
-    if kind == "schedule" and branch == "dev" and candidate == os.getenv("GITHUB_SHA"):
+                                        branch=default, base=base, candidate=candidate, scope=scope)}
+    if kind == "schedule" and branch == default and candidate == os.getenv("GITHUB_SHA"):
         return {"nightly": True}
     return {}
 
@@ -104,8 +115,10 @@ def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker
     if plan["replicas"] != [1, 2] or policy.read_file(candidate, policy.KNOWN) is not None:
         raise ValueError("Bootstrap measurement requires two replicas and no allowance list")
     if flags['canaries']:
-        canary_evidence.verify_directory(reports, allow_product_errors=False)
-    runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+        verify_canaries(reports, allow_product_errors=False)
+    evidence = maker.ReportEvidence()
+    runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                                 output, evidence=evidence)
     known_skips.comparison_runs(runs, set(), release=False)
     if flags['node_census']:
         raw_files = policy.paths(git("ls-tree", "-r", "--name-only", "-z", census_base, "--", "tests"))
@@ -118,10 +131,13 @@ def bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker
         allowed = node_census.removed_nodes(ledger, maker.SAFE_NODE.fullmatch)
         node_census.emit(node_census.compare(before, set(runs[0]), allowed), output)
     output.mkdir(parents=True, exist_ok=True)
-    evidence = {"schema": 1, "bootstrap": True, "sha": candidate, "tree": plan["tree"],
+    if evidence.recovered or evidence.unobserved:
+        maker.report_outside(None, runs, output, recovered=evidence.recovered, reruns=evidence.reruns,
+                             unobserved=evidence.unobserved)
+    measurement = {"schema": 1, "bootstrap": True, "sha": candidate, "tree": plan["tree"],
         "base_sha": base, "run_id": os.environ["GITHUB_RUN_ID"],
         "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "replicas": plan["replicas"], "runs": runs}
-    (output / "bootstrap-measurement.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    (output / "bootstrap-measurement.json").write_text(json.dumps(measurement, indent=2) + "\n", encoding="utf-8")
     (output / "verdict.json").write_text(json.dumps({"passed": True, "bootstrap": True,
         "reason": "Complete bootstrap measurement; list-cut admission remains required"}) + "\n", encoding="utf-8")
     print("BOOTSTRAP: complete measurement; no existing failure allowance was assumed")
@@ -149,11 +165,13 @@ def main():
                  policy.commit(data["merge_group"]["base_sha"]) if kind=="merge_group" else
                  policy.commit(data["before"]) if kind=="push" else candidate)
     policy.fetch(census_base,census_base)
-    if branch not in {"dev", "preview", "main"}:
+    default = policy.default_branch(data)
+    if branch not in policy.working_branches(default):
         raise ValueError("Unsupported branch")
-    if branch in {"preview", "main"}:
-        dev_tip = policy.fetch("refs/heads/dev")
-        base = policy.accepted_dev_commit(policy.tree(candidate), dev_tip) if branch == "main" else dev_tip
+    release = branch == "main" and default != "main"
+    if branch != default:
+        dev_tip = policy.fetch("refs/heads/" + default)
+        base = policy.accepted_dev_commit(policy.tree(candidate), dev_tip) if release else dev_tip
     source_tree = policy.tree(candidate)
     if plan["sha"] != candidate or plan["tree"] != source_tree or plan["base_sha"] != base:
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
@@ -172,15 +190,17 @@ def main():
         bootstrap_verdict(plan, reports, output, candidate, base, census_base, maker, flags)
         return
     old, current = policy.read_file(base, policy.KNOWN), policy.read_file(candidate, policy.KNOWN)
-    if old is not None and current != old and not (policy.removal_only(old,current)
-            or branch=='dev' and policy.renewal_only(old,current)):
-        raise ValueError("Candidate allowance data must only remove entries or extend unstable expiry through the audited Tier-1 route")
+    if old is not None and current != old and not policy.removal_only(old, current):
+        raise ValueError("Candidate allowance data must only remove existing entries")
     # All code imports resolve under this trusted source, never the candidate or artifact directory.
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
+    quarantine_registry, quarantine = quarantine_policy(base, base if release else candidate, old, current)
+    if quarantine:
+        maker.write_summary_lines([expired_issue_summary(quarantine, utc_today())])
     retry = maker.retry_run(plan)
     if flags['canaries']:
-        canary_evidence.verify_directory(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
+        verify_canaries(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
     root_raw = policy.read_file(base, "ci/root-run-evidence.json")
     skips_raw = policy.read_file(base, "ci/known-skips.json")
     if root_raw is None or skips_raw is None:
@@ -191,6 +211,8 @@ def main():
     known_skips.require_measurements(root_evidence)
     skip_list = known_skips.decode_list(skips_raw, root_evidence, maker.SAFE_NODE.fullmatch)
     allowed_skips = {row["node"] for row in skip_list["skips"]}
+    if allowed_skips & quarantine.keys():
+        raise ValueError("Known-skip and quarantine entries must be disjoint")
     if current is not None:
         failure_list = policy.decode(current)
         if failure_list.get("schema")!=3:raise ValueError("Current failure policy needs class, owner and reason (schema 3)")
@@ -205,7 +227,9 @@ def main():
         data_root = Path(scratch).resolve()
         assert data_root.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve())
         for path in policy.LISTS:
-            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch=='dev' else policy.read_file(base, path)
+            if path in {QUARANTINE, QUARANTINE_RETIRED}:
+                continue  # The verifier receives the effective quarantine directly.
+            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch==default else policy.read_file(base, path)
             if raw is not None:
                 policy.decode(raw)
                 destination = data_root / path
@@ -220,7 +244,10 @@ def main():
                 raise ValueError("Replica count differs from the trusted reader context")
             # After the replica check, so the more specific refusal names a wrong replica count.
             validate_selected_reports(plan, reports)
-            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], output)
+            evidence = maker.ReportEvidence()
+            runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                                         output, listed=failure_nodes | quarantine.keys(),
+                                         evidence=evidence, quarantine_nodes=quarantine_registry.keys())
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
@@ -228,23 +255,23 @@ def main():
                     os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files))
                 ledger=policy.read_file(base,"ci/removed-tests.json")
                 if ledger is None:raise ValueError("Target node-removal ledger is missing")
-                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch=='dev' else ledger
+                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch==default else ledger
                 allowed=node_census.allowed_removals(ledger,candidate_ledger,before_nodes,set(runs[0]),maker.SAFE_NODE.fullmatch)
                 census=node_census.compare(before_nodes,set(runs[0]),allowed)
                 node_census.emit(census,output)
-            if branch == "main" and policy.tree(base) != source_tree:
+            if release and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
-            recovered = {}
-            product_errors = maker.product_error_nodes(reports, listed=failure_nodes, recovered=recovered,
-                                                     allow_retry=retry)
-            if recovered and (branch == "main" or allowed_skips & recovered.keys()):
+            recovered = evidence.recovered
+            product_errors = maker.product_error_nodes(reports, listed=failure_nodes | quarantine.keys(),
+                                                       allow_retry=retry, quarantined={} if release else quarantine)
+            if recovered and (release or allowed_skips & recovered.keys()):
                 raise ValueError("Release/known-skip execution contains a failure or error")
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
             outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
             error_nodes |= product_errors & outside
-            compared, skipped = known_skips.comparison_runs(runs, allowed_skips, release=branch == "main", allowed_errors=error_nodes)
-            maker.collect_reports = lambda *args: compared
+            compared, skipped = known_skips.comparison_runs(
+                runs, allowed_skips, release=release, allowed_errors=error_nodes, quarantined=quarantine)
             print("Known skips: reviewed=" + str(len(allowed_skips)) + "; observed=" + str(len(skipped)))
             if os.getenv("GITHUB_STEP_SUMMARY"):
                 with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
@@ -255,7 +282,9 @@ def main():
                         "--unstable-issue", str(config["unstable_issue"] or 0),
                         "--unstable-expires-on", str(config["unstable_expires_on"] or ""),
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
-            maker.main(**stale_options(kind, branch, data, base, candidate, scope))
+            maker.main(runs=compared, evidence=evidence, product_errors=product_errors,
+                       quarantine=quarantine, release=release, quarantine_registry=quarantine_registry,
+                       **stale_options(kind, branch, data, base, candidate, scope))
             verdict = policy.decode((output / "verdict.json").read_bytes())
             if partial:
                 missing_skips = sorted(node for node in allowed_skips if node.split("::", 1)[0] not in selected_files)

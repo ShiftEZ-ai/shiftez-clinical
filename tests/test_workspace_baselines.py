@@ -32,14 +32,18 @@ def test_workspace_create_captures_baseline_and_freezes_evaluation(h):
         assert row.payload_hash == baseline["snapshot_hash"]
         old_policy = db.scalar(select(m.Policy).where(m.Policy.status == "active"))
         old_definition = deepcopy(old_policy.definition)
-        old_policy.definition = {**old_policy.definition, "scope": {"person_ids": ["changed-after-capture"]}}
+        new_definition = {**old_definition, "scope": {"person_ids": [h.seed["people"][0]]}}
+        old_policy.definition = new_definition
         old_policy.revision += 1
         db.get(m.Organisation, h.seed["organisation_id"]).input_revision += 1
         baseline_id = row.id
+        frozen = next(item for item in verify(row)["policies"] if item["id"] == old_policy.id)
+        assert frozen["definition"] == old_definition
 
-    snapshot = h.snapshot(workspace)
-    frozen = next(item for item in snapshot["policies"] if item["id"] == old_policy.id)
-    assert frozen["definition"] == old_definition
+    # A draft check evaluates the current revision against its immutable capture.
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace["id"]), mandatory_rules=True)
+    assert [item["definition"] for item in snapshot["policies"] if item["id"] == old_policy.id] == [new_definition]
 
     with pytest.raises(DatabaseError, match="immutable workspace baseline"):
         with h.app.state.engine.begin() as db:
@@ -546,12 +550,14 @@ def test_baseline_freezes_settings_but_keeps_department_row_live(h):
     assert snapshot["department"]["weekend_days"] == [0, 1]
     assert snapshot["department"]["operating_calendar_id"] == calendar_id
     assert snapshot["department"]["name"] == "Live department name"
-    assert snapshot["department"]["generation_defaults"]["scoring"]["wish_debt_cap"] == 7
+    assert snapshot["department"]["generation_defaults"]["scoring"]["wish_debt_cap"] == 2
     with transaction(h.app.state.engine) as db:
         from apps.api.serialization import record
         from apps.api.services.jobs import baseline_generation_context
         workspace = db.get(m.Workspace, draft["id"])
-        assert snapshot["department"] == record(db.get(m.Department, workspace.department_id))
+        assert snapshot["department"] == {**record(db.get(m.Department, workspace.department_id)),
+            "generation_defaults": before["department"]["generation_defaults"],
+            "display_settings": before["department"]["display_settings"]}
         defaults, _ = baseline_generation_context(db, workspace)
         assert defaults.scoring.wish_debt_cap == frozen["scoring"]["wish_debt_cap"]
         assert domain_snapshot(db, workspace, operational=True)["generation_options"] == frozen

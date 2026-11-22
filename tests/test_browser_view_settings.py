@@ -4,7 +4,7 @@ import os
 import re
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, toolbar, close_popover, view_settings, choose_radio, choose_layout, save_dialog, pick_view
+from .test_browser import browser, live_server, sign_in, navigate, toolbar, close_popover, view_settings, choose_radio, choose_layout, save_dialog, pick_view, choose
 from .test_browser_combined_acceptance import save_view
 
 pytestmark = pytest.mark.browser
@@ -162,9 +162,12 @@ def test_calendar_rows_are_duties_or_people_and_people_group_by_rank(browser, li
         choose_radio(panel, "Rows", "People")
         expect(page.locator("#schedule-view")).to_have_attribute("aria-label", "People view")
         choose_radio(panel, "Cells show", "Duty codes")
+        # Group opens on the codes grid once it is drawn, not on the People view's toolbar still on screen: the codes grid
+        # keeps the duty rows' grouping (Service), so its Group is the active-grouping editor, not the first menu.
+        expect(page.locator("#schedule-view")).to_have_attribute("aria-label", "Timeline view")
         close_popover(page)
-        group = toolbar(bar, "Group")
-        group.get_by_label("Group by", exact=True).select_option("rank")
+        settled(page)
+        choose(bar, "Group", "Group by", "Rank")
         close_popover(page)
         heads = page.locator("#schedule-view .tl-grid .pg-group-head")
         expect(heads.first).to_be_visible()

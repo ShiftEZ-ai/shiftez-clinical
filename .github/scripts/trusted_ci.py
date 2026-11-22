@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import runpy
 import secrets
 import statistics
@@ -19,6 +20,7 @@ import working_policy as policy
 import canary_evidence as canaries
 import hardening
 import make_known_failures as maker
+from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
@@ -69,7 +71,7 @@ def select():
     trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
     measurement = (data.get("inputs") or {}).get("root_measurement", False) in (True, "true")
     if measurement:
-        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/dev":
+        if kind != "workflow_dispatch" or os.environ["GITHUB_REF"] != "refs/heads/" + policy.default_branch(data):
             raise ValueError("Root measurements dispatch only the protected dev workflow")
         candidate = pinned_root()["sha"]
     elif kind == "schedule":
@@ -89,9 +91,14 @@ def pr_changed_files(base, candidate, git):
     return {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
 
 
+def quarantine_revision(branch, default, base, candidate):
+    """A release reads the accepted base's quarantine; integration reads the candidate's. main releases only while it is not the default."""
+    return base if branch == "main" and default != "main" else candidate
+
+
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
-    if pr["base"]["ref"] != "dev" or any(label["name"] == "full-ci" for label in pr["labels"]):
+    if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
         return None
     base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
@@ -315,6 +322,48 @@ def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, 
     return first
 
 
+def registry_at_revision(revision):
+    try:
+        raw = policy.read_file(revision, QUARANTINE)
+        if raw is None:
+            raise ValueError("registry is missing")
+        text = raw.decode("utf-8")
+        registry = decode_registry(text, utc_today())
+        # Compare the source of each row without making its neighbours or position part of its identity.
+        decoder = json.JSONDecoder()
+        separators = re.compile(r"[ \t\r\n,]*")
+        end = text.index("[") + 1
+        entries = {}
+        for node, row in registry.items():
+            start = separators.match(text, end).end()
+            _, end = decoder.raw_decode(text, start)
+            entries[node] = (row, text[start:end])
+        return entries
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("Cannot read trusted quarantine registry: " + QUARANTINE) from None
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid quarantine registry {QUARANTINE}: {error}") from None
+
+
+def quarantine_policy(base, candidate, known_before, known_after):
+    base_raw, base_retired = policy.retired_at_revision(base)
+    retired = set(base_retired)
+    if candidate != base:
+        _, candidate_retired = policy.retired_at_revision(candidate, allow_legacy=base_raw is None)
+        retired.update(candidate_retired)
+    entries = registry_at_revision(candidate)
+    current = policy.known_failure_classes(known_after)
+    overlap = current.keys() & entries.keys()
+    if overlap:
+        raise ValueError("Known-failure and quarantine entries must be disjoint: " + ", ".join(sorted(overlap)))
+    before = entries if base == candidate else registry_at_revision(base)
+    moved = policy.moved_failure_classes(known_before, current)
+    honoured = {node: row for node, (row, source) in entries.items()
+                if node not in retired and ((node in before and source == before[node][1])
+                                            or moved.get(node) == row["reason"].split(":", 1)[0].strip())}
+    return {node: row for node, (row, _) in entries.items()}, honoured
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("select", "context", "plan", "run"))
@@ -356,7 +405,15 @@ def main():
         workers = "4"
     listed = frozenset()
     if maker.retry_run(candidate):
-        listed = maker.listed_nodes(maker.at_revision(candidate["sha"]))
+        event = policy.event()
+        branch = (event["pull_request"]["base"]["ref"] if os.environ["GITHUB_EVENT_NAME"] == "pull_request"
+                  else event["merge_group"]["base_ref"].removeprefix("refs/heads/"))
+        base = candidate["base_sha"]
+        current = policy.read_file(candidate["sha"], policy.KNOWN)
+        old = policy.read_file(base, policy.KNOWN)
+        _, quarantine = quarantine_policy(base, quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"]),
+                                          old, current)
+        listed = maker.listed_nodes(maker.decode_list(current) if current is not None else None) | quarantine.keys()
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
