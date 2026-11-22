@@ -1,6 +1,6 @@
 """maintenance: dated governance effects, explicit grant expiry and fail-closed preference policy."""
 import copy
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,12 +10,15 @@ from sqlalchemy import insert, select
 from apps.api import models as m
 from apps.api.auth import authenticate
 from apps.api.db import transaction
+from apps.api.services.read_projection_warming import warm_all
 from apps.api.services.rule_effects import affected_workspaces
 from apps.api.services.wishes import multipliers
 from packages.contracts import schemas as s
 from packages.domain.conditions import active_rules
 from packages.domain.rule_effects import observed_effect
 from packages.domain.rule_lines import default_line_strengths, line_relations
+from packages.domain.time import local_midnight
+from .clock_support import freeze_clock
 from .governance_support import identity
 from .test_rule_catalogue_api import line, person, propose, approve
 from .test_wish_settings import payload, save_settings
@@ -60,7 +63,27 @@ def test_governance_permissions_use_contract_roles(h, role):
         h.get('admin', '/api/me')['organisation']['revision'], status=200 if role == 'admin' else 403)
 
 
-def test_home_shows_own_rule_and_rota_only_with_current_self_review_permission(h):
+def test_home_shows_own_rule_and_rota_only_with_current_self_review_permission(h, monkeypatch):
+    assert_current_self_review_permission(h, monkeypatch)
+
+
+@pytest.mark.postgres
+def test_home_shows_own_rule_and_rota_only_with_current_self_review_permission_postgres(pg, monkeypatch):
+    assert_current_self_review_permission(pg, monkeypatch)
+
+
+def assert_current_self_review_permission(h, monkeypatch):
+    end_day = date(2026, 10, 4)
+    with transaction(h.app.state.engine) as db:
+        zone = db.get(m.Organisation, h.seed['organisation_id']).timezone
+    expires_at = local_midnight(end_day, zone)
+    instant = expires_at - timedelta(minutes=1)
+    assert instant.date() == expires_at.date()
+    freeze_clock(monkeypatch, lambda: instant)
+
+    def counts():
+        return {x['key']: x['count'] for x in h.get('solo', '/api/home')['attention']}
+
     identity(h, 'solo', ['coordinator', 'approver'])
     workspace = h.command('solo', 'workspace.create', {'name': 'Own rota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'})['workspace']
     workspace = h.command('solo', 'shift.create', {'workspace_id': workspace['id'], 'assignment_type_id': h.seed['type'],
@@ -69,16 +92,42 @@ def test_home_shows_own_rule_and_rota_only_with_current_self_review_permission(h
         'participants': [{'person_id': h.seed['people'][0], 'start': '2026-10-04T08:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'}]},
         revision=workspace['revision'])['workspace']
     workspace = h.lifecycle(workspace, 'submit', 'solo')['workspace']
+    assert 'reviews' not in counts()
     policy = h.command('solo', 'policy.create', {'name': 'Own rule', 'owner': 'Test', 'source': 'Test fixture',
         'starts_on': '2026-01-01', 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}})['record']
-    counts = lambda: {x['key']: x['count'] for x in h.get('solo', '/api/home')['attention']}
-    assert counts().get('reviews', 0) == counts().get('rules', 0) == 0
-    grant = h.command('admin', 'self_approval.grant', {'identity_id': h.seed['identities']['solo'],
-        'starts_on': '2026-01-01', 'actions': ['rota.approve', 'rule.activate'], 'reason': 'Sole reviewer cover'})['permission']
-    assert counts()['reviews'] == counts()['rules'] == 1
-    h.command('solo', 'policy.activate', {'reason': 'Routine update'}, policy['id'], policy['revision'], status=422)
+
+    assert not {'reviews', 'rules'} & counts().keys()
+    grant_fields = {'identity_id': h.seed['identities']['solo'], 'starts_on': '2026-01-01',
+                    'actions': ['rota.approve', 'rule.activate'], 'reason': 'Sole reviewer cover'}
+    instant += timedelta(seconds=1)
+    h.command('admin', 'self_approval.grant', {**grant_fields, 'ends_on': end_day.isoformat()})
+    stale = h.lifecycle(workspace, 'approve', 'solo', status=409)
+    assert stale['error']['code'] == 'STALE_INPUTS'
+    current = counts()
+    assert current.get('rules') == current.get('resubmit') == 1
+    assert 'reviews' not in current
+
+    instant += timedelta(seconds=1)
+    workspace = h.lifecycle(workspace, 'reopen', 'solo')['workspace']
+    h.lifecycle(workspace, 'submit', 'solo')
+    refused = h.command('solo', 'policy.activate', {'reason': 'Routine update'}, policy['id'], policy['revision'], status=422)
+    assert refused['error']['code'] == 'SELF_APPROVAL_REASON'
+    warm_all(h.app.state.engine)
+    current = counts()
+    assert current.get('reviews') == current.get('rules') == 1
+
+    # The cached Home entries expire at local midnight without a write.
+    instant = expires_at
+    assert not {'reviews', 'rules'} & counts().keys()
+
+    instant += timedelta(seconds=1)
+    grant = h.command('admin', 'self_approval.grant', {**grant_fields, 'no_end_date': True})['permission']
+    warm_all(h.app.state.engine)
+    current = counts()
+    assert current.get('reviews') == current.get('rules') == 1
+    instant += timedelta(seconds=1)
     h.command('admin', 'self_approval.revoke', {'reason': 'Independent reviewer returned'}, grant['id'], grant['revision'])
-    assert counts().get('reviews', 0) == counts().get('rules', 0) == 0
+    assert not {'reviews', 'rules'} & counts().keys()
 
 
 def policy_row(lines):
