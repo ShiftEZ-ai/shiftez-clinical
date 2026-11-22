@@ -189,7 +189,15 @@ def test_department_search_maximum_is_audited_undoable_and_cannot_be_overridden_
 
 
 def test_generation_queue_uses_the_draft_baseline_after_department_defaults_change(budget_h):
-    h = budget_h
+    assert_generation_uses_captured_defaults(budget_h)
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_postgres_generation_uses_captured_defaults(budget_h):
+    assert_generation_uses_captured_defaults(budget_h)
+
+
+def assert_generation_uses_captured_defaults(h):
     workspace = h.shift(h.workspace(), people=[])['workspace']
     with transaction(h.app.state.engine) as db:
         baseline = db.scalar(select(m.WorkspaceBaseline).where(
@@ -201,10 +209,13 @@ def test_generation_queue_uses_the_draft_baseline_after_department_defaults_chan
 
     me = h.get('admin', '/api/me')
     changed = h.command('admin', 'department.settings', {**department_settings(h),
-        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4}},
+        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4,
+                                'scoring': {'wish_debt_cap': 7}}},
         h.seed['department_id'], me['organisation']['revision'])
     assert changed['department']['generation_defaults']['max_search_minutes'] == 4
     assert captured['max_search_minutes'] != 4
+    current = changed['department']['generation_defaults']
+    assert h.get('admin', '/api/me')['department']['generation_defaults'] == current
 
     job = h.command('coordinator', 'job.create', {
         'workspace_id': workspace['id'], 'kind': 'generation'}, revision=workspace['revision'])['job']
@@ -223,6 +234,56 @@ def test_generation_queue_uses_the_draft_baseline_after_department_defaults_chan
                                include_fairness=False, include_objectives=False)
         assert GenerationOptions.model_validate(
             data['department']['generation_defaults']).model_dump(mode='json') == captured
+        assert data['department']['generation_defaults'] == data['generation_options']
+        assert GenerationOptions.model_validate(data['generation_options']).model_dump(mode='json') == manifest['generation']['defaults']
+        live = domain_snapshot(db, db.get(m.Workspace, workspace['id']), current_scheduling=True,
+                               include_fairness=False, include_objectives=False)
+        assert live['department']['generation_defaults'] == current
+        assert live['generation_options'] == current
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine) as db:
+        prepared = db.get(m.Job, job['id']).input_snapshot
+        assert GenerationOptions.model_validate(prepared['department']['generation_defaults']).model_dump(mode='json') == captured
+        assert prepared['generation_defaults'] == prepared['generation_options'] == captured
+        assert prepared['generation_manifest']['generation']['defaults'] == captured
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_generation_queue_uses_refreshed_department_defaults(budget_h):
+    h = budget_h
+    workspace = h.workspace()
+    previous_hash = workspace['snapshot_hash']
+    workspace = h.shift(workspace, people=[])['workspace']
+    me = h.get('admin', '/api/me')
+    changed = h.command('admin', 'department.settings', {**department_settings(h),
+        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4,
+                                'scoring': {'wish_debt_cap': 7}}},
+        h.seed['department_id'], me['organisation']['revision'])
+    current = changed['department']['generation_defaults']
+    resolved = GenerationOptions.model_validate(current).model_dump(mode='json')
+    workspace = h.refresh_draft_baseline(workspace)
+    assert workspace['snapshot_hash'] != previous_hash
+    job = h.command('coordinator', 'job.create', {
+        'workspace_id': workspace['id'], 'kind': 'generation'}, revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace['id']),
+                                   include_fairness=False, include_objectives=False)
+        saved = db.get(m.Job, job['id']).input_snapshot
+        assert snapshot['department']['generation_defaults'] == snapshot['generation_options'] == current
+        assert saved['generation_defaults'] == saved['generation_manifest']['generation']['defaults'] == resolved
+        assert GenerationOptions.model_validate(snapshot['department']['generation_defaults']).model_dump(mode='json') == resolved
+        assert saved['baseline']['hash'] == workspace['snapshot_hash']
+        verify_generation_snapshot(db, db.get(m.Workspace, workspace['id']), saved)
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine) as db:
+        prepared = db.get(m.Job, job['id']).input_snapshot
+        assert prepared['department']['generation_defaults'] == current
+        assert prepared['generation_defaults'] == prepared['generation_options'] == resolved
+        assert prepared['generation_manifest']['generation']['defaults'] == resolved
 
 
 def test_department_name_change_cannot_bypass_resolved_search_limit_validation(budget_h):
@@ -369,19 +430,30 @@ def test_continue_refuses_changed_model_inputs(budget_h, change, code):
             assert continued.input_snapshot['generation_defaults'] == previous.input_snapshot['generation_defaults']
 
 
-def test_increasing_runtime_limit_preserves_preparation_fingerprint_and_continue_uses_new_limit(budget_h):
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_continue_keeps_the_captured_runtime_limit_and_preparation_fingerprint(budget_h):
     h = budget_h
-    workspace, job = start(h)
+    me = h.get('admin', '/api/me')
+    # Save explicit defaults first so the later change alters only the runtime limit.
+    initial = h.command('admin', 'department.settings', {**department_settings(h),
+        'generation_defaults': {'max_search_minutes': 45}}, h.seed['department_id'], me['organisation']['revision'])
+    _, job = start(h)
+    limit = initial['department']['generation_defaults']['max_search_minutes']
+    assert job['effective_options']['max_search_minutes'] == limit
     exhausted(h, job, {'model': 'preserved'})
     me = h.get('admin', '/api/me')
     saved = h.command('admin', 'department.settings', {**department_settings(h),
         'generation_defaults': {'max_search_minutes': 90}}, h.seed['department_id'], me['organisation']['revision'])
     assert saved['organisation']['input_revision'] == me['organisation']['input_revision']
-    rejected = h.command('coordinator', 'job.continue', {'minutes': 91, 'reason': 'More than current limit'},
-        job['id'], status=422)
-    assert rejected['error']['code'] == 'SEARCH_MINUTES_LIMIT'
-    continued = h.command('coordinator', 'job.continue', {'minutes': 90, 'reason': 'Use new runtime limit'}, job['id'])['job']
-    assert continued['effective_options']['max_search_minutes'] == 90
+    assert saved['department']['generation_defaults']['max_search_minutes'] == 90 > limit
+    # The draft owns its search limit, including when an existing run is continued.
+    for minutes in (90, 91):
+        rejected = h.command('coordinator', 'job.continue', {'minutes': minutes, 'reason': 'More than captured limit'},
+            job['id'], status=422)
+        assert rejected['error']['code'] == 'SEARCH_MINUTES_LIMIT'
+    continued = h.command('coordinator', 'job.continue',
+        {'minutes': limit, 'reason': 'Use captured runtime limit'}, job['id'])['job']
+    assert continued['effective_options']['max_search_minutes'] == limit
     assert continued['input_fingerprint'] == job['input_fingerprint']
 
 
@@ -415,6 +487,60 @@ def test_continue_from_department_defaults_reuses_the_actual_prepared_solver_mod
     result = h.get('coordinator', '/api/jobs/' + continued['id'])['job']['result']
     assert result['status'] == 'candidate_feasible'
     assert result['preparation_reused'] and result['validation']['valid']
+
+
+def test_continue_rebuilds_preparation_when_a_mandatory_overtime_cap_is_activated(budget_h, monkeypatch):
+    from ortools.sat.python import cp_model
+    from packages.domain.solver_control import SolverControl
+    from packages.domain.solver_resume import resume_key
+    from tests.test_overtime_extra_cover import extra_type
+
+    h = budget_h
+    duty_type = extra_type(h)
+    person = h.seed['people'][0]
+    h.policy({'kind': 'allocation_overtime'}, {'person_id': person}, severity='advisory')
+    draft = h.shift(h.workspace(), typ=duty_type['id'], people=[])['workspace']
+    job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation'},
+                    revision=draft['revision'])['job']
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(SolverControl, 'solve', lambda *args: cp_model.UNKNOWN)
+        assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine) as db:
+        original = db.get(m.Job, job['id'])
+        assert original.result['status'] == 'needs_more_time'
+        saved_key = original.resume_state['key']
+        saved_fingerprint = original.input_fingerprint
+    h.policy({'kind': 'block_quota', 'starts_on': draft['starts_on'], 'ends_on': draft['ends_on'],
+              'metric': 'duties', 'comparison': 'maximum', 'amount': 0, 'overtime': 'only'}, {'person_id': person},
+             checked=[draft])
+    continued = h.command('coordinator', 'job.continue', {'minutes': 1, 'reason': 'Continue prepared search'},
+                          job['id'])['job']
+    with transaction(h.app.state.engine, write=True) as db:
+        resumed = db.get(m.Job, continued['id'])
+        # A recovered attempt can have persisted an incumbent under its original fingerprint.
+        resumed.result = {'status': 'candidate_feasible', 'input_fingerprint': saved_fingerprint,
+                          'checkpointed': True}
+    solve = SolverControl.solve
+
+    def verify_reprepared(control, solver, model, tier):
+        with transaction(h.app.state.engine) as db:
+            running = db.get(m.Job, continued['id'])
+            assert running.input_fingerprint != saved_fingerprint
+            assert running.result is None
+        return solve(control, solver, model, tier)
+
+    monkeypatch.setattr(SolverControl, 'solve', verify_reprepared)
+    assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine) as db:
+        resumed = db.get(m.Job, continued['id'])
+        assert resumed.input_fingerprint != saved_fingerprint
+        assert resumed.input_fingerprint == resumed.input_snapshot['input_manifest']['token']
+        options = GenerationOptions.model_validate(resumed.input_snapshot['generation_options'])
+        assert resume_key(resumed.input_snapshot, options, False, False) != saved_key
+        assert resumed.result['status'] == 'candidate_feasible'
+        assert resumed.result['additions'] == [] and resumed.result['validation']['valid']
+        assert not resumed.result['preparation_reused']
+        assert db.get(m.Job, job['id']).input_fingerprint == saved_fingerprint
 
 
 def test_new_run_and_continue_have_one_cache_owner_even_with_a_fixed_clock(budget_h, monkeypatch):

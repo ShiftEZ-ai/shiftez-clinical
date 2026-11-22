@@ -158,6 +158,7 @@ def test_fill_options_reports_first_page_and_honours_generic_cancellation(monkey
 
     data = department()
     data['fingerprint'] = 'synthetic-fill-options-progress'
+    data['department'] = {}
     data['shifts'][0]['locked'] = False
     workspace = SimpleNamespace(**data['workspace'], status='draft', revision=1)
     db = SimpleNamespace(scalar=lambda *args: None)

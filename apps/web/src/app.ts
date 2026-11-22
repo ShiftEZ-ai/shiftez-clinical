@@ -7,20 +7,20 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
 import {dateRange,lastDayIncluded,shiftMonth} from './date_picker.js';
 import {storedSetup,keepSetup,addTimeStep,addTimeRoom,scopeCapability,parseGroup,type RunSetup} from './autoschedule_setup.js';
-import {peopleToSchedule,PEOPLE_POPOVER} from './schedule_group.js';
+import {peopleToSchedule,peoplePopoverKey} from './schedule_group.js';
 import {rememberedAccount,rememberAccount,forgetAccount,signingInAs,forgetDeviceMemory} from './account_memory.js';
 import {applyTheme,setTheme,theme,isDark,motionStill,setMotionStill,navPinned,setNavPinned,clearPrefs,nameMode,setNameMode,type Theme,type NameMode,setDepartmentNames,ownNameMode} from './theme.js';
 import {openPalette,compactSearch,type PaletteItem} from './palette.js';
 import {exportDialog,type ExportSource} from './schedule_export.js';
 import {scheduleGrid} from './schedule_grid.js';
 import {DIMENSIONS,TIME_AXES,isDim,personDim,dimOf,type Dim,type Column as GridColumn} from './schedule_dimensions.js';
-import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
+import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
 import {calendarPeriod,addDays,filterShifts,isClosed,closureText,absentFrom,grantOverlap,membershipCovers,LAYER_DEFAULTS,savedLayers,type PlanRange} from './planner_logic.js';
 import {normalSearch,recordMatcher,fieldMatcher,searchParam,serverCapability,type SearchOptions} from './search.js';
 /** The Schedule's session search options (search.ts), saved with the planner view (search_options). */
@@ -49,7 +49,7 @@ import {setupGuidePage,setupSteps,dataHealth,missingSetup,stepDone,setupCounts,t
 /** SW3-D-11: the last read of ranks sharing a short code (Data health and its nav count). */
 let rankCodeClashes:RankCodeClash[]=[];
 import {staffImportSection} from './staff_import.js';
-import {keptReads,forgetReads,probeWorkers,workersKnown,reprobeWorkers,serverChecking,oidcDepartments,oidcChoose,oidcCancel,get,rotaMeta,request,newest,background,leavePage,onUndone,undoInPlace,applyUndone,type Undone,command,READ_ONLY_COMMANDS,takeUndo,login,logout,instant,download,clearSessionState,readAfresh,ApiError,sessionChanged,sessionKey,savingNow,signingOutNow,readsDone,WITHDRAWN,knownRevision,onSessionReset,awaitingApproval,withdrawApprovals,identify,refreshSession,guardDraftEdits,awaitJob,ROTA_DECISIONS,redoDraft,undoRefused,serverHealth,automatic,ownSavingNow,confirmingNow,savingWords,updatingNow,UPDATING_WORDS,openingPage,applyWrote,APPLY_CONFIRMED} from './api.js';
+import {keptReads,forgetReads,probeWorkers,workersKnown,reprobeWorkers,serverChecking,oidcDepartments,oidcChoose,oidcCancel,get,rotaMeta,rotaWhole,request,newest,background,leavePage,onUndone,undoInPlace,applyUndone,type Undone,command,READ_ONLY_COMMANDS,takeUndo,login,logout,instant,download,clearSessionState,readAfresh,ApiError,sessionChanged,sessionKey,savingNow,signingOutNow,readsDone,WITHDRAWN,knownRevision,onSessionReset,awaitingApproval,withdrawApprovals,identify,refreshSession,guardDraftEdits,awaitJob,ROTA_DECISIONS,redoDraft,undoRefused,serverHealth,automatic,ownSavingNow,confirmingNow,savingWords,updatingNow,UPDATING_WORDS,openingPage,applyWrote,APPLY_CONFIRMED} from './api.js';
 import {brand,applyBranding,parseBranding,documentTitle} from './brand.js';
 import {brandingPanel} from './branding_settings.js';
 import {bulkSelection,setBulkContext,registry,editRoles,type BulkAction,type SelectionValue} from './bulk.js';
@@ -57,7 +57,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,type Shape} from './loading.js';
+import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -65,13 +65,13 @@ import {dataTable,conditionFilter,joinFilter,mentions as conditionsMention,holds
 import {peopleView,refreshPeople,findsPerson,PEOPLE_GROUPS,PEOPLE_SORTS} from './planner_people.js';
 import {RULE_KINDS,RULE_NUMBER_FIELD,RULE_TOPICS,ruleTopic,LINE_KINDS,lineField,lineLabel,lineWho,isOrder,perPersonEditor,SETTING_LABELS,MODE_LABELS,lineSetting,lineHasNumber,protectTimeForm,protectedTimeRule,calendarProtectionPanel,catalogueEntryOf,ruleConditionFields,activeOn,peopleChoices,colourSwatches,catalogueForm,workspaceForm,shiftForm,sessionsHeld,relationshipForm,programmeEligibilityForm,availabilityForm,availabilityFields,leaveTypePicker,LEAVE_RECORD_KINDS,policyForm,quotaLimits,quotaNumberLabel,exceptionForm,safetyRule,allowsException,staffNeeded,type Context} from './forms.js';
 import {recurringSessions,seriesGroups} from './recurring_sessions.js';
-import type {Me,Row,PersonRow,Catalogues,WorkspaceData,Evaluation,Finding,PublicData} from './types.js';
+import type {Me,Row,PersonRow,Catalogues,WorkspaceData,Evaluation,Finding,PublicData,PlannerSession} from './types.js';
 import {fillOptions} from './candidates.js';
 import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_delta.js';
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
-import {routingPage,reviewPanel,approvalDialog,decidesStep,SWAP_KIND_WORDS} from './governance.js';
+import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
@@ -113,14 +113,14 @@ import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effect
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
 import {tagsPage,tagEditor,tagLabel,tagRefs,tagsFor} from './tags.js';
-import {PAGE_TABS,parseRoute,routeHash,ruleNotice} from './routes.js';
+import {PAGE_TABS,parseRoute,routeHash,ruleNotice,withoutPrototype} from './routes.js';
 import {grantRefusal} from './role_grants.js';
 import {integrationsPage} from './integrations.js';
 import {signInConfigPage} from './sign_in_config.js';
 import {readinessRegion,requirementEvidence,currency,notCompared,SUPERSEDED,type Currency} from './planning_context.js';
 import {openAmendment} from './published_amendment.js';
 import {publishedSession,changesChip,markChanges,loadChanges,forgetChanges,changeable,replaceNext,stagedCoverage,changedSessions,markDiff,type ChangeDiff,type PublishedHooks} from './published_changes.js';
-import {ruleCataloguePage,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
+import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
@@ -137,6 +137,8 @@ import {tabs as sharedTabs} from './dom.js';  // the one tab set (UX › control
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
+import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
+import {rotaOutdated} from './dom.js';  // one rota verdict
 
 applyTheme();
 const root=document.querySelector('#app')!;
@@ -188,6 +190,8 @@ const freshScheduling=(workspace='',open=false)=>({workspace,open,scope:'period'
 let schedulingSettings=freshScheduling();
 // Each rota keeps its own run setup (dates, clinics, priorities) while you switch between rotas; sign-out forgets them.
 const schedulingByRota=new Map<string,ReturnType<typeof freshScheduling>>();
+// #1041: the one Approve review opening per rota (the ?approve= route or a press): a redraw meanwhile holds its button.
+const reviewRuns=new Map<string,Promise<unknown>>();
 // The intended run setup is also kept on this device (autoschedule_setup.ts), so a reload keeps it; runs are the server's.
 const ownSetup=(workspace:string)=>storedSetup(me?.identity_id||'',me?.department.id||'',workspace) as Partial<ReturnType<typeof freshScheduling>>;
 const keptSetup=(s:ReturnType<typeof freshScheduling>)=>{if(s.workspace&&me)keepSetup(me.identity_id,me.department.id,s.workspace,s as RunSetup);};
@@ -242,11 +246,15 @@ let draftReadIn='';
 let replaceMisses=0,routePerson='';
 const forgetSchedule=()=>{plannerMemo=null;scheduleCache.drafts.clear();scheduleCache.windows.clear();scheduleCache.source=null;scheduleEpoch++;};
 // The first open of a rota draws its days in view from its compact detail and that window's sessions and findings (not
-// the rota's whole detail of megabytes), then reads the whole rota at once. Until it lands the view is inert and says so:
-// no whole-rota feature (footer counts, checks, bulk, swaps, hover facts, publishing) ever runs on the window.
+// the rota's whole detail of megabytes), then reads the whole rota at once. Until it lands the week is read-only (D59):
+// it is read, paged and opened read-only; every write is in place but held with its reason (dom.ts notYet), and nothing
+// claims a whole-rota fact (footer health, score, Fix list; its check marks say they are the last check's). No
+// whole-rota feature (footer counts, checks, bulk, swaps, hover facts, publishing) ever runs on the window.
 // The window is never put in scheduleCache.drafts, which every reader takes for the whole rota.
 
 let scheduleEpoch=0,windowOnScreen=false;  // a window drawn, the whole rota still loading: the page is not loaded yet
+/** Why a write waits while only the window is in (its tip and description, and the footer's busy pill). */
+const WHOLE_LOADING='Loading the whole rota…';
 const wholeSeen=new Set<string>(),wholeReads=new Map<string,{epoch:number;read:Promise<WorkspaceData>}>();
 /** The rota's whole detail, read once at a time and kept only if nothing was forgotten meanwhile (a live change). */
 /** `quiet`: read behind a drawn window (D59), never on the top bar. `seen`: false for a read started ahead (readAhead),
@@ -254,7 +262,7 @@ const wholeSeen=new Set<string>(),wholeReads=new Map<string,{epoch:number;read:P
 function wholeRota(id:string,quiet=false,seen=true,reader:(path:string)=>Promise<WorkspaceData>=path=>get<WorkspaceData>(path,{quiet})):Promise<WorkspaceData>{
   const epoch=scheduleEpoch,going=wholeReads.get(id);if(seen)wholeSeen.add(id);if(going?.epoch===epoch)return going.read;
   // A read that started before an edit lands after its delta was applied: the newer copy held stays.
-  const read=reader('/api/workspaces/'+id).then(d=>{const held=scheduleCache.drafts.get(id);
+  const read=rotaWhole(id,reader).then(d=>{const held=scheduleCache.drafts.get(id);
     if(held&&!held.partial&&Number(held.workspace.revision)>Number(d.workspace.revision))return held;
     if(epoch===scheduleEpoch){scheduleCache.drafts.set(id,d);draftReadIn=schedView;}return d;})
     .finally(()=>{if(wholeReads.get(id)?.read===read)wholeReads.delete(id);});
@@ -280,7 +288,7 @@ function readAhead(boot=false){
   const dated=planDayFromRoute&&schedView!=='year'&&layerMode!=='side'&&!sourcePublication;
   const days=dated?periodNow(planDay,me!.organisation.week_start).days:null,range=days?`start=${days[0]}&end=${addDays(days.at(-1)!,1)}`:'';
   const quiet=<T,>(p:Promise<T>)=>{p.catch(()=>{});return p;};  // each is awaited (and its failure handled) where it is used
-  ahead={id,epoch:scheduleEpoch,range,list:boot&&!workspaceListOffset?quiet(reader<RotaList>('/api/workspaces?limit=50&offset=0')):null,meta:quiet(reader('/api/workspaces/'+encodeURIComponent(id)+'?view=compact')),
+  ahead={id,epoch:scheduleEpoch,range,list:boot&&!workspaceListOffset?quiet(reader<RotaList>('/api/workspaces?limit=50&offset=0')):null,meta:quiet(rotaMeta(id,reader)),
     window:range?quiet(reader<ScheduleWindow>('/api/schedule/sessions?'+range)):null};
   // Not yet "seen" whole: the Planner still draws the window first, while this read runs beside it, quietly (UX-FIX-A,
   // D59: the read behind a drawn week never lights the top bar).
@@ -288,6 +296,11 @@ function readAhead(boot=false){
 }
 /** The reads started ahead for this rota, taken once by the render that uses them. */
 function takeAhead(id:string){const a=ahead;if(!a||a.id!==id||a.epoch!==scheduleEpoch)return null;ahead=null;return a;}
+/** FE-PERF (scale): a Rules list address starts the page's own reads at boot beside the lists (rule_catalogue.ts
+ *  readRulesAhead), not after them. Only where the first draw is that list (allowed, not desktop-only, the rule catalogue
+ *  on, no ?source= that may open a rule instead); taken by the next draw, whichever page it is, so never kept for later. */
+let rulesAhead:ReturnType<typeof readRulesAhead>|null=null;
+const rulesListFirst=()=>view==='rules'&&!routeParts.length&&!routeQuery.has('source')&&ruleCatalogueOn()&&allowed(view)&&(!phoneLite()||fitsPhone(view,routeParts,routeQuery));
 /** A rota's days in view: compact detail, then every page of its sessions and findings there. A rota that changes while
  *  the pages are read is read whole instead. */
 async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[]):Promise<WorkspaceData|null>{
@@ -302,7 +315,7 @@ async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[
   if(!shifts||!checks)return null;
   // The window's open places and filled counts (coverOf) come from its coverage rows, as the whole rota's do.
   const validation=meta.workspace.validation?{...meta.workspace.validation,findings:checks.items,coverage:checks.coverage}:meta.workspace.validation;
-  return {...(meta as unknown as WorkspaceData),shifts:shifts.items,workspace:{...meta.workspace,validation},partial:true};
+  return {...(meta as unknown as WorkspaceData),shifts:shifts.items as PlannerSession[],workspace:{...meta.workspace,validation},partial:true};
 }
 // A draft edit, forward or Undo, keeps what this visit read except the draft itself (see patchDraft): the Schedule
 // redraws reading only the draft. `inPlace`: every save since the last refresh was patched so (refreshOnce).
@@ -321,7 +334,8 @@ function patchDraft(r:Row,kind:string):boolean{
   // A read changes no draft: the draft held stays (dropping it read the whole rota again after an edit or undo, and
   // left an issue list opened meanwhile without its Fix list).
   if(READ_ONLY_COMMANDS.has(kind))return true;
-  if(kind==='generation.apply')lastJobs=null;
+  // The jobs read says the rota's run settings: a baseline capture or refresh, or the department's own, changes them.
+  if(kind==='generation.apply'||kind==='department.settings'||kind.startsWith('workspace.baseline.'))lastJobs=null;
   const id:string=r?.workspace?.id||'',row=plannerMemo?.page.workspaces.find(x=>x.id===id),held=scheduleCache.drafts.get(id);
   // SW3-B-03: a submit or an approval answers with the rota's new state (no health): the list takes it too, so the page
   // redraws in that state reading only the rota, not the whole rota list (minutes under load, and a failed read left
@@ -409,7 +423,7 @@ const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.g
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
-  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>={
+  live:LiveScope[];liveIds?:()=>Partial<Record<LiveScope,string[]>>}>=withoutPrototype({
   // Every account lands on Home, so Home always fits a phone (its phone branch keeps only phone work): never a refusal.
   home:{title:'Home',roles:[],phone:()=>true,live:['workspace','publication','rules','catalogue','requests','swaps','availability','access','inbox']},
   schedule:{title:'Schedule',roles:[CAPABILITY.STAFF,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR],
@@ -443,7 +457,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   inbox:{title:TERMS.inbox,roles:[],phone:()=>true,live:['inbox']},
   // Everyone's own reports (feedback.ts); Developers triage all of them in System › Feedback.
   feedback:{title:'My feedback',roles:[],phone:()=>true,live:['feedback']},
-};
+});
 const permits=(...keys:string[])=>Boolean(me&&keys.some(key=>hasAccess(me!.roles,key)));
 const may=(p:Permission)=>Boolean(me&&grants(me.roles,p));
 const acts=(status:string)=>Boolean(me&&actsOn(status,me.roles));
@@ -1057,7 +1071,9 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
   // An outage is declared only when the pulse fails too (LABEL-FE: one endpoint refusing is not the server down), and
   // after it only what failed is read again (a page that did not load or could not refresh), never in a loop.
   if(now==='ok'&&wasDown&&me){wasDown=false;showConnection(true);if(refreshFailed||pageFailed)void refresh(true);return;}
-  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},()=>{wasDown=true;}).finally(()=>{probing=false;});}
+  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},e=>{wasDown=true;
+    // Confirmed down: rows on screen say at once that they could not be refreshed (not only the footer), and are read again when it is back.
+    if(!sessionChanged(e)){refreshFailed=true;showConnection(false,e);}}).finally(()=>{probing=false;});}
   paintConnection();});
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
@@ -1275,6 +1291,8 @@ const pageName=(target:string)=>{const [page,part]=target.replace(/^#/,'').split
   return page==='configuration'&&part?kindLabel(kindAt(part)):paths[page]?.title||'another page';};
 // The docked item panel is asked last: it closes with its page (unless it holds unsaved changes).
 function leaving(then?:()=>void,where='another page'){
+  // A dialog with unsaved changes (an Approve note, a person, a rule) asks first: Back never discards it silently.
+  if(askDirtyDialog(then))return false;
   // An unchanged record form closes at once; a changed one asks, and Discard changes closes it and goes on to `then`.
   if(catalogueSource){const source=catalogueSource;if(source.dialog.isConnected)source.tryClose();
     if(source.dialog.isConnected){if(then)source.tryCloseThen(()=>{source.close();then();});return false;}source.clear();}
@@ -1415,7 +1433,7 @@ function writeRoute(){
 // A background refresh (the live pulse) reads the server state but does not redraw under someone using the page: if a
 // menu, dialog or field opened while it read, it says so (refreshSkipped), the redraw is owed (redrawOwed, paid by the
 // next draw of any kind) and the pulse waits for them instead.
-let refreshForeground=false,refreshSkipped=false,redrawOwed=false;
+let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
@@ -1431,7 +1449,7 @@ function refresh(quiet=false,scopes?:Set<LiveScope>,changes?:LiveChange[],retry=
   forgetResolved();
   refreshScopes=scopes&&refreshScopes!==null?new Set([...refreshScopes||[],...scopes]):null;
   refreshChanges=scopes&&changes&&refreshChanges?[...refreshChanges,...changes]:null;
-  if(!quiet)refreshForeground=true;
+  if(!quiet)refreshForeground=pageStep();
   if(!retry)return refreshes.join();
   // A Retry reads the deferred lists afresh too (loadLists drops whichever answer is older).
   hydrating=null;return refreshes.retry();
@@ -1492,7 +1510,7 @@ const ME_SCOPES:LiveScope[]=['settings','access','catalogue','people'],LIST_SCOP
 async function refreshOnce(stale=()=>false){
   forgetReads(refreshScopes??null,refreshChanges);refreshChanges=[];  // maintenance/118: kept answers (api.ts keptRead) last across redraws until a change can alter them
   if(!me)return;accessRead=null;readAfresh();const saved=[...savedKinds];savedKinds.clear();const local=inPlace&&saved.length>0;inPlace=true;
-  const quiet=!refreshForeground;refreshForeground=false;refreshSkipped=false;
+  const from=refreshForeground,quiet=from===null;refreshForeground=null;refreshSkipped=false;
   const scopes=refreshScopes??null;refreshScopes=undefined;const touches=(of:LiveScope[])=>!scopes||of.some(s=>scopes.has(s));
   // Only draft edits since the last refresh, patched in place, on the Schedule: it redraws reading just the draft (the
   // session, lists in memory and the other counts cannot have changed). Anything else reads what it can affect.
@@ -1504,6 +1522,8 @@ async function refreshOnce(stale=()=>false){
     if(touches(LIST_SCOPES))await loadCatalogues();
     if(session!==sessionKey()||stale())return;
     refreshFailed=false;showConnection(true);void loadNavBadges(true,saved.length?saved:scopes?[]:undefined,scopes);
+    // A save can close its dialog before the follow-up reads finish. The page opened since then owns its draw.
+    if(!quiet&&pageStep()!==from)return;
     if(quiet&&readerBusy()){redrawOwed=true;refreshSkipped=true;return;}
     // Drawn from here on, by either path: an owed redraw is paid (else every pulse would refresh again).
     redrawOwed=false;
@@ -1511,10 +1531,11 @@ async function refreshOnce(stale=()=>false){
     // error and keeps the stale banner.
     const related=routeParts.indexOf('related'),inPlace=related>=0?await refreshRelated(routeParts[related+1]):undefined;
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
-    foregroundRender=!quiet;await renderPage();}
+    foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
-    // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
-    if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
+    // A page showing data carries the stale banner, a page that did not load its own Retry; with nothing on screen, a
+    // message says the refresh failed.
+    if(!pageFailed&&!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
 }
 /** Signing in and reloading take the same path: no splash. Once the account is known the app frame (sidebar, top bar
  *  with the person's name, footer) appears at once with the page as a skeleton; the sign-in card fades out over it. */
@@ -1539,20 +1560,20 @@ async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
   // stuck, and a late answer to an older start is dropped. The older start's account read is aborted, so even its late
   // 401 cannot report the session as ended (api.ts drops an aborted read's answer before the session-expired event).
-  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();
+  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();let framed=false;
   try{if(!card)await rotateIfDue();
     // SW3-C-P01: after /api/me confirms the viewer may read leave types, start that read beside the catalogues. An
     // inactive staff account gets no forbidden background request; the account response is the permission boundary.
     const account=await request<Me>('/api/me',{signal:own.signal});if(stale())return;me=account;const leave=leaveTypesRead(account);rememberAccount(me.identity_id,me.display_name,me.account?.username);applyDisplay();readRoute('home');catalogues={people:[]};
     if(stepOf()===null)history.replaceState({step:0},'');shownStep=stepOf()!;
-    shell();document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
+    shell();framed=true;document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
     // A page cached from an earlier release talks to a newer server: say so (About Rota shows the same).
     if(me.release&&me.release!==WEB_RELEASE)newVersion();
     // The live baseline is read before the page: a change after it moves the next pulse (one refresh), one before it is
     // in the page's own read. Without it the first pulse cannot tell and would redraw the page for nothing.
     // Pages that need deferred lists load them in one read (not the lean set and then the rest, maintenance):
     // the page and the sidebar counts then start their reads together.
-    readAhead(true);
+    readAhead(true);rulesAhead=rulesListFirst()?readRulesAhead(ctx()):null;
     await Promise.all([loadCatalogues(needsDeferredCatalogues(),leave),background<Row>('/api/pulse').then(p=>{seenActivity=p.activity;noticeNewVersion(p.build);},()=>{})]);
     // Live updates from the pulse just read, not from the first 10 s fallback tick: a change committed meanwhile that only
     // the stream announces (a worker's check completing) was missed, the stream's baseline being taken after it.
@@ -1563,7 +1584,13 @@ async function boot(card?:HTMLElement|null){
     await renderPage();if(alert!==undefined){if(alert)openNoteTarget(alert as Row);else navigate('inbox');}
     if(justUpdated())notify('Updated to the latest version.','success');  // the silent reload of maintenance landed
     void reconcile();}
-  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else bootFailure(e,()=>void boot(),true);}
+  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else startFailed(e,framed);}
+}
+/** Signed in with the frame drawn, a page whose lists did not load says only that, in the page with Retry (as a page
+ *  that fails later does), never that the app can't be reached; the Schedule keeps the start-up screen's words. */
+function startFailed(e:unknown,framed:boolean){
+  if(!framed||view==='schedule'){bootFailure(e,()=>void boot(),true);return;}
+  pageFailed=true;document.querySelector('#main')?.replaceChildren(el('div',{},readFailed(failedPageName(),e,()=>void boot())));
 }
 /** The one start-up failure screen (signed in or out, N-12): what happened, what staff do meanwhile, Retry, and Sign out
  *  for a signed-in account that may be the problem. */
@@ -1621,12 +1648,16 @@ function keepFocus(old:Element,swap:()=>void){
 /** What a page kept on screen while the next one loads may not be used: a Configuration section's pane (its nav stays
  *  live), else everything kept. */
 const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pane')||kept;
-async function renderPage(){
+/** `live`: a background refresh's redraw (a live update); it gives way to someone who began using the page while it read
+ *  (at the swap, below), as refreshOnce does before it starts. */
+async function renderPage(live=false){
+  const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
-  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null;
+  const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
+  const quiet=live&&!waited;
   // SW3-A-24: leaving the Schedule closes the auto-schedule panel; it no longer opens by itself on the next visit.
   if(changedPage&&renderedView==='schedule')schedulingSettings.open=schedulingSettings.editing=false;
   // D-139: a panel editing a rota (Add session) closes, or asks, once the page shows another rota or leaves the Schedule.
@@ -1674,6 +1705,10 @@ async function renderPage(){
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
   const previous=changedPage||!(view==='configuration'||view==='schedule'&&schedSubPage()||!waited)?[]:[...document.querySelector('#main')?.childNodes||[]];
+  // A live update's redraw reads while that page stays usable, so someone may open a filter or a dialog on it meanwhile.
+  // What the frame shows for it (title, actions, footer status) is kept, so the redraw can give way at the swap (below).
+  const frameShown=quiet&&!keep&&previous.length?{title:document.querySelector('.topbar .page-title'),actions:[...document.querySelector('.topbar .page-actions')?.childNodes||[]],
+    status:[...document.querySelector('.app-footer .page-status')?.childNodes||[]],leave:leaving}:null;
   // The same page already on screen: if this read fails at the server or the connection, it stays (with the stale banner).
   const shownBefore=!changedPage&&!keep&&document.querySelector('#main')?.getAttribute('data-loaded-view')===view&&document.querySelector('#main')?.getAttribute('data-loaded-tab')===(routeParts[0]||'')?[...document.querySelector('#main')!.childNodes]:[];
   const sk=keep||previous.length?null:pageSkeleton();
@@ -1691,14 +1726,16 @@ async function renderPage(){
   if(keep&&plannerRota&&plannerRota.id!==workspaceId)main.querySelector('.planner-main')?.setAttribute('inert','');
   // maintenance: Configuration keeps its section nav usable while the next section loads (another pick replaces it): only
   // the section left is inert, never the nav (an inert nav ignored every pointer click until the read finished).
-  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;}else body.append(sk!);}
+  // Moving the page detaches its scrollers, which resets their native positions: put them back at once (not only when
+  // the rebuilt page mounts), so a background redraw does not show the list at its top meanwhile.
+  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
   // maintenance: a read meeting rules being rebuilt (api.ts projectionReady): the old content gives way to the page's skeleton.
   let waiting=sk;const updating=()=>{if(serial!==renderSerial||waiting||keep)return;waiting=pageSkeleton();body.inert=false;body.replaceChildren(waiting);};
   window.addEventListener('projection-updating',updating);
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
     const content=el('div',{});buildingPage(content);const renderer:Record<string,(target:HTMLElement)=>Promise<void>>={
-    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
+    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedPanel,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
     schedule:schedulePage,
     requests:t=>requestsPage(ctx(),t,{query:routeQuery,setQuery:q=>{routeQuery=q;history.replaceState(null,'',routeHash(view,routeParts,q));},
       showDay:(day,person)=>navigate(routeHash('schedule',['week',day],{person}).slice(1))}),
@@ -1713,7 +1750,7 @@ async function renderPage(){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
@@ -1736,11 +1773,17 @@ async function renderPage(){
   await (waited?track(building):building).finally(()=>{openingPage(false);window.removeEventListener('projection-updating',updating);});
   // A skeleton that showed stays its 400 ms, then the page fades in; one that never showed gives way at once.
   const shown=serial===renderSerial&&await settle(waiting);
+  // Someone began using the page while this live update read (refreshOnce's rule, checked again now): the page stays as
+  // it is, with its popover or dialog open, and the update is owed (onPulse replays it once they are done).
+  if(serial===renderSerial&&frameShown&&readerBusy()){if(frameShown.title)document.querySelector('.topbar .page-title')?.replaceWith(frameShown.title);
+    document.querySelector('.topbar .page-actions')?.replaceChildren(...frameShown.actions);document.querySelector('.app-footer .page-status')?.replaceChildren(...frameShown.status);
+    leaveCheck=frameShown.leave;main.setAttribute('data-loaded-view',view);main.setAttribute('data-loaded-tab',routeParts[0]||'');buildingPage(null);redrawOwed=refreshSkipped=true;return;}
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
       body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
+      void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
       // Perf instrumentation (as rk-decorate): a page's render, start to drawn; requests included when it made any.
       // `keep`: a redraw of the page on screen (a save, a live update), which the PC measures read (PC-STEPS).
@@ -1761,7 +1804,7 @@ async function renderPage(){
   catch(e){if(serial===renderSerial){
     buildingPage(null);  // a failed build never stays the page being built (alive()); a superseded one was replaced by its successor's
     const unreachable=e instanceof ApiError&&(e.status===0||e.status>=500)&&!sessionChanged(e);
-    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;}
+    if(unreachable&&(keep&&!main.querySelector('.planner-main[inert]')||shownBefore.length)){if(!keep){main.replaceChildren(...shownBefore.filter(n=>!(n instanceof Element&&n.matches('.stale-banner'))));staleShown(main).inert=false;restoreTableScroll(main);restoreRulesScroll(main);}
       refreshFailed=true;main.setAttribute('data-loaded-view',view);showStale(true,e);orient();return;}
     // maintenance: this tab runs an older bundle than the server's: reload onto it once, or with something unsaved open
     // offer Reload to update (the update bar stays too). A connection failure is not the bundle's fault.
@@ -1962,6 +2005,17 @@ const heldCheck=(id:string)=>{const row=checkRows.get(id);return row?{...row,res
 /** Terminal validation jobs whose compact delta was just applied; their paired
  * workspace pulse must not start a second refresh. */
 const checkSettled=new Map<string,number>();
+/** The rota checks this page saw end (their last status row, by job id; the latest 16, in memory). A job list read before
+ *  the end still lists such a check as queued: it is never joined again (autoCheck) nor offered Cancel, and every list the
+ *  Auto-schedule panel draws, the kept one included, shows it as it ended (withEnded). */
+const checksEnded=new Map<string,Row>();
+const withEnded=(list:Row):Row=>!(list.jobs as Row[]|undefined)?.some(j=>checksEnded.has(String(j.id)))?list
+  :{...list,jobs:(list.jobs as Row[]).map(j=>{const ended=checksEnded.get(String(j.id));return ended?{...j,...ended}:j;})};
+const checkEndedSeen=({delta:_,...job}:Row)=>{checksEnded.set(String(job.id),job);  // its row without the check's delta (kept by checkRows)
+  while(checksEnded.size>16)checksEnded.delete(checksEnded.keys().next().value!);
+  if(lastJobs)lastJobs={...lastJobs,jobs:withEnded(lastJobs.jobs)};};
+/** Cancel only for a check still going that has not been seen ending. */
+const checkCancelShown=()=>checkCancellable(checkJob)&&!checksEnded.has(String(checkJob?.id));
 // B7: when the running check started (the footer's clock), the check its Cancel set aside, and why a check stopped (the
 // line above the grid). Either leaves the previous results shown, marked "Not checked".
 // shortcut: Cancel stops waiting here; the server's check still finishes (a synchronous command). Make it a cancellable job with maintenance.
@@ -2013,6 +2067,7 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
 const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+  if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
   if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
@@ -2024,9 +2079,9 @@ const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
  *  until the check's job is known (job.create answered, or a check found running joined), never for the synchronous
  *  check run without workers, which the server cannot stop (UX-FIX-A). */
 const checkLine=()=>{const said=checkSaid(),line=elapsed(said,checkStarted,cancelCheck),b=line.querySelector('button');line.dataset.checkLine=said;
-  if(b){b.dataset.checkCancel='';b.hidden=!checkCancellable(checkJob);}return line;};
+  if(b){b.dataset.checkCancel='';b.hidden=!checkCancelShown();}return line;};
 /** Every check line drawn shows its Cancel only while the check can be stopped (checkCancellable). */
-const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancellable(checkJob);};
+const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancelShown();};
 /** The check is now a job the server can stop: every check line drawn before it shows its Cancel. */
 const checkStoppable=(job:Row,key:string,w:Row)=>{const id=String(job.id),since=Date.parse(job.created_at)||Date.now();checkJob={id,key,status:String(job.status),since,w};
   sayCancel();sayCheck();
@@ -2079,6 +2134,7 @@ const checkAgain=()=>{checkStop=null;checkCancelled='';checkUnstarted='';autoChe
  *  footer item, with its elapsed time and Cancel, instead of the Auto-schedule panel's. */
 function autoCheck(data:WorkspaceData,existing?:Row){
   const w=data.workspace,key=w.id+':'+data.current_fingerprint;
+  if(existing&&checksEnded.has(String(existing.id)))return;  // a list read before it ended: it is over, not joined again
   // A job the server already has is new proof about the workers; without one the remembered probe stands.
   if(existing)void reprobeWorkers(String(existing.id));else probeWorkers();
   if(existing?(autoChecking||checkJob?.id===existing.id):autoCheckKey===key)return;
@@ -2146,9 +2202,14 @@ const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>(
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
 const baselinePreview=(w:Row)=>background<BaselineRefreshPreview>(`/api/workspaces/${encodeURIComponent(String(w.id))}/baseline/refresh-preview`);
 /** The planner bar's drift control: one maker for the bar and for an answer that lands after the bar was drawn. */
-const baselineDriftButton=(w:Row,changes:number)=>iconButton(`${changes} department change${changes===1?'':'s'} · review`,
-  'history',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError),
-  {class:'bare baseline-drift','data-tip':'Department changes since this draft was created'});
+/** "N department changes": the one wording for the planner bar and the Rules page. */
+const departmentChanges=(n:number)=>plural(n,'department change');
+const driftName=(n:number)=>`${departmentChanges(n)} since this draft was created`;
+// Visible text, never icon-only: it changes what the draft is built on. A tight bar keeps icon + count (the count pills' step).
+const baselineDriftButton=(w:Row,changes:number)=>{
+  const b=el('button',{type:'button',class:'health-pill baseline-drift','aria-label':driftName(changes)},
+    icon('history'),el('span',{class:'num'},String(changes)),el('span',{class:'label'},`department change${changes===1?'':'s'}`));
+  b.addEventListener('click',()=>void refreshDraftBaseline(w,()=>refresh()).catch(reportError));return b;};
 /** D-053: a failed drift check says so with Retry (never nothing on the bar, which reads as "no department changes"). */
 const baselineDriftFailed=(e:unknown,retry:()=>void)=>{const n=failedNote('Couldn’t check department changes.',e,retry);
   n.classList.add('baseline-drift');n.querySelector('button')?.setAttribute('aria-label','Retry checking department changes');return n;};
@@ -2255,10 +2316,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The open rota's auto-schedule jobs are asked for with its sessions, not after the page is drawn (one round trip
   // less before the Auto-schedule panel can show its setup or a run in progress); the panel takes this read once.
   jobsEarly=planner&&needDraft&&earlyId&&permits(CAPABILITY.COORDINATOR)&&!windowFirst(earlyId)&&!(memo&&lastJobs?.id===earlyId&&lastJobs.activity===seenActivity)
-    ?{id:earlyId,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
+    ?{id:earlyId,woke:panelWakes,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
   const savedViews=memo?.views?Promise.resolve(memo.views):fetchViews<PlannerSaved>('planner').catch(()=>[] as SavedView<PlannerSaved>[]);
   const listAhead=!memo&&!workspaceListOffset&&ahead?.id===workspaceId&&ahead.epoch===scheduleEpoch?ahead.list:null;
-  const page=planner?memo?.page||await (listAhead||get<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
+  // An automatic rota choice also writes the address. Wait for the current list instead of choosing from a kept reply.
+  const readList=workspaceId||draftNone||sourcePublication?get:background;
+  const page=planner?memo?.page||await (listAhead||readList<RotaList>(`/api/workspaces?limit=50&offset=${workspaceListOffset}`)):{workspaces:[] as Row[],total:0,has_more:false};
   const work:Row[]=[...page.workspaces];
   if(routeView){const saved=(await savedViews).find(x=>x.id===routeView);if(saved){applyPlannerView(saved.definition.planner,saved.definition.conditions,routeQuery);setTableColumns('planner-list',saved.definition);plannerViewId=saved.id;if(routeQuery.has('person'))schedFilters={...schedFilters,person_ids:[routeQuery.get('person')||'']};}routeView='';}
   // The Schedule's first opening this session shows its default view (the person's, else the department's), if chosen.
@@ -2334,7 +2397,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(!routeShift&&shiftLink&&draftData&&!partial(draftData)&&String(draftData.workspace.id)===shiftLink.rota){const s=draftData.shifts.find(x=>String(x.id)===shiftLink!.id);
     if(!s||toLocal(s.start,zoneNow).slice(0,10)!==shiftLink.day)routeShift=shiftLink.id;}
   if(routeShift&&draftData){const s=draftData.shifts.find(x=>String(x.id)===routeShift);
-    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(planDay&&day!==planDay)notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
+    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(linkMoved(planDay,day,ws,routeQuery.get('panel')!=='session'))notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
     else{notify(SESSION_REMOVED,'warning');routeShift='';shiftLink=null;routeQuery.delete('shift');routeQuery.delete('panel');}}
   // F4 (maintenance): an amendment opens on the week of its first change (review_week_start), not on its first day.
   const changedWeek=String((draftData as {change_diff?:{review_week_start?:string|null}|null}|null)?.change_diff?.review_week_start||'');
@@ -2345,6 +2408,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(meta){draftData=await readWindow(meta,periodNow(planDay,ws).days).catch(e=>{throw rotaFailed(e);})||await readDraft(meta.workspace.id);
     if(!partial(draftData))w=draftData.workspace;}  // read whole instead (it changed meanwhile): its own facts, not meta's
   const whole=draftData&&!partial(draftData)?draftData:null;
+  // D59: the window on screen, the whole rota on its way. Every write control is held where it stands (never queued).
+  const reading=partial(draftData),hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
+  let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
   const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
@@ -2379,7 +2445,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(mySerial!==renderSerial)return;
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
-  const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts,coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
+  const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
   const layer=sourceWindow||win;
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
@@ -2438,7 +2504,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     close:returnFromAuto,dismiss:closeAuto});
   const autoOpen=draft&&schedulingSettings.open;
   if(w){const data=whole;
-    const drift=baselineDriftFor(w);driftButton=draft&&drift?.changes.length?baselineDriftButton(w,drift.changes.length):null;
+    const drift=baselineDriftFor(w);driftButton=draft&&drift?.changes.length?hold(baselineDriftButton(w,drift.changes.length)):null;
     // Drafts check themselves after every change (autoCheck). When that could not run or is outdated, the footer's
     // "Needs a check" pill runs it; no separate Check rota button.
     const validate=el('button',{type:'button',class:'health-pill warn','data-tip':'The rota or its rules changed since the last check · select to check now'},icon('clock'),el('span',{class:'label'},TERMS.needsCheck));
@@ -2451,16 +2517,24 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Whoever created or last edited the rota cannot approve it; say so instead of offering a button that fails.
     const ownWork=!mayDecide(me!,'rota.approve',data?.reviewer_involved??[w.created_by,w.last_edited_by].includes(me!.identity_id));  // the server's contributor test
     // Submitted, but rules, people or availability changed since: approving or publishing would be refused.
-    const outdated=['submitted','approved'].includes(w.status)&&(data?!!data.review_progress?.stale_inputs:!!w.outdated);
+    // the window carries the compact detail's review_progress, so Week reads the same server field as the whole rota.
+    const outdated=rotaOutdated(w,draftData);
     // L11: out of date is the rota's one status (rotaStatusPill), not a second pill; the review strip's "?" says why.
+    // #1041: one opening of the review per rota; a second press, or a redraw's button, joins it (held, busy) until it opens.
+    const approveLabel=w.base_publication_id?'Approve changes':'Approve rota',approveWords=busyLabel(approveLabel);
+    const openApproval=()=>joinRun(reviewRuns,w.id,withDraft(async d=>{if(!decidesStep(d))return notDecider(d);const read=await readRotaReview(d);return approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),
+      ()=>notify(`${WAIT_WORDS.slow} the review…`,'info'));
+    const approveButton=():HTMLButtonElement=>{const b=button(approveLabel,openApproval,'primary keep-label'),run=reviewRuns.get(w.id);if(!run)return b;
+      notYet(b,approveWords).classList.add('is-busy');b.setAttribute('aria-busy','true');b.replaceChildren(el('span',{class:'spinner','aria-hidden':'true'}),approveWords);
+      void run.then(()=>{if(!b.isConnected)return;const why=b.getAttribute('aria-describedby');b.replaceWith(approveButton());if(why)document.getElementById(why)?.remove();});return b;};
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)queueMicrotask(withDraft(async d=>{if(!decidesStep(d))return;const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}));}
+      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
     if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
-      else if(data&&decidesStep(data))workflow.append(button(w.base_publication_id?'Approve changes':'Approve rota',withDraft(async d=>{const read=await readRotaReview(d);approvalDialog(ctx(),d,form=>rotaReviewSummary(form,d,read,'approve'));}),'primary keep-label'));}
+      else if(data&&decidesStep(data))workflow.append(approveButton());}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
@@ -2476,11 +2550,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
-    if(['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR))workflow.append(outdated
+    // One predicate for Reopen: the note below shows exactly when the button does not.
+    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
-    for(const b of [...workflow.children])compact(b);
+    // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
+    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+    for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
@@ -2498,10 +2576,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
     const missingBaseline=draft&&!w.baseline;
     auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
-      ?button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'})
+      ?hold(button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'}))
       :el('button',{type:'button',class:'button secondary auto-button'+(whole&&proposalShown(whole)?' has-proposal':''),
-        // D59: whole-rota work waits for the whole rota; only here is that said (the page itself is ready to use).
-        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule',disabled:!whole,'aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':whole?'Auto-schedule · fill open places using your rules':'Loading the whole rota…'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+        // D59: whole-rota work waits for the whole rota: held in place, focusable, saying why (notYet).
+        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':'Auto-schedule · fill open places using your rules'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+    if(auto&&!whole)notYet(auto,WHOLE_LOADING);
     side.hidden=!autoOpen;
     // Help reads the views that draw sessions; Year and Month (day health) have their own key.
     if(schedView!=='year')help=iconButton('How to read this schedule','help',()=>unpin(()=>toggleHelp(w.id,closeAuto)),{'aria-pressed':String(helpOpen())});
@@ -2534,7 +2613,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
-    rotaHealth=outdated||footerIsPublished(w)?null:kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
+    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
       :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(fixHealth(w.id,{...fixSum,checking:true},data,w)):longCheck())
       :kind==='provisional'?withWords(checkingWords(provisional!.status)):kind==='waiting'?withWords(waitingWord('queued'))
       :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?fixHealth(w.id,fixSum!,data,w)
@@ -2546,26 +2625,26 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
     if((conflicts||competing)&&rotaHealth){const b=el('button',{type:'button',class:'health-pill warn','aria-haspopup':'dialog','aria-label':conflicts?`${plural(conflicts,'overlap')} with a published rota`:`${plural(competing,'other draft')} for these days`,'data-ctip':conflicts?'Overlaps a published rota · choose how it fits':'Other drafts cover these days · compare'},
       el('span',{class:'sd-dot warn both','aria-hidden':'true'}),el('span',{class:'num'},String(conflicts||competing)),el('span',{class:'label'},conflicts?' overlap':' other draft'+(competing>1?'s':'')));
-      footerAct(b,'overlap',withDraft(overlapDialog));
+      footerAct(hold(b),'overlap',withDraft(overlapDialog));
       // Siblings in the non-interactive health group, never inside the Check button (AO-002: no nested control, no bubbled check).
       if(!rotaHealth.classList.contains('health-pills'))rotaHealth=el('div',{class:'health-pills',role:'group','aria-label':'Rota health'},rotaHealth);
       rotaHealth.append(b);}
     const absenceIds=draft&&whole?[...new Set<string>((w.validation?.findings||[]).filter((f:Row)=>['UNAVAILABLE','EXTERNAL_ROTATION'].includes(f.code)).map((f:Row)=>String(f.shift_id)))]:[];
     tools=iconButton('Rota tools','dots',()=>popover(tools!,(panel,close)=>{
-      const item=(label:string,glyph:IconName,run:()=>unknown)=>menuItem(label,glyph,()=>{close();return run();});
+      const free=(label:string,glyph:IconName,run:()=>unknown)=>menuItem(label,glyph,()=>{close();return run();}),item:typeof free=(...a)=>hold(free(...a));
       // Labelled sections, one icon per tool: check the rota, edit it, share it; discarding comes last on its own.
       const section=(label:string,...items:HTMLElement[])=>items.length?[el('div',{role:'group','aria-label':label,class:'menu-group'},el('div',{class:'menu-heading','aria-hidden':'true'},label),...items)]:[];
       panel.append(el('div',{class:'menu-list sched-tools',role:'menu','aria-label':'Rota tools'},
-        ...section('Check',menuItem('Rules in this rota','rules',()=>{close();openRotaRules();},{},(w.rule_adjustments||[]).length?plural((w.rule_adjustments||[]).length,'change'):''),item('Who’s available','people',()=>openRotaRules('people')),...(fixSum&&(fixSum.must||fixSum.could)?[menuItem('Fix list','check',()=>{close();openIssues(w.id);},{},fixSum.must?`${fixSum.must} must fix`:`${fixSum.could} could improve`)]:[]),...(toResolve?[menuItem('Resolve problems one by one','target',()=>{close();resolveNow();},{},plural(toResolve,'step'))]:[]),
+        ...section('Check',menuItem('Rules in this rota','rules',()=>{close();openRotaRules();},{},(w.rule_adjustments||[]).length?plural((w.rule_adjustments||[]).length,'change'):''),free('Who’s available','people',()=>openRotaRules('people')),...(fixSum&&(fixSum.must||fixSum.could)?[hold(menuItem('Fix list','check',()=>{close();openIssues(w.id);},{},reading?'':fixSum.must?`${fixSum.must} must fix`:`${fixSum.could} could improve`))]:[]),...(toResolve?[menuItem('Resolve problems one by one','target',()=>{close();resolveNow();},{},plural(toResolve,'step'))]:[]),
           // How many rules and targets this rota changes for itself shows beside each entry (the top bar has no rules chip).
-          menuItem(ROTA_TARGETS,'sliders',()=>{close();rotaTargetsDialog(w.id);},{},(w.target_overrides||[]).length?plural((w.target_overrides||[]).length,'change'):'')),
+          hold(menuItem(ROTA_TARGETS,'sliders',()=>{close();rotaTargetsDialog(w.id);},{},(w.target_overrides||[]).length?plural((w.target_overrides||[]).length,'change'):''))),
         // Changing a published rota makes an amendment: an edit, not sharing (SR-02).
         ...section('Edit',...(draft?[...(w.baseline?[item('Refresh draft baseline','reset',()=>void refreshDraftBaseline(w,refresh).catch(reportError))]:[]),item('Add recurring sessions','calendar',withDraft(seriesMaterialise)),item('Update recurring sessions','reset',withDraft(seriesFollowing)),
           ...(absenceIds.length&&absenceIds.length<=100?[item('Prepare cover for recorded absences','people',withDraft(d=>bulkImpactDialog(ctx(),d,absenceIds,'release_unavailable',()=>{})))]:[]),
           item('Exchange two assignments','swap',withDraft(d=>swapDialog(d)))]:[]),...(permits(CAPABILITY.COORDINATOR)?[item('Change a published rota…','edit',()=>void changePublished())]:[])),
         ...section('Share',...(draft&&w.visibility==='private'?[item('Share with schedulers…','eye',()=>shareDraft(w,refresh))]:[]),
           ...(w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
-          ...publishedTools(item,false)),
+          ...publishedTools(free,false)),
         // Archive or Delete draft comes last on its own: the rota's own read (whole or compact) names it in
         // allowed_actions, so a rota past the list's first page has it too (rota_lifecycle.ts).
         ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
@@ -2573,10 +2652,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft)undoButton=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
+    if(draft)undoButton=hold(iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'}));
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
-    if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=redoBarButton();
+    if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
   }else if(planner||permits(CAPABILITY.STAFF)){
     // The published rotas in view that this person may archive (allowed_actions), last and on their own.
     const pubs=work.filter(r=>r.status==='published'&&period.days.some(d=>r.starts_on<=d&&d<r.ends_on));
@@ -2702,7 +2781,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A published-only schedule's checks are the live check of what is published (publishedLive), current when read.
       const stored=!draftData?(shown.workspace.validation as unknown as Row|undefined):null;
       const live=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive.evaluation as unknown as Row:null;
-      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?w!.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,person});
+      const summary=(person?:(p:Row)=>Node|null)=>sessionSummary(sctx(),s,{validation:s.context?null:draftData?draftData.workspace.validation as Row|undefined:(live||stored),name:id=>fullNameOf(people[id]),code:id=>displayName(people[id]),refresh:async()=>{close();await refresh();},fresh:draftData?fresh:true,kept:reading,person});
       const pub=String(s.publication_id||source?.publication.id||'');
       const published=!acts&&(s.context||!draftData)&&!!pub&&changeable(s);
       if(pubHooks&&published)publishedSession(dock,s,pub,pubHooks,summary);else body.append(summary());
@@ -2736,19 +2815,20 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const team=may('schedule.read_team'),mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
     nextDuty:team?undefined:async()=>{const next=(await upcoming(ctx())).duties[0];if(!next)return null;const on=toLocal(next.start,zone()).slice(0,10);
       return {label:`Next duty: ${formatDay(on,'UTC')}`,go:()=>navigate(`schedule/week/${on}`)};}};
-  const weekHooks:WeekHooks=draftData?{fixedHeld:sessionsHeld(draftData),sessionsHeld:draft&&sessionsHeld(draftData),name:displayName,code:shortCode,details:s=>{if(s.context)readOnly(s);else if(!openSession(s))sessionDock(s,weekHooks.sessionActions?.(s));},view:readOnly,dnd,proposal,editable:draft,fresh,selected,onSelect:updateSelectionBar,refresh,
+  const editing=draft&&!reading;
+  const weekHooks:WeekHooks=draftData?{fixedHeld:sessionsHeld(draftData),sessionsHeld:editing&&sessionsHeld(draftData),open:reading?readOnly:undefined,kept:reading,name:displayName,code:shortCode,details:s=>{if(s.context)readOnly(s);else if(!openSession(s))sessionDock(s,weekHooks.sessionActions?.(s));},view:readOnly,dnd,proposal,editable:editing,fresh,selected,onSelect:updateSelectionBar,refresh,
     live:()=>heldDraft(draftData),lock:permits(CAPABILITY.COORDINATOR)?(s,on)=>setLocked(heldDraft(draftData),[s],on):undefined,
     fill:s=>{queueFill(w!.id,s.id);toCalendar(s);renderPage();},
-    fixList:draft&&planOnDesk()?f=>{const l=fixCache.get(w!.id)?.list;if(f?.shift&&l&&!causeOfShift(l,f.shift))return false;openIssues(w!.id,f?.shift?{shift:f.shift}:{});return true;}:undefined,
+    fixList:editing&&planOnDesk()?f=>{const l=fixCache.get(w!.id)?.list;if(f?.shift&&l&&!causeOfShift(l,f.shift))return false;openIssues(w!.id,f?.shift?{shift:f.shift}:{});return true;}:undefined,
     onResolveMove:s=>{toCalendar(s);renderPage();},
     autoSchedule:scope=>{schedulingSettings.open=true;if(scope)schedulingSettings.scope=scope;renderPage();},
     onPanel:show=>unpin(()=>{closeAuto();show();}),
     onPanelChange:id=>{if(routeShift||routeQuery.get('panel')!=='session'||routeQuery.get('edit')!==w!.id)return;
       if(id)routeQuery.set('shift',id);else{routeQuery.delete('shift');routeQuery.delete('panel');}writeRoute();},
-    menu:t=>t.shift?.context?[]:plannerShortcuts(heldDraft(draftData),t,draft),onTable:p=>{listParts=p;},exchange:draft?a=>swapDialog(heldDraft(draftData),a):undefined,
-    create:draft?'Add session':undefined,onCreate:draft?()=>shiftForm(ctx(),draftData,undefined,shownDay(draftData)):undefined,onShowAll:()=>showAllSessions(),...mine,
+    menu:reading?undefined:t=>t.shift?.context?[]:plannerShortcuts(heldDraft(draftData),t,draft),onTable:p=>{listParts=p;},exchange:editing?a=>swapDialog(heldDraft(draftData),a):undefined,
+    create:editing?'Add session':undefined,onCreate:editing?()=>shiftForm(ctx(),draftData,undefined,shownDay(draftData)):undefined,onShowAll:()=>showAllSessions(),...mine,
     // The session panel's footer (S-09): Edit session first, then ⋯ (close or reopen, cover, staffing).
-    sessionActions:s=>draftData.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&!s.locked?{edit:()=>shiftForm(ctx(),draftData,s),
+    sessionActions:s=>!reading&&draftData.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&!s.locked?{edit:()=>shiftForm(ctx(),draftData,s),
       more:[{label:s.cancelled?'Reopen session':'Close session',icon:'close' as IconName,run:()=>sessionsHeld(draftData)?notify(onlyRotaCoordinator('close'),'info'):bulkImpactDialog(ctx(),draftData,[s.id],s.cancelled?'reopen':'cancel',()=>{})},
         ...(s.cancelled?[]:[{label:'Prepare automatic cover',icon:'people' as IconName,run:()=>bulkImpactDialog(ctx(),draftData,[s.id],'release_unavailable',()=>{})},
           {label:'Find staffing or replacement options',icon:'search' as IconName,run:()=>staffingDialog(ctx(),draftData,s)}])]}:undefined,
@@ -2759,12 +2839,19 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
   target.append(viewPanel);
-  // The window on screen until the whole rota lands (wholeRota): shown, not usable; then the page draws it whole.
-  // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it takes
-  // input once that read is in (D59: whole-rota work never runs on the window). Auto-schedule says so on itself.
+  // The window on screen until the whole rota lands (wholeRota): read-only, its writes held; then the page draws it whole.
+  // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it is read,
+  // paged and opened read-only meanwhile (D59: whole-rota work never runs on the window). Editing coming in is said once,
+  // politely. A failed read says so above the week with Retry: never a week left quietly half-loaded.
   // The whole rota read ahead (readAhead) may already be in: then nothing is read again.
-  if(partial(draftData)){windowOnScreen=true;viewPanel.inert=true;const id=w!.id,epoch=scheduleEpoch;
-    void (scheduleCache.drafts.has(id)?Promise.resolve():wholeRota(id,true).catch(e=>{throw rotaFailed(e);})).then(()=>true,e=>!sessionChanged(e)).then(again=>{if(again&&mySerial===renderSerial&&epoch===scheduleEpoch&&workspaceId===id&&view==='schedule')void redraw();});}
+  if(reading){windowOnScreen=true;viewPanel.dataset.reading='';viewPanel.setAttribute('aria-label',viewPanel.getAttribute('aria-label')+' · from the last check');
+    const id=w!.id,epoch=scheduleEpoch,here=()=>mySerial===renderSerial&&epoch===scheduleEpoch&&workspaceId===id&&view==='schedule';
+    const readWhole=():void=>void (scheduleCache.drafts.has(id)?Promise.resolve():wholeRota(id,true).catch(e=>{throw rotaFailed(e);})).then(
+      // Said once, politely, when the week can be edited: after its redraw, or at once when a page change is drawing it.
+      ()=>{const ready=()=>{if(draft&&view==='schedule'&&workspaceId===id)say('Ready to edit');};if(here())void redraw().then(ready);else ready();},
+      // A refusal or a rota gone (an ApiError rotaFailed keeps) is the page's to say, as before; a failed read is said here.
+      e=>{if(sessionChanged(e)||!here())return;if(e instanceof ApiError){void redraw();return;}const failed=readFailed('the whole rota',e,()=>{failed.remove();readWhole();});viewPanel.before(failed);wholeBusy?.remove();});
+    readWhole();}
   const nav=scheduleNav(rangeNow(),period,today,go,()=>planDay,viewDays.days,zone());
   let attention=-1,dayChanges=0;
   const phone=phoneQuery.matches;
@@ -2788,7 +2875,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
     const away=await myLeave().catch(()=>[] as Span[]);
     if(mySerial!==renderSerial)return;
-    visibleData.shifts=visibleData.shifts.map(s=>s.participants.some((p:Row)=>p.person_id===me!.person_id)&&away.some(a=>a.start<Date.parse(s.end)&&a.end>Date.parse(s.start))?{...s,leave_pending:true}:s);
+    visibleData.shifts=visibleData.shifts.map(s=>s.participants.some(p=>p.person_id===me!.person_id)&&away.some(a=>a.start<Date.parse(s.end)&&a.end>Date.parse(s.start))?{...s,leave_pending:true}:s);
   }
   if(sideBySide&&draftData){
     viewPanel.append(nav);
@@ -2974,6 +3061,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   scheduleSync=()=>tbar.sync();
   // Year draws day summaries: search and filters stay in their place, switched off, instead of vanishing (SR-10).
   if(schedView==='year'&&tbar.search){tbar.search.disabled=true;tbar.search.setAttribute('aria-label','Search sessions (not in Year)');tbar.sync();}
+  if(reading)for(const n of tbar.root.querySelectorAll<HTMLElement>('.dt-search-wrap :is(input,button),.dt-tool[aria-label^="Filter"],.add-session'))hold(n);
   const motion=viewKey!==lastView.key?'pv-enter':planDay>lastView.day?'pv-next':planDay<lastView.day?'pv-prev':'';
   if(motion)[...viewPanel.children].forEach(n=>n.classList.add(motion));
   Object.assign(lastView,{key:viewKey,day:planDay});
@@ -3037,7 +3125,7 @@ function filtersOf(p:Partial<PlannerSettings>|undefined):Record<string,string[]>
 }
 /** The Schedule's filters on its sessions: each field keeps any of its values (a place includes the places inside it;
  *  person facts (rank, programme, tag) are someone on the session's, on that day). */
-function filterSessions(list:Row[]){
+function filterSessions(list:PlannerSession[]){
   if(exportFound&&!exportFound.values.length)return [];  // a People search that finds nobody lists no session
   const own=joinFilter(schedFilters,schedConditions),tree=exportFound?{match:'all' as const,conditions:[...(own?[own]:[]),exportFound]}:own;if(!tree)return list;
   // A place holds its own id and every place it is inside ("Clinic A" keeps the rooms in it).
@@ -3048,7 +3136,7 @@ function filterSessions(list:Row[]){
   const facts=(kind:string,key:string)=>{const by=new Map<string,Row[]>();for(const m of rows(kind)){const own=by.get(m.person_id)||[];own.push(m);by.set(m.person_id,own);}
     return (person:string,day:string)=>(by.get(person)||[]).filter(m=>activeOn(m,day)).map(m=>m[key]);};
   const ranks=facts('memberships','category_id'),programmes=facts('programme_memberships','programme_id');
-  return list.filter(s=>{const day=toLocal(s.start,zone()).slice(0,10),ids=(s.participants as Row[]).map(p=>p.person_id as string);
+  return list.filter(s=>{const day=toLocal(s.start,zone()).slice(0,10),ids=s.participants.map(p=>p.person_id);
     // The same facts the server reads (schedule_view._schedule_holds); person facts are the person's on that day.
     const person=(field:string,id:string):unknown[]=>field==='person_ids'?[id]:field==='category_ids'?ranks(id,day):field==='programme_ids'?programmes(id,day):field==='tags'?tags.get(id)||[]:[];
     const own=(field:string):unknown[]=>field==='service_ids'?s.service_ids:field==='location_ids'?within(s.location_id):field==='assignment_type_ids'?[s.assignment_type_id]
@@ -3057,18 +3145,18 @@ function filterSessions(list:Row[]){
     return holdsForSomeone(tree,session,ids.map(id=>(field:string)=>[...own(field),...person(field,id)]));});
 }
 /** The search, for the renderers that do not filter by themselves (Timeline, Day). */
-function applyFilters(list:Row[]){
+function applyFilters(list:PlannerSession[]){
   return filterShifts(list,catalogues,{schema_version:1,mode:'week',search:schedSearch?'':searchText,location_id:null,assignment_type_id:null,person_id:null});
 }
 /** The session search with options (search.ts): over the sessions loaded for the days in view only, never a claim about
  *  other days (Schedule days have no server text search). Own text is the session's own (a closure reason); related
  *  are its duty type, place, clinics and people, each name on its own, or a picked one by id. */
-function searchSessions(list:Row[]){
+function searchSessions(list:PlannerSession[]){
   const m=schedView==='people'||!schedSearch?null:recordMatcher(searchText,schedSearch);if(!m)return list;
   const named=(kind:string)=>new Map(rows(kind).map(r=>[r.id,labelOf(r)])),places=named('locations'),clinics=named('services'),people=named('people');
   return list.filter(s=>m({own:()=>[s.cancellation_reason],id:s.id,
-    related:()=>[s.type_snapshot?.name,places.get(s.location_id),...(s.service_ids||[]).map((id:string)=>clinics.get(id)),...(s.participants||[]).map((x:Row)=>people.get(x.person_id))],
-    refs:()=>[s.assignment_type_id,s.location_id,...(s.service_ids||[]),...(s.participants||[]).map((x:Row)=>x.person_id)]}));
+    related:()=>[s.type_snapshot?.name,places.get(s.location_id),...(s.service_ids||[]).map((id:string)=>clinics.get(id)),...(s.participants||[]).map(x=>people.get(x.person_id))],
+    refs:()=>[s.assignment_type_id,s.location_id,...(s.service_ids||[]),...(s.participants||[]).map(x=>x.person_id)]}));
 }
 const merged=(list:Row[],extra?:Record<string,Row>)=>{if(!extra)return list;const have=new Set(list.map(r=>r.id));return [...list,...Object.values(extra).filter(r=>!have.has(r.id))];};
 /** Academic calendar entries in view: a labelled band above the People view (never behind an expander). */
@@ -3401,7 +3489,7 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   // A rota check changes nothing, so it runs at once when the stored one is outdated (the button reads "Checking…").
   if(w.validation?.fingerprint!==data.current_fingerprint&&w.status==='draft'){
     await command('workspace.validate',{reason:'Check before publishing'},w.id,w.revision);if(left())return;
-    data=await get<WorkspaceData>('/api/workspaces/'+w.id);w=data.workspace;}
+    data=await rotaWhole(w.id);w=data.workspace;}
   // A read that failed says so, with Retry, instead of the button going quiet (SW3-B-02).
   const read=await readRotaReview(data).catch(e=>{if(left()||sessionChanged(e))return null;
     notify(couldntLoad('the rota’s checks',e),'error',{label:'Retry',run:()=>publishDialog(data,opt)},e);return null;});
@@ -3626,7 +3714,7 @@ function fixActions(data:WorkspaceData,hints:FindingFixHint[]=[],done:()=>void,r
   if(!out.length&&!o.except)for(const id of rules.slice(0,2)){const rule=find('policies',id)?.name;if(rule)go(`Open ${rule}`,()=>void openRuleSource(id).catch(reportError));}
   return out;
 }
-const freshRota=(data:WorkspaceData)=>get<WorkspaceData>('/api/workspaces/'+data.workspace.id);
+const freshRota=(data:WorkspaceData)=>rotaWhole(data.workspace.id);
 /** "Add UCC sessions": the recurring-session form filled in from the cause (duty type, clinic, place, days, times and
  *  dates); once created, its sessions go into this draft through the usual reviewed Add recurring sessions. Someone
  *  who may not change recurring sessions (a coordinator) adds the same pattern to this rota only (patternSessions). */
@@ -3731,7 +3819,7 @@ function scoreCheckHooks(){
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
     choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
-    submit:(id:string)=>void get<WorkspaceData>('/api/workspaces/'+id).then(publishDialog).catch(reportError),
+    submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
     autoSchedule:(id:string)=>void rotaMeta(id).then(d=>autoSameSessions(id,d.workspace.revision))
       .then(r=>rotaMeta(r.workspace.id)).then(d=>openPaletteRota(d.workspace,true)).catch(reportError),
@@ -3984,7 +4072,8 @@ function rotaStatusPill(w:Row,outdated=false){
   // resubmitting", never also "Waiting for approval".
   const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
-  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'');
+  pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
+    +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
 }
 /** The Fix list's top bar (A1): the rota switcher (another rota's Fix list, or this rota's schedule), its stage, and the
@@ -4094,7 +4183,7 @@ function fixAction(c:FixCause,id:string,data:WorkspaceData|null){
     // A session pattern does not depend on whose check asked for it: the same pattern for two people is one choice.
     const seen=new Map((sc.prefills||[]).map(p=>[a.kind==='add_sessions'?JSON.stringify({...p,person_id:null}):JSON.stringify(p),p]));
     const hints=[...seen.values()].map(prefill=>({action:a.kind,prefill})) as FindingFixHint[];
-    void (data?Promise.resolve(data):get<WorkspaceData>('/api/workspaces/'+encodeURIComponent(id))).then(d=>{
+    void (data?Promise.resolve(data):rotaWhole(id)).then(d=>{
       if(hints.length===1&&a.kind==='add_sessions')return newSeries(d,hints[0].prefill);
       const person=hints.length===1?hints[0].prefill.person_id:sc.person_ids?.length===1?sc.person_ids[0]:'',row=person?find('people',person):undefined;
       if(a.kind==='open_eligibility'&&(row||!hints.length)){if(row)personDetails(row);else navigate('people');return;}
@@ -4102,7 +4191,7 @@ function fixAction(c:FixCause,id:string,data:WorkspaceData|null){
   // TYPE_VERSION_CHANGED (SCHEDULING bcf0c3a64): the sessions take their duty type's current settings, through the same
   // reviewed bulk step as the Schedule's "Refresh type versions" (its impact, then the armed confirm, then Undo).
   if((a.kind as string)==='refresh_sessions'){const ids=causeShifts(c);if(!ids.length)return;
-    void (data?Promise.resolve(data):get<WorkspaceData>('/api/workspaces/'+encodeURIComponent(id))).then(d=>bulkImpactDialog(ctx(),d,ids,'refresh_types',()=>{})).catch(reportError);return;}
+    void (data?Promise.resolve(data):rotaWhole(id)).then(d=>bulkImpactDialog(ctx(),d,ids,'refresh_types',()=>{})).catch(reportError);return;}
   if(a.kind==='open_line'||a.kind==='review_targets'){const l=c.rule_lines[0];if(l)void openRuleSource(l.rule_id).catch(reportError);else navigate('rules');return;}
   if(a.kind==='choose_cover'){const s=data?.shifts.find(x=>sc.shift_ids?.includes(x.id));
     if(s){workspaceId=id;draftNone=false;queueFill(id,s.id);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}else open();return;}
@@ -4365,15 +4454,15 @@ function swapDialog(data:WorkspaceData,firstId='',secondId=''){
   // Each assignment once, grouped by day for the shared searchable picker. With the first side given (a drop, or the chip's
   // Exchange with…), the second lists only that week's other sessions (SR-14), not every assignment in the rota.
   const day=(s:Row)=>toLocal(s.start,zone()).slice(0,10),js=((me!.organisation.week_start??6)+1)%7;
-  const from=data.shifts.find(s=>s.participants.some((p:Row)=>p.id===firstId));
+  const from=data.shifts.find(s=>s.participants.some(p=>p.id===firstId));
   const weekOf=(d:string)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()-js+7)%7);return x.toISOString().slice(0,10);};
   const options=(near:boolean)=>data.shifts.filter(s=>!s.context&&!isClosed(s)&&!s.locked&&(!near||!from||s.id!==from.id&&weekOf(day(s))===weekOf(day(from))))
-    .sort((a,b)=>String(a.start).localeCompare(String(b.start))).flatMap(s=>s.participants.map((p:Row)=>({value:p.id,label:`${name('people',p.person_id)} · ${formatDay(s.start,zone())} · ${s.type_snapshot.name} ${formatTime(s.start,zone())}`,group:formatDay(s.start,zone())})));
+    .sort((a,b)=>String(a.start).localeCompare(String(b.start))).flatMap(s=>s.participants.map(p=>({value:p.id,label:`${name('people',p.person_id)} · ${formatDay(s.start,zone())} · ${s.type_snapshot.name} ${formatTime(s.start,zone())}`,group:formatDay(s.start,zone())})));
   // OD-17: an optional note. The impact is worked out as soon as both sides are chosen (SI-23): one Save, no second step.
   formDialog('Exchange two assignments','',form=>{
     const a=select('First assignment',options(false),firstId),b=select('Second assignment',options(true),secondId),reason=routineNote();form.append(a.wrap,b.wrap);
     // The picked name's date and time are in its label (H-03): one person can be on several sessions that week.
-    const shiftOf=(id:string)=>data.shifts.find(s=>s.participants.some((p:Row)=>p.id===id))?.id;
+    const shiftOf=(id:string)=>data.shifts.find(s=>s.participants.some(p=>p.id===id))?.id;
     const save=draftImpact(form,ctx(),()=>({kind:'draft.swap',expected_revision:data.workspace.revision,payload:{workspace_id:data.workspace.id,first_assignment_id:a.input.value,second_assignment_id:b.input.value,reason:routineReason(reason.input.value)}}),true,
       ()=>[shiftOf(a.input.value),shiftOf(b.input.value)].filter(Boolean) as string[]);
     form.append(reason.wrap);
@@ -4531,7 +4620,7 @@ async function departmentSettingsPage(target:HTMLElement){
   const calendarChoices=choices(rows('operating_calendars').filter(r=>r.active!==false||r.id===calendarNow));
   const workCalendar=select('Working days for prorated targets',calendarChoices,calendarNow,false,'Department weekend days');
   // F-C4: a plain explanation, so contextual help beside the label (as Recurring sessions' dates), not a paragraph.
-  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included.'},icon('help')));
+  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included. Days a person is away (leave or absence) are not working days for them.'},icon('help')));
   // Swaps: who approves them and which steps run by themselves (a dedicated route is set up under Review routes).
   // The saved choice is always an option (also when it is no longer active or the routes could not be read) and is sent
   // only when changed, so saving an unrelated setting neither resets swaps to the rota review route nor fails on a retired one.
@@ -4971,9 +5060,17 @@ function inlineField(kind:string,fieldName:string,edit:Omit<EditSpec<Row>,'save'
   // The reply's records patch the list and the lists in memory in place (C-34); switching one on or off recounts the nav.
   return {...edit,value:edit.value||(r=>r[fieldName]),...(fieldName==='active'?{afterSave:recount}:{}),save:async(list,value)=>{
     const result=await command('catalogue.bulk_update',{catalogue:kind,items:list.map(r=>({id:r.id,revision:r.revision})),set:{[fieldName]:fieldName==='short_code'?String(value).toUpperCase():value},reason:'Inline edit'});
-    // The write reply is the bare record: its fields go onto the row in memory, which keeps what the read added
-    // (a person's current rank, programme, aliases) for the list and the next visit.
-    const byId=new Map((result.records as Row[]).map(r=>[r.id,r])),merge=(r:Row)=>byId.has(r.id)?{...r,...byId.get(r.id)}:r;
+    // Patch the saved fields while retaining the derived facts from the list read.
+    const byId=new Map((result.records as Row[]).map(r=>[r.id,r]));
+    const merge=(r:Row)=>{
+      const saved=byId.get(r.id);
+      if(!saved)return r;
+      if(kind!=='people')return {...r,...saved};
+      const {effective_active,...person}=saved;
+      // Older receipts carry only the configured flag. Preserve the list status when that flag did not change.
+      const active=effective_active??(person.active===(r.configured_active??r.active)?r.active:person.active);
+      return {...r,...person,configured_active:person.active,active};
+    };
     catalogues={...catalogues,[kind]:rows(kind).map(merge)};setTypeColours(rows('assignment_types'));setRankColours(rows('categories'));return list.map(merge);}};
 }
 const revisionsOf=(kind:string,ids:string[])=>rows(kind).filter(r=>ids.includes(r.id)).map(r=>({id:r.id,revision:r.revision}));
@@ -5014,7 +5111,7 @@ function peopleBulkActions(ids:string[]):BulkAction[]{
     // day), with the selected people already chosen; several people go through one bulk change with one Undo.
     ...(permits(CAPABILITY.COORDINATOR)?[{label:'Record leave',icon:'leave' as const,more:true,run:(i:string[],d:()=>void)=>formDialog(`Record leave for ${plural(i.length,'person','people')}`,'',form=>{
       const save=availabilityFields(ctx(),form,false,{person_ids:i});return async()=>{await save();d();};},'Record leave')}]:[]),
-    ...(picked.some(p=>p.active!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
+    ...(picked.some(p=>(p.configured_active??p.active)!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
     ...(picked.length&&picked.every(p=>p.active===false)&&permits(CAPABILITY.ADMIN)?[{label:'Remove personal details',icon:'trash' as const,danger:true,run:(i:string[],d:()=>void)=>confirmAction(`Remove personal details of ${plural(i.length,'former staff member')}`,'For people who have left. Their name, contact and staff details, private leave reasons and notes, calendar links and sign-in are removed for good; they appear as “Former staff member”. Rotas, publications and the audit log keep what they recorded.',async reason=>{await runBulk({collection:'people',noun:['person','people'],destructive:true,verb:'Remove details of',message:'Personal details removed for {n} people.',onDone:async()=>{d();await refresh();},
       body:{item_kind:'person.anonymise',items:i.map(id=>({target_id:id,expected_revision:picked.find(p=>p.id===id)!.revision})),reason}});},'Remove details')}]:[]),
   ];
@@ -5129,7 +5226,7 @@ async function peoplePage(target:HTMLElement){
       ...contact,
       ...(!full?[]:[{key:'status',label:'Status',field:'active',options:['Active','Inactive'],text:(p:Row)=>p.active===false?'Inactive':'Active',facet:(p:Row)=>p.active===false?'Inactive':'Active',
         cell:(p:Row)=>p.active===false?statusBadge('inactive','Inactive'):statusBadge('active','Active'),  // the one status palette (P-21)
-        edit:inlineField('people','active',{kind:'toggle',value:p=>p.active!==false})}]),
+        edit:inlineField('people','active',{kind:'toggle',value:p=>(p.configured_active??p.active)!==false})}]),
       // Details to review is for the people who can fix them (editors; credentialers for clinic eligibility).
       ...(manager||cred?[{key:'review',label:'Details to review',options:['Needs attention','Complete'],facet:(p:Row)=>of(p).gaps.length?'Needs attention':'Complete',sort:(p:Row)=>of(p).gaps.length,
         cell:(p:Row)=>of(p).gaps.length?pillList(of(p).gaps.map(([text,tip,tone])=>{const b=badge(text,tone);b.setAttribute('data-tip',tip);return b;}),{label:['detail to review','details to review']}):el('span',{class:'muted'},'Complete')}]:[]),
@@ -5386,7 +5483,7 @@ async function programmesPage(target:HTMLElement){
 function plannerShortcuts(data:WorkspaceData,t:MenuTarget,draft:boolean):MenuEntry[]{
   const c=ctx(),s=t.shift,person=t.person_id?rows('people').find(p=>p.id===t.person_id):undefined,out:MenuEntry[]=[];
   // First: the rules that apply to what was pointed at (pins the rules panel).
-  const rt:RuleTarget|null=person&&s?{kind:'assignment',person:person.id,shift:s.id,day:t.day,label:fullNameOf(person),sub:s.type_snapshot.name}:person?{kind:'person',person:person.id,label:fullNameOf(person),shifts:data.shifts.filter(x=>x.participants.some((p:Row)=>p.person_id===person.id)).map(x=>x.id)}
+  const rt:RuleTarget|null=person&&s?{kind:'assignment',person:person.id,shift:s.id,day:t.day,label:fullNameOf(person),sub:s.type_snapshot.name}:person?{kind:'person',person:person.id,label:fullNameOf(person),shifts:data.shifts.filter(x=>x.participants.some(p=>p.person_id===person.id)).map(x=>x.id)}
     :s&&t.shifts&&t.shifts.length>1?{kind:'row',type:s.assignment_type_id,location:s.location_id,label:s.type_snapshot.name,shifts:t.shifts.map(x=>x.id)}:s?{kind:'session',shift:s.id,label:s.type_snapshot.name}
     :t.day?{kind:'day',day:t.day,days:[t.day],label:dayTitle(t.day),shifts:(t.shifts||[]).map(x=>x.id)}:null;
   if(rt)out.push({label:'Rules that apply here',icon:'rules',hint:'Which rule wins, and change it',run:()=>pinRules(rt,'rules')});
@@ -5562,10 +5659,10 @@ const ruleDatesNode=(p:Row)=>dateUnits(ruleDateParts(p).map((part,i)=>(i?'– ':
 let draftMaps=new Map<string,Promise<RuleMap>>();
 const draftMap=(id:string)=>{let m=draftMaps.get(id);if(!m){m=get<RuleMap>(`/api/workspaces/${id}/rule-map`);draftMaps.set(id,m);}return m;};
 /** The drafts the Rules page reports on (newest first) and the one shown: the first covering today, else the draft open
- *  in Schedule, else the most recent, that has sessions. Once per visit; a rule sheet may
+ *  in Schedule, else the most recent. Once per visit; a rule sheet may
  *  switch it for the rest of the visit. Null: no draft, or a role that does not read rotas. */
 let draftChoice:Promise<{drafts:Row[];chosen:string}|null>|null=null;
-const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(async r=>{
+const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(r=>{
   const today=toLocal(new Date().toISOString(),zone()).slice(0,10);
   const drafts=r.workspaces.filter(w=>w.status==='draft').sort((a,b)=>String(b.starts_on).localeCompare(String(a.starts_on)));
   if(!drafts.length)return null;
@@ -5573,8 +5670,7 @@ const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY
   // draft open on the Schedule; then the others. An old amendment covering today says nothing about the lines planned.
   const planned=(w:Row)=>!w.base_publication_id&&today<w.ends_on,open=(w:Row)=>w.id===workspaceId;
   const order=[...drafts.filter(planned).reverse(),...drafts.filter(w=>!planned(w)&&open(w)),...drafts.filter(w=>!planned(w)&&!open(w))];
-  // shortcut: reads at most 3 drafts' rule maps to find one with sessions; past that, the first in order.
-  for(const w of order.slice(0,3))if((await draftMap(w.id).catch(()=>null))?.shifts.length)return {drafts,chosen:w.id};
+  // Chosen by order alone; no draft's rule map is read to choose (a rule page reads none until asked).
   return {drafts,chosen:order[0].id};}).catch(()=>null):Promise.resolve(null));
 /** People each rule reaches today (GET /api/policies/reach), kept between draws of the Rules page. */
 let reachNow:Record<string,number>={};
@@ -5586,26 +5682,39 @@ const sheetSection=(title:string,action:Child,...content:Child[])=>el('section',
  *  drafts the section's head switches between them. One section for the rule sheet and the catalogue rule page. */
 function draftHealth(policy:Row):HTMLElement{
   let health:HTMLElement=el('div',{class:'rl-health-slot',hidden:true});
-  const inDraft=(found:{drafts:Row[];chosen:string})=>void draftMap(found.chosen).then(map=>{
-    const entry=map.rules.find(r=>r.id===policy.id),draft=found.drafts.find(w=>w.id===found.chosen)!;
+  // A swap that removes the focused control (the pressed button) keeps the keyboard in place: on the new section's heading.
+  const swap=(next:HTMLElement)=>{const had=health.contains(document.activeElement);health.replaceWith(next);health=next;
+    const h=next.querySelector<HTMLElement>('h3');if(had&&h){h.tabIndex=-1;focusQuietly(h);}};
+  const draftOf=(found:{drafts:Row[];chosen:string})=>found.drafts.find(w=>w.id===found.chosen)!;
+  // On demand. The page shows which draft and one button; the draft's rule map and drift are read only when asked
+  // (they cost ~30 s at department scale, and a rule page must not read a draft by itself).
+  const offer=(found:{drafts:Row[];chosen:string})=>swap(sheetSection('In '+labelOf(draftOf(found)),
+    button('Show effect',()=>inDraft(found),'secondary small',{'aria-label':`Show effect in ${labelOf(draftOf(found))}`})));
+  const inDraft=(found:{drafts:Row[];chosen:string})=>{
+    swap(sheetSection('In '+labelOf(draftOf(found)),'',skeleton('lines',`Loading ${labelOf(draftOf(found))} effect…`)));
+    void draftMap(found.chosen).then(map=>{
+    const entry=map.rules.find(r=>r.id===policy.id),draft=draftOf(found);
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
-    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(
-      `${drift.changes.length} department change${drift.changes.length===1?'':'s'}`,
-      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',
-      {'aria-label':`${drift.changes.length} department change${drift.changes.length===1?'':'s'} since this draft was created`}):'';
-    if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
+    const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
+      ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
+    // Asked for: the loading section is always replaced by a result (never left loading), so only a closed page stops here.
+    if(!health.isConnected)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
     pick?.input.addEventListener('change',()=>{found.chosen=pick.input.value;inDraft(found);});
     const next=sheetSection('In '+labelOf(draft),el('div',{class:'rl-sec-actions'},driftAction,pick?.wrap||'',showOnPlanner([policy],true)||''),
       !map.shifts.length?el('p',{class:'hint'},'No duties yet.'):entry?healthStrip(entry,map.days,map.fresh,reachNow[policy.id]??null):el('p',{class:'hint'},'This rule is not checked in this draft.'));
-    health.replaceWith(next);health=next;}).catch(()=>{});
-  // Read once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
+    swap(next);}).catch(e=>{
+      // A failure stays in this section with the shared failure note and its Retry (the failed read is not kept).
+      draftMaps.delete(found.chosen);
+      if(alive(health))swap(sheetSection('In '+labelOf(draftOf(found)),'',readFailed(`${labelOf(draftOf(found))} effect`,e,()=>inDraft(found))));});};
+  // Offered once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
   // so the slot is awaited frame by frame. shortcut: gives up after ~10 s unattached (a page replaced before it showed).
-  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?inDraft(found):frames>0&&attached(found,frames-1));
-  void currentDrafts().then(found=>{if(found)attached(found);});
+  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?offer(found):frames>0&&attached(found,frames-1));
+  // Only an active rule is in a draft's map: a rule waiting for approval, retired or switched off keeps the hidden slot.
+  if(policy.status==='active'&&policy.active!==false)void currentDrafts().then(found=>{if(found)attached(found);});
   return health;
 }
 function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),review?:()=>unknown,position?:PanelPosition){
@@ -5622,7 +5731,7 @@ function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),r
         :d.fact?.person_id?button('Person quota or offer',()=>navigate(routeHash('people',[],{open:d.fact.person_id,tab:'facts',fact:d.id}).slice(1)),'link-button')
           :d.fact?.calendar_entry_id?button('Calendar protection',()=>{const entry=find('programme_calendar_entries',d.fact.calendar_entry_id);if(entry)calendarProtectionPanel(ctx(),entry);},'link-button'):'')
       ,button('Department proposal',()=>simplifyPanel(ctx(),refresh,policy._conversion_id),'link-button')));
-    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership, excluding external rotations. Whole sessions round ${rule.rounding}.`));
+    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership and the days a person is not away, excluding external rotations. Whole sessions round ${rule.rounding}.`));
     if(rule.supervisor_ids?.length)notes.push(note('Allocation preference applies with these named supervisors: '+rule.supervisor_ids.map((id:string)=>name('people',id)).join(', ')+'. Clinical supervision authority is checked separately.'));
     if(rule.leave_buffer_days)notes.push(note(`Applies only within ${rule.leave_buffer_days} calendar days before or after approved or recorded leave, on the selected weekdays. Private leave reasons are not disclosed.`));
     if(rule.kind==='allocation_preference'&&rule.balance_by&&rule.balance_by!=='none')notes.push(el('p',{},`${rule.balance_by==='service_mode'?`Target ${Math.round(rule.balance_target_share*10000)/100}% ${rule.balance_target_mode} duties`:`Prefer fewer ${rule.balance_by==='supervisor'?'duties with the same supervisor':rule.balance_by==='supervisor_group'?'duties with any selected supervisor':'matching duties'}`} per ${rule.balance_window==='rolling'?`${rule.balance_window_days} local days`:rule.balance_window==='rota'?'planning period':'configured calendar week'}. Balancing weight: ${rule.balance_weight}.`));
@@ -6874,7 +6983,7 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   // Use X: someone no rule stops (the schedule needed them elsewhere). Applies the proposal, checks X for the session
   // with the fill panel's own check, then adds X as an ordinary draft edit (Undo takes X off again).
   const use=(p:Row,shift:Row|undefined)=>{const free=(p.people||[]).find((x:Row)=>x.kind==='FREE');if(!o.panel||!o.editable||!shift||shift.locked||!free)return null;const who=name('people',free.person_id);
-    return button(`Apply, then add ${who}`,async()=>{await applyJob(job);const w=(await rotaMeta(job.workspace_id)).workspace,now=(await get<WorkspaceData>('/api/workspaces/'+w.id)).shifts.find(x=>x.id===shift.id)!;
+    return button(`Apply, then add ${who}`,async()=>{await applyJob(job);const w=(await rotaMeta(job.workspace_id)).workspace,now=(await rotaWhole(w.id)).shifts.find(x=>x.id===shift.id)!;
       const options=await fillOptions({workspace_id:w.id,shift_id:shift.id,expected_revision:w.revision});
       const c=options.candidates.find((x:Row)=>x.person_id===free.person_id);
       if(!c||c.status==='blocked'){await refresh();throw new Error(`The suggestions are applied, but ${who} can no longer take this session. Pick someone else.`);}
@@ -6985,8 +7094,10 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   if(fixed)return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?changed.nodes:[fixed.nodes[0]]),...fixed.nodes.slice(1),breaks,basicFact,clash,
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);}):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
+  // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
   return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
-    basicFact,resultMetrics(s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7028,7 +7139,7 @@ function runErrorNode(code:string,refusal:unknown,runId:string,close?:()=>void):
     e.action==='feedback'?el('div',{class:'actions'},button('Send feedback',()=>{close?.();openFeedback({error:`Reference: ${code}${runId?` · Run ${runId}`:''}`});},'secondary small')):'');
 }
 async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/'+job.id)).job;
-  const rota=await get<WorkspaceData>('/api/workspaces/'+result.workspace_id).catch(()=>null);
+  const rota=await rotaWhole(result.workspace_id).catch(()=>null);
   const currentDraft=!!rota&&rota.workspace.status==='draft'&&!rota.workspace.archived_at&&permits(CAPABILITY.COORDINATOR);
   const fits=rota?currency(result,rota.current_fingerprint):'unknown',editable=currentDraft&&currentGeneration(result,rota!);
   showDialog((result.kind==='validation'?TERMS.backgroundCheck:TERMS.autoSchedule)+(result.result?' results':' run details'),formatDate(result.created_at,zone())+' · '+formatTime(result.created_at,zone()),(body,close)=>{
@@ -7172,7 +7283,7 @@ async function appliedAnyway(jobId:string,e:unknown):Promise<typeof APPLY_CONFIR
   if(job?.status!=='applied')throw e;
   window.dispatchEvent(new CustomEvent('rota-saved',{detail:{kind:'generation.apply',result:APPLY_CONFIRMED}}));return APPLY_CONFIRMED;
 }
-let lastJobs:{id:string;jobs:Row;activity?:number|null}|null=null;
+let lastJobs:{id:string;jobs:Row;activity?:number|null;woke:number}|null=null;
 /** The rota and revision last read again because a run was applied after the draft on screen (SW3-A-05): once each. */
 let behindRead='';
 /** The rota's latest auto-schedule run left a proposal that still fits it (not applied, discarded or out of date). */
@@ -7226,8 +7337,8 @@ function markProposal(data:WorkspaceData){
 /** The rota's job list when it is not held yet (Resolve issues or Submit opened first): one read, failures say nothing. */
 async function readJobs(data:WorkspaceData){
   if(!permits(CAPABILITY.COORDINATOR)||data.workspace.status!=='draft'||lastJobs?.id===data.workspace.id&&lastJobs.activity===seenActivity)return;
-  const r=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(data.workspace.id)).catch(()=>null);
-  if(r)lastJobs={id:data.workspace.id,jobs:r,activity:seenActivity};
+  const woke=panelWakes,r=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(data.workspace.id)).catch(()=>null);
+  if(r)lastJobs={id:data.workspace.id,jobs:r,activity:seenActivity,woke};
 }
 /** Resolve issues and Submit: the waiting proposal said once above the issues, with its review. */
 const proposalNote=(data:WorkspaceData,done:()=>void=()=>{})=>proposalShown(data)?el('div',{class:'span-2 issues-cta proposal-note'},
@@ -7291,8 +7402,12 @@ function liveHooks(data:WorkspaceData){
 /** A count or duration with its words never split across lines ("took < 1 s", "630 changes ready"). */
 const unbroken=(text:string)=>text.replaceAll(' ',' ');
 let panelVisibility:(()=>void)|null=null;
+/** Returns to the tab, counted whichever panel (if any) owned the listener then. Each job-list read carries the count
+ *  from when it started (`woke`): one that started before a return may predate what changed, so no panel draws it. A read
+ *  started after a return never joins one started before it (readAfresh). */
+let panelWakes=0;document.addEventListener('visibilitychange',()=>{if(!document.hidden){panelWakes++;readAfresh();}});
 /** The open rota's job list, read alongside its sessions by the Schedule (renderSchedule) for the panel's first draw. */
-let jobsEarly:{id:string;read:Promise<Row|null>}|null=null;
+let jobsEarly:{id:string;read:Promise<Row|null>;woke:number}|null=null;
 const panelPulse=ownedListener('jobs-changed');
 let panelJob='',releasePanelJob:(()=>void)|null=null;
 function watchPanelJob(id:string){if(id===panelJob)return;releasePanelJob?.();panelJob=id;releasePanelJob=id?watchJob(id):null;}
@@ -7309,13 +7424,17 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // The panel's place shows its shape while the jobs are read, never an empty column (FD-03).
   const sk=skeleton('panel','Loading auto-schedule…');target.append(sk);
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
-  const handover=awaitAdoption(PEOPLE_POPOVER);
+  const peopleKey=peoplePopoverKey(w.id),handover=awaitAdoption(peopleKey);
   try{
-  const prefetched=jobsEarly?.id===w.id?jobsEarly.read:null;jobsEarly=null;
-  const initialJobs=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs.jobs:(prefetched&&await prefetched)||await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});
+  const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
+  const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
+  let firstWoke=reused?reused.woke:prefetched?prefetched.woke:panelWakes;
+  let initialJobs:Row|null=reused?reused.jobs:prefetched&&await prefetched.read;
+  if(!initialJobs){firstWoke=panelWakes;initialJobs=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});}
   if(serial!==renderSerial)return;
   const capability=initialJobs.generation_capability||{},cpSat=capability.engine==='cp_sat',maxDays=Number(capability.max_period_days)||31;
-  const defaults={...capability.default_options,...me!.department.generation_defaults} as GenerationOptions;
+  // An unissued rota runs with the settings captured with it; the rota's job list says them (else the department's).
+  const defaults={...capability.default_options,...('generation_defaults' in initialJobs?initialJobs.generation_defaults:me!.department.generation_defaults)} as GenerationOptions;
   const maxMinutes=Number(defaults.max_search_minutes)||AUTO_SCHEDULE_LIMITS.default_max_minutes;
   // A kept setup that no longer fits (a lower ceiling, other rota dates or clinics) falls back to the defaults.
   if(st().minutes!==undefined&&!(st().minutes!>=AUTO_SCHEDULE_LIMITS.minimum_minutes&&st().minutes!<=maxMinutes))st().minutes=undefined;
@@ -7376,7 +7495,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       button('Use the department setting',()=>{st().keep=undefined;keptSetup(st());syncGroup();},'link-button')]:[]));};
   const syncGroup=()=>{keep.input.checked=keeping();keep.input.disabled=grouped()&&!rebalanceGroup;groupNote.hidden=!st().group;syncKeep();
     groupNote.textContent=!st().group?'':keeping()?'Existing assignments stay as they are. Only these people are added.':'Only these people’s unlocked assignments may change. Everyone else’s stay.';};
-  const people=scopeCap?peopleToSchedule({fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
+  const people=scopeCap?peopleToSchedule({key:peopleKey,fields:ruleConditionFields(ctx()).filter(f=>scopeCap.fields.includes(f.key)),value:st().group,required:st().pickGroup,
     words:p=>conditionsSummary(p,namer(ctx()).label),onChange:(v,required)=>{Object.assign(st(),{group:v,pickGroup:required,scopeError:''});keptSetup(st());syncGroup();syncRun();}}):null;
   // A group asked for where the scheduler cannot take one: everyone only when chosen, never by itself.
   const noGroups:HTMLElement|null=!scopeCap&&grouped()?el('p',{class:'auto-stale',role:'status'},icon('alert'),'This scheduler cannot schedule only some people. ',
@@ -7552,7 +7671,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   const runWhy=el('span',{class:'grow muted auto-why',role:'status'});
   // Review maintenance: why Run (and Fill everything else) can't start, always in words; the scope's own words first.
   const runReason=()=>{if(runnable())return '';const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;
-    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:'Every session is locked, so there is nothing to fill.');};
+    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:live.length?'Every session is locked, so there is nothing to fill.':'This draft has no sessions, so there is nothing to fill.');};
   const syncRun=()=>{const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;disabledWhy(run,runReason(),[],runWhy);if(!run.disabled)runWhy.textContent=said;};
   autoRunSync=()=>{if(panel.isConnected)syncRun();else autoRunSync=null;};
   function drawStep(){
@@ -7568,9 +7687,13 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // it was run), Change goes back to setup.
     const line=(parts:(string|Node)[],open:()=>void,label='Change')=>{const change=el('button',{type:'button',class:'link-button','aria-expanded':step===1?String(st().editing):null},label);
       change.addEventListener('click',open);return el('div',{class:'rl-done'},el('span',{class:'grow'},...parts),change);};
-    body.replaceChildren(...(step===1?[line(fillSummary(),()=>{st().editing=!st().editing;drawStep();},st().editing?'Done':'Change'),...(staleNote?[el('p',{class:'auto-stale',role:'status'},icon('alert'),staleNote)]:[]),
-        ...setupNotes,...(st().editing?[fill]:[]),priorities,...(active||st().starting?[el('p',{},button('Show run',showRun,'link-button'))]:review||feedback.querySelector('.auto-outcome')?[el('p',{},button('Back to the result',()=>{st().step=3;drawStep();},'link-button'))]:[])]
-      :[line(review?reviewedSummary(review):[...fillSummary(),cpSat?` · ${presetName()}`:''],()=>{st().step=1;st().editing=true;drawStep();}),feedback,history]));
+    if(step===1)body.replaceChildren(line(fillSummary(),()=>{st().editing=!st().editing;drawStep();},st().editing?'Done':'Change'),...(staleNote?[el('p',{class:'auto-stale',role:'status'},icon('alert'),staleNote)]:[]),
+        ...setupNotes,...(st().editing?[fill]:[]),priorities,...(active||st().starting?[el('p',{},button('Show run',showRun,'link-button'))]:review||feedback.querySelector('.auto-outcome')?[el('p',{},button('Back to the result',()=>{st().step=3;drawStep();},'link-button'))]:[]));
+    else{
+      const summary=line(review?reviewedSummary(review):[...fillSummary(),cpSat?` · ${presetName()}`:''],()=>{st().step=1;st().editing=true;drawStep();});
+      if(feedback.parentNode===body)body.firstChild!.replaceWith(summary);
+      else body.replaceChildren(summary,feedback,history);
+    }
     // The footer holds the one next move: Run; for a proposal Apply (Discard is a quiet link); for a run that stopped
     // because some places cannot be filled, Fill everything else.
     const n=review?changeCount(review.result):0;
@@ -7600,6 +7723,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   if(panel.isConnected)trackStatusFooter(document.querySelector<HTMLElement>('.app-footer'));
   let timer:number|undefined;
   let jobsKey='',loads=0,wasRunning='',queuedPolls=0,polling=false,known=!!st().step;
+  let cancelRun:{job:Row;row:HTMLElement;spacer:HTMLElement}|undefined;
   // A refresh that failed keeps the result on screen under one line, Retry inside; Apply waits for a fresh read (G-46).
   const failed=(e:unknown)=>{if(sessionChanged(e)||!panel.isConnected)return;
     // Nothing shown yet: the panel's wait ends in the failure, with Retry, never in a skeleton left loading (DL-045).
@@ -7614,7 +7738,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Back on the tab with a run going: read it at once instead of waiting out a slower poll.
   // One listener at a time: a redrawn panel replaces the previous one's, so an old panel (and the page around it) is not
   // kept alive by a tab that never changes visibility (perf SC-01).
-  const onVisible=()=>{if(!panel.isConnected)return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
+  // A panel in the page still being built (alive) is the one that will show: it reads too, or the wake-up is lost.
+  const onVisible=()=>{if(!alive(panel))return;if(!document.hidden&&(polling||!target.hidden))void load().catch(failed);};
   if(panelVisibility)document.removeEventListener('visibilitychange',panelVisibility);
   panelVisibility=onVisible;document.addEventListener('visibilitychange',onVisible);
   // One polling chain: a newer load (panel opened, Retry, cancel) supersedes one still waiting for the server.
@@ -7631,7 +7756,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       review:()=>{st().open=true;st().step=3;target.hidden=false;document.querySelector('.auto-button')?.setAttribute('aria-expanded','true');jobsKey='';void load().catch(failed);},
       apply:editable&&changes&&currentGeneration(job,data)?async()=>{await applyJob(job);await refresh();}:null}:null);};
   // The live stream wakes a watched run at once (polling stays the fallback).
-  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(panel.isConnected&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
+  panelPulse(e=>{const ids=(e as CustomEvent<string[]|null>).detail;if(alive(panel)&&polling&&st().live&&!document.hidden&&(!ids||ids.includes(st().live)))void load().catch(failed);});
   const finishShown=liveFinisher(st(),finishLive);
   const liveRead=async(id:string):Promise<Row>=>{const status=(await get('/api/jobs/'+id+'/status?events=true')).job as Row,
     job=DONE_JOB.includes(status.status)?(await get('/api/jobs/'+id)).job as Row:status,list=lastJobs!.jobs;
@@ -7654,16 +7779,19 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
         if(continued.preparation_expired)notify('Cached preparation expired. This attempt rebuilds from your saved inputs.','info');await load();},'Continue');},tone,{'data-run-continue':''});
     more.input.addEventListener('input',()=>{st().resume={job:latest.id,minutes:String(more.value())};go.textContent=`Continue for ${said()}`;});
     return {more,go};};
-  const load=async(firstRead?:Row)=>{
-    window.clearTimeout(timer);const mine=++loads;
+  const load=async(firstRead?:Row,since=panelWakes):Promise<void>=>{
+    window.clearTimeout(timer);const mine=++loads,woke=firstRead?since:panelWakes;
     // Opened before anything was read: its skeleton shows while this read is on its way.
     if(!known&&!st().step&&!target.hidden&&!body.querySelector(':scope>.loading'))drawStep();
     // A run shown live is read on its own (its progress) while it goes, not the rota's whole job list every second;
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
-    const response:Row=firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id)));
+    const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
     if(gone()||mine!==loads)return;
-    lastJobs={id:w.id,jobs:response,activity:seenActivity};markProposal(data);
+    // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
+    // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
+    if(woke!==panelWakes)return load();
+    lastJobs={id:w.id,jobs:response,activity:seenActivity,woke};markProposal(data);
     const jobs:Row[]=response.jobs.filter((j:Row)=>j.kind!=='feasibility'),running:Row|undefined=response.jobs.find((j:Row)=>['queued','running'].includes(j.status));
     // Polled only while a run is queued or running (PL-03): every 3 s while it is watched, every 30 s while the panel is
     // closed or the tab hidden (so a finish is still said), a queued run backing off 3 → 10 → 30 s (restarted by your own
@@ -7685,14 +7813,16 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     watchPanelJob(liveRunning?.id||'');
     const searching=liveRunning?.status==='running';
     const watched=(!target.hidden||searching)&&!document.hidden,delay=!running?(watched?30000:0):!watched?30000:running.status==='queued'?[3000,10000,30000][Math.min(queuedPolls,3)-1]:searching&&Date.now()-streamSeen>=45_000?1000:3000;
-    if(delay)timer=window.setTimeout(()=>{if(panel.isConnected)void load().catch(failed);},delay);
+    if(delay)timer=window.setTimeout(()=>{if(alive(panel))void load().catch(failed);},delay);
     const compiler=response.generation_capability?.algorithm;
     const nextKey=JSON.stringify([jobs,running,compiler]);
     // A run that finishes while you work elsewhere (panel closed, another tab) says so once.
     // (The live view's finish card says it instead, when the run was shown on this schedule.)
     if(wasRunning&&!liveRunning&&(document.hidden||target.hidden&&!st().live))notify(`Auto-schedule finished for ${w.name}. Open Auto-schedule to review it.`,'info');
     if(liveRunning){st().live=liveRunning.id;const hooks=liveHooks(data);void ours(liveView()).then(m=>m.liveRun(liveRunning.id,hooks).update(liveRunning));}
-    else if(!running)finishShown();
+    // #1160: the run's own end ends its footer strip; a check beside it (or one a live read's kept list still shows
+    // running) never holds it on its last step.
+    else finishShown();
     wasRunning=liveRunning?.id||'';
     // A run shown live has its progress in the footer: no second "working" line over the schedule.
     // D76: only a run makes the panel busy; a check runs beside it (the server allows one run per draft, any checks).
@@ -7718,7 +7848,10 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     if(gone()||mine!==loads)return;
     // Focus inside the run's progress or result stays on the same control across this redraw (WCAG 2.4.3).
     const had=feedback.contains(document.activeElement)?document.activeElement:null,keep=had?focusSpot(feedback,had):null;
-    feedback.replaceChildren();history.replaceChildren();feedback.inert=history.inert=false;feedback.removeAttribute('aria-busy');review=null;continuation=null;shortfall=null;let latestRun:Row|null=null;
+    // Keep Cancel mounted for this run so a status update cannot take away the press or its confirmation.
+    if(cancelRun?.job.id!==liveRunning?.id)cancelRun=undefined;
+    for(const node of [...feedback.childNodes])if(node!==cancelRun?.row)node.remove();
+    history.replaceChildren();feedback.inert=history.inert=false;feedback.removeAttribute('aria-busy');review=null;continuation=null;shortfall=null;let latestRun:Row|null=null;
     if(liveRunning){const running=liveRunning;
       // F-12: a run seen while the panel is open never moves the step the person is on (its own Run already went to
       // Review & apply); only a panel opened on nothing goes straight to the run. Earlier steps offer Show run.
@@ -7728,31 +7861,41 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // SX-20 (SW-16): one clock — the progress below says the time; the head says only the state.
       sub.textContent=`${w.name} · ${running.status==='queued'?'queued':'running'}`;
       // Filling everything else: the first run's reasons stay above its progress (SR-26).
-      if(!checkingRules)feedback.append(...continuedNotes(!!running.diagnostic_proposal));
+      const progress=document.createDocumentFragment();
+      if(!checkingRules)progress.append(...continuedNotes(!!running.diagnostic_proposal));
       // Issues first: what the run's checks found before the search (job.progress.precheck_issues), at once.
-      feedback.append(earlyIssues(running));
+      progress.append(earlyIssues(running));
       // Queued: no claim that a worker is alive or how long it takes; cancelling is always safe (CA-07).
       if(running.status==='queued'){const ops=allowed('system')&&tabsFor('system').some(t=>t.key==='operations');
-        feedback.append(el('p',{class:'muted'},`Queued. Cancelling leaves the draft unchanged.${ops?' ':' If it stays queued, ask an operator to check the scheduler.'}`,
+        progress.append(el('p',{class:'muted'},`Queued. Cancelling leaves the draft unchanged.${ops?' ':' If it stays queued, ask an operator to check the scheduler.'}`,
           ops?el('a',{href:'#system/operations',class:'link-button'},'Scheduler status'):''));}
-      feedback.append(checkingRules?el('p',{role:'status'},running.status==='queued'?'Waiting to start…':`Checking rules · ${elapsed}s elapsed`):generationProgress(running,elapsed,running.diagnostic_proposal,phoneQuery.matches,defaults),
+      progress.append(checkingRules?el('p',{role:'status'},running.status==='queued'?'Waiting to start…':`Checking rules · ${elapsed}s elapsed`):generationProgress(running,elapsed,running.diagnostic_proposal,phoneQuery.matches,defaults),
         // maintenance: edits made meanwhile no longer end the run; the finished proposal is checked against them (A4).
         ...(!checkingRules&&running.status==='running'?[el('p',{class:'muted auto-keep-working'},'You can keep working. Edits are checked against the result when it finishes.')]:[]),
-        ...(checkingRules?[el('progress',{'aria-label':'Rule check in progress'})]:[]),
-        // D76: a queued run offers only Cancel; Stop and keep best and more time once its search is running. Owner (7 Nov
-        // 2026): Stop and keep best is the primary (it keeps the best schedule for review); Cancel discards, so it is the
-        // same-button armed confirm; each says what it does in its "?"; Add time only when minutes can be added.
-        !checkingRules&&cpSat?(()=>{const stopping=!!running.search_control?.stop,searching=running.status==='running'&&!GENERATION_SEARCH_FINISHED_STAGES.includes(running.progress?.stage);
+        ...(checkingRules?[el('progress',{'aria-label':'Rule check in progress'})]:[]));
+      feedback.prepend(progress);
+      // D76: a queued run offers only Cancel; Stop and keep best and more time once its search is running. Owner (7 Nov
+      // 2026): Stop and keep best is the primary (it keeps the best schedule for review); Cancel discards, so it is the
+      // same-button armed confirm; each says what it does in its "?"; Add time only when minutes can be added.
+      if(!checkingRules&&cpSat){
+          const stopping=!!running.search_control?.stop,searching=running.status==='running'&&!GENERATION_SEARCH_FINISHED_STAGES.includes(running.progress?.stage);
           const room=addTimeRoom(running,maxMinutes,Number(defaults.search_minutes)),step=addTimeStep((me!.department as Row).display_settings?.generation_controls,room);
           const stop=button(stopping?'Keeping the best result…':'Stop and keep best',()=>confirmAction('Stop and keep best','Finish with the best proposal found. If none is ready yet, you can continue from the saved inputs; preparation that had not finished runs again.',async reason=>{await command('job.stop_keep_best',{reason},running.id);queuedPolls=0;await load();},'Stop and keep best'),'primary',{disabled:!editable||stopping,why:!editable?TERMS.cannotChangeRota:TERMS.keepBestStopped,'data-run-stop':''});
           // How much time to add is chosen per press, up to the run's ceiling (job.add_time takes any bounded amount); the
           // suggested step is the department's (Configuration › Auto-schedule & scoring › Timing).
           const add=editable&&searching&&!stopping&&room>=AUTO_SCHEDULE_LIMITS.minimum_minutes?button(`Add ${duration(step*60)}`,()=>{const more=timeField('extension_minutes',step,{label:'Time to add',max:room});
               confirmAction('Add search time',`Give this search more time (up to ${duration(room*60)}). Preparation and final checks do not use this time.`,async reason=>{await command('job.add_time',{minutes:more.value(),reason},running.id);queuedPolls=0;await load();},'Add time',more.wrap);},'ghost'):'';
-          const cancel=armed(button('Cancel',async()=>{await command('job.cancel',{reason:'Cancelled from the Auto-schedule panel'},running.id,running.revision);await load();},'ghost run-cancel',{disabled:!editable,why:TERMS.cannotChangeRota,'data-run-stop':'','aria-label':'Cancel auto-schedule'}),'Discard this run?');
-          return el('div',{class:'actions auto-run-actions'},...(running.status==='queued'?[]:[stop,helpButton('About Stop and keep best','Ends the search now and keeps the best schedule found so far for you to review. Nothing changes until you apply it.'),add]),
-            el('span',{class:'grow'}),cancel,helpButton('About Cancel','Stops the run and discards it. The draft stays as it is.'));})()
-        :el('div',{class:'actions'},button(checkingRules?'Cancel check':'Cancel auto-schedule',()=>confirmAction(checkingRules?'Cancel check':'Cancel auto-schedule','Keep the draft unchanged and discard this job’s result.',async reason=>{await command('job.cancel',{reason},running.id,running.revision);await load();},'Confirm',undefined,true),'secondary',{'data-run-stop':''})));
+          if(!cancelRun){
+            const state={job:running,row:el('div',{class:'actions auto-run-actions'}),spacer:el('span',{class:'grow'})};
+            const cancel=armed(button('Cancel',async()=>{await command('job.cancel',{reason:'Cancelled from the Auto-schedule panel'},state.job.id,state.job.revision);await load();},'ghost run-cancel',{disabled:!editable,why:TERMS.cannotChangeRota,'data-run-stop':'','aria-label':'Cancel auto-schedule'}),'Discard this run?');
+            state.row.append(state.spacer,cancel,helpButton('About Cancel','Stops the run and discards it. The draft stays as it is.'));
+            cancelRun=state;
+          }
+          const {row,spacer}=cancelRun;cancelRun.job=running;
+          while(row.firstChild!==spacer)row.firstChild!.remove();
+          if(running.status!=='queued')spacer.before(stop,helpButton('About Stop and keep best','Ends the search now and keeps the best schedule found so far for you to review. Nothing changes until you apply it.'),...(add?[add]:[]));
+          if(row.parentNode!==feedback)feedback.append(row);
+      }else feedback.append(el('div',{class:'actions'},button(checkingRules?'Cancel check':'Cancel auto-schedule',()=>confirmAction(checkingRules?'Cancel check':'Cancel auto-schedule','Keep the draft unchanged and discard this job’s result.',async reason=>{await command('job.cancel',{reason},running.id,running.revision);await load();},'Confirm',undefined,true),'secondary',{'data-run-stop':''})));
     }else if(latestRead){
       const latest=latestRead;latestRun=latest;
       const result=latest.result;
@@ -7787,7 +7930,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       // Stopped, failed or ended early with a saved checkpoint (result.resume_available): the best found so far can be
       // reviewed and the search continued. A cancelled run keeps none (Cancel discards).
       const resumable=editable&&cpSat&&currentDraft&&!stale&&latest.currency!=='superseded'&&!discarded&&['succeeded','failed'].includes(latest.status)&&!!result?.resume_available
-        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&result?.search_stop?.reason!=='optimal'&&!canContinue;
+        &&!['needs_more_time','requirements_conflict'].includes(result?.status)&&!['optimal','model_proven'].includes(result?.search_stop?.reason)&&!canContinue;
       if(current&&result?.status==='needs_more_time'){
         feedback.append(outcome('neutral',text,GENERATION_RESUME_NOTE));
         if(editable&&cpSat){const {more,go}=resumeControls(latest,'primary');continuation=go;feedback.append(more.wrap);}
@@ -7888,9 +8031,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
           :button('Review',()=>inspectSchedulingJob(j),'ghost small',{'aria-label':`Review ${what} of ${stamp(j.created_at)}`}));})));
     jobsKey=nextKey;lastSchedulingBody={id:w.id,feedback:[...feedback.childNodes],history:[...history.childNodes]};
     known=true;drawStep();
-    if(keep)refocusSpot(feedback,keep);
+    if(keep&&document.activeElement!==had)refocusSpot(feedback,keep);
   };
-  await load(initialJobs);  // the jobs just read above: no second request
+  await load(initialJobs,firstWoke);  // the jobs just read above: no second request, unless back on the tab since
   // Opening the panel reads again; a failure says so in the panel (failed), not only in a toast over a skeleton.
   return ()=>load().catch(failed);
   }finally{handover();}
@@ -8342,6 +8485,16 @@ async function auditPage(target:HTMLElement){
   target.append(el('section',{class:'panel'},bar.root,list,pager),footerStatus(shown));draw();
 }
 
+/** Home's Self-approved decisions: the last 30 days the server lets this reader see (the department's, or their own).
+ *  A list, so it docks beside the page (DESIGN: lists are panels, not modals). */
+function selfApprovedPanel(){
+  dockPanel({key:'self-approved',title:'Self-approved decisions',build:({body})=>{
+    const load=()=>get(`/api/audit?self_approved=true&people=false&from=${addDays(departmentToday(),-30)}`).then(d=>{
+      body.replaceChildren(d.events.length?auditFeed(d.events):empty('No self-approved decisions','None in the last 30 days.',null,'history'));
+    },e=>{if(!sessionChanged(e))body.replaceChildren(failedNote(couldntLoad('the self-approved decisions',e),e,load));});
+    void load();}});
+}
+
 let polling=false;
 window.addEventListener('session-expired',e=>{const code=(e as CustomEvent).detail?.code;
   // Revoked access starts over; an ended session keeps the page for the same account (maintenance).
@@ -8559,7 +8712,7 @@ async function onPulse(given?:Row){
     const editing=editingNow();
     // F-L2: roles compared as sets, and never from a pulse without them (a restarting server): an unchanged account must
     // not rebuild the app and drop an open form. A real change waits while a form is being edited (the server refuses
-    // whatever the new roles no longer permit), then rebuilds.
+    // whatever the new roles no longer permit), then rebuilds and says why.
     const rolesChanged=Array.isArray(pulse.roles)&&JSON.stringify([...me.roles].sort())!==JSON.stringify([...pulse.roles].sort());
     const stale=!!changes?.length||key!==loadedKey||moved||!connected||redrawOwed||opsWatch;
     // Revision-keyed caches (schedule windows, academic time) see the new revisions without reading the account.
@@ -8572,8 +8725,11 @@ async function onPulse(given?:Row){
       else{adopt();seenActivity=pulse.activity;const scopes=new Set(changes.map(c=>c.scope));
         // The Schedule's own edit: its check, once it lands, reads the counts (autoCheck settle), as the redraw did before.
         if(!(ownPulse&&view==='schedule'&&plannerMemo)&&Object.values(BADGE_SOURCES).some(b=>b.live.some(s=>scopes.has(s))))void loadNavBadges(true,[],scopes);}}
-    if(rolesChanged&&readerBusy())hold(pulse);
-    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};document.querySelectorAll('dialog').forEach(d=>d.remove());await boot();}
+    // Any dialog holds it, open or not: the browser closes a dialog with unsaved changes by itself (a repeated Escape)
+    // and showDialog opens it again a task later, so a restart in that instant would drop it unsaid. Every app dialog
+    // is removed when it closes (showDialog, palette, the sign-in shade on resuming), so none holds it for ever.
+    if(rolesChanged&&(readerBusy()||document.querySelector('dialog')))hold(pulse);
+    else if(rolesChanged){deferredPulse=null;catalogues={people:[]};const was=me;await boot();if(me&&me!==was)notify('Your access changed.','info');}
     // Swaps and review routes redraw only when something moved (the activity counter covers swaps): an unconditional
     // redraw every 10 s took keyboard focus away. Operations follows the worker only while it has work (opsBusy);
     // imports run inside their command, so Imports redraws on a change like every other page.

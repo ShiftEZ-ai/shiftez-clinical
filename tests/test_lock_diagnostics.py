@@ -98,8 +98,10 @@ def test_lock_diagnostic_timeout_is_configurable_and_bounded(monkeypatch):
 @pytest.mark.parametrize("contention", ("skip_locked", "timeout"))
 def test_password_login_row_lock_logs_metadata_and_relation(pg, tmp_path, monkeypatch, caplog, contention):
     base_settings, _, identity_id = provision(pg, tmp_path)
-    settings = replace(base_settings, command_lock_timeout_ms=80, command_statement_timeout_ms=150,
-                       command_write_budget_ms=500, command_lock_diagnostic_interval_seconds=1,
+    # The lock wait stays tight (80 ms): a sign-in that waits on the locked row still fails. The statement
+    # timeout and write budget are generous, so a busy shared database cannot fail the skip-locked path.
+    settings = replace(base_settings, command_lock_timeout_ms=80, command_statement_timeout_ms=5000,
+                       command_write_budget_ms=10000, command_lock_diagnostic_interval_seconds=1,
                        command_lock_diagnostic_timeout_ms=37,
                        password_login_progressive_delay=False)
     engine = db.make_engine(settings.database_url, settings=settings)

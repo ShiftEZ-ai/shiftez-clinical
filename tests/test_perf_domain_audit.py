@@ -86,10 +86,10 @@ def test_indexed_fairness_days_and_blocks_keep_complete_reports():
 
 def test_fairness_dated_reads_do_not_rescan_other_people():
     data = department()
+    expected = dated_results(data)
     names = ('memberships', 'rotations', 'availability')
     for name in names:
         data[name] = CountedRows(data[name])
-    expected = dated_results(data)
     indexed = {**data, '_person_rows': index_person_rows(data)}
     # Building the request-local index visits each source row once.  The
     # department-scale fixture includes 150 people, 500 sessions and six years

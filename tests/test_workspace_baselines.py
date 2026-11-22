@@ -14,7 +14,7 @@ from apps.api.snapshots import currency_hint, domain_snapshot, fingerprint, fing
 from apps.api.snapshots import snapshot_inputs
 from apps.api.workspace_baselines import _diff, _strictest_policy, live_safety_inputs, latest, projection, verify, verify_generation_snapshot
 from packages.contracts.rule_catalogue import RULE_CATALOGUE, _V2_ENTRIES
-from packages.contracts.schemas import NEVER_OVERRIDDEN, PolicyDefinition, SAFETY_STRICTNESS, safety_merge_policy
+from packages.contracts.schemas import GenerationOptions, NEVER_OVERRIDDEN, PolicyDefinition, SAFETY_STRICTNESS, safety_merge_policy
 
 
 def test_workspace_create_captures_baseline_and_freezes_evaluation(h):
@@ -32,14 +32,18 @@ def test_workspace_create_captures_baseline_and_freezes_evaluation(h):
         assert row.payload_hash == baseline["snapshot_hash"]
         old_policy = db.scalar(select(m.Policy).where(m.Policy.status == "active"))
         old_definition = deepcopy(old_policy.definition)
-        old_policy.definition = {**old_policy.definition, "scope": {"person_ids": ["changed-after-capture"]}}
+        new_definition = {**old_definition, "scope": {"person_ids": [h.seed["people"][0]]}}
+        old_policy.definition = new_definition
         old_policy.revision += 1
         db.get(m.Organisation, h.seed["organisation_id"]).input_revision += 1
         baseline_id = row.id
+        frozen = next(item for item in verify(row)["policies"] if item["id"] == old_policy.id)
+        assert frozen["definition"] == old_definition
 
-    snapshot = h.snapshot(workspace)
-    frozen = next(item for item in snapshot["policies"] if item["id"] == old_policy.id)
-    assert frozen["definition"] == old_definition
+    # A draft check evaluates the current revision against its immutable capture.
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace["id"]), mandatory_rules=True)
+    assert [item["definition"] for item in snapshot["policies"] if item["id"] == old_policy.id] == [new_definition]
 
     with pytest.raises(DatabaseError, match="immutable workspace baseline"):
         with h.app.state.engine.begin() as db:
@@ -546,16 +550,28 @@ def test_baseline_freezes_settings_but_keeps_department_row_live(h):
     assert snapshot["department"]["weekend_days"] == [0, 1]
     assert snapshot["department"]["operating_calendar_id"] == calendar_id
     assert snapshot["department"]["name"] == "Live department name"
-    assert snapshot["department"]["generation_defaults"]["scoring"]["wish_debt_cap"] == 7
+    # Captured generation defaults are exposed alongside the captured display settings.
+    assert snapshot["department"]["generation_defaults"] == frozen
+    assert snapshot["department"]["generation_defaults"]["scoring"]["wish_debt_cap"] == 2
     with transaction(h.app.state.engine) as db:
         from apps.api.serialization import record
         from apps.api.services.jobs import baseline_generation_context
         workspace = db.get(m.Workspace, draft["id"])
-        assert snapshot["department"] == record(db.get(m.Department, workspace.department_id))
+        assert snapshot["department"] == {**record(db.get(m.Department, workspace.department_id)),
+            "generation_defaults": before["department"]["generation_defaults"],
+            "display_settings": before["department"]["display_settings"]}
         defaults, _ = baseline_generation_context(db, workspace)
         assert defaults.scoring.wish_debt_cap == frozen["scoring"]["wish_debt_cap"]
         assert domain_snapshot(db, workspace, operational=True)["generation_options"] == frozen
-        assert domain_snapshot(db, workspace, current_scheduling=True)["generation_options"]["scoring"]["wish_debt_cap"] == 7
+        current = domain_snapshot(db, workspace, current_scheduling=True)
+        assert current["generation_options"]["scoring"]["wish_debt_cap"] == 7
+        assert current["department"]["generation_defaults"] == current["generation_options"]
+        goals = domain_snapshot(db, workspace, current_goals=True)
+        assert goals["department"]["generation_defaults"] == goals["generation_options"] == frozen
+        assert goals["fairness_strengths"] == snapshot["fairness_strengths"]
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Workspace, draft["id"]).status = "submitted"
+    assert h.snapshot(draft)["department"]["generation_defaults"] == frozen
 
 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
@@ -569,7 +585,11 @@ def test_legacy_draft_settings_follow_live_department(h):
         db.flush()
         draft = {"id": workspace.id}
         db.get(m.Department, h.seed["department_id"]).generation_defaults = {"scoring": {"wish_debt_cap": 7}}
-    assert h.snapshot(draft)["generation_options"]["scoring"]["wish_debt_cap"] == 7
+    options = h.snapshot(draft)["generation_options"]
+    assert options["scoring"]["wish_debt_cap"] == 7
+    assert h.get("coordinator", f"/api/jobs?workspace_id={draft['id']}")["generation_defaults"] == options
+    with transaction(h.app.state.engine) as db:
+        assert domain_snapshot(db, db.get(m.Workspace, draft["id"]), current_goals=True)["generation_options"] == options
 
 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
@@ -668,4 +688,5 @@ def test_deferred_generation_keeps_frozen_display_and_score_settings(h):
         assert snapshot["autoschedule_animation"]["mode"] == "off"
         assert snapshot["generation_options"]["scoring"]["wish_debt_cap"] == 2
         assert snapshot["generation_defaults"]["scoring"]["wish_debt_cap"] == 2
+        assert GenerationOptions.model_validate(snapshot["department"]["generation_defaults"]).model_dump(mode="json") == snapshot["generation_options"]
         assert snapshot["department"]["weekend_days"] == [0, 1]

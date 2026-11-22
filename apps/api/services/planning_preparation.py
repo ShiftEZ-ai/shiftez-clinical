@@ -1,4 +1,5 @@
 """Rolled-back planning preparation; only exact current evidence may replay under the writer lock."""
+import pickle
 from copy import deepcopy
 from uuid import NAMESPACE_URL, uuid5
 
@@ -34,30 +35,42 @@ def bind(db, plan, *, replay=False):
                                        'inputs': plan.setdefault('inputs', {}),
                                        'input_tokens': plan.setdefault('input_tokens', {}),
                                        'validation_baselines': plan.setdefault('validation_baselines', {}),
-                                       'next_id': 0, 'next_check': 0, 'replay': replay}
+                                       'validation_scopes': plan.setdefault('validation_scopes', {}),
+                                       'prepared_snapshots': plan.setdefault('prepared_snapshots', {}),
+                                       'summary_cache': plan.setdefault('summary_cache', {}),
+                                       'next_snapshot': 0,
+                                       'pending_checks': [], 'next_id': 0, 'next_check': 0, 'replay': replay}
     def assign_id(_db, row):
         if isinstance(row, m.Workspace) and row.id is None:
             row.id = command_id(db)
     event.listen(db, 'after_attach', assign_id)
 
 
-def command_compute(db, kind, data, compute, *, options=None, final=False):
+def command_compute(db, kind, data, compute, *, options=None, final=False, input_token=None, defer=False,
+                    refresh_on_replay=False):
     state = db.info.get('_planning_preparation')
     if state is None:
         return compute()
     partial = data.get('_partial')
-    key = snapshot_hash({'kind': kind, 'manifest': manifest(data)['token'], 'focus': sorted(data['focus_ids']),
+    key = snapshot_hash({'kind': kind, 'manifest': input_token or manifest(data)['token'], 'focus': sorted(data['focus_ids']),
         'options': options, 'quota_subjects': sorted(data['quota_subjects']) if 'quota_subjects' in data else None,
         'partial': {**{k: sorted(partial[k]) for k in ('shifts', 'people')},
                     'complete': partial.get('complete'), 'previous': partial.get('previous')} if partial else None})
     index = state['next_check']
     state['next_check'] += 1
-    if index == len(state['checks']) and not state['replay']:
-        raise ComputePreparation(key, compute, final=final)
-    require(index < len(state['checks']) and key == state['checks'][index][0], 'STALE_INPUTS',
+    if index == len(state['checks']) + len(state['pending_checks']) and not state['replay']:
+        if defer:
+            state['pending_checks'].append((key, compute))
+            return None
+        raise ComputePreparation(key, compute, final=final, pending=state['pending_checks'])
+    current = index < len(state['checks']) and key == state['checks'][index][0]
+    if state['replay'] and refresh_on_replay and not current:
+        return compute()
+    require(current, 'STALE_INPUTS',
             'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again', 409,
             {'recoverable': True})
-    return deepcopy(state['checks'][index][1])
+    computed = state['checks'][index][1]
+    return pickle.loads(computed) if state.get('kind') == 'shift.update' else deepcopy(computed)
 
 
 def command_evaluate(db, data, **kwargs):
@@ -68,8 +81,8 @@ def command_evaluate(db, data, **kwargs):
 
 
 class ComputePreparation(Exception):
-    def __init__(self, key, compute, *, final=False):
-        self.key, self.compute, self.final = key, compute, final
+    def __init__(self, key, compute, *, final=False, pending=()):
+        self.key, self.compute, self.final, self.pending = key, compute, final, pending
 
 
 class RollbackPreparation(Exception):

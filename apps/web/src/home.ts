@@ -3,6 +3,7 @@ import {skeleton,swap} from './loading.js';
 import {needRow,nameWords,el,grants,button,iconButton,badge,popover,menuItem,area,formDialog,notify,icon,statusBadge,empty,emptyLine,note,sectionHead,footerStatus,legend,formatDate,toLocal,formatTime,formatDay,plural,withIcon,colourOf,table,type Child,type Legend,type BadgeTone,needText,needCount,CAPABILITY} from './dom.js';
 import {refused,ROLE_REFUSED,alive,readFailed} from './dom.js';  // a refused read is the role's (maintenance)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
+import {rotaOutdated,statusLabel} from './dom.js';  // one rota verdict
 import {openFiltered} from './table_view.js';
 import {setupSteps,missingSetupWords,stepDone,setupCounts} from './setup_guide.js';
 import {workspaceForm,type Context} from './forms.js';
@@ -33,6 +34,8 @@ export interface HomeHooks {
   openCatalogue:(kind:string)=>void;
   /** Plain words for an audit action (the audit log's own wording). */
   auditWords:(action:string,n:number)=>{chip:string;verb:string;what:string;colour:string};
+  /** The self-approved decisions this reader may see (the department's for audit readers, else their own), in the audit log's words. */
+  selfApproved:()=>void;
   /** The calendar subscription panel (Insights › Exports has the same one). */
   subscription:()=>Promise<HTMLElement>;
   /** False once another page render started (a late reply must not touch the new page's title). */
@@ -338,7 +341,7 @@ export function needsOf(ctx:Context,hooks:HomeHooks,home:HomeData):Need[]{
       case 'ready_to_submit':row={tone:'draft',title:'Ready to submit',...open('Open')};break;
       case 'in_review':row={tone:'info',title:'In review',...open('Open')};break;
       case 'rotations_soon':row={tone:'info',title:s(n,'Rotation changing','Rotations changing'),action:'Open',go:()=>ctx.navigate('programmes'),context:'Starts or ends in the next 2 weeks'};break;
-      case 'self_approved':row={tone:'info',title:s(n,'Self-approved decision','Self-approved decisions'),action:'Open',go:()=>ctx.navigate('system/audit'),context:'In the last 30 days'};break;
+      case 'self_approved':row={tone:'info',title:s(n,'Self-approved decision','Self-approved decisions'),action:'Open',go:hooks.selfApproved,context:'In the last 30 days'};break;
     }
     if(row)out.push({...row,count:n,key:i.key});  // an unknown key (an older client) is skipped
   }
@@ -434,7 +437,7 @@ function rotaStrip(ctx:Context,today:string,say:(text:string)=>void){
       if(start<=today&&today<end){const mark=el('span',{class:'home-now',title:'Today, '+shortDay(today)});mark.style.setProperty('--at',`${((Date.parse(today)-Date.parse(start))/864e5+.5)/length*100}%`);bar.append(mark);}
       let word:string,action:HTMLElement|string='',state:HTMLElement|string='';
       const pubWord=shown===length?'Published':shown?'Published '+ranges.map(([a,b])=>leaveDates({type:'',starts_on:a,ends_on:b})).join(', '):'';
-      const stateWord=(w:Row)=>w.status==='draft'?(pubWord?'draft':'Draft'):w.status==='submitted'?'In review':'Approved';
+      const stateWord=(w:Row)=>w.status==='draft'?(pubWord?'draft':'Draft'):rotaOutdated(w)?statusLabel('outdated'):w.status==='submitted'?'In review':'Approved';  // the list's server verdict
       if(draft){
         word=[pubWord,stateWord(draft),String(draft.name||'')+(drafts.length>1?` +${plural(drafts.length-1,'draft')}`:''),
           pct!==null?`${pct}% filled`:coordinator&&!(draft.health?.fresh&&draft.health.summary)?'':noPercent(draft)].filter(Boolean).join(' · ');

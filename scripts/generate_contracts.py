@@ -10,7 +10,7 @@ from packages.contracts import schemas as s
 
 ROOT = Path(__file__).resolve().parents[1]
 CLASSES = [s.DisplaySettingsRestore, s.PersonPropertiesInput, s.ContactTypeInput, s.PersonContactInput, s.PersonCard, s.PlanningGroupInput, s.PlanningSettingsInput, s.PlanningRollback, s.ScoreSettingsInput, s.ScoreSettingsRollback, s.ScoreReview, s.LegacyLeadCheckInput, s.JobRecovery, s.LeadContextInput, s.LeadContext, s.Me, s.RuleCheckComparison, s.PolicyActivationDecision, s.JobInput, s.JobCancelInput, s.GenerationExtension, s.JobTimeInput, s.GenerationContinue, s.JobResult, s.GenerationApply, s.ImportPreview, s.ImportApply, s.ImportRefresh, s.StaffImportPreview, s.StaffImportReview, s.StaffAccessBulkInput, s.CreatedUndo, s.ReferenceRotaPreview, s.DepartmentSettingsInput, s.StaffingSuggestionsInput, s.FillOptionsInput, s.FillOptionsResult, s.WhyInput, s.IssueBatch, s.IssuePreviewInput, s.ExceptionBatch, s.CategoryInput, s.DisplaySettingsInput, s.SeriesReconcile, s.SeriesExpand, s.OperatingCalendarInput, s.ResourcePoolInput, s.ResourceRequirement, s.PlannerViewInput, s.PlannerViewDefinition, s.PlannerViewSettings, s.FairnessViewSettings, s.RulesViewSettings, s.AssignmentTypeInput, s.PolicyInput, s.SeriesInput, s.ShiftInput, s.Command,
-           s.LivePulse, s.WorkspaceCompactDetail, s.WorkspacePartQuery, s.WorkspacePartPage,
+           s.LivePulse, s.ScheduleSession, s.WorkspaceCompactDetail, s.WorkspacePartQuery, s.WorkspacePartPage,
            s.DraftEditDelta,
            s.MembershipInput, s.ProgrammeMembershipInput, s.ProgrammeCalendarInput, s.MentorshipInput, s.RotationInput, s.EligibilityInput, s.GrantInput, s.AvailabilityInput,
            s.RotationBoard, s.RotationBlock, s.RotationTemplateInput, s.RotationPlanInput, s.RotationCopyInput, s.RotationRemoveInput,
@@ -149,6 +149,8 @@ def render():
     # The release this web bundle is built from (apps/api/version.py): About Rota compares it with the running API.
     from apps.api.version import __version__
     content += "\nexport const APP_VERSION = " + json.dumps(__version__) + ";\n"
+    content += "export type WorkspaceDetailView = " + ts(TypeAdapter(s.WorkspaceDetailView).json_schema()) + ";\n"
+    content += "export const SCHEDULE_DETAIL_FIELDS = " + json.dumps(s.SCHEDULE_DETAIL_FIELDS) + " as const;\n"
     content += "export const ROLE_NAMES = " + json.dumps(list(s.ROLE_NAMES)) + " as const;\n"
     content += "export type JobCurrency = " + " | ".join(json.dumps(value) for value in typing.get_args(s.JobCurrency)) + ";\n"
     content += "export const RUN_SUPERSEDED = " + json.dumps(s.RUN_SUPERSEDED) + " as const;\n"
@@ -198,6 +200,7 @@ def render():
                          'integer': info.annotation is int}
         return out
     content += "export const WISH_PRIORITY_FIELDS = " + json.dumps(described(s.ScoringSettings, ('wish_priority_decay', 'wish_granted_credit', 'wish_history_periods'))) + " as const;\n"
+    content += "export const GENERATION_FILL_FIELDS = " + json.dumps(described(s.GenerationOptions, ('fill_tier_time_share',))) + " as const;\n"
     # A run's stop conditions (Stop when: Configuration › Timing and one run): words, defaults and bounds; the words for
     # each conflict choice and each reason a search stopped.
     content += "export const GENERATION_STOP_FIELDS = " + json.dumps(described(s.GenerationOptions, ('stop_without_improvement_seconds', 'target_gap_percent', 'target_score', 'stop_by', 'on_conflict'))) + " as const;\n"

@@ -223,12 +223,14 @@ def test_pending_replacement_in_the_same_batch_blocks_fact_undo(h):
 
 def test_bulk_replacement_approval_keeps_the_independent_reviewer_check(h):
     previous = chain(h, 1)[0]
-    replacement = replace(h, previous, 4)
     with transaction(h.app.state.engine, write=True) as db:
-        db.add(m.RoleBinding(identity_id=h.seed['identities']['coordinator'],
+        reviewer = h.seed['identities']['coordinator']
+        db.get(m.Identity, reviewer).person_id = previous['person_id']
+        db.add(m.RoleBinding(identity_id=reviewer,
             department_id=h.seed['department_id'], role='approver', starts_on=date(2020, 1, 1)))
+    replacement = replace(h, previous, 4)
     body = {'item_kind': 'person.workload.activate', 'items': [{'target_id': replacement['id'],
-        'expected_revision': replacement['revision']}], 'reason': 'The proposer cannot approve this replacement'}
+        'expected_revision': replacement['revision']}], 'reason': 'The subject needs permission to approve this replacement'}
     check = preview(h, 'coordinator', body)
     assert check['items'][0]['issues'][0]['code'] == 'SELF_APPROVAL'
     before = state(h)

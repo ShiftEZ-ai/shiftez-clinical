@@ -15,8 +15,8 @@ from packages.contracts.rule_catalogue import GREEDY_NOT_APPLIED
 from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
-from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
-from .validation import participation_for, trainee_intervals, named_people, session_matches, person_free
+from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified, person_active_for_interval
+from .validation import coverage_boundary_inputs, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
 from .supervision_levelling import levelled_order, session_spread_policies
@@ -25,7 +25,7 @@ from .recurrence import inactive, with_series_state, usual_assignee_fixed, serie
 from .fill_priority import STAGE_ORDER
 
 # 43: reject proposals that introduce or worsen missing supervision.
-ALGORITHM_VERSION = "bounded-greedy-43"
+ALGORITHM_VERSION = "bounded-greedy-44"
 # Person-level errors that only the person's own duties decide (overlap, rest, travel, transitions, hours and duty limits).
 OWN_DUTY_CODES = {'TIME_OVERLAP', 'MIN_REST', 'TRAVEL_BUFFER', 'FORBIDDEN_TRANSITION', 'MAX_HOURS', 'MAX_DUTIES',
                   'CONSECUTIVE_DAYS', 'CONSECUTIVE_WEEKENDS'}
@@ -38,7 +38,7 @@ MANIFEST = {
     "max_sessions": 1500, "max_people": 500, "max_period_days": 31,
     "preserves_locked_assignments": True,
     "automatic_unavailability_repair": True,
-    "redistribution": "One gap-first rebuild; repair may move unlocked draft assignments only when validated deficits decrease.",
+    "redistribution": "One gap-first rebuild, then a bounded CP-SAT required-cover repair. Mandatory constraints remain blocking.",
     "quota_support": "Mandatory minima and advisory targets guide additions; mandatory maxima and safety constraints remain blocking. No optimality guarantee.",
     "capacity_overflow": "Normal capacity is attempted first; only explicitly permitted ranks can consume extra places, with visible warnings.",
     "auto_publish": False, "optimality_claim": "none",
@@ -103,6 +103,11 @@ def coverage_findings(validation):
     for finding in finding_observations(validation):
         if finding['code'] in COVERAGE_CODES:
             yield finding
+
+
+def unmet_requirements(validation):
+    return [*coverage_findings(validation), *[f for f in finding_observations(validation)
+            if f['code'] in {'QUOTA_BELOW_MINIMUM', 'QUOTA_BELOW_TARGET'}]]
 
 
 def preference_window(data, policy, shift):
@@ -217,14 +222,96 @@ def allocation_weight(policy, strengths):
 
 
 def overtime_cap_ids(data):
-    """Required overtime limits in force, including the source names retained by grouped rules."""
-    if '_overtime_cap_ids' in data:
-        return data['_overtime_cap_ids']
-    caps = [p for p in data['policies'] if p['status'] == 'active' and p.get('active', True)
-            and (p['definition']['rule']['kind'] == 'block_quota' and p['definition']['rule']['comparison'] in {'maximum', 'range'}
-                 or p['definition']['rule']['kind'] in {'forbidden_transition', 'max_consecutive_weekends'})
-            and p['definition']['severity'] == 'mandatory']
-    return {p['id'] for p in caps} | {i for p in caps for i in p['definition'].get('merged_ids') or []}
+    """Required overtime limits in force, resolved without mutating caller-owned input."""
+    policies = data.get('policies') or []
+
+    from .rule_lines import expand
+    from packages.contracts.rule_catalogue import CATALOGUE_MAPPING
+
+    def is_cap(policy):
+        rule, definition = policy['definition']['rule'], policy['definition']
+        return (policy.get('status') == 'active' and policy.get('active', True)
+                and definition.get('severity') == 'mandatory'
+                and (rule['kind'] == 'block_quota' and rule.get('comparison') in {'maximum', 'range'}
+                     or rule['kind'] in {'forbidden_transition', 'max_consecutive_weekends'}))
+
+    originals = list((data.get('_overtime_originals') or {}).values()) or list(policies)
+    if data.get('_overtime_originals'):
+        resolved = policies
+    else:
+        local = {**data, 'policies': list(originals)}
+        resolved = active_rules(list(originals), context=local)
+    rows = originals
+    by_id = {p['id']: p for p in rows}
+    by_catalogue = defaultdict(list)
+    catalogue_by_source = defaultdict(set)
+
+    def lineage_row(policy):
+        return ((policy.get('status') == 'active' and policy.get('active', True))
+                or (policy.get('status') == 'retired' and policy.get('approved_by')))
+
+    def add_catalogue_lineage(key, ident):
+        if not ident:
+            return
+        policy = by_id.get(ident)
+        if policy is not None and lineage_row(policy):
+            by_catalogue[key].append(ident)
+
+    for policy in rows:
+        rule = policy.get('definition', {}).get('rule', {})
+        if rule.get('kind') == 'catalogue' and lineage_row(policy):
+            by_catalogue[(policy.get('department_id'), rule.get('id'))].append(policy['id'])
+    for binding in data.get('source_bindings') or []:
+        binding = binding.get('data', binding)
+        source = binding.get('source') or {}
+        source_rule = (source.get('definition') or {}).get('rule') or {}
+        source_catalogue_id = binding.get('source_catalogue_id') or source_rule.get('id')
+        entry_id = CATALOGUE_MAPPING.get(source_catalogue_id, source_catalogue_id)
+        if not entry_id:
+            continue
+        department_id = binding.get('department_id') or source.get('department_id')
+        key = (department_id, entry_id)
+        if binding.get('source_policy_id'):
+            catalogue_by_source[binding['source_policy_id']].add(key)
+        add_catalogue_lineage(key, binding.get('source_policy_id'))
+        for destination in binding.get('destinations') or []:
+            if destination.get('kind') == 'policy':
+                add_catalogue_lineage(key, destination.get('id'))
+
+    roots = []
+    for policy in resolved:
+        if policy.get('status') != 'active' or not policy.get('active', True):
+            continue
+        rule = policy['definition']['rule']
+        if rule.get('kind') == 'catalogue':
+            roots.extend((copy, policy) for copy in expand(policy) if is_cap(copy))
+        elif is_cap(policy):
+            roots.append((policy, by_id.get(policy['id'], policy)))
+
+    ids, queued = set(), []
+    catalogue_keys = set()
+    for policy, source in roots:
+        queued.append(policy['id'])
+        queued.extend(policy['definition'].get('merged_ids') or [])
+        queued.append(policy['definition'].get('replaces_id'))
+        source_rule = source.get('definition', {}).get('rule', {})
+        if source_rule.get('kind') == 'catalogue':
+            catalogue_keys.add((source.get('department_id'), source_rule.get('id')))
+        catalogue_keys.update(catalogue_by_source.get(source.get('id') or policy.get('id'), ()))
+    for key in catalogue_keys:
+        queued.extend(by_catalogue.get(key, ()))
+    while queued:
+        ident = queued.pop()
+        if not ident or ident in ids:
+            continue
+        ids.add(ident)
+        policy = by_id.get(ident)
+        if policy is None:
+            continue
+        definition = policy.get('definition') or {}
+        queued.extend(definition.get('merged_ids') or [])
+        queued.append(definition.get('replaces_id'))
+    return ids
 
 
 def allocation_index(data, first, last):
@@ -389,25 +476,97 @@ def _sweep_modes(baseline):
     return (True, False) if any(deficit_score(baseline)[:-1]) else (False,)
 
 
-def generate(snapshot: dict, time_budget_seconds: float = 90.0) -> dict:
-    result = _generate_with_redistribution(snapshot, time_budget_seconds)
+def _proposal_placements(snapshot, proposal):
+    removed = {(r['shift_id'], r['assignment_id']) for r in proposal['removals']}
+    kept = {(s['id'], p['person_id']) for s in snapshot['shifts'] for p in s['participants']
+            if (s['id'], p['id']) not in removed}
+    return kept | {(a['shift_id'], a['participant']['person_id']) for a in proposal['additions']}
+
+
+def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None, deterministic=False) -> dict:
+    placement_budget = time_budget_seconds
+    if placement_budget is None:
+        from packages.contracts.schemas import GenerationOptions
+        placement_budget = 90.0
+        options = GenerationOptions.model_validate(snapshot.get('generation_options', snapshot.get('generation_defaults')) or {})
+        time_budget_seconds = max(placement_budget, options.search_minutes * 60)
+    started = time.monotonic()
+    deadline = started + time_budget_seconds
+    result = _generate_with_redistribution(snapshot, placement_budget, cancelled=cancelled)
+    finished_placement = time.monotonic()
+    remaining = deadline - finished_placement
+    open_required = deficit_score(result['validation'])[0] if result['status'] == 'candidate_with_gaps' else 0
+    # shortcut: repair up to 4 open places (1 repaired in 0.01-3.6 s; 36-38 took 36-40 s); revisit with larger successful repairs.
+    if open_required > 4:
+        result.setdefault('warnings', []).append(
+            f'Required-cover repair skipped because {open_required:g} required places remain open.')
+    elif open_required and finished_placement < started + placement_budget and not (cancelled and cancelled()):
+        try:
+            from .cp_sat import generate as required_cover
+            from .solver_control import SolverControl
+            control = SolverControl(cancelled=lambda: time.monotonic() >= deadline or bool(cancelled and cancelled()))
+            placements = _proposal_placements(snapshot, result)
+            repaired = required_cover({**snapshot, '_greedy_required_cover': True, '_greedy_placements': placements},
+                                      remaining, workers=1, feasibility_only=True, deterministic=deterministic, _control=control)
+            repair_timed_out = repaired.get('status') in {'cancelled', 'unknown_time_limit', 'needs_more_time'}
+            if repair_timed_out and control.validated_result is not None:
+                repaired = {**control.validated_result, 'solver_status': 'FEASIBLE', 'score_completed': False}
+            repair_timed_out = repair_timed_out or repaired.get('search_stop', {}).get('reason') == 'time_limit'
+        except ImportError:
+            repaired = {'status': 'unavailable'}
+            repair_timed_out = False
+        if repaired.get('status') == 'candidate_feasible' and repaired.get('validation', {}).get('valid'):
+            moved = len(placements - _proposal_placements(snapshot, repaired))
+            result = repaired
+            result['required_cover_repair'] = {'algorithm_version': repaired['algorithm_version'], 'moved': moved,
+                                               'solver_status': repaired['solver_status'],
+                                               **{key: result.pop(key) for key in (
+                                                   'phase_timings', 'first_solution_seconds', 'search_elapsed_seconds',
+                                                   'stop_reason', 'search_stop', 'score_completion_seconds',
+                                                   'live_score_metrics', 'improvements_found') if key in result}}
+            result['algorithm_version'] = ALGORITHM_VERSION
+            result['unmet_requirements'] = unmet_requirements(result['validation'])
+            if repair_timed_out:
+                result['message'] = ('Search time expired. The complete validated rota is retained; '
+                                     'score optimization is unfinished.')
+            suggestions = 'suggestion' if moved == 1 else 'suggestions'
+            result.setdefault('warnings', []).append(
+                f'Required cover was repaired with CP-SAT. The repair moved {moved} greedy {suggestions}.')
+        else:
+            if repair_timed_out:
+                result['status'] = 'unknown_time_limit'
+            reason = ('was cancelled' if cancelled and cancelled() else 'ran out of time' if repair_timed_out
+                      else 'is unavailable' if repaired.get('status') == 'unavailable'
+                      else 'found no valid complete rota')
+            result.setdefault('warnings', []).append(
+                f'Required-cover repair {reason}; the best partial proposal is retained.')
+    if cancelled and cancelled():
+        result['status'] = 'cancelled'
+    if result.get('status') in {'cancelled', 'unknown_time_limit'}:
+        reason = 'Search cancelled.' if result['status'] == 'cancelled' else 'Search time expired.'
+        result['message'] = (reason + ' The complete validated rota is retained; score optimization is unfinished.'
+            if result.get('validation', {}).get('valid') else
+            reason + ' The best validated partial proposal is retained, with unfilled places listed in unmet '
+            'requirements. This does not prove the requirements conflict.')
     result.update(scope_receipt(snapshot))
     result['not_applied'] = copy.deepcopy(GREEDY_NOT_APPLIED)
+    result['elapsed_seconds'] = time.monotonic() - started
+    result['time_limit_seconds'] = time_budget_seconds
     return result
 
 
-def _generate_with_redistribution(snapshot: dict, time_budget_seconds: float) -> dict:
+def _generate_with_redistribution(snapshot: dict, time_budget_seconds: float, *, cancelled=None) -> dict:
     deadline = time.monotonic() + time_budget_seconds
-    first = _generate(snapshot, time_budget_seconds)
+    first = _generate(snapshot, time_budget_seconds, cancelled=cancelled)
     if first.get('status') not in {'candidate_with_gaps', 'unknown_time_limit'} or not first.get('additions'):
         return first
     gaps = {f['shift_id'] for f in first['unmet_requirements'] if f.get('shift_id')}
     remaining = deadline - time.monotonic()
-    if not gaps or remaining <= 0:
+    if not gaps or remaining <= 0 or cancelled and cancelled():
         return first
     # shortcut: one alternative order, not an optimizer; extend only if measured gaps justify it.
     # Rebuild from the immutable input so only this run's suggestions can be redistributed.
-    second = _generate(snapshot, remaining, gaps)
+    second = _generate(snapshot, remaining, gaps, cancelled=cancelled)
     better = (second.get('validation') and
               deficit_score(second['validation']) < deficit_score(first['validation']))
     chosen = second if better else first
@@ -425,7 +584,8 @@ def own_duty_blocked(data, shift, participant, own, known):
     pid = participant['person_id']
     kept = {s['id']: s for s in [*own, shift]}
     reduced = {**data, 'shifts': list(kept.values()), 'focus_ids': [i for i in data['focus_ids'] if i in kept],
-               '_partial': {'shifts': set(kept), 'people': {pid}}, 'quota_subjects': set(), 'skip_coverage': True}
+               '_partial': {'shifts': set(), 'people': {pid}, 'person_shifts': lambda _: kept.values()},
+               'quota_subjects': set()}
 
     def errors():
         result = evaluate(reduced, explain_findings=False)
@@ -444,20 +604,38 @@ def own_duty_blocked(data, shift, participant, own, known):
 class Recheck:
     """The run's whole-rota check kept in parts (each session's own checks, each person's), so a trial re-checks only the
     sessions it touches and the person it moves. Every part comes from the shared validator, computed exactly as a whole
-    check computes it (`_partial` in validation.evaluate); what a part leaves out (shapes and goals, advisory only;
-    resources and session setup, which do not depend on who works) cannot change a decision. The candidate is still
+    check computes it (`_partial` in validation.evaluate). Shapes, goals and advisory personal findings do not
+    guide trial decisions. Resource and session setup checks depend only on fixed inputs. The candidate is still
     checked whole at the end. tests/test_generation_recheck.py compares every trial with a whole check."""
 
     def __init__(self, data):
-        self.data = data
-        focus = set(data['focus_ids'])
-        live = [s for s in data['shifts'] if not inactive(s) and s['id'] in focus]
-        self.spans = [(aware(s['start']), aware(s['end']), s['id']) for s in live]
-        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
-        self.parts = self._check({s['id'] for s in live}, people)
+        from .quotas import applicable_policies
 
-    def _check(self, shift_ids, people):
-        r = evaluate({**self.data, '_partial': {'shifts': shift_ids, 'people': people}}, explain_findings=False)
+        self.data = data
+        self.prepared = prepare_assignment_trials(data)
+        self.prepared['_trial_boundary_inputs'] = coverage_boundary_inputs(self.prepared)
+        self.prepared['_quota_policies'] = applicable_policies(self.prepared)
+        self.setup_cache = {}
+        focus = set(data['focus_ids'])
+        self.active = {s['id']: s for s in self.prepared['shifts'] if not inactive(s)}
+        self.order = {sid: order for order, sid in enumerate(self.active)}
+        self.person_duties = defaultdict(set)
+        for sid, session in self.active.items():
+            for participant in session['participants']:
+                self.person_duties[participant['person_id']].add(sid)
+        self.live_ids = focus & self.active.keys()
+        self.spans = [(aware(s['start']), aware(s['end']), sid) for sid, s in self.active.items() if sid in focus]
+        self.peers = {}
+        people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
+        self.parts = self._check(self.live_ids, people)
+
+    def _check(self, shift_ids, people, changed=frozenset()):
+        def person_shifts(pid):
+            ids = self.person_duties.get(pid, set()) | changed
+            return [self.active[sid] for sid in sorted(ids, key=self.order.__getitem__)]
+
+        r = evaluate({**self.prepared, '_partial': {'shifts': shift_ids, 'people': people,
+                     'setup_cache': self.setup_cache, 'person_shifts': person_shifts}}, explain_findings=False)
         sessions, persons, rows = {i: [] for i in shift_ids}, {i: [] for i in [*people, None]}, {i: [] for i in people}
         for f in r['session_findings']:
             sessions[f['shift_id']].append(f)
@@ -465,26 +643,46 @@ class Recheck:
             persons.setdefault(f['person_id'], []).append(f)
         for row in (r['quota_report'] or {}).get('rows', []):
             rows[row['person_id']].append(row)
+        for group in (sessions, persons):
+            for key, findings in group.items():
+                group[key] = list(finding_observations({'findings': findings}))
         return sessions, persons, rows
 
     def touched(self, changed):
         """The changed sessions and every session of this rota overlapping one (pooled cover and clinic-wide limits
         count the people on sessions at the same time)."""
         from .validation_scope import affected_sessions
-        return affected_sessions(self.data['shifts'], changed, spans=self.spans) | {
-            s['id'] for s in changed if any(i == s['id'] for _, _, i in self.spans)}
+        affected = set()
+        for shift in changed:
+            sid = shift['id']
+            if sid not in self.peers:
+                self.peers[sid] = affected_sessions((), [shift], spans=self.spans) | ({sid} & self.live_ids)
+            affected.update(self.peers[sid])
+        return affected
 
     def result(self, parts=None):
         merged = [{**whole, **part} for whole, part in zip(self.parts, parts or ({}, {}, {}))]
-        return {'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
+        return {'_plain_findings': True,
+                'findings': [f for group in (merged[0], merged[1]) for items in group.values() for f in items],
                 'quota_report': {'rows': [r for items in merged[2].values() for r in items]}, '_parts': parts}
 
     def trial(self, changed, people):
-        return self.result(self._check(self.touched(changed), set(people)))
+        people = set(people)
+        changed_ids = {s['id'] for s in changed if s['id'] in self.active}
+        result = self.result(self._check(self.touched(changed), people, changed_ids))
+        # The caller restores the trial's assignments before deciding whether to accept.
+        result['_changed_duties'] = (changed_ids, {
+            pid: {s['id'] for s in changed if s['id'] in changed_ids and any(p['person_id'] == pid for p in s['participants'])}
+            for pid in people})
+        return result
 
     def accept(self, result):
         for whole, part in zip(self.parts, result['_parts'] or ({}, {}, {})):
             whole.update(part)
+        changed, duties = result['_changed_duties']
+        for pid, active in duties.items():
+            self.person_duties[pid].difference_update(changed)
+            self.person_duties[pid].update(active)
 
 
 def pair_attached(data, shifts, added, removals, period):
@@ -525,8 +723,11 @@ def pair_attached(data, shifts, added, removals, period):
                 added.append({'shift_id': shift['id'], 'participant': paired, **duty_labels(data, shift)})
 
 
-def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) -> dict:
+def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *, cancelled=None) -> dict:
     deadline = time.monotonic() + time_budget_seconds
+    def interrupted():
+        return time.monotonic() >= deadline or bool(cancelled and cancelled())
+
     data = copy.deepcopy(snapshot)
     from .date_sets import prepare_date_sets
     data['_date_set_cache'] = prepare_date_sets(data)
@@ -545,7 +746,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         return {"status": "unsupported_size", "algorithm_version": ALGORITHM_VERSION,
                 "message": "Narrow the planning period or employee scope to the published bounds", "capability_manifest": MANIFEST}
     # Every rule as the checks read it: a catalogue rule's lines are the kinds they write.
-    data['policies'] = active_rules(data['policies'], context=data)
+    raw_policies = list(data['policies'])
+    data['policies'] = active_rules(raw_policies, context=data)
+    data['_overtime_originals'] = {p['id']: p for p in raw_policies}
     leadership.prepare(data)
     unsupported = [p["kind"] for p in data['policies'] if p["kind"] not in MANIFEST["supported_rule_kinds"]]
     if unsupported:
@@ -621,7 +824,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             # Rest/travel findings describe the gap between two duties; the editable duty touches its boundary.
             return overlaps(a, b, lo, hi) or finding['code'] in {'MIN_REST', 'TRAVEL_BUFFER'} and (b == lo or a == hi)
 
-        while time.monotonic() < deadline:
+        while not interrupted():
             # Independent people can be repaired together; re-evaluate before
             # removing another duty for the same person (rest chains can change).
             conflicts = {}
@@ -658,7 +861,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         return {"status": "invalid_inputs", "validation": initial, "algorithm_version": ALGORITHM_VERSION,
                 "removals": [], "message": "Resolve configuration conflicts before scheduling; no changes proposed."}
     tolerated = {citation_finding_key(f) for f in initial_noncoverage}
-    timed_out, added = time.monotonic() >= deadline, []
+    timed_out, added = interrupted(), []
     hours = {pid: sum(duration_hours(aware(p["start"]), aware(p["end"])) for s in data["shifts"] if not inactive(s)
                       for p in s["participants"] if p["person_id"] == pid) for pid in data["people"]}
     history = {pid: [] for pid in data['people']}
@@ -703,11 +906,12 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
     if session_data['policies']:
         for shift in shifts:
             scores = []
-            for pid, person in data['people'].items():
-                if time.monotonic() >= deadline:
+            a, b = aware(shift['start']), aware(shift['end'])
+            for pid in data['people']:
+                if interrupted():
                     timed_out = True
                     break
-                if person['active'] and population_allows(data, shift, pid):
+                if person_active_for_interval(data, pid, a, b) and population_allows(data, shift, pid):
                     score = allocation_tier(session_data, shift, pid)
                     scores.append(score)
                     if tiered:
@@ -757,7 +961,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                               and lead_qualified(data, p['person_id'], shift, lead, a, b)),
                              key=lambda p: lead_rank(shift, p['person_id']))
             for p in options:
-                if time.monotonic() >= deadline or not needs_leads(shift):
+                if interrupted() or not needs_leads(shift):
                     break
                 promoted = {**p, 'team_lead': True} if id(p) in mine else {
                     **p, 'id': str(uuid.uuid5(uuid.NAMESPACE_URL, data['fingerprint'] + shift['id'] + p['person_id'] + ':lead')),
@@ -793,18 +997,21 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             for phase in passes
             for stage in stages
             for shift in ordered_shifts if stage is None or (stage, shift['id']) in stage_people):
+        if interrupted():
+            timed_out = True
+            break
         if shift["locked"]:
             continue
         # Who could take this session at all (active, qualified, not away, on leave or restricted) never changes during
         # the run: decide it once per session, not for every person at every seat.
         a, b = aware(shift['start']), aware(shift['end'])
         candidates = stage_people[stage, shift['id']] if stage is not None else data['people']
-        pool = [pid for pid in candidates if population_allows(data, shift, pid) and data['people'][pid]['active'] and series_candidate_allowed(data, shift, pid)
+        pool = [pid for pid in candidates if population_allows(data, shift, pid) and person_active_for_interval(data, pid, a, b) and series_candidate_allowed(data, shift, pid)
                 and qualified(data, pid, shift, shift['type_snapshot']['definition'], a, b)
                 and not rotation_blocks(data, pid, a, b) and not restriction_blocks(data, pid, shift, a, b)
                 and not any(overlaps(a, b, aware(r['start']), aware(r['end'])) for r in person_rows(data, 'availability', pid))]
         for _seat in range(100):
-            if time.monotonic() >= deadline:
+            if interrupted():
                 timed_out = True
                 break
             before_score = deficit_score(baseline)
@@ -832,7 +1039,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
             current_ids = {p["person_id"] for p in shift["participants"]}
             settings = {}
             for pid in pool:
-                if time.monotonic() >= deadline:
+                if interrupted():
                     timed_out = True
                     break
                 settings[pid] = allocation_settings(data, shift, pid, history=history[pid])
@@ -864,7 +1071,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                         pid not in cover_policy(f)['definition']['rule'].get('when_person_ids', [])
                         and scope_matches_throughout(data, cover_policy(f)['definition']['scope'], pid, shift, aware(f['start']), aware(f['end']))) for f in coverage_needed):
                     continue
-                if time.monotonic() >= deadline:
+                if interrupted():
                     timed_out = True
                     break
                 definition = shift["type_snapshot"]["definition"]
@@ -902,15 +1109,15 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                     loads = [p.get('supervisor_person_id') for p in shift['participants']]
                     balanced = levelled_order(pairings, loads) if level else list(pairings)
                     pairings.sort(key=lambda supervisor_id: (supervisor_id not in attached, attached.get(supervisor_id) != 'required',
-                        balanced.index(supervisor_id),
+                        balanced.index(supervisor_id) if level else 0,
                         -allocation_settings(data, shift, pid, supervisor_id, history=history[pid],
                                              candidate_overtime=overtime)[0], supervisor_id))
                 for other, prior in displaced:
                     other['participants'].remove(prior)
-                if own_duty_blocked(data, shift, participant, [s for s, _ in history[pid]], own_errors):
+                if own_duty_blocked(recheck.prepared, shift, participant, [s for s, _ in history[pid]], own_errors):
                     pairings = []  # the whole-rota check below would refuse every pairing
                 for supervisor_id in pairings:
-                    if time.monotonic() >= deadline:
+                    if interrupted():
                         timed_out = True
                         break
                     if supervisor_id:
@@ -966,7 +1173,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
         name_leads()
         pair_attached(data, shifts, added, removals, period)
     for cache in ('_scope_interval_cache', '_policy_applies_cache', '_policy_applies_people', '_allocation_match_cache', '_person_rows', '_person_dates_cache', '_line_index_cache', '_bucket_keys_cache', '_workload_matches_cache', '_quota_cache', '_counted_policies', '_workload_normalization_cache'):
-        data.pop(cache)
+        data.pop(cache, None)
+    if hasattr(data, '_fair_share_measurement_cache'):
+        del data._fair_share_measurement_cache
     validation = evaluate(data)
     unexpected = [f for f in finding_observations(validation) if f['severity'] == 'error'
         and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM', 'ATTACHMENT_PAIRING'}
@@ -993,6 +1202,5 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=()) ->
                        and f['code'] not in COVERAGE_CODES | {'QUOTA_BELOW_MINIMUM'}],
             "summary": summary,
             "declined_wishes": declined_wishes(data, validation, preferences_applied=False),
-            "unmet_requirements": [*coverage_findings(validation), *[f for f in finding_observations(validation)
-                if f["code"] in {"QUOTA_BELOW_MINIMUM", "QUOTA_BELOW_TARGET"}]],
+            "unmet_requirements": unmet_requirements(validation),
             "message": "Draft candidate only. No optimality or infeasibility proof; acceptance requires current-input validation and ordinary review/publication."}

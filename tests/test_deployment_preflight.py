@@ -16,14 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def clean_env(monkeypatch):
-    for key in ('DATABASE_URL','DATABASE_URL_FILE','OIDC_CLIENT_SECRET','OIDC_CLIENT_SECRET_FILE','ROTA_ENV','PUBLIC_ORIGIN','ROTA_IMAGE','ROTA_ALLOW_DISPOSABLE_TEST_DB','ROTA_ALLOW_TEST_ROLES','FMUC_DATA_KEY','FMUC_DATA_KEY_FILE'):
+    for key in (
+        'DATABASE_URL', 'DATABASE_URL_FILE', 'ROTA_ENV', 'PUBLIC_ORIGIN', 'ROTA_IMAGE',
+        'ROTA_ALLOW_DISPOSABLE_TEST_DB', 'ROTA_ALLOW_TEST_ROLES', 'FMUC_DATA_KEY', 'FMUC_DATA_KEY_FILE',
+        'ROTA_IDENTITY_USERS_FILE', 'ROTA_PASSWORD_LOGIN_ENABLED', 'ROTA_PASSWORD_LOGIN_PROGRESSIVE_DELAY',
+        'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'OIDC_CLIENT_SECRET_FILE',
+        'OIDC_REDIRECT_URI', 'OIDC_ALLOWED_HOSTS',
+    ):
         monkeypatch.delenv(key,raising=False)
 
 
 def production(**changes):
     return replace(Settings(environment='production',database_url='postgresql+psycopg://runtime:fictional@db.invalid/rota',
-        public_origin='https://rota.invalid',oidc_issuer='https://id.invalid/realms/rota',oidc_client_id='rota',
-        oidc_client_secret='fictional-secret',oidc_redirect_uri='https://rota.invalid/auth/callback',oidc_allowed_hosts='id.invalid'),**changes)
+        public_origin='https://rota.invalid',oidc_issuer='https://rota.invalid/authelia',oidc_client_id='rota',
+        oidc_client_secret='fictional-secret',oidc_redirect_uri='https://rota.invalid/auth/callback',oidc_allowed_hosts='rota.invalid'),**changes)
 
 
 def test_worker_preflight_uses_worker_startup_contract_without_api_secrets(monkeypatch):
@@ -109,12 +115,24 @@ def test_oidc_trust_url_has_no_embedded_credentials_queries_or_fragments(issuer)
 
 
 def test_production_requires_managed_passwords_and_refuses_sqlite_secret_file_shortcut(tmp_path,monkeypatch):
+    monkeypatch.setenv('ROTA_IDENTITY_USERS_FILE', str(tmp_path / 'missing-users.yml'))
+    monkeypatch.setenv('OIDC_ISSUER', 'https://id.invalid/realms/rota')
     clean_env(monkeypatch)
     users = tmp_path / 'users.json'; users.write_text('{"users": {}}', encoding='utf-8')
     production(identity_users_file=str(users), fmuc_data_key='01' * 32).check()
     path=tmp_path/'dburl';path.write_text('sqlite:///example.db');path.chmod(0o600)
     monkeypatch.setenv('DATABASE_URL_FILE',str(path));monkeypatch.setenv('ROTA_ENV','production')
-    with pytest.raises(RuntimeError,match='PostgreSQL'):Settings.from_env().check()
+    if os.name == 'nt':
+        # The mounted-secret reader requires POSIX. Exercise the same database guard on Windows.
+        def read_fixture_secret(name, *args, **kwargs):
+            if name == 'DATABASE_URL':
+                return Path(os.environ['DATABASE_URL_FILE']).read_text(encoding='utf-8')
+            return secret_from_env(name, *args, **kwargs)
+
+        monkeypatch.setattr('apps.api.settings.secret_from_env', read_fixture_secret)
+    settings = Settings.from_env()
+    assert not settings.identity_users_file and not settings.oidc_issuer
+    with pytest.raises(RuntimeError,match='PostgreSQL'):settings.check()
 
 
 def test_local_preflight_real_readonly_current_schema_and_no_audit_changes(h):
@@ -166,8 +184,7 @@ def test_production_password_key_preflight_rejects_missing_or_invalid_keys_witho
     clean_env(monkeypatch)
     users = tmp_path / 'users.yml'
     users.write_text('{}', encoding='utf-8')
-    settings = production(password_login_enabled=True, identity_users_file=str(users),
-                          oidc_issuer='https://rota.invalid/authelia', fmuc_data_key=key)
+    settings = production(password_login_enabled=True, identity_users_file=str(users), fmuc_data_key=key)
     connections = []
     def forbidden(*a, **kw):
         connections.append(True)
@@ -189,13 +206,18 @@ def test_production_password_key_preflight_rejects_missing_or_invalid_keys_witho
 
 @pytest.mark.parametrize('enabled', [False, True])
 def test_production_password_key_preflight_preserves_fixed_mode(tmp_path, monkeypatch, enabled):
+    # Fixed mode stays supported with a key; sign-in event and rate-limit keys are keyed hashes (#930), so a keyless
+    # production cannot store them safely and is refused at startup, naming the setting only.
     clean_env(monkeypatch)
     users = tmp_path / 'users.yml'
     users.write_text('{}', encoding='utf-8')
     settings = production(password_login_enabled=enabled, password_login_progressive_delay=False,
-                          identity_users_file=str(users), oidc_issuer='https://rota.invalid/authelia')
-    result = preflight.inspect(settings, require_production=True)
-    assert next(row for row in result['checks'] if row['check'] == 'configuration')['status'] == 'passed'
+                          identity_users_file=str(users))
+    keyless = next(row for row in preflight.inspect(settings, require_production=True)['checks']
+                   if row['check'] == 'configuration')
+    assert keyless['status'] == 'failed' and keyless['detail'] == 'FMUC_DATA_KEY is required for sign-in in production'
+    keyed = preflight.inspect(replace(settings, fmuc_data_key='01' * 32), require_production=True)
+    assert next(row for row in keyed['checks'] if row['check'] == 'configuration')['status'] == 'passed'
 
 
 @pytest.mark.parametrize('enabled', [False, True])
@@ -217,7 +239,7 @@ def test_cli_key_configuration_refusal_is_visible_on_stderr_without_secret_value
     users.write_text('{}', encoding='utf-8')
     secret = 'malformed-synthetic-key'
     settings = production(password_login_enabled=True, identity_users_file=str(users),
-                          oidc_issuer='https://rota.invalid/authelia', fmuc_data_key=secret if failure == 'invalid' else '')
+                          fmuc_data_key=secret if failure == 'invalid' else '')
     def load():
         if failure == 'secret-file':
             raise RuntimeError(f'Unreadable {users}: {secret}')

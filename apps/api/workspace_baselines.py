@@ -1,14 +1,17 @@
 """Immutable department-input baselines and auditable three-way refreshes."""
+from collections import OrderedDict
 from copy import deepcopy
 import json
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
+from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
-from .serialization import json_value, record, records_many
-from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs, snapshot_window
+from .serialization import generation_defaults_record, json_value, record
+from .settings import Settings
+from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs
 from packages.contracts import schemas as s
 from packages.domain.generation_scope import selected_session_ids
 
@@ -42,8 +45,10 @@ DEPARTMENT_SETTING_FIELDS = {
     "auto": ["generation_defaults"],
     "display": ["display_settings"],
 }
+CAPTURED_GENERATION_STATES = frozenset({"draft", "submitted", "approved"})
 ALWAYS_KEYS = {"organisation", "departments", "department_ids"}
 LIVE_SAFETY_KINDS = frozenset(s.NEVER_OVERRIDDEN)
+ZERO_LIMIT_KINDS = frozenset({"max_duties", "max_hours", "max_consecutive_days", "max_consecutive_weekends", "block_quota"})
 LIVE_QUALIFICATION_KEYS = ("memberships", "eligibilities", "grants", "rotations", "programme_memberships", "mentorships")
 LIVE_QUALIFICATION_DEFINITIONS = ("programmes", "rotation_types", "cohorts", "tags", "tag_members", "capabilities", "categories")
 LIVE_OPERATIONAL_KEYS = ("operating_calendars", "closures", "date_sets", "resource_pools")
@@ -81,6 +86,264 @@ def _distinct_live_policy(policy):
     return {**deepcopy(policy), "id": ident, "_source_policy_id": policy.get("id")}
 
 
+def _ceiling(rule):
+    kind = rule.get("kind")
+    if kind == "block_quota":
+        return {"maximum": rule.get("amount"), "range": rule.get("maximum_amount")}.get(rule.get("comparison"))
+    if kind in ZERO_LIMIT_KINDS:
+        return rule.get("hours" if kind == "max_hours" else "maximum")
+    return None
+
+
+def _with_catalogue_numbers(line, numbers):
+    projected = {**deepcopy(line), "numbers": deepcopy(numbers)}
+    if "source_bindings" in projected:
+        projected["source_bindings"] = {key: value for key, value in projected["source_bindings"].items()
+                                         if key in numbers}
+    return projected
+
+
+def _indexed_catalogue_lines(lines):
+    return [line if source_index == index else {**line, "_source_index": line.get("_source_index", source_index)}
+            for index, (source_index, line) in enumerate(lines)]
+
+
+def _legacy_projection_scope(projected, original, indexes):
+    """Keep the original identities and selectors when part of a legacy template is projected."""
+    definition = projected["definition"]
+    if definition["rule"]["kind"] == "block_quota":
+        projected["_quota_line_indices"] = indexes
+        if len(indexes) < len(original):
+            projected["_quota_template_people"] = sorted({line["person_id"] for line in original if line.get("person_id")})
+    elif not definition.get("listed_only") and len(indexes) < len(original):
+        kept = set(indexes)
+        projected["_legacy_shadow_rows"] = [
+            *projected.get("_legacy_shadow_rows", []),
+            *[{key: line[key] for key in ("person_id", "starts_on", "ends_on") if key in line}
+              for index, line in enumerate(original) if index not in kept and line.get("person_id")],
+        ]
+    return projected
+
+
+def _zero_limit_policy(policy):
+    """Return the mandatory at-most-zero part of a policy, if it has one."""
+    definition = policy.get("definition") or {}
+    if definition.get("overrides"):
+        definition = {**definition, "overrides": []}
+    rule = definition.get("rule") or {}
+    if rule.get("kind") != "catalogue":
+        if definition.get("severity") != "mandatory" or rule.get("kind") not in ZERO_LIMIT_KINDS:
+            return None
+        default_zero = _ceiling(rule) == 0
+        lines = definition.get("per_person") or []
+        if not lines:
+            return deepcopy({**policy, "definition": definition}) if default_zero and not definition.get("listed_only") else None
+        field = s.line_field(definition)
+        zeros = [(index, line) for index, line in enumerate(lines)
+                 if _ceiling(s.line_rule(rule, line, field)) == 0]
+        listed = definition.get("listed_only") or not default_zero
+        if not zeros and listed:
+            return None
+        projected = {**deepcopy(policy), "definition": {
+            **deepcopy(definition), "per_person": [deepcopy(line) for _, line in zeros], "listed_only": listed}}
+        return _legacy_projection_scope(projected, lines, [index for index, _ in zeros])
+
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+    entry = catalogue_entry(rule.get("id"), rule.get("catalogue_version", 1))
+    if not entry or "max" not in entry["numbers"] or not rule.get("on", True):
+        return None
+    source = rule.get("lines") or []
+    delegated = set(policy.get("_live_zero_line_ids", ()))
+    zeros = {}
+    for index, line in enumerate(source):
+        numbers = line.get("numbers") or {}
+        maximum = numbers.get("max") or {}
+        level = maximum.get("level", "mandatory")
+        if line["id"] in delegated or maximum.get("value") != 0 or level not in ("mandatory", None):
+            continue
+        slot = slot_for_number(entry, "max", rule, line, numbers)
+        if slot["kind"] not in ZERO_LIMIT_KINDS or slot["advisory"]:
+            continue
+        zeros[index] = _project_maximum(entry, rule, line)
+    if not zeros:
+        return None
+    # Resolve precedence after tag expansion, with positive maxima and level donors still available.
+    for index, line in enumerate(source):
+        if index not in zeros and "max" in (line.get("numbers") or {}):
+            zeros[index] = {**_project_maximum(entry, rule, line), "_source_default_only": True}
+    return {**deepcopy(policy), "_zero_max_projection": True, "definition": {**deepcopy(definition),
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(sorted(zeros.items()))}}}
+
+
+def _project_maximum(entry, rule, line):
+    from packages.contracts.rule_catalogue import slot_for_number
+
+    kind = slot_for_number(entry, "max", rule, line, line["numbers"])["kind"]
+    projected = _with_catalogue_numbers(line, {"max": line["numbers"]["max"]})
+    # A removed minimum or target can otherwise change which measure the maximum counts.
+    if slot_for_number(entry, "max", rule, projected, projected["numbers"])["kind"] != kind:
+        projected.setdefault("settings", {}).setdefault(kind, {})
+    return projected
+
+
+def _without_zero_limit(policy, covered_by):
+    """Remove only frozen zeros whose complete scope is also zero live."""
+    definition = policy.get("definition") or {}
+    rule = definition.get("rule") or {}
+
+    def scope(row, *, omit_person_lines=False):
+        value = {key: value for key, value in (row.get("definition") or {}).items()
+                 if key not in {"merged_ids", "replaces_id"}}
+        if omit_person_lines:
+            value.pop("per_person", None)
+        return {**{key: row.get(key) for key in ("department_id", "starts_on", "ends_on")},
+                "definition": {**value, "rule": {key: value for key, value in
+                    (value.get("rule") or {}).items() if key != "lines"}}}
+
+    # Equality proves coverage without guessing containment of condition trees.
+    captured_default = (rule.get("kind") != "catalogue" and _ceiling(rule) == 0
+                        and not definition.get("per_person") and not definition.get("listed_only"))
+    if scope(policy, omit_person_lines=captured_default) != scope(covered_by, omit_person_lines=captured_default):
+        return deepcopy(policy)
+    if rule.get("kind") != "catalogue":
+        field = s.line_field(definition)
+        original = definition.get("per_person") or []
+        lines = [(index, line) for index, line in enumerate(original)
+                 if _ceiling(s.line_rule(rule, line, field)) != 0]
+        listed = definition.get("listed_only", False) or _ceiling(rule) == 0
+        if listed and not lines:
+            return None
+        retained = {**policy, "definition": {
+            **definition, "per_person": [line for _, line in lines], "listed_only": listed}}
+        return (_legacy_projection_scope(retained, original, [index for index, _ in lines])
+                if len(lines) < len(original) else retained)
+    live_lines = {line.get("id"): line for line in
+                  ((covered_by.get("definition") or {}).get("rule") or {}).get("lines") or []}
+    lines = []
+    for index, line in enumerate(rule.get("lines") or []):
+        live = live_lines.get(line.get("id")) or {}
+        covered = ({key: value for key, value in line.items() if key != "numbers"} ==
+                   {key: value for key, value in live.items() if key != "numbers"}
+                   and (live.get("numbers") or {}).get("max", {}).get("value") == 0
+                   and (live.get("numbers") or {}).get("max", {}).get("level", "mandatory") == "mandatory")
+        numbers = {key: deepcopy(number) for key, number in (line.get("numbers") or {}).items()
+                   if not (covered and key == "max" and number.get("value") == 0 and
+                           number.get("level", "mandatory") == "mandatory")}
+        if numbers:
+            lines.append((index, _with_catalogue_numbers(line, numbers)))
+    if not lines:
+        return None
+    return {**deepcopy(policy), "definition": {**deepcopy(definition),
+        "rule": {**deepcopy(rule), "lines": _indexed_catalogue_lines(lines)}}}
+
+
+def _without_projected_catalogue_zeros(policy, zero):
+    # Keep line definitions for specificity and inherited strengths. Only the zero projection emits these caps.
+    zero_lines = {line["id"] for line in zero["definition"]["rule"]["lines"] if not line.get("_source_default_only")}
+    if all(line["id"] in zero_lines and set(line["numbers"]) == {"max"}
+           and line["numbers"]["max"].get("level", "mandatory") == "mandatory"
+           for line in policy["definition"]["rule"]["lines"]):
+        return None
+    return {**policy, "_live_zero_line_ids": sorted(zero_lines)}
+
+
+def _mandatory_recheck_policy(policy):
+    zero = _zero_limit_policy(policy)
+    if zero is None:
+        return policy
+    projected = (_without_projected_catalogue_zeros(policy, zero) if policy["definition"]["rule"]["kind"] == "catalogue"
+                 else _without_zero_limit(policy, policy))
+    # A partial live rule is additive. The captured definitions own any replacement.
+    if projected is not None and projected["definition"].get("overrides"):
+        projected = {**projected, "definition": {**projected["definition"], "overrides": []}}
+    return projected
+
+
+def _overlay_zero_limits(frozen, current, safety_ids=()):
+    """Overlay live zero ceilings without relaxing frozen draft obligations."""
+    # shortcut: a captured zero is suppressed only when its projection or legacy scope equals live, else it binds twice (stricter, never looser); fold into one overlay after v0.1.0 (#1006)
+    def newest(rows):
+        result = {}
+        for row in sorted(rows, key=lambda item: (item.get("revision", 0),
+                                                   str(item.get("approved_at") or ""),
+                                                   str(item.get("created_at") or ""),
+                                                   str(item.get("id") or ""))):
+            result[row.get("id")] = row
+        return result
+
+    def obligation(row):
+        definition = {key: value for key, value in row["definition"].items()
+                      if key not in {"merged_ids", "replaces_id"}}
+        rule = definition["rule"]
+        if rule.get("kind") == "catalogue":
+            lines = []
+            for line in rule.get("lines", ()):
+                line = {key: value for key, value in line.items() if key != "_source_index"}
+                if line.get("_source_default_only"):
+                    line["numbers"] = {
+                        name: {key: value for key, value in number.items() if key != "value"}
+                        for name, number in line["numbers"].items()
+                    }
+                lines.append(line)
+            definition = {**definition, "rule": {**rule, "lines": lines}}
+        return (row.get("department_id"), row.get("starts_on"), row.get("ends_on"), definition)
+
+    current_by_id = newest(current)
+    live_zeros = {key: zero for key, policy in current_by_id.items()
+                  if policy.get("status") == "active" and policy.get("active", True)
+                  and (zero := _zero_limit_policy(policy)) is not None}
+
+    def predecessors(row):
+        definition = row["definition"]
+        return [*(definition.get("merged_ids") or ()), definition.get("replaces_id")]
+
+    successors = {}
+    for ident in live_zeros:
+        row = current_by_id[ident]
+        rule = row["definition"]["rule"]
+        if rule.get("kind") != "catalogue" or not row.get("approved_by"):
+            continue
+        # Approved catalogue edits create new IDs. Only follow retired versions of the same entry.
+        seen, pending = {ident}, predecessors(row)
+        while pending:
+            previous = pending.pop()
+            if previous in seen:
+                continue
+            seen.add(previous)
+            old = current_by_id.get(previous)
+            if not old or old.get("status") != "retired" or old.get("department_id") != row.get("department_id"):
+                continue
+            old_rule = old["definition"]["rule"]
+            if old_rule.get("kind") == "catalogue" and old_rule.get("id") == rule.get("id"):
+                successors.setdefault(previous, set()).add(ident)
+                pending.extend(predecessors(old))
+
+    out = []
+    for policy in frozen:
+        source_id = policy.get("_source_policy_id", policy.get("id"))
+        candidates = successors.get(source_id, ())
+        live_id = next(iter(candidates)) if source_id not in live_zeros and len(candidates) == 1 else source_id
+        live_zero = live_zeros.get(live_id)
+        if live_zero is None or (saved_zero := _zero_limit_policy(policy)) is None:
+            out.append(policy)
+            continue
+        zero_lines = saved_zero["definition"]["rule"].get("lines", ())
+        inherits_level = any(line["numbers"]["max"].get("level", "mandatory") is None for line in zero_lines)
+        if inherits_level or policy.get("id") in safety_ids or s.safety_rule(policy.get("definition") or {}):
+            # Inherited and mixed-safety lines require equivalent zero projections before suppressing a copy.
+            same_zero = obligation(saved_zero) == obligation(live_zero)
+            retained = _without_projected_catalogue_zeros(policy, saved_zero) if same_zero else policy
+        else:
+            retained = _without_zero_limit(policy, current_by_id[live_id])
+        if retained is not None:
+            out.append(retained)
+    retained_ids = {policy.get("id") for policy in out}
+    for source_id, zero in live_zeros.items():
+        zero.update(_live_zero=True, _source_policy_id=source_id)
+        out.append(_distinct_live_policy(zero) if source_id in retained_ids else zero)
+    return out
+
+
 def _strict_value(kind, field, left, right):
     if not isinstance(left, (int, float)):
         return right
@@ -94,7 +357,7 @@ def _strict_value(kind, field, left, right):
     raise ValueError(f"Cannot numerically merge safety slot {kind}.{field}")
 
 
-def _strictest_policy(frozen, live, kind):
+def _strictest_policy(frozen, live, kind, *, include_mandatory=False):
     """Resolve one live safety revision without losing a differently scoped obligation."""
     frozen_active = frozen.get("status") == "active" and frozen.get("active", True)
     live_active = live.get("status") == "active" and live.get("active", True)
@@ -151,6 +414,19 @@ def _strictest_policy(frozen, live, kind):
         frozen_rule = (merged.get("definition") or {}).get("rule") or {}
         live_rule = (live.get("definition") or {}).get("rule") or {}
         entry = catalogue_entry(live_rule.get("id"), live_rule.get("catalogue_version", 1)) or {}
+        if include_mandatory and entry:
+            prior = {line["id"]: line.get("numbers") or {} for line in frozen_rule.get("lines") or []}
+            changed = {(line.get("_source_identity", line["id"]), key) for line in live_rule.get("lines") or []
+                       for key, number in (line.get("numbers") or {}).items()
+                       if prior[line["id"]][key].get("value") != number.get("value")}
+            if changed:
+                from packages.domain.rule_lines import expand
+
+                for copy in expand(live, outrank=False):
+                    definition, template = copy["definition"], copy["template_line"]
+                    if (definition["severity"] == "mandatory" and definition["rule"]["kind"] not in LIVE_SAFETY_KINDS
+                            and any((template["id"], key) in changed for key in template["slot"].split("+"))):
+                        return [frozen, _distinct_live_policy({**live, "_live_mandatory_recheck": True})]
 
         def line_key(line):
             return (line.get("where"), line.get("who"), tuple(line.get("weekdays") or ()),
@@ -235,62 +511,14 @@ def _catalogue_destination_at_least_as_strict(source, destination):
 
 
 def _live_safety_snapshot(db, workspace):
-    """Read only the live safety and qualification sources needed by a draft overlay."""
+    """Reacquire the same shared inputs used by a fresh draft snapshot."""
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    department_ids = select(m.Department.id).where(m.Department.organisation_id == organisation.id)
-    person_ids = select(m.Person.id).where(m.Person.organisation_id == organisation.id)
-    policy_ids = select(m.Policy.id).where(m.Policy.department_id.in_(department_ids))
-    lo, hi = snapshot_window(workspace, organisation.timezone)
-    sources = {
-        "people": (m.Person, m.Person.organisation_id == organisation.id),
-        "departments": (m.Department, m.Department.organisation_id == organisation.id),
-        **{key: (cls, cls.department_id.in_(department_ids)) for key, cls in LIVE_VALIDITY_SOURCES.items()},
-        **{key: (cls, cls.department_id.in_(department_ids)) for key, cls in {
-            "programmes": m.Programme, "rotation_types": m.RotationType, "cohorts": m.Cohort,
-            "tags": m.Tag, "tag_members": m.TagMember, "capabilities": m.Capability, "categories": m.Category,
-        }.items()},
-        "memberships": (m.Membership, m.Membership.department_id.in_(department_ids)),
-        "eligibilities": (m.Eligibility, m.Eligibility.department_id.in_(department_ids)),
-        "grants": (m.CapabilityGrant, m.CapabilityGrant.department_id.in_(department_ids)),
-        "rotations": (m.Rotation, m.Rotation.department_id.in_(department_ids)),
-        "programme_memberships": (m.ProgrammeMembership, m.ProgrammeMembership.department_id.in_(department_ids)),
-        "mentorships": (m.Mentorship, m.Mentorship.department_id.in_(department_ids)),
-        "resource_pools": (m.ResourcePool, m.ResourcePool.department_id.in_(department_ids)),
-        "operating_calendars": (m.OperatingCalendar, m.OperatingCalendar.department_id.in_(department_ids)),
-        "closures": (m.LocationClosure, m.LocationClosure.department_id.in_(department_ids)),
-        "date_sets": (m.DateSet, m.DateSet.department_id.in_(department_ids)),
-        "policies": (m.Policy, m.Policy.department_id.in_(department_ids)),
-        "exceptions": (m.PolicyException, m.PolicyException.policy_id.in_(policy_ids)),
-        "scheduling_facts": (m.SchedulingFact, m.SchedulingFact.department_id.in_(department_ids)),
-        # Keep retracted rows in the currency so both adding and removing a leave
-        # invalidates a bound check; the evaluator still receives only active rows.
-        "type_lead_ownership": (m.TypeLeadOwnership, m.TypeLeadOwnership.department_id.in_(department_ids)),
-    }
     cache = db.info.setdefault("_live_safety_sources", {})
     cache_key = (organisation.id, organisation.input_revision, organisation.availability_revision)
-    acquired = cache.get(cache_key)
-    if acquired is None:
-        acquired = records_many(db, sources, exclude={"people": ("pager",)})
-        cache[cache_key] = acquired
-    availability = records_many(db, {"availability": (m.Availability, m.Availability.person_id.in_(person_ids)
-                         & (m.Availability.start < hi) & (m.Availability.end > lo))},
-                               exclude={"availability": ("private_reason",)})["availability"]
-    acquired = {**acquired, "availability": availability}
-    from .snapshots import tag_data
-    scheduling_facts = [row for row in acquired["scheduling_facts"]
-                        if row.get("status") in ("active", "retired") and row.get("approved_by")]
-    return {"organisation": record(organisation),
-            "people": {row["id"]: row for row in acquired["people"]},
-             **{key: {row["id"]: row for row in acquired[key]} for key in
-                ("resource_pools", "operating_calendars", "date_sets", *LIVE_VALIDITY_SOURCES)},
-             "closures": acquired["closures"],
-             "tags": tag_data(db, department_ids, acquired={"tags": acquired["tags"],
-                                                               "tag_members": acquired["tag_members"]}),
-            **{key: acquired[key] for key in (*LIVE_QUALIFICATION_KEYS, *LIVE_QUALIFICATION_DEFINITIONS,
-                                               "policies", "exceptions", "availability", "type_lead_ownership",
-                                               "departments") if key != "tags"},
-            "scheduling_facts": scheduling_facts}
+    if cache_key not in cache:
+        cache[cache_key] = snapshot_inputs(db, organisation)
+    return cache[cache_key]
 
 
 def _scope(value):
@@ -452,14 +680,26 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                   for policy in frozen_policies}
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
+    current_safety_ids = {policy["id"] for policy in active_current_policies
+                          if s.safety_rule(policy.get("definition") or {})}
     live_policies = [policy for policy in active_current_policies
-                     if (s.safety_rule(policy.get("definition") or {}) or include_mandatory
+                     if (policy["id"] in current_safety_ids or include_mandatory
                          and (policy.get("definition") or {}).get("severity") == "mandatory") and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
     if include_mandatory:
-        replaced = {policy.get("id") for policy in live_policies}
-        frozen_policies = [policy for policy in frozen_policies
-                           if policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})]
+        filtered = [(policy, policy if policy["id"] in current_safety_ids else _mandatory_recheck_policy(policy))
+                    for policy in live_policies]
+        # A partly filtered policy still needs the captured numbers for the excluded slots.
+        replaced = {policy["id"] for policy, projected in filtered if projected is policy}
+        live_policies = [projected if projected is policy else
+                         _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
+                         for policy, projected in filtered if projected is not None]
+        retained = [policy for policy in frozen_policies
+                    if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
+                        or _zero_limit_policy(policy) is not None)]
+        result["_mandatory_overlay_changed"] = len(retained) != len(frozen_policies) or any(
+            projected is not None and policy["id"] not in current_safety_ids for policy, projected in filtered)
+        frozen_policies = retained
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}
@@ -519,6 +759,11 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         latest_leadership[((policy.get("definition") or {}).get("rule") or {}).get("id")] = policy
     live_leadership = list(latest_leadership.values())
     result["policies"] = list(frozen_policies)
+    # Apply can carry a positive replacement alongside a stricter captured zero.
+    if include_mandatory:
+        retained_ids = {policy["id"] for policy in frozen_policies}
+        live_policies = [_distinct_live_policy({**policy, "_live_mandatory_recheck": True}) if policy["id"] in retained_ids
+                         and policy["id"] not in current_safety_ids else policy for policy in live_policies]
     result["policies"] += live_leadership
     result["policies"] += [policy for policy in live_policies if policy not in live_leadership]
     # A revised safety row keeps one policy id for every downstream consumer;
@@ -535,18 +780,30 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         grouped_rows = [policies[0]]
         for policy in policies[1:]:
             safety = (kind in LIVE_SAFETY_KINDS or kind == "team_lead_requirement"
-                      or kind == "catalogue" and s.safety_rule(policy.get("definition") or {}))
+                      or kind == "catalogue" and (s.safety_rule(policy.get("definition") or {})
+                          or include_mandatory and s.safety_rule(grouped_rows[0].get("definition") or {})))
             if safety:
                 base = grouped_rows.pop(0)
-                grouped_rows = _strictest_policy(base, policy, kind)
+                grouped_rows = _strictest_policy(base, policy, kind, include_mandatory=include_mandatory)
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)
-    result["policies"] = merged
+    if include_mandatory and any(policy.get("_live_mandatory_recheck") for policy in merged):
+        result["_mandatory_overlay_changed"] = True
+    from packages.domain.rule_lines import seeded_policies
+    # Make migration defaults available to the zero projection without changing safety merging.
+    saved_seeds = result.get("policy_seed_lines") or []
+    live_seeds = current.get("policy_seed_lines") or []
+    result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
+        seeded_policies(current_policies, live_seeds), current_safety_ids)
+    if saved_seeds:
+        result["policy_seed_lines"] = []
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])
     for key in LIVE_QUALIFICATION_KEYS:
-        result[key] = current.get(key, result.get(key, []))
+        value = current.get(key, result.get(key, []))
+        # The shared projection already orders clinic eligibility by creation.
+        result[key] = value if key == "eligibilities" else sorted_rows(value)
     for key in LIVE_QUALIFICATION_DEFINITIONS:
         value = current.get(key)
         if value is not None:
@@ -562,6 +819,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     live_exceptions = current.get("exceptions") or []
     result["exceptions"] = [row for row in frozen_exceptions if row.get("policy_id") in safety_ids]
     result["exceptions"] += [row for row in live_exceptions if row.get("policy_id") not in safety_ids]
+    aliases = {}
+    for policy in result["policies"]:
+        if policy.get("_live_zero") or policy.get("_live_mandatory_recheck"):
+            source_id = policy["_source_policy_id"]
+            if source_id != policy["id"]:
+                aliases.setdefault((source_id, policy["revision"]), []).append(policy["id"])
+    result["exceptions"] += [{**row, "policy_id": alias} for row in live_exceptions
+                             for alias in aliases.get((row.get("policy_id"), row.get("policy_revision")), ())]
     result["scheduling_facts"] = current.get("scheduling_facts", result.get("scheduling_facts", []))
     result["people"] = {ident: dict(row) for ident, row in (current.get("people") or {}).items()}
     result["_live_safety_staleness"] = {
@@ -594,11 +859,11 @@ def capture(db, workspace, actor_id, scope=None, *, payload=None, workspace_revi
     )
     db.add(row)
     db.flush()
-    rows = db.info.get('_baseline_rows')
-    if rows:
+    for name in ('_baseline_rows', '_baseline_hints'):
+        rows = db.info.get(name, {})
         for key in list(rows):
             if key[0] == workspace.id:
-                rows.pop(key, None)
+                del rows[key]
     return row
 
 
@@ -610,14 +875,90 @@ def capture_draft_baseline(db, workspace, actor_id, scope=None, *, payload=None,
     saved = latest(db, workspace.id)
     require(saved is not None and saved.id == row.id, "BASELINE_CAPTURE_FAILED",
             "The draft baseline could not be saved; scheduling is unavailable", 409)
-    verify(saved)
+    verify_in_transaction(db, saved)
+    baseline_rows(db)[(workspace.id, workspace.revision)] = saved
     return saved
 
 
-def latest(db, workspace_id):
-    return db.scalar(select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
-                    .order_by(m.WorkspaceBaseline.workspace_revision.desc(), m.WorkspaceBaseline.created_at.desc(),
-                              m.WorkspaceBaseline.id.desc()).limit(1))
+def _latest_ordering():
+    B = m.WorkspaceBaseline
+    return B.workspace_revision.desc(), B.created_at.desc(), B.id.desc()
+
+
+def latest(db, workspace_id, *, include_payload=True):
+    query = select(m.WorkspaceBaseline).where(m.WorkspaceBaseline.workspace_id == workspace_id)
+    if not include_payload:
+        query = query.options(defer(m.WorkspaceBaseline.canonical_payload, raiseload=True))
+    return db.scalar(query.order_by(*_latest_ordering()).limit(1))
+
+
+def latest_many(db, workspace_ids):
+    """Read only the latest baseline identity and hash for each workspace."""
+    B = m.WorkspaceBaseline
+    ranked = select(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
+        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')
+    ).where(B.workspace_id.in_(workspace_ids)).subquery()
+    rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
+    return {row.workspace_id: row for row in rows}
+
+
+def _generation_settings_query(department_id):
+    baseline = m.WorkspaceBaseline
+    return select(baseline.included_sources,
+                  baseline.canonical_payload["departments"][department_id].as_json().label("settings"))
+
+
+def _captured_generation_settings(department_id, sources, settings):
+    frozen = frozen_department_settings({"departments": {department_id: settings}}, department_id, sources or ())
+    return {"generation_defaults": frozen["generation_defaults"]} if "generation_defaults" in frozen else {}
+
+
+def workspace_generation_defaults(db, workspace, department, *, frozen_settings=None):
+    """Read captured options for an unissued rota, with a fallback for uncaptured settings."""
+    current = generation_defaults_record(department.generation_defaults) or {}
+    if workspace.status not in CAPTURED_GENERATION_STATES:
+        return current
+    if frozen_settings is None:
+        from .snapshots import _baseline_hint
+        baseline_id, payload_hash = _baseline_hint(db, workspace)
+        if baseline_id is None:
+            return current
+
+        def read(_workspace_id):
+            row = db.execute(_generation_settings_query(department.id)
+                             .where(m.WorkspaceBaseline.id == baseline_id)).one_or_none()
+            return _captured_generation_settings(department.id, *row) if row is not None else {}
+
+        # Warm reads use baseline metadata. Only a projection miss reads the JSON settings.
+        from .services.read_projections import CANONICAL_AUDIENCE, cached
+        memo = db.info.setdefault('read_projection_inputs', {})
+        key = ('generation_defaults', baseline_id, payload_hash)
+        if key not in memo:
+            stamp = snapshot_hash({"baseline": baseline_id, "hash": payload_hash})
+            memo[key] = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
+                               read, audience=CANONICAL_AUDIENCE)[workspace.id]
+        frozen_settings = memo[key]
+    return (generation_defaults_record(frozen_settings["generation_defaults"]) or {}
+            if "generation_defaults" in frozen_settings else current)
+
+
+def workspace_generation_context(db, workspace, *, current_goals=False):
+    """Load the parent rows together, and inline the settings when building a goals projection."""
+    D, O = m.Department, m.Organisation
+    query = select(D, O).join(O, O.id == D.organisation_id).where(D.id == workspace.department_id)
+    frozen_settings = None
+    if current_goals and workspace.status in CAPTURED_GENERATION_STATES:
+        # The goals result is already cached. A second projection would add writes on its cold path.
+        baseline = (_generation_settings_query(workspace.department_id)
+                    .where(m.WorkspaceBaseline.workspace_id == workspace.id)
+                    .order_by(*_latest_ordering()).limit(1).subquery())
+        department, organisation, sources, settings = db.execute(
+            query.add_columns(*baseline.c).outerjoin(baseline, true())).one()
+        frozen_settings = _captured_generation_settings(department.id, sources, settings)
+    else:
+        department, organisation = db.execute(query).one()
+    return department, organisation, workspace_generation_defaults(
+        db, workspace, department, frozen_settings=frozen_settings)
 
 
 def verify(row):
@@ -631,6 +972,36 @@ def verify(row):
     require(set(row.included_sources) <= set(SOURCE_NAMES), "BASELINE_INVALID",
             "The saved draft baseline contains an unknown source", 409)
     return payload
+
+
+def baseline_rows(db):
+    transaction = db.get_transaction()
+    if db.info.get('_verified_baseline_transaction') is not transaction:
+        db.info['_verified_baseline_transaction'] = transaction
+        db.info.pop('_baseline_rows', None)
+        db.info.pop('_verified_baselines', None)
+        db.info.pop('_verified_baseline_keys', None)
+    return db.info.setdefault('_baseline_rows', {})
+
+
+def verify_in_transaction(db, row):
+    """Return a verified payload for read-only use by this transaction."""
+    if row is None:
+        return None
+    if object_session(row) is not db or not db.in_transaction() or row in db.dirty:
+        return verify(row)
+    baseline_rows(db)
+    cache = db.info.setdefault('_verified_baselines', OrderedDict())
+    keys = db.info.setdefault('_verified_baseline_keys', set())
+    key = row.id, row.payload_hash
+    if key not in cache:
+        cache[key] = json_value(row.canonical_payload) if key in keys else verify(row)
+        keys.add(key)
+    cache.move_to_end(key)
+    settings = db.get_bind().get_execution_options().get('rota_write_settings') or Settings()
+    while len(cache) > settings.verified_baseline_cache_entries:
+        cache.popitem(last=False)
+    return cache[key]
 
 
 def verify_generation_snapshot(db, workspace, snapshot):
@@ -656,8 +1027,10 @@ def generation_manifest(row, snapshot, *, job_id=None, requester_id=None, job=No
     payload = verify(row)
     info = projection(row)
     source_hashes = {source: group_hash(payload, source) for source in info["included_sources"]}
-    input_manifest = snapshot.get("input_manifest") or {}
-    result = result or {}
+    from packages.domain.input_manifest import bind_generation_admission
+    from .serialization import CANDIDATE_EVIDENCE_REF, job_result_with_reconciliation
+    input_manifest = bind_generation_admission(snapshot.get("input_manifest") or {}, snapshot)
+    result = job_result_with_reconciliation(job, result) or {}
     result_copy = {key: value for key, value in result.items() if key != "generation_manifest"}
     result_hash = snapshot_hash(result_copy) if result_copy else None
     candidate_hash = result.get("candidate_hash") or (snapshot_hash({key: result.get(key) for key in ("additions", "removals")})
@@ -694,7 +1067,9 @@ def generation_manifest(row, snapshot, *, job_id=None, requester_id=None, job=No
                 "completed_at": completed_at.isoformat() if hasattr(completed_at, "isoformat") else completed_at,
                 "status": status},
         "result": {"status": result.get("status"), "hash": result_hash, "candidate_hash": candidate_hash,
-                   "rollback": result.get("reconciliation") or result.get("rollback")},
+                   "rollback": result.get("reconciliation") or result.get("rollback"),
+                   **({CANDIDATE_EVIDENCE_REF: result[CANDIDATE_EVIDENCE_REF]}
+                      if CANDIDATE_EVIDENCE_REF in result else {})},
     }
 
 
@@ -731,8 +1106,8 @@ def baseline_reference(row):
     }
 
 
-def attach(db, workspace, value):
-    row = latest(db, workspace.id)
+def attach(db, workspace, value, *, baseline=None):
+    row = latest(db, workspace.id, include_payload=False) if baseline is None else baseline
     if row is None:
         return value
     info = projection(row)

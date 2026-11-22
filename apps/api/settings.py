@@ -1,4 +1,9 @@
-"""Deployment settings, not coordinator-editable operational policies."""
+"""Deployment settings, not coordinator-editable operational policies.
+
+ROTA_WORKER_CLAIM_MAX_DEFER_SECONDS defaults to 20 (range 1..600 seconds).
+Once the oldest enabled queued job reaches this age, claiming uses the existing
+bounded writer wait before housekeeping; the command write budget still applies.
+"""
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address
 import logging
@@ -9,12 +14,18 @@ from typing import Literal
 from urllib.parse import urlparse
 from pydantic import ValidationError
 from .data_crypto import data_key_from_secret  # noqa: F401  the one key parser (GitHub and mailbox secrets)
-from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, SESSION_IDLE_MINUTES_MIN,
+from packages.contracts.schemas import (BulkSettings, DeploymentSessionSettingsInput, DisplaySettingsInput,
+                                        SESSION_IDLE_MINUTES_MIN,
                                         SESSION_IDLE_MINUTES_DEFAULT, SESSION_MAX_HOURS_DEFAULT,
                                         valid_feedback_github_repo)
 
 # The compose health check allows a two-minute file age; keep configurable worker waits at half that window.
 WORKER_IDLE_MAX_SECONDS = 60
+
+
+def new_department_display_settings() -> dict[str, bool]:
+    """A new department stores the default Rules page; departments created before it store none and keep theirs."""
+    return {"rule_catalogue": DisplaySettingsInput.model_fields["rule_catalogue"].default}
 
 
 def new_department_session_limits() -> dict[str, int | None]:
@@ -223,6 +234,7 @@ class Settings:
     worker_heartbeat_max_age_seconds: int = 180
     smtp_private_host_allowlist: str = ""
     worker_poll_seconds: int = 2
+    worker_claim_max_defer_seconds: int = 20
     # Notification dispatch has a tighter fallback than solver/job polling; PostgreSQL LISTEN wakes it first.
     worker_notification_poll_seconds: int = 1
     worker_idle_max_seconds: int = 30  # Keep below the compose health-check window with margin.
@@ -270,7 +282,7 @@ class Settings:
             **{name: int(os.getenv("ROTA_" + name.upper(), getattr(cls, name)))
                for name in ("session_idle_minutes", "session_hours", "rate_commands_per_minute", "rate_exports_per_minute", "rate_feed_per_hour", "rate_feed_address_per_hour",
                             "bulk_max_items", "bulk_direct_max", "bulk_staged_days", "rate_bulk_preview_per_minute",
-                            "generation_resume_days", "feasibility_second_pass_seconds", "static_cache_seconds", "worker_poll_seconds", "worker_notification_poll_seconds", "worker_idle_max_seconds", "worker_batch_size",
+                            "generation_resume_days", "feasibility_second_pass_seconds", "static_cache_seconds", "worker_poll_seconds", "worker_claim_max_defer_seconds", "worker_notification_poll_seconds", "worker_idle_max_seconds", "worker_batch_size",
                             "worker_projection_retry_seconds", "worker_projection_retry_max_seconds",
                             "worker_supersession_interval_seconds", "worker_supersession_workspaces", "worker_supersession_batch_size",
                             "worker_supersession_retry_max_seconds",
@@ -304,6 +316,8 @@ class Settings:
             raise RuntimeError('ROTA_FEASIBILITY_SECOND_PASS_SECONDS must be from 1 to 600')
         if not 1 <= self.worker_poll_seconds <= self.worker_idle_max_seconds <= WORKER_IDLE_MAX_SECONDS:
             raise RuntimeError('Worker polling must be positive and leave margin below the container liveness window')
+        if not 1 <= self.worker_claim_max_defer_seconds <= 600:
+            raise RuntimeError('ROTA_WORKER_CLAIM_MAX_DEFER_SECONDS must be from 1 to 600')
         if not 1 <= self.worker_notification_poll_seconds <= self.worker_idle_max_seconds:
             raise RuntimeError('ROTA_WORKER_NOTIFICATION_POLL_SECONDS must be between one second and the worker idle interval')
         if not self.worker_idle_max_seconds <= self.worker_projection_retry_seconds <= self.worker_projection_retry_max_seconds <= 86400:
@@ -410,3 +424,6 @@ class Settings:
         if (require_authentication and self.environment == "production" and password_login_enabled(self)
                 and self.password_login_progressive_delay and not self.fmuc_data_key):
             raise RuntimeError("FMUC_DATA_KEY is required for progressive password sign-in")
+        if require_authentication and self.environment == "production" and not self.fmuc_data_key:
+            # Sign-in event and rate-limit keys are keyed hashes; a keyless production cannot store them safely.
+            raise RuntimeError("FMUC_DATA_KEY is required for sign-in in production")

@@ -1,4 +1,5 @@
 """Recorded supervision teams stay together in one team box (team_view.ts) in Calendar cells without losing member actions."""
+from tests.historical_staffing import retained_staffing
 import os
 from pathlib import Path
 import re
@@ -146,7 +147,7 @@ def test_busy_cell_limits_whole_teams_atomically(browser, live_server, h, view):
 def test_only_recorded_same_session_supervision_forms_a_team(browser, live_server, h, view):
     w, session, people, typ = fixture(h)
     start, end = '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00'
-    w = h.shift(w, start, end, typ=typ, people=[
+    w = retained_staffing(h, w, start, end, typ=typ, people=[
         {'person_id': people[1], 'start': start, 'end': end, 'participation': 'trainee', 'supervisor_person_id': people[0]},
         {'person_id': people[3], 'start': start, 'end': end, 'participation': 'supervisor'}])['workspace']
     other = next(s for s in h.detail(w)['shifts'] if s['id'] != session['id'])

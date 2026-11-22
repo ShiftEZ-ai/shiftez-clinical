@@ -58,6 +58,75 @@ def test_schedule_score_and_trend_for_planners_only(h):
     assert mine['schedule'] is None and mine['score_trend'] == []
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('changed_input', ['session', 'scoring', 'grant'])
+def test_draft_schedule_currency_matches_the_check_gate(h, changed_input):
+    from apps.api.services.planning import complete_check
+    from apps.api.snapshots import domain_snapshot
+
+    created = h.shift(h.workspace('Draft check currency'))
+    workspace = created['workspace']
+    h.command('coordinator', 'workspace.validate', {'reason': 'Check draft inputs'},
+              workspace['id'], workspace['revision'])
+    url = '/api/fairness/goals?workspace_id=' + workspace['id']
+    assert h.get('coordinator', url)['schedule']['fresh'] is True
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Workspace, workspace['id'])
+        stored = row.validation
+        department = db.get(m.Department, row.department_id)
+        source = domain_snapshot(db, row)
+        assert complete_check(stored, source, source['department']['generation_defaults']) is True
+        if changed_input == 'session':
+            shift = db.get(m.Shift, created['shift_id'])
+            shift.end += timedelta(hours=1)
+            shift.revision += 1
+            row.content_revision += 1
+            row.revision += 1
+        elif changed_input == 'scoring':
+            department.generation_defaults = {**(department.generation_defaults or {}),
+                'scoring': {'weights': {'coverage': 36, 'rules': 25, 'fairness': 25,
+                                        'preferences': 10, 'stability': 5}}}
+            department.revision += 1
+        else:
+            grant = db.scalar(select(m.CapabilityGrant).where(m.CapabilityGrant.person_id == h.seed['people'][0]))
+            grant.revoked = True
+            grant.revision += 1
+            db.get(m.Organisation, department.organisation_id).input_revision += 1
+    # A later scoring change leaves the draft's captured settings and check current.
+    expected_fresh = changed_input == 'scoring'
+    assert h.get('coordinator', url)['schedule']['fresh'] is expected_fresh
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, workspace['id'])
+        source = domain_snapshot(db, row)
+        assert complete_check(row.validation, source, source['department']['generation_defaults']) is expected_fresh
+        assert row.validation == stored
+    if changed_input == 'scoring':
+        h.refresh_draft_baseline(workspace)
+        assert h.get('coordinator', url)['schedule'] is None
+
+
+def test_draft_schedule_currency_discards_legacy_cached_verdict(h, monkeypatch):
+    workspace = h.shift(h.workspace('Cached draft check'))['workspace']
+    client = h.client('coordinator')
+    url = '/api/fairness/goals?workspace_id=' + workspace['id']
+    current_schedule = fairness_service.schedule
+
+    def legacy_tag(actor, workspace_id, who, starts_on, ends_on, inputs):
+        # The goals read stores its projection under this tag; an older release stored it under the legacy one.
+        return fairness_service._dashboard_tag('fairness-goals', actor, (workspace_id, who, starts_on, ends_on), inputs)
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(fairness_service, '_goals_tag', legacy_tag)
+        legacy.setattr(fairness_service, 'schedule',
+                       lambda db, row: {**current_schedule(db, row), 'fresh': False})
+        cached = client.get(url)
+        assert cached.status_code == 200 and cached.json()['schedule']['fresh'] is False
+
+    current = client.get(url, headers={'if-none-match': cached.headers['etag']})
+    assert current.status_code == 200 and current.headers['etag'] != cached.headers['etag']
+    assert current.json()['schedule']['fresh'] is True
+
+
 def test_distribution_and_exposure_support_conditional_reads(h):
     person = h.seed['people'][0]
     published = session(h, h.workspace('Conditional fairness'), 4, [person])

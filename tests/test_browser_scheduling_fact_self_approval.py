@@ -13,7 +13,7 @@ pytestmark = pytest.mark.browser
 
 @pytest.mark.parametrize('permitted', [False, True], ids=['independent-approval-required', 'self-approval-permitted'])
 def test_own_fact_review_and_approval_follow_server_eligibility(browser, live_server, h, permitted):
-    reviewer = identity(h, 'both', ['coordinator', 'approver'])
+    reviewer = identity(h, 'both', ['coordinator', 'approver'], person=h.seed['people'][0])
     fact = h.command('both', 'person.workload.propose', workload(h, 3))['fact']
     permission = None
     if permitted:
@@ -45,7 +45,10 @@ def test_own_fact_review_and_approval_follow_server_eligibility(browser, live_se
         reason(page, decision_reason, 'Approve')
         expect(review).to_have_count(0)
         expect(page.locator('#toast-tray .toast', has_text='Change approved.')).to_be_visible()
-        expect(row).to_have_count(0)
+        # The decided fact stays listed on the whole list, now Approved and no longer decidable. The row is first seen
+        # Approved: the refresh redraws the list, and a missing row would satisfy the button check alone.
+        expect(row).to_contain_text('Approved')
+        expect(row.get_by_role('button', name='Approve', exact=True)).to_have_count(0)
         facts = h.get('auditor', f"/api/people/{fact['person_id']}/scheduling-facts")
         assert not facts['proposed']
         assert [(f['id'], f['approved_by']) for f in facts['active']] == [(fact['id'], reviewer)]

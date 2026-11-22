@@ -17,7 +17,7 @@ from apps.api.snapshots import cheap_fingerprints, inactive_series_shift_ids
 from packages.contracts.schemas import PERMISSIONS
 from packages.domain.time import aware
 from packages.domain.finding_causes import DUTIES_DURING_APPROVED_LEAVE
-from . import availability, reviews, schedule, scheduling_facts, published_operational
+from . import availability, independence, reviews, schedule, scheduling_facts, published_operational
 from .independence import person_key, my_actions, active_permissions
 from .common import neutral_rota_name, rota_names
 from apps.api.settings import Settings
@@ -28,13 +28,13 @@ _HOME_CACHE_LOCK = Lock()
 _HOME_CACHE_LIMIT = 128
 
 
-def _home_stamp(db, actor, now):
+def _home_stamp(db, actor, now, max_days):
     """Return a bounded invalidation stamp without aggregating every history row."""
     latest_audit = db.scalar(select(func.max(m.AuditEvent.created_at)).where(
         m.AuditEvent.department_id == actor.department_id))
     row = db.execute(select(m.Department.revision, m.Department.catalogue_revision,
                             m.Organisation.revision, m.Organisation.input_revision,
-                            m.Organisation.availability_revision)
+                            m.Organisation.availability_revision, m.Organisation.timezone)
                     .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
                     .where(m.Department.id == actor.department_id)
                     ).one()
@@ -42,7 +42,20 @@ def _home_stamp(db, actor, now):
     # stamp process-independent so the durable Home projection is shared by
     # every API worker after a deploy.
     from .rota_summary import validation_job_stamp
-    return (*row, latest_audit, now.date(), validation_job_stamp(db, department_id=actor.department_id))
+    # Dated grants start and expire at the department's midnight.
+    today = now.astimezone(ZoneInfo(row.timezone)).date()
+    # A worker can confirm a submitted rota without an audit or validation job change.
+    review_stamps = ()
+    if actor.permits("coordinator", "approver", "programme_lead"):
+        from .read_projections import CANONICAL_AUDIENCE
+        W, C = m.Workspace, m.WorkspaceReadProjection
+        horizon = timedelta(days=max_days)
+        review_stamps = tuple((wid, stamp) for wid, stamp in db.execute(
+            select(W.id, C.stamp).join(C, C.workspace_id == W.id)
+            .where(W.department_id == actor.department_id, W.status == 'submitted', W.archived_at.is_(None),
+                   W.ends_on > today - horizon, W.starts_on < today + horizon,
+                   C.kind == 'fingerprint', C.audience == CANONICAL_AUDIENCE).order_by(W.id)))
+    return (*row, latest_audit, today, review_stamps, validation_job_stamp(db, department_id=actor.department_id))
 
 
 def rota_strip(db, actor, start, end, limit, offset):
@@ -103,13 +116,16 @@ def _home_uncached(db, actor, *, max_days):
         W = m.Workspace
         rotas = count(W, W.archived_at.is_(None))
         # Live rotas only (a handful); their stored check says what is left without loading any session.
+        # Drafts near today; a rota waiting for review or publishing whatever its month (the Schedule offers it too).
+        # ponytail: rotas left submitted or approved are read without a date bound; cap them if a department keeps dozens.
         near_since = today - timedelta(days=max_days)
         near_until = today + timedelta(days=max_days)
         live = list(db.scalars(select(W).options(load_only(W.id, W.name, W.status, W.starts_on, W.ends_on,
             W.revision, W.content_revision, W.base_publication_id, W.submitted_fingerprint, W.submitted_at, W.review_snapshot,
             W.return_note,
             W.archived_at, W.department_id, W.accepted_issues)).where(W.department_id == dept, W.archived_at.is_(None),
-            W.status.in_(schedule.LIVE), W.ends_on > near_since, W.starts_on < near_until)
+            W.status.in_(schedule.LIVE), or_(W.status.in_(('submitted', 'approved')),
+                                              and_(W.ends_on > near_since, W.starts_on < near_until)))
             .order_by(W.starts_on, W.id)))
         drafts = [w for w in live if w.status == "draft"]
         names = rota_names(db, actor.roles, actor.person_id, {w.id: w.name for w in live})
@@ -117,11 +133,16 @@ def _home_uncached(db, actor, *, max_days):
         checking = checking_workspaces(db, [w.id for w in live])
         from .workspace_reads import stored_checks
         checks = stored_checks(db, live)
-        # A landing read must not rebuild every live rota. Unknown currency is shown
-        # conservatively and the planner resolves it on open.
+        # Home reads saved currency. Unknown submitted rotas get no review offer.
         current_inputs = cheap_fingerprints(db, live, checks=checks)
+        if can("coordinator", "approver", "programme_lead"):
+            unconfirmed = [w for w in live if w.status == 'submitted' and w.id not in current_inputs]
+            if unconfirmed:
+                from apps.api.snapshots import fingerprints
+                current_inputs.update(fingerprints(db, unconfirmed, checks=checks, reload=False,
+                                                   rebuild=lambda _w: False))
         outdated = {w.id for w in live if w.status != "draft" and (
-            w.id not in current_inputs or w.submitted_fingerprint != current_inputs[w.id])}
+            not current_inputs.get(w.id) or w.submitted_fingerprint != current_inputs[w.id])}
         fresh = {w.id for w in drafts if checks[w.id]['checked'] and checks[w.id]['fingerprint'] == current_inputs.get(w.id)}
 
         summaries = {}
@@ -259,14 +280,15 @@ def _home_uncached(db, actor, *, max_days):
         add(65, "rules", proposed, sample=[{"name": proposal.name, "by": proposal.display_name}] if proposal else [],
             link_target="#rules?source=" + proposal.id if proposal else None)
         exceptions = (Pe.department_id == dept, Pe.status == "proposed",
-                      *(() if 'exception.approve' in self_actions else (Pe.created_by.not_in(my_ids),)))
+                      *(() if 'exception.approve' in self_actions else (independence.subject_independent(
+                          db, actor, (Pe.person_id,), Pe.created_by, sql=True),)))
         exception = db.execute(select(Pe.id, Pe.policy_id).where(*exceptions)
                                .order_by(Pe.created_at, Pe.seq).limit(1)).first()
         add(66, "exceptions", count(Pe, *exceptions[1:]),
             link_target=f"#rules?source={exception.policy_id}&exception={exception.id}" if exception else None)
     if can("coordinator"):
         AP = m.AvailabilityPattern
-        add(45, "patterns", count(AP, AP.status == "proposed", *availability.not_own(AP, actor)))
+        add(45, "patterns", count(AP, AP.status == "proposed", availability.decision_scope(db, actor, AP)))
         S = m.SwapRequest
         agreed = (S.status.in_(("accepted", "reviewing")), S.expires_at > now)
         add(50, "swaps_to_apply", count(S, *agreed), sample=swap_sample(db, dept, agreed))
@@ -293,13 +315,15 @@ def _home_uncached(db, actor, *, max_days):
             .order_by(C.name, C.id).limit(2))] if pending_acknowledgements else [])
 
     current = lambda cls: and_(cls.department_id == dept, cls.starts_on <= today, or_(cls.ends_on.is_(None), cls.ends_on > today))
-    people = select(func.count()).select_from(m.Person).where(m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True))
     if can("admin", "credentialer"):
+        from .people import active_people_on
+        people = select(func.count()).select_from(m.Person).where(
+            m.Person.organisation_id == actor.organisation_id, active_people_on(today))
         E = m.Eligibility
         add(55, "no_eligibility", db.scalar(people.where(~m.Person.id.in_(select(E.person_id).where(current(E))))) or 0)
     if can("admin", "coordinator"):
-        from .people import current_people
-        add(56, "no_rank", current_people(db, actor)['people_without_current_rank'])
+        from .people import current_people_counts
+        add(56, "no_rank", current_people_counts(db, actor, today)['people_without_current_rank'])
     if can("admin"):
         add(57, "no_hours", count(m.Service, m.Service.active.is_(True), m.Service.calendar_id.is_(None)))
     if can(*PERMISSIONS["feedback.triage"]):
@@ -314,9 +338,11 @@ def _home_uncached(db, actor, *, max_days):
         add(5, "failed_notifications", count(m.Outbox, m.Outbox.state == "failed"))
         add(6, "failed_runs", count(m.Job, m.Job.status == "failed", m.Job.completed_at > now - timedelta(days=1)))
     recent = []
+    E = m.AuditEvent
+    # Audit readers count the department's self-approved decisions; anyone else their own (what /api/audit lets them read).
+    own = () if can(*PERMISSIONS["audit.read"]) else (E.actor_id == actor.identity_id,)
+    add(90, "self_approved", count(E, E.created_at > now - timedelta(days=30), E.detail["self_approved"].as_string().is_not(None), *own))
     if can(*PERMISSIONS["audit.read"]):
-        E = m.AuditEvent
-        add(90, "self_approved", count(E, E.created_at > now - timedelta(days=30), E.detail["self_approved"].as_string().is_not(None)))
         # Each command is one change, even when a batch writes one event per request. Separate later Undos of the
         # same batch by correlation; single-record events keep their own row. Count before taking the latest 40.
         group = (func.coalesce(E.detail["batch_id"].as_string(), E.id), E.correlation_id, E.actor_id)
@@ -368,7 +394,7 @@ def home(db, actor, *, settings=None):
     settings = settings or Settings()
     max_days = settings.workspace_read_max_days
     from .notification_audience import is_test_identity
-    stamp = (_home_stamp(db, actor, now), settings.publish_test_people_only, is_test_identity(actor))
+    stamp = (_home_stamp(db, actor, now, max_days), settings.publish_test_people_only, is_test_identity(actor))
     from .read_projections import cached_department
     if db is not None:
         return cached_department(db, actor, 'home', digest([stamp, max_days]),

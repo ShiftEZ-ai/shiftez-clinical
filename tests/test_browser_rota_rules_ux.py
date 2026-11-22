@@ -308,26 +308,21 @@ def test_the_rules_list_groups_by_question_with_one_sentence_per_rule(browser, l
         page.route(re.compile(r'.*/api/rules-explained\?group_by=question.*'), lambda route: route.fulfill(json=projection))
         navigate(page, 'rules')
         main = page.locator('#main')
-        heads = main.locator('tr.rt-family')
+        heads = main.locator('section.rt-q')
         expect(heads.first).to_contain_text('Staffing in each session')  # A has no rule here: not drawn
         expect(heads.first.locator('.rt-letter')).to_have_text('B')
-        row = main.locator(f'tr.rt-rule[data-rule="{entry["id"]}"]')
-        expect(row.locator('.rt-sentence')).to_have_text(summary)
+        row = main.locator(f'li.rt-item[data-rule="{entry["id"]}"]')
+        expect(row.locator('.rt-sentence')).to_have_count(0)  # the one-row Rules list drops the per-row sentence.
+        expect(row.locator('.rt-meta')).to_contain_text('1 line')
         expect(row.get_by_role('img', name='Safety rule: can only be made stricter')).to_be_visible()
         expect(row.get_by_role('button', name=entry['name'], exact=True)).to_be_visible()  # the link to its page
-        conflict = main.locator('tr.rt-conflict')
+        conflict = main.locator('li.rt-conflict')
         expect(conflict).to_have_count(1)
         expect(conflict).to_contain_text('These two can’t both be true: at most 3 people, and at least 4. Lines #12 and #40.')
         conflict.get_by_role('button', name='Open both').click()
         expect(row.locator('.rt-toggle')).to_have_attribute('aria-expanded', 'true')
-        # The people table, once, under the question whose rules it reads (here B), in the server's words.
-        table = main.get_by_role('table', name='Staffing in each session')
-        expect(table.get_by_role('columnheader')).to_have_text(['Who', 'Monthly cap'])
-        expect(table.get_by_role('row', name=re.compile('^Fellow'))).to_contain_text('14')
-        expect(table.get_by_role('row', name=re.compile('^Dr Sample Alpha'))).to_contain_text('18, an exception')
-        # How to read it is help on the table's caption, not a visible line (AGENTS §2, DESIGN).
-        expect(table.get_by_role('button', name='People are listed only where they differ from their rank.')).to_be_visible()
-        expect(main.get_by_text('People are listed only where they differ from their rank.', exact=True)).to_have_count(0)
+        # the one-row Rules list removes the people table from the Rules list; line details open in the rule page instead.
+        expect(main.get_by_role('table', name='Staffing in each session')).to_have_count(0)
     finally:
         context.close()
 
@@ -350,12 +345,12 @@ def test_the_rules_list_moves_a_kept_family_default_to_question_once(browser, li
         page.evaluate("([k, v]) => localStorage.setItem(k, JSON.stringify(v))", [key, {'group': 'family', 'wrap': ['who']}])
         navigate(page, 'rules')
         main = page.locator('#main')
-        expect(main.locator('tr.rt-family').first.locator('.rt-letter')).to_have_text('B')  # moved to Question
+        expect(main.locator('section.rt-q').first.locator('.rt-letter')).to_have_text('B')  # moved to Question
         kept = page.evaluate("k => JSON.parse(localStorage.getItem(k))", key)
         assert kept['group'] == 'question' and kept['question_default'] is True and kept['wrap'] == ['who'], kept
         page.evaluate("([k, v]) => localStorage.setItem(k, JSON.stringify(v))", [key, {**kept, 'group': 'family'}])
         page.reload()
-        expect(main.locator('tr.rt-rule').first).to_be_visible()
+        expect(main.locator('li.rt-item').first).to_be_visible()
         expect(main.locator('.rt-letter')).to_have_count(0)  # Family, chosen after the move, stays
     finally:
         context.close()
@@ -389,11 +384,11 @@ def test_the_rules_questions_read_that_fails_once_says_so_and_retry_reads_them_a
         # The shared failure note never hides the error: its reference, and Report this problem (QA-133).
         expect(failure).to_contain_text('Reference: ref-qa133-test')
         expect(failure.get_by_role('button', name='Report this problem')).to_be_visible()
-        expect(main.locator('tr.rt-rule').first).to_be_visible()  # the family list still works under it
+        expect(main.locator('li.rt-item').first).to_be_visible()  # the family list still works under it
         assert len(asked) == 1  # the page asked on open
         expect(main.locator('.rt-letter')).to_have_count(0)
         failure.get_by_role('button', name='Retry', exact=True).click()
-        expect(main.locator('tr.rt-family').first.locator('.rt-letter')).to_have_text('B')
+        expect(main.locator('section.rt-q').first.locator('.rt-letter')).to_have_text('B')
         expect(failure).to_have_count(0)
         assert len(asked) == 2  # exactly one new request
     finally:
@@ -515,9 +510,12 @@ def test_a_people_table_cell_never_hides_its_limits_behind_a_bare_number(browser
     try:
         page.route(re.compile(r'.*/api/rules-explained\?group_by=question.*'), lambda route: route.fulfill(json=projection))
         navigate(page, 'rules')
-        table = page.locator('#main').get_by_role('table', name='Workload per person')
-        expect(table.get_by_role('row', name=re.compile('^Consultant')).get_by_role('cell')).to_have_text([worded])  # as sent
-        expect(table).not_to_contain_text('at most 2 duties')
+        # The one-row Rules list has no people table (one row per rule; a rule's lines open under it), so no bare
+        # display can show there.
+        main = page.locator('#main')
+        expect(main.locator(f'li.rt-item[data-rule="{entry["id"]}"]')).to_be_visible()
+        expect(main.get_by_role('table', name='Workload per person')).to_have_count(0)
+        expect(main).not_to_contain_text('at most 2 duties')
     finally:
         context.close()
 
@@ -607,7 +605,7 @@ def test_rules_list_marks_an_unexplained_rule_in_each_grouping(browser, live_ser
             else:
                 navigate(page, 'rules')
             main = page.locator('#main')
-            row = main.locator(f'tr.rt-rule[data-rule="{entry["id"]}"]')
+            row = main.locator(f'li.rt-item[data-rule="{entry["id"]}"]')
             marker = row.locator('.rule-unexplained')
             expect(marker).to_have_text(UNEXPLAINED if grouping == 'question' else UNEXPLAINED_SHORT)
             expect(marker.locator('.iss-mark.warning .icon')).to_have_count(1)
@@ -656,8 +654,8 @@ def test_rules_list_shows_one_safety_lock_and_none_for_a_preference_in_each_grou
             else:
                 navigate(page, 'rules')
             main = page.locator('#main')
-            safety = main.locator(f'tr.rt-rule[data-rule="{rest["id"]}"]')
-            non_safety = main.locator(f'tr.rt-rule[data-rule="{preference["id"]}"]')
+            safety = main.locator(f'li.rt-item[data-rule="{rest["id"]}"]')
+            non_safety = main.locator(f'li.rt-item[data-rule="{preference["id"]}"]')
             expect(safety).to_have_count(1)
             expect(non_safety).to_have_count(1)
             lock = safety.locator('.rk-lockmark[role="img"]')
@@ -695,8 +693,43 @@ def test_rules_key_hides_safety_lock_when_a_family_filter_shows_only_preferences
         main = page.locator('#main')
         expect(main.get_by_role('list', name='Key').get_by_text('safety rule: can only be made stricter', exact=True)).to_have_count(1)
         filter_by(main, 'Family', ['Preferences & fairness'])
-        expect(main.locator(f'tr.rt-rule[data-rule="{rest["id"]}"]')).to_have_count(0)
-        expect(main.locator(f'tr.rt-rule[data-rule="{preference["id"]}"]')).to_have_count(1)
+        expect(main.locator(f'li.rt-item[data-rule="{rest["id"]}"]')).to_have_count(0)
+        expect(main.locator(f'li.rt-item[data-rule="{preference["id"]}"]')).to_have_count(1)
         expect(main.get_by_role('list', name='Key').get_by_text('safety rule: can only be made stricter', exact=True)).to_have_count(0)
+    finally:
+        context.close()
+
+
+def test_a_rest_rule_with_overlapping_lines_shows_once_with_its_numbers(browser, live_server, h):
+    """Issue 1158: overlapping lines of one rule were only notices, one per pair of lines, without a number. The rule is one
+    row in view, with each line's number and why the strictest binds said once; opened, which lines overlap."""
+    from datetime import date, timedelta
+    from .test_rule_catalogue_conflicts import approve as approve_rule, line, person, propose as propose_rule, rank
+    a = h.seed['people'][0]
+    day = h.get('coordinator', '/api/rules/catalogue')['day']
+    lines = [line(numbers={'min': {'value': 11}}), line(who=rank(h.seed['category']), numbers={'min': {'value': 8}}),
+             line(who=person(a), numbers={'min': {'value': 12}})]
+    rule = approve_rule(h, propose_rule(h, 'rest_between_duties', lines)['record'])
+    end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+    w = h.shift(h.workspace('Overlapping rest', day, end), start=f'{day}T08:00:00+03:00', end=f'{day}T10:00:00+03:00', people=[a])['workspace']
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        open_planner(page, w)
+        planner_tool(page, 'Rules in this rota')
+        panel = page.get_by_role('dialog', name='Rules in this rota')
+        row = panel.locator(f'.rk-row[data-rk-row="{rule["id"]}"]')
+        expect(row).to_have_count(1)
+        expect(row).to_be_visible()  # above the fold, never folded under "N more are met"
+        expect(panel.locator('.rk-conflict')).to_have_count(0)
+        head = row.locator('.rk-row-head')
+        for number in ('11 hours', '8 hours', '12 hours'):
+            expect(head).to_contain_text(number)
+        why = 'Where these lines overlap, all of them apply, so the strictest binds.'
+        expect(head).to_contain_text(why)
+        assert panel.inner_text().count(why) == 1
+        assert 'overlapping lines that apply together' not in panel.inner_text()
+        assert not re.search(r'#\d', head.inner_text()), head.inner_text()
+        head.click()
+        expect(row.locator('.rk-detail')).to_contain_text('Lines #1, #2 and #3 overlap.')
     finally:
         context.close()

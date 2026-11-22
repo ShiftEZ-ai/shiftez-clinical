@@ -236,13 +236,18 @@ async function stepAuthority(ctx:Context,data:WorkspaceData){
   const options=ids.length?(await get<{delegations:Row[]}>('/api/review-delegations')).delegations.filter(x=>ids.includes(String(x.id))):[];
   return {own:own||!ids.length,options,decides:decidesStep(data)};
 }
+/** Who reviews the pending step, said to someone who does not decide it (never an empty dialog, never silence). */
+export function notDecider(data:WorkspaceData){const pending=data.review_progress?.pending_step;
+  notify(`This step is reviewed by ${roleLabel(String(pending?.role||APPROVER_ROLE))}${pending?.escalation_role?' (or '+roleLabel(String(pending.escalation_role))+' once escalated)':''}.`,'warning');}
 export async function approvalDialog(ctx:Context,data:WorkspaceData,summary:(form:HTMLElement)=>void|{gaps:number;payload:()=>Record<string,unknown>;label?:()=>string}){
   const w=data.workspace,pending=data.review_progress?.pending_step;
   const {own,options,decides}=await stepAuthority(ctx,data);
   // The Approve button shows only to whoever decides the step (app.ts); should one still be pressed, it is said, never an empty dialog.
-  if(!decides){notify(`This step is reviewed by ${roleLabel(String(pending?.role||APPROVER_ROLE))}${pending?.escalation_role?' (or '+roleLabel(String(pending.escalation_role))+' once escalated)':''}.`,'warning');return;}
+  if(!decides){notDecider(data);return;}
   // SX-17: an amendment is approved as changes, not as a whole rota.
   const noun=w.base_publication_id?'Approve changes':'Approve rota';
+  // One Approve at a time: a quick press while the address's own review opens finds it already open.
+  if([...document.querySelectorAll('dialog[open] .dialog-head h2')].some(h=>h.textContent===noun))return;
   // Further reviews are mentioned only when the route has more steps after this one (the route's own data).
   const later=pending?(data.review_progress?.steps||[]).filter((s:Row)=>!s.complete&&s.key!==pending.key).length:0;
   // L11: the review strip beside it already names the step; only what follows it is said here.

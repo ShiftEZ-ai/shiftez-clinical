@@ -1,0 +1,68 @@
+name: Image
+permissions:
+  contents: read
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    name: Build and publish image
+    runs-on: ubuntu-24.04
+    # Generous until the first runs are measured; then set from the measured time plus margin.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+    - name: Require GitHub-hosted execution
+      env:
+        HOSTED_KIND: ${{ runner.environment }}
+      working-directory: .
+      run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Build and push by digest
+      id: push
+      env:
+        REGISTRY_TOKEN: ${{ github.token }}
+        ACTOR: ${{ github.actor }}
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        COMMIT: ${{ github.sha }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -euo pipefail
+        image="ghcr.io/${GITHUB_REPOSITORY,,}"
+        case "$REF_TYPE/$REF_NAME" in
+          tag/v*) tags=(--tag "$image:$REF_NAME") ;;
+          # The default branch keeps the dev and dev-<sha12> tag names whatever it is called; unset refuses.
+          "branch/${DEFAULT_BRANCH:?}") tags=(--tag "$image:dev" --tag "$image:dev-${COMMIT:0:12}") ;;
+          *) echo "Only the default branch and v* tags publish an image"; exit 1 ;;
+        esac
+        printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+        docker buildx create --use --name publish >/dev/null
+        docker buildx build --file infra/Dockerfile --push "${tags[@]}" \
+          --build-arg ROTA_BUILD_COMMIT="$COMMIT" \
+          --build-arg ROTA_BUILD_DATE="$(git log -1 --format=%cI "$COMMIT")" \
+          --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+          --label org.opencontainers.image.revision="$COMMIT" \
+          --metadata-file "$RUNNER_TEMP/metadata.json" .
+        digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$RUNNER_TEMP/metadata.json")
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "No image digest"; exit 1; }
+        docker buildx imagetools inspect "$image@$digest" >/dev/null
+        docker logout ghcr.io
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        echo "Image \`$image@$digest\` for \`$COMMIT\`" >> "$GITHUB_STEP_SUMMARY"
+'on':
+  push:
+    branches:
+    # shortcut: dev is removed after the default branch is renamed to main.
+    - dev
+    - main
+    tags:
+    - v*

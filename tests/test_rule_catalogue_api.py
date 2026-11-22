@@ -82,6 +82,30 @@ def test_catalogue_read_reuses_revision_projection_and_invalidates_after_policy_
     return locals()
 
 
+def test_catalogue_response_shape_change_invalidates_cached_body_and_etag(h, monkeypatch):
+    from apps.api.services import rule_catalogue
+
+    stamp, build = rule_catalogue._catalogue_stamp, rule_catalogue._catalogue_uncached
+
+    def legacy_body(*args, **kwargs):
+        body = build(*args, **kwargs)
+        for item in body['entries']:
+            item.pop('line_replaces')
+        return body
+
+    client = h.client('auditor')
+    with monkeypatch.context() as legacy:
+        legacy.setattr(rule_catalogue, '_catalogue_stamp', lambda db, actor: ('rules-in-force-v2', *stamp(db, actor)[1:]))
+        legacy.setattr(rule_catalogue, '_catalogue_uncached', legacy_body)
+        before = client.get('/api/rules/catalogue')
+        assert before.status_code == 200, before.text
+        assert all('line_replaces' not in item for item in before.json()['entries'])
+    after = client.get('/api/rules/catalogue', headers={'If-None-Match': before.headers['etag']})
+    assert after.status_code == 200, after.text
+    assert all('line_replaces' in item for item in after.json()['entries'])
+    assert after.headers['etag'] != before.headers['etag']
+
+
 def test_catalogue_local_cache_keeps_no_anchor_audiences_separate(h, monkeypatch):
     """The no-workspace fallback must not reuse one reader's history metadata for another."""
     from packages.contracts import schemas as s
@@ -164,16 +188,21 @@ def test_checks_name_duplicates_overlaps_warnings_and_issues(h):
     assert h.client('staff').post('/api/rules/catalogue/duties_per_week/check', json={'lines': []}).status_code == 403
 
 
+def test_a_line_with_an_empty_list_is_refused_in_plain_words(h):
+    for bad, words in (({'weekdays': []}, 'Choose at least one day'), ({'numbers': {}}, 'Give the line a number')):
+        issues = h.client('coordinator').post('/api/rules/catalogue/duties_per_week/check', json={'lines': [{**line(numbers={'max': {'value': 5}}), **bad}]}).json()['issues']
+        assert [x['message'] for x in issues] == [words], issues
+        assert 'lines.0.' in issues[0]['field']  # still the line's own issue, as the editor places it
+
+
 def test_proposals_wait_for_another_person_and_retiring_brings_back_the_version_before(h):
     w, _, _ = world(h)
     a = h.seed['people'][0]
     everyone, mine = line(numbers={'max': {'value': 2}}), line(who=person(a), numbers={'max': {'value': 1}})
     propose(h, 'duties_per_week', [everyone, everyone], status=422)  # the same line twice
-    refused = propose(h, 'duties_per_week', [everyone, mine], status=409)
-    assert refused['error']['code'] == 'OVERLAPS_UNACKNOWLEDGED'
     check = h.client('coordinator').post('/api/rules/catalogue/duties_per_week/check', json={'lines': [everyone, mine]}).json()
     assert check['overlaps'][0]['message'].endswith('for 1 person today')
-    first = propose(h, 'duties_per_week', [everyone, mine], acknowledged=[everyone['id']])['record']
+    first = propose(h, 'duties_per_week', [everyone, mine])['record']
     assert first['status'] == 'proposed' and first['kind'] == 'catalogue'
     propose(h, 'duties_per_week', [everyone], status=409)  # one waiting proposal per rule
     h.command('coordinator', 'policy.activate', {'reason': 'Self approval'}, first['id'], first['revision'], status=403)
@@ -241,8 +270,8 @@ def catalogue_check_measurement(scale_harness):
     from apps.api.services.rule_catalogue import check
     real = policies.people_data
 
-    def department(db, actor, day):  # the department at scale: 150 people
-        data, a, b = real(db, actor, day)
+    def department(db, actor, day, *, last=None):  # the department at scale: 150 people
+        data, a, b = real(db, actor, day, last=last)
         return {**data, 'people': {**data['people'], **{str(uuid.uuid4()): {'active': True} for _ in range(147)}}}, a, b
     from datetime import date, timedelta
     people = h.seed['people']
@@ -311,9 +340,15 @@ def test_overlaps_are_listed_per_line(h):
     found = h.client('coordinator').post('/api/rules/catalogue/duties_per_week/check', json={'lines': [everyone, mine, other]}).json()
     assert found['line_overlaps'] == {everyone['id']: [{'line_id': mine['id'], 'people': 1, 'winner': mine['id']}],
                                       mine['id']: [{'line_id': everyone['id'], 'people': 1, 'winner': mine['id']}]}
-    approve(h, propose(h, 'duties_per_week', [everyone, mine, other], acknowledged=[everyone['id']])['record'])
+    assert found['line_replaces'] == {mine['id']: [{'replaced_line_id': everyone['id'], 'numbers': ['max']}]}
+    waiting = propose(h, 'duties_per_week', [everyone, mine, other])['record']
+    assert entry(h, 'duties_per_week')['proposed']['line_replaces'] == found['line_replaces']
+    approve(h, waiting)
     shown = entry(h, 'duties_per_week')
     assert shown['line_overlaps'] == found['line_overlaps'] and shown['overlaps'] == 1
+    assert shown['line_replaces'] == found['line_replaces']
+    from packages.contracts.schemas import RuleCatalogueInForceEntry
+    assert RuleCatalogueInForceEntry.model_validate({k: shown[k] for k in ('also_in_force', 'line_replaces')}).model_dump(mode='json')['line_replaces'] == found['line_replaces']
 
 
 def test_a_repeating_quota_line_without_dates_has_no_hidden_end(h):

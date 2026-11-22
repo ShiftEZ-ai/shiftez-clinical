@@ -5321,6 +5321,14 @@
             "title": "Allocation Order",
             "type": "string"
           },
+          "fill_tier_time_share": {
+            "default": 0.5,
+            "description": "Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Fill-priority time share (0\u20131)",
+            "type": "number"
+          },
           "pair_limit_max_opportunities": {
             "default": 50000,
             "maximum": 1000000,
@@ -9200,6 +9208,7 @@
           "reason": {
             "enum": [
               "optimal",
+              "model_proven",
               "time_limit",
               "plateau",
               "gap",
@@ -11666,6 +11675,14 @@
             "title": "Allocation Order",
             "type": "string"
           },
+          "fill_tier_time_share": {
+            "default": 0.5,
+            "description": "Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Fill-priority time share (0\u20131)",
+            "type": "number"
+          },
           "pair_limit_max_opportunities": {
             "default": 50000,
             "maximum": 1000000,
@@ -13257,7 +13274,7 @@
         "type": "array"
       },
       "rule_catalogue": {
-        "default": false,
+        "default": true,
         "title": "Rule Catalogue",
         "type": "boolean"
       },
@@ -21124,6 +21141,652 @@
     "title": "LivePulse",
     "type": "object"
   },
+  "ScheduleSession": {
+    "$defs": {
+      "InstantInterval": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "bulk": true,
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "bulk": true,
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "InstantInterval",
+        "type": "object"
+      },
+      "OverlapCancelAction": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "enum": [
+              "Cancel this occurrence",
+              "Cancel the other occurrence"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "side": {
+            "enum": [
+              "this",
+              "other"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "shift.action",
+              "series.occurrence.cancel"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "label",
+          "side",
+          "kind",
+          "payload"
+        ],
+        "title": "OverlapCancelAction",
+        "type": "object"
+      },
+      "PublishedAbsenceReport": {
+        "additionalProperties": false,
+        "description": "A team-safe absence marker; the private report reason never crosses this boundary.",
+        "properties": {
+          "request_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "assignment_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "approved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "person_id",
+          "assignment_id",
+          "status"
+        ],
+        "title": "PublishedAbsenceReport",
+        "type": "object"
+      },
+      "ScheduleParticipant": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "bulk": true,
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "bulk": true,
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "fixed": {
+            "default": false,
+            "title": "Fixed",
+            "type": "boolean"
+          },
+          "participation": {
+            "default": "staff",
+            "enum": [
+              "staff",
+              "trainee",
+              "supervisor"
+            ],
+            "title": "Participation",
+            "type": "string"
+          },
+          "overtime": {
+            "default": false,
+            "title": "Overtime",
+            "type": "boolean"
+          },
+          "supervisor_person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Supervisor Person Id"
+          },
+          "team_lead": {
+            "default": false,
+            "title": "Team Lead",
+            "type": "boolean"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/InstantInterval"
+            },
+            "maxItems": 8,
+            "title": "Segments",
+            "type": "array"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          },
+          "rank": {
+            "default": "",
+            "title": "Rank",
+            "type": "string"
+          },
+          "wish_effects": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Wish Effects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "person_id",
+          "id",
+          "override_reason"
+        ],
+        "title": "ScheduleParticipant",
+        "type": "object"
+      },
+      "SeriesOverlapConflict": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "TIME_OVERLAP",
+              "UNAVAILABLE",
+              "EXTERNAL_ROTATION"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Series Id"
+          },
+          "occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrence On"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Clinic Ids",
+            "type": "array"
+          },
+          "clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clinic Names",
+            "type": "array"
+          },
+          "other_shift_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Shift Id"
+          },
+          "other_workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Workspace Id"
+          },
+          "other_series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Series Id"
+          },
+          "other_occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Occurrence On"
+          },
+          "other_session_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Session Name"
+          },
+          "other_clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Other Clinic Ids",
+            "type": "array"
+          },
+          "other_clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Other Clinic Names",
+            "type": "array"
+          },
+          "availability_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Availability Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WhyLeave"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cancel_actions": {
+            "items": {
+              "$ref": "#/$defs/OverlapCancelAction"
+            },
+            "title": "Cancel Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "date",
+          "start",
+          "end",
+          "person_id",
+          "person_name",
+          "shift_id",
+          "session_name",
+          "clinic_ids",
+          "clinic_names"
+        ],
+        "title": "SeriesOverlapConflict",
+        "type": "object"
+      },
+      "WhyLeave": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "type",
+          "starts_on",
+          "ends_on"
+        ],
+        "title": "WhyLeave",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "start": {
+        "bulk": true,
+        "format": "date-time",
+        "title": "Start",
+        "type": "string"
+      },
+      "end": {
+        "bulk": true,
+        "format": "date-time",
+        "title": "End",
+        "type": "string"
+      },
+      "id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Id",
+        "type": "string"
+      },
+      "revision": {
+        "title": "Revision",
+        "type": "integer"
+      },
+      "assignment_type_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Assignment Type Id",
+        "type": "string"
+      },
+      "type_revision": {
+        "title": "Type Revision",
+        "type": "integer"
+      },
+      "type_snapshot": {
+        "additionalProperties": true,
+        "title": "Type Snapshot",
+        "type": "object"
+      },
+      "location_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Location Id",
+        "type": "string"
+      },
+      "service_ids": {
+        "items": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "title": "Service Ids",
+        "type": "array"
+      },
+      "participants": {
+        "items": {
+          "$ref": "#/$defs/ScheduleParticipant"
+        },
+        "title": "Participants",
+        "type": "array"
+      },
+      "attributes": {
+        "additionalProperties": true,
+        "title": "Attributes",
+        "type": "object"
+      },
+      "cancelled": {
+        "title": "Cancelled",
+        "type": "boolean"
+      },
+      "cancellation_reason": {
+        "anyOf": [
+          {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Cancellation Reason"
+      },
+      "locked": {
+        "title": "Locked",
+        "type": "boolean"
+      },
+      "closed": {
+        "default": false,
+        "title": "Closed",
+        "type": "boolean"
+      },
+      "series_state_frozen": {
+        "default": false,
+        "title": "Series State Frozen",
+        "type": "boolean"
+      },
+      "usual_assignee_unavailability": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Usual Assignee Unavailability",
+        "type": "array"
+      },
+      "double_booking_conflicts": {
+        "items": {
+          "$ref": "#/$defs/SeriesOverlapConflict"
+        },
+        "title": "Double Booking Conflicts",
+        "type": "array"
+      },
+      "absence_reports": {
+        "items": {
+          "$ref": "#/$defs/PublishedAbsenceReport"
+        },
+        "title": "Absence Reports",
+        "type": "array"
+      }
+    },
+    "required": [
+      "start",
+      "end",
+      "id",
+      "revision",
+      "assignment_type_id",
+      "type_revision",
+      "type_snapshot",
+      "location_id",
+      "service_ids",
+      "participants",
+      "attributes",
+      "cancelled",
+      "cancellation_reason",
+      "locked"
+    ],
+    "title": "ScheduleSession",
+    "type": "object"
+  },
   "WorkspaceCompactDetail": {
     "additionalProperties": false,
     "properties": {
@@ -26779,6 +27442,20 @@
         "title": "Active",
         "type": "boolean"
       },
+      "inactive_from": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "bulk": true,
+        "default": null,
+        "title": "Inactive From"
+      },
       "title": {
         "bulk": true,
         "default": "",
@@ -30292,7 +30969,7 @@
       }
     },
     "additionalProperties": false,
-    "description": "A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):\non or off, its settings and every line. Lines that give way to more specific ones are acknowledged by line id.",
+    "description": "A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):\non or off, its settings and every line. Ordered overrides need no acknowledgement.",
     "properties": {
       "reason": {
         "maxLength": 500,
@@ -30403,6 +31080,7 @@
         "type": "array"
       },
       "acknowledged_overlaps": {
+        "description": "Ignored legacy input; ordered overrides need no acknowledgement.",
         "items": {
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
           "type": "string"
@@ -62750,6 +63428,29 @@
         ],
         "title": "RuleInForce",
         "type": "object"
+      },
+      "RuleLineReplacement": {
+        "additionalProperties": false,
+        "properties": {
+          "replaced_line_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Replaced Line Id",
+            "type": "string"
+          },
+          "numbers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Numbers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "replaced_line_id",
+          "numbers"
+        ],
+        "title": "RuleLineReplacement",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -62760,6 +63461,18 @@
         },
         "title": "Also In Force",
         "type": "array"
+      },
+      "line_replaces": {
+        "patternProperties": {
+          "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$": {
+            "items": {
+              "$ref": "#/$defs/RuleLineReplacement"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Line Replaces",
+        "type": "object"
       }
     },
     "required": [

@@ -890,3 +890,52 @@ def test_a_replaced_proposal_is_not_ready_on_home(browser, live_server, h):
         expect(page.locator('#auto-panel')).to_be_visible()
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('who', ['admin', 'owner'])
+def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who):
+    """The owner and administrators hold no audit role: Open lists their own self-approved decisions, not a refused page."""
+    grant = {'actions': ['rule.activate'], 'starts_on': '2026-01-01', 'ends_on': '2027-01-01', 'reason': 'Only one approver this quarter'}
+    if who == 'admin':
+        h.command('admin', 'self_approval.grant', {**grant, 'identity_id': h.seed['identities']['admin']})
+    else:
+        identity(h, 'owner', ['coordinator', 'approver', 'admin'])
+        h.command('admin', 'self_approval.grant', {**grant, 'identity_id': h.seed['identities']['owner']})
+        rule = h.command('owner', 'policy.create', {'name': 'Own rest rule', 'owner': 'QA', 'source': 'Home self-approval test',
+            'starts_on': '2020-01-01', 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}})['record']
+        h.command('owner', 'policy.activate', {'reason': 'Reviewed with the clinical lead by phone'}, rule['id'], rule['revision'])
+    name = h.get(who, '/api/me')['display_name']
+    context, page = sign_in(browser, live_server, who, viewport=DESKTOP)
+    refused = []
+    page.on('response', lambda r: refused.append(r.url) if r.status == 403 else None)
+    try:
+        navigate(page, 'home')
+        page.locator('#main .home-needs-list li[data-need=self_approved]').get_by_role('button', name='Open', exact=True).click()
+        panel = page.get_by_role('region', name='Self-approved decisions')
+        row = panel.locator('.audit-row')
+        expect(row).to_have_count(1)
+        expect(row).to_contain_text(name)
+        expect(row.locator('.audit-self')).to_contain_text('Self-approved')
+        assert refused == []
+    finally:
+        context.close()
+
+
+def test_a_rota_months_ahead_is_offered_for_review_on_home(browser, live_server, h):
+    """A submitted rota three months ahead waits in Needs you as Rota to review, and Review opens its review."""
+    start = local_today() + timedelta(days=99)
+    at = lambda hour: f'{start.isoformat()}T{hour:02}:00:00+03:00'
+    w = h.workspace('Far review rota', start.isoformat(), (start + timedelta(days=7)).isoformat())
+    w = h.lifecycle(h.shift(w, start=at(8), end=at(12))['workspace'], 'submit')['workspace']
+    context, page = sign_in(browser, live_server, 'approver', DESKTOP)
+    try:
+        navigate(page, 'home')
+        row = needs(page, 'Rota to review')
+        expect(row).to_contain_text('Far review rota')
+        row.get_by_role('button', name=re.compile('^Review')).click()
+        dialog = page.get_by_role('dialog', name='Approve rota')
+        expect(dialog).to_be_visible()
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
+        expect(page).to_have_url(re.compile('edit=' + re.escape(w['id'])))
+    finally:
+        context.close()

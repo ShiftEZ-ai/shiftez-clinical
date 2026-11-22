@@ -63,7 +63,19 @@ UNAVAILABLE_OUTCOME: dict[str, Literal['definite', 'unknown']] = {
 LiveScope = Literal["workspace", "publication", "rules", "catalogue", "people", "availability", "requests", "swaps", "inbox", "jobs", "settings", "access", "feedback"]
 WorkerLiveness = Literal['running', 'not_responding', 'never_seen']
 JobStatus = Literal['queued', 'running', 'succeeded', 'failed', 'cancelled']
-WorkspaceDetailView = Literal['full', 'compact']
+WorkspaceDetailView = Literal['full', 'compact', 'schedule']
+
+INTERNAL_CHECK_KEYS = frozenset({'_session_parts', '_person_parts'})
+JOB_PRIVATE_CHECK_FIELDS = (*sorted(INTERNAL_CHECK_KEYS), 'fix_list_context', 'fix_list_state', 'fix_list_delta',
+                            'input_manifest', 'score_dependencies', 'diagnostic_version')
+# What the Schedule's whole-rota read leaves out: fields no client path reads (Design ruling a′, 20 Nov 2026).
+SCHEDULE_DETAIL_FIELDS = {
+    'session': ('series_snapshot', 'series_revision', 'series_modified', 'series_id', 'occurrence_on', 'lineage_id',
+                'template_skipped', 'closure_reason', 'created_at', 'workspace_id'),
+    'participant': ('created_at', 'source', 'source_actor_id', 'source_run_id', 'source_at', 'shift_id', 'revision'),
+    'coverage': ('availability_basis',),
+    'check': (*JOB_PRIVATE_CHECK_FIELDS, 'goals'),
+}
 WorkspacePart = Literal['shifts', 'validation']
 
 # Draft edit replies are deliberately bounded.  A command that touches more than
@@ -1936,6 +1948,7 @@ class PersonInput(Schema):
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     active: bool = Field(default=True, json_schema_extra={"bulk": True})
+    inactive_from: date | None = Field(default=None, json_schema_extra={"bulk": True})
     title: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     work_email: Email | Literal[""] = ""
     work_phone: str = Field(default="", max_length=80, json_schema_extra={"bulk": True})
@@ -2100,6 +2113,9 @@ class GenerationOptions(Schema):
     overtime_penalty: int = Field(default=1, ge=1, le=MAX_SCORE_INPUT, strict=True)
     balance_measure: Literal['duties', 'reserved_hours'] = 'reserved_hours'
     allocation_order: Literal['weighted', 'tiered'] = 'weighted'
+    fill_tier_time_share: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False,
+        title='Fill-priority time share (0–1)',
+        description='Maximum share of time remaining after coverage and mandatory minima for fill-priority steps; the rest improves schedule quality. 0 skips fill-priority search.')
     pair_limit_max_opportunities: int = Field(default=50000, ge=1, le=1000000, strict=True)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
 
@@ -4933,8 +4949,14 @@ class RuleInForce(Schema):
     safety: bool
 
 
+class RuleLineReplacement(Schema):
+    replaced_line_id: ID
+    numbers: list[str]
+
+
 class RuleCatalogueInForceEntry(Schema):
     also_in_force: list[RuleInForce]
+    line_replaces: dict[ID, list[RuleLineReplacement]] = Field(default_factory=dict)
 
 
 class RuleCatalogueCounts(Schema):
@@ -5693,7 +5715,7 @@ class CatalogueUpdating(Schema):
 
 class RuleProposalInput(Decision):
     """A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):
-    on or off, its settings and every line. Lines that give way to more specific ones are acknowledged by line id."""
+    on or off, its settings and every line. Ordered overrides need no acknowledgement."""
     legacy_lead_conversion: LegacyLeadConversion | None = None
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 1
@@ -5704,7 +5726,23 @@ class RuleProposalInput(Decision):
     balance_between_people: bool = Field(default=True, strict=True, json_schema_extra={"bulk": True})
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=8, json_schema_extra={"bulk": True})
     lines: list[RuleLine] = Field(default_factory=list, max_length=2000, json_schema_extra={"bulk": True})
-    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, json_schema_extra={"writeOnly": True})
+    acknowledged_overlaps: list[ID] = Field(default_factory=list, max_length=2000, description='Ignored legacy input; ordered overrides need no acknowledgement.', json_schema_extra={"writeOnly": True})
+
+
+class RuleMapCatalogueLine(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+
+
+class RuleMapEntry(Schema):
+    model_config = ConfigDict(extra='allow')
+    binding_value: float | None
+    lines: list[RuleMapCatalogueLine | PersonAmount]
+
+
+class RuleMapResponse(Schema):
+    model_config = ConfigDict(extra='allow')
+    rules: list[RuleMapEntry]
 
 
 class RuleMapProposal(Schema):
@@ -6300,6 +6338,33 @@ class SeriesOverlapBatchPreview(Schema):
 
 
 class SessionOverlapFlags(Schema):
+    double_booking_conflicts: list[SeriesOverlapConflict] = Field(default_factory=list)
+    absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
+
+
+class ScheduleParticipant(ParticipantInput):
+    id: ID
+    override_reason: Reason | None
+    rank: str = ''
+    wish_effects: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ScheduleSession(InstantInterval):
+    id: ID
+    revision: int
+    assignment_type_id: ID
+    type_revision: int
+    type_snapshot: dict[str, Any]
+    location_id: ID
+    service_ids: list[ID]
+    participants: list[ScheduleParticipant]
+    attributes: dict[str, Any]
+    cancelled: bool
+    cancellation_reason: Reason | None
+    locked: bool
+    closed: bool = False
+    series_state_frozen: bool = False
+    usual_assignee_unavailability: list[dict[str, Any]] = Field(default_factory=list)
     double_booking_conflicts: list[SeriesOverlapConflict] = Field(default_factory=list)
     absence_reports: list[PublishedAbsenceReport] = Field(default_factory=list)
 
@@ -7673,13 +7738,14 @@ GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged':
 GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_limit': 'search time used up',
     'plateau': 'stopped when it stopped improving', 'gap': 'close enough to the best possible',
     'score': 'target score reached', 'clock': 'stop time reached', 'operator_stop': 'stopped with Stop and keep best',
-    'cancelled': 'cancelled', 'failed': 'stopped by an error', 'no_search': 'nothing to search',
+    'model_proven': 'search finished; checks changed the proposal', 'cancelled': 'cancelled',
+    'failed': 'stopped by an error', 'no_search': 'nothing to search',
     'conflict': 'rules conflict'}
 
 
 class GenerationSearchStop(Schema):
     """The typed reason a finished generation run stopped searching."""
-    reason: Literal['optimal', 'time_limit', 'plateau', 'gap', 'score', 'clock',
+    reason: Literal['optimal', 'model_proven', 'time_limit', 'plateau', 'gap', 'score', 'clock',
                     'operator_stop', 'cancelled', 'failed', 'no_search', 'conflict']
     search_seconds: float = Field(ge=0, allow_inf_nan=False)
     detail: str = ''
@@ -8041,8 +8107,8 @@ class DisplaySettingsInput(Schema):
     ignore_al_prefix: bool = True
     avoid_duplicate_codes: bool = True
     tags: list[TagDefinition] = Field(default_factory=list, max_length=30)
-    # The Rules page shows the rule catalogue while it is being proven.
-    rule_catalogue: bool = False
+    # The Rules page shows the rule catalogue (owner decision, 19 Nov 2026: the default for new departments).
+    rule_catalogue: bool = True
     whereabouts: WhereaboutsSettings = Field(default_factory=WhereaboutsSettings)
     reason: Reason
 

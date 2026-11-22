@@ -1,0 +1,35 @@
+name: Dependency graph
+permissions:
+  contents: read
+concurrency:
+  group: dependency-graph
+  cancel-in-progress: true
+jobs:
+  submit:
+    name: Submit locked dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The dependency submission API needs contents:write; this job runs only on pushes to dev, never for pull requests.
+    permissions:
+      contents: write
+    steps:
+    - name: Require GitHub-hosted execution
+      env:
+        HOSTED_KIND: ${{ runner.environment }}
+      working-directory: .
+      run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Submit the hash-locked Python and npm dependencies
+      env:
+        SUBMISSION_TOKEN: ${{ github.token }}
+      run: python3 -I .github/scripts/dependency_snapshot.py
+'on':
+  push:
+    branches:
+    # shortcut: dev is removed after the default branch is renamed to main.
+    - dev
+    - main

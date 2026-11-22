@@ -1,23 +1,41 @@
 from datetime import date, datetime
 from copy import deepcopy
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.inspection import inspect
-from packages.contracts.schemas import AutoscheduleAnimationSettings, WishSettings
+from packages.contracts.schemas import AutoscheduleAnimationSettings, SCHEDULE_DETAIL_FIELDS, WishSettings
 from packages.domain.time import aware
 from packages.domain.rota_summary import normalized_check, normalized_score
-from packages.domain.serialization import json_value
+from packages.domain.serialization import PLAIN, json_default, json_value
 from packages.domain.generation_scope import selected_session_ids
 
 
 CHECK_SUMMARY = ('valid', 'error_count', 'warning_count', 'evaluated_at', 'fingerprint', 'engine_version', 'scope')
 JOB_SUMMARY_FIELDS = ('required_places', 'filled_places', 'open_places_count',
                       'open_extra_cover_places_count', 'open_extra_cover_session_count')
+CANDIDATE_EVIDENCE_REF = 'candidate_evidence_ref'
+CANDIDATE_EVIDENCE_VERSION = 1
 JOB_INPUT_FIELDS = ('generation_engine', 'generation_options', 'compiler_version', 'diagnostic_proposal', 'bindings',
                     'generation_scope', 'generation_scope_source', 'run_context', 'currency_hint', 'input_manifest',
                     'quota_policy_limit', 'planning_group_version_id', 'planning_group_id', 'lookahead', 'planning_context',
                     'proof_scope', 'completion', 'planning_population', 'generation_session_ids', 'generation_manifest', 'continuation',
                     'planner_command_kind', 'planner_source_fingerprint', 'planner_expected_revision', 'fill_options',
                     '_deferred_generation')
+
+
+def projection_json_value(value):
+    """Keep FastAPI's JSON representation while fast-pathing plain projected rows."""
+    if type(value) is dict:
+        encoded = {}
+        for key, child in value.items():
+            if isinstance(key, str) and key.startswith('_sa'):
+                continue
+            key = key if type(key) is str else jsonable_encoder(key)
+            encoded[key] = child if type(child) in PLAIN else projection_json_value(child)
+        return encoded
+    if type(value) is list:
+        return [child if type(child) in PLAIN else projection_json_value(child) for child in value]
+    return jsonable_encoder(value)
 
 
 def generation_options_record(options):
@@ -54,123 +72,193 @@ def compact_reply(result):
     return result
 
 
+_RECORD_EXCLUSIONS = {
+    'push_subscription_versions': ('endpoint_ciphertext', 'endpoint_digest', 'p256dh_ciphertext', 'auth_ciphertext'),
+    'jobs': ('resume_state', 'resume_checkpoint', 'read_metadata', 'result_summary', 'worker_id', 'supersedes'),
+    'rotations': ('mentor_id',),
+    'mailbox_connections': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
+    'mailbox_oauth_flows': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
+    'integration_credentials': ('token_ciphertext',),
+    'auth_configuration': ('secret_ciphertext', 'previous'),
+    'accounts': ('username_normalized', 'email_normalized'),
+    'identities': ('subject_normalized',),
+    'ai_provider_profiles': ('key_ciphertext',),
+    'import_sources': ('content', 'extraction'),
+    'feedback_reports': ('screenshot', 'screenshot_media_type'),
+}
+
+
+def _record_fields(mapper, exclude):
+    if private := _RECORD_EXCLUSIONS.get(mapper.local_table.name):
+        exclude = (*exclude, *private)
+    return [field for field in mapper.column_attrs if field.key not in exclude]
+
+
 def record(row, exclude=()):
     mapper = inspect(row).mapper
-    if mapper.local_table.name == 'push_subscription_versions':
-        exclude = (*exclude, 'endpoint_ciphertext', 'endpoint_digest', 'p256dh_ciphertext', 'auth_ciphertext')
-    if mapper.local_table.name == 'jobs':
-        exclude = (*exclude, 'resume_state', 'resume_checkpoint', 'read_metadata', 'result_summary', 'worker_id', 'supersedes')
-    if mapper.local_table.name == "rotations":
-        exclude = (*exclude, "mentor_id")
-    if mapper.local_table.name in {'mailbox_connections', 'mailbox_oauth_flows'}:
-        exclude = (*exclude, 'encrypted_refresh_token', 'encrypted_verifier', 'state_hash')
-    if mapper.local_table.name == "integration_credentials":
-        exclude = (*exclude, "token_ciphertext")
-    if mapper.local_table.name == "auth_configuration":
-        exclude = (*exclude, "secret_ciphertext", "previous")
-    if mapper.local_table.name == "accounts":
-        exclude = (*exclude, "username_normalized", "email_normalized")
-    if mapper.local_table.name == "identities":
-        exclude = (*exclude, "subject_normalized")
-    if mapper.local_table.name == "ai_provider_profiles":
-        exclude = (*exclude, "key_ciphertext")
-    if mapper.local_table.name == "import_sources":
-        exclude = (*exclude, "content", "extraction")
-    if mapper.local_table.name == "feedback_reports":
-        exclude = (*exclude, "screenshot", "screenshot_media_type")
-    value = {c.key: json_value(getattr(row, c.key)) for c in mapper.column_attrs if c.key not in exclude}
-    if mapper.local_table.name == 'jobs' and value.get('search_control') is not None:
+    value = {field.key: json_value(getattr(row, field.key)) for field in _record_fields(mapper, exclude)}
+    return _finish_record(mapper.local_table.name, value, row)
+
+
+def _finish_record(table, value, row=None):
+    if table == 'jobs' and value.get('search_control') is not None:
         value['search_control'] = {key: value['search_control'][key] for key in ('minutes', 'stop')
                                    if key in value['search_control']}
-    if mapper.local_table.name == "rotations":
-        value['mentor_id'] = row.attachment_mentor_id
-    if mapper.local_table.name == 'workspaces' and 'validation' in value:
+    if table == "rotations":
+        # Bulk rows were detached and never loaded the attachment relationship.
+        value['mentor_id'] = row.attachment_mentor_id if row is not None else None
+    if table == 'workspaces' and 'validation' in value:
         value['validation'] = normalized_check(value['validation'])
-    if mapper.local_table.name == 'workspaces':
-        from sqlalchemy.orm import object_session
-        from .services.workspace_access import access_record
+    if table == 'workspaces':
         archived_by_name = None
-        if db := object_session(row):
-            value.update(access_record(db, row))
-            if row.archived_by:
-                from .models import Identity
-                archived_by_name = db.scalar(select(Identity.display_name).where(Identity.id == row.archived_by))
+        if row is not None:
+            from sqlalchemy.orm import object_session
+            if db := object_session(row):
+                from .services.workspace_access import access_record
+                value.update(access_record(db, row))
+                if row.archived_by:
+                    from .models import Identity
+                    archived_by_name = db.scalar(select(Identity.display_name).where(Identity.id == row.archived_by))
         value['archived_by_name'] = archived_by_name
         # The durable pre-archive snapshot can contain review/check evidence;
         # expose only lifecycle metadata and keep the full state server-side.
         if isinstance(value.get('archive_state'), dict):
             value['archive_state'] = {key: value['archive_state'][key] for key in (
                 'status', 'content_revision', 'visibility', 'purpose') if key in value['archive_state']}
-    if mapper.local_table.name == 'departments' and 'generation_defaults' in value:
+    if table == 'departments' and 'generation_defaults' in value:
         value['generation_defaults'] = generation_defaults_record(value['generation_defaults'])
-    if mapper.local_table.name == 'departments' and 'wish_settings' in value:
+    if table == 'departments' and 'wish_settings' in value:
         value['wish_settings'] = WishSettings.model_validate(value['wish_settings'] or {}).model_dump(mode='json')
-    if mapper.local_table.name == 'departments' and 'display_settings' in value:
+    if table == 'departments' and 'display_settings' in value:
         value['autoschedule_animation'] = AutoscheduleAnimationSettings.model_validate(
             (value['display_settings'] or {}).get('autoschedule_animation') or {}).model_dump(mode='json')
     return value
 
 
-def records_many(db, sources, *, exclude=None, order_by=None):
-    """Read heterogeneous catalogue rows together; record() owns their public shape.
-
-    Every row remains a separate result, avoiding one department-sized JSON blob.
-    This cache-free acquisition is also suitable for authoritative writer reads.
-    """
+def records_many(db, sources, *, exclude=None, order_by=None, execution_options=None):
+    """Read heterogeneous records together, selecting only their public columns."""
     exclude = exclude or {}
-    return {name: [record(row, exclude=exclude.get(name, ())) for row in rows]
-            for name, rows in rows_many(db, sources, order_by=order_by).items()}
+    tables, columns = {}, {}
+    for name, (cls, _) in sources.items():
+        mapper = inspect(cls)
+        tables[name] = mapper.local_table.name
+        columns[name] = {field.key: field.columns[0] for field in _record_fields(mapper, exclude.get(name, ()))}
+    result = {name: [] for name in sources}
+    for name, value in _values_many(db, sources, order_by=order_by, projected_columns=columns,
+                                    execution_options=execution_options):
+        result[name].append(_finish_record(tables[name], value))
+    return result
+
+
+def shift_link_rows(db, ids, *, include_participants, execution_options=None):
+    """Read clinics and public assignment records in one typed statement."""
+    from sqlalchemy import Date, DateTime, any_, bindparam, null, union_all
+    from sqlalchemy.dialects.postgresql import ARRAY
+    from .models import Assignment, ShiftService
+
+    if db.get_bind().dialect.name == 'postgresql':
+        shift_ids = bindparam('shift_ids', ids, type_=ARRAY(ShiftService.shift_id.type))
+        links = ShiftService.shift_id == any_(shift_ids)
+        participant_links = Assignment.shift_id == any_(shift_ids)
+    else:
+        links = ShiftService.shift_id.in_(ids)
+        participant_links = Assignment.shift_id.in_(ids)
+    if not include_participants:
+        query = select(ShiftService.shift_id, ShiftService.service_id).where(links)
+        for shift_id, service_id in db.execute(query.execution_options(**(execution_options or {}))):
+            yield shift_id, service_id, None
+        return
+
+    fields = _record_fields(inspect(Assignment), ())
+    keys = [field.key for field in fields]
+    dates = [field.key for field in fields if isinstance(field.columns[0].type, (Date, DateTime))]
+    shift_index = keys.index('shift_id')
+    assignments = select(*(getattr(Assignment, key) for key in keys), null()).where(participant_links)
+    # Keep the assignment columns first in the UNION so results use their SQLAlchemy types.
+    services = select(*(ShiftService.shift_id if key == 'shift_id' else null() for key in keys),
+                      ShiftService.service_id).where(links)
+    for row in db.execute(union_all(assignments, services).execution_options(**(execution_options or {}))):
+        shift_id, service_id = row[shift_index], row[-1]
+        if service_id is not None:
+            yield shift_id, service_id, None
+            continue
+        value = dict(zip(keys, row))
+        for key in dates:
+            if (item := value[key]) is not None:
+                value[key] = json_default(item)
+        yield shift_id, None, value
 
 
 def rows_many(db, sources, *, order_by=None):
     """Acquire independent typed rows in one statement, without attaching them to the session."""
+    result = {name: [] for name in sources}
+    for name, value in _values_many(db, sources, order_by=order_by):
+        result[name].append(sources[name][0](**value))
+    return result
+
+
+def _values_many(db, sources, *, order_by=None, projected_columns=None, execution_options=None):
     import json
-    from sqlalchemy import Boolean, Date, DateTime, JSON, Text, cast, func, literal, select, union_all
+    from sqlalchemy import Boolean, Date, DateTime, JSON, Text, cast, func, literal, union_all
+    from . import models as m
+
     sqlite = db.bind.dialect.name == 'sqlite'
+    build = func.json_object if sqlite else func.json_build_object
     order_by = order_by or {}
-    queries = []
+    queries, converters = [], {}
     for name, (cls, where) in sources.items():
-        from . import models as m
         # Core JSON UNIONs do not receive the Session's ORM loader criteria.
         if issubclass(cls, m.Withdrawable):
             where = where & cls.withdrawn.is_(False)
         elif cls is m.Mentorship:
             from .db import live_mentorship_clause
             where = where & live_mentorship_clause()
-        fields = []
-        for column in inspect(cls).columns:
+        mapper = inspect(cls)
+        columns = ((column.key, column) for column in mapper.columns) if projected_columns is None else (
+            projected_columns[name].items())
+        fields, typed = [], []
+        for key, column in columns:
             value = func.json(column) if sqlite and isinstance(column.type, JSON) else column
-            fields.extend((literal(column.key), value))
-        build = func.json_object if sqlite else func.json_build_object
+            fields.extend((literal(key), value))
+            if isinstance(column.type, DateTime):
+                typed.append((key, datetime.fromisoformat))
+            elif isinstance(column.type, Date):
+                typed.append((key, date.fromisoformat))
+            elif isinstance(column.type, Boolean):
+                typed.append((key, bool))
+        converters[name] = typed
         # Rank before serialization: private ordering expressions need not be public record fields.
         position = func.row_number().over(order_by=order_by[name]) if name in order_by else literal(0)
         queries.append(select(literal(name).label('source'), cast(build(*fields), Text),
-                              position.label('position')).where(where))
-    result = {name: [] for name in sources}
+                              position.label('position')).select_from(mapper.persist_selectable).where(where))
     query = union_all(*queries)
     if order_by:
         query = query.order_by('source', 'position')
+    if execution_options:
+        query = query.execution_options(**execution_options)
     for name, encoded, _ in db.execute(query):
-        cls = sources[name][0]
         value = json.loads(encoded)
-        for column in inspect(cls).columns:
-            item = value[column.key]
-            if item is None:
-                continue
-            if isinstance(column.type, DateTime):
-                value[column.key] = datetime.fromisoformat(item)
-            elif isinstance(column.type, Date):
-                value[column.key] = date.fromisoformat(item)
-            elif isinstance(column.type, Boolean):
-                value[column.key] = bool(item)
-        result[name].append(cls(**value))
-    return result
+        for key, convert in converters[name]:
+            if (item := value[key]) is not None:
+                item = convert(item)
+                value[key] = json_default(item) if projected_columns is not None and isinstance(item, date) else item
+        # A decoded row already owns its JSON containers.
+        yield name, value
+
+
+def candidate_evidence_count(reference):
+    if (isinstance(reference, dict) and reference.get('version') == CANDIDATE_EVIDENCE_VERSION
+            and type(reference.get('count')) is int and reference['count'] >= 0
+            and isinstance(reference.get('digest'), str) and len(reference['digest']) == 64):
+        return reference['count']
+    return None
 
 
 def job_result_summary(result):
     if result is None:
         return None
-    value = {k: v for k, v in result.items() if k not in {'candidate_evidence', 'error', 'error_detail'}}
+    value = {k: v for k, v in result.items()
+             if k not in {'candidate_evidence', CANDIDATE_EVIDENCE_REF, 'error', 'error_detail'}}
     if (error_detail := job_error_detail(result)) is not None:
         value['error_detail'] = error_detail
     if result.get('status') in {'candidate_feasible', 'candidate_with_gaps', 'requirements_conflict',
@@ -194,7 +282,9 @@ def job_result_summary(result):
     validation = value.get('validation')
     if isinstance(validation, dict) and 'score' in validation:
         value['validation'] = {**validation, 'score': None if validation.get('scope') else normalized_score(validation['score'])}
-    if 'candidate_evidence' in result:
+    if (count := candidate_evidence_count(result.get(CANDIDATE_EVIDENCE_REF))) is not None:
+        value['candidate_evidence_count'] = count
+    elif 'candidate_evidence' in result:
         value['candidate_evidence_count'] = len(result['candidate_evidence'])
     if 'diagnostics' in result:
         value['diagnostics'] = [{**{k: v for k, v in item.items() if k != 'candidates'},
@@ -222,7 +312,7 @@ def job_result_metadata(result, *, include_error_detail=False):
     value = {'status': result.get('status')}
     if include_error_detail and (error_detail := job_error_detail(result)) is not None:
         value['error_detail'] = error_detail
-    for key in ('solver_status', 'search_stop'):
+    for key in ('solver_status', 'search_stop', 'score_completed'):
         if key in result:
             value[key] = deepcopy(result[key])
     if 'solver_status' in result and 'score' in result:
@@ -245,7 +335,7 @@ def job_result_metadata(result, *, include_error_detail=False):
         value['reconciliation'] = {key: receipt[key] for key in ('id', 'status', 'changed_fact_count',
             'conflicting_placement_count', 'retention_optimal', 'validation', 'prepared_fingerprint',
             'current_fingerprint', 'validation_current', 'solver_status', 'reconciliation_allowance_exhausted',
-            'population_recorded', 'population_people') if key in receipt}
+            'population_recorded', 'population_people', 'applied_content_revision') if key in receipt}
     # applied_content_revision: Recent runs offers Undo on an applied run that is not the latest job (a check after it).
     for key in ('algorithm_version', 'applied_content_revision', 'generation_scope', 'generation_scope_source',
                 'planning_group_version_id', 'planning_context', 'lookahead', 'proof_scope', 'completion',
@@ -287,6 +377,55 @@ def job_read_metadata(snapshot, result):
     elif snapshot.get('fingerprint') is not None:
         value['input_fingerprint'] = snapshot['fingerprint']
     return value
+
+
+def retain_job_reconciliation(job, receipt, *, result=None, interim=False, applied_revision=None):
+    """Store a new receipt with the result, or change only the application state."""
+    metadata = job.read_metadata
+    if metadata is None:
+        metadata = job_read_metadata(job.input_snapshot, job.result)
+        job.result_summary = refresh_job_result_projection(job)
+    projected = {**(metadata.get('result') or {})}
+    if receipt is not None:
+        projected['reconciliation'] = job_result_metadata({'reconciliation': receipt})['reconciliation']
+    if applied_revision is not None:
+        projected['applied_content_revision'] = applied_revision
+    job.read_metadata = {**metadata, 'result': projected}
+    if result is not None:
+        result = {**result, 'reconciliation': receipt}
+        if interim:
+            from sqlalchemy.orm.attributes import set_committed_value
+            # In-session readers see this receipt without flushing the proposal before the final update.
+            set_committed_value(job, 'result', result)
+        else:
+            job.result = result
+
+
+def job_result_with_reconciliation(job, result):
+    """Read current application state with the retained receipt and proposal."""
+    stored = (getattr(job, '__dict__', {}).get('read_metadata') or {}).get('result') or {}
+    if result is None or not stored:
+        return result
+    if 'applied_content_revision' in stored and result.get('applied_content_revision') != stored['applied_content_revision']:
+        result = {**result, 'applied_content_revision': stored['applied_content_revision']}
+    receipt, projected = result.get('reconciliation'), stored.get('reconciliation')
+    if isinstance(receipt, dict) and isinstance(projected, dict) and projected.get('id') == receipt.get('id'):
+        state = {key: projected[key] for key in ('status', 'applied_content_revision')
+                 if key in projected and projected[key] != receipt.get(key)}
+        if state:
+            result = {**result, 'reconciliation': {**receipt, **state}}
+    return result
+
+
+def job_reconciliation_columns():
+    """Read just the immutable receipt and the revision used by the application-state guard."""
+    from . import models as m
+    from sqlalchemy import func
+    revision = m.Job.result['applied_content_revision']
+    current_revision = func.coalesce(
+        m.Job.read_metadata['result', 'applied_content_revision'].as_integer(),
+        revision.as_integer())
+    return m.Job.result['reconciliation'], revision, current_revision
 
 
 def effective_input_fingerprint(row, *, input_snapshot=..., projection=..., deferred=...):
@@ -336,14 +475,28 @@ def job_run_context(snapshot):
             'basis': 'frozen_workspace_and_selected_duties'}
 
 
+def schedule_projection(data):
+    session, participant, coverage, check = (SCHEDULE_DETAIL_FIELDS[key]
+                                            for key in ('session', 'participant', 'coverage', 'check'))
+    shifts = [{**{key: value for key, value in row.items() if key not in session},
+               'participants': [{key: value for key, value in p.items() if key not in participant}
+                                for p in row['participants']]} for row in data['shifts']]
+    workspace = data['workspace']
+    if isinstance(workspace.get('validation'), dict):
+        validation = {key: value for key, value in workspace['validation'].items() if key not in check}
+        if isinstance(validation.get('coverage'), list):
+            validation['coverage'] = [{key: value for key, value in row.items() if key not in coverage}
+                                      for row in validation['coverage']]
+        workspace = {**workspace, 'validation': validation}
+    return {**data, 'workspace': workspace, 'shifts': shifts}
+
+
 def job_detail_result(kind, result):
     value = job_result_summary(result)
     def visible_check(check):
-        from packages.domain.validation import INTERNAL_CHECK_KEYS
+        from packages.contracts.schemas import JOB_PRIVATE_CHECK_FIELDS
         # Reuse inputs belong to the retained job, not its findings/coverage UI.
-        private = INTERNAL_CHECK_KEYS | {'fix_list_context', 'fix_list_state', 'fix_list_delta',
-                                        'input_manifest', 'score_dependencies', 'diagnostic_version'}
-        return {key: part for key, part in check.items() if key not in private}
+        return {key: part for key, part in check.items() if key not in JOB_PRIVATE_CHECK_FIELDS}
     if value is not None:
         if kind == 'validation':
             value = visible_check(value)
@@ -358,7 +511,13 @@ def job_detail_result(kind, result):
     return value
 
 
-def job_result_projection(kind, result):
+def refresh_job_result_projection(job):
+    result = job.result
+    retained = (job.result_summary or {}).get('evidence') if CANDIDATE_EVIDENCE_REF in (result or {}) else None
+    return job_result_projection(job.kind, result, retained_evidence=retained)
+
+
+def job_result_projection(kind, result, *, retained_evidence=None):
     if result is None:
         return None
 
@@ -385,7 +544,16 @@ def job_result_projection(kind, result):
                 'diagnostics': [counts(item.get('candidates', []), item.get('shift_id'))
                                 for item in check.get('diagnostics', [])],
                 'checks': {phase: evidence(part) for phase, part in check.get('checks', {}).items()}}
-    return {'result': job_detail_result(kind, result), 'evidence': evidence(result)}
+    stats = evidence(result)
+    if CANDIDATE_EVIDENCE_REF in result:
+        reference = result[CANDIDATE_EVIDENCE_REF]
+        stats[CANDIDATE_EVIDENCE_REF] = reference
+        if retained_evidence and retained_evidence.get(CANDIDATE_EVIDENCE_REF) == reference:
+            stats['candidate_evidence'] = retained_evidence['candidate_evidence']
+    projection = {'result': job_detail_result(kind, result), 'evidence': stats}
+    if kind == 'validation' and 'input_manifest' in result:
+        projection['input_manifest'] = result['input_manifest']
+    return projection
 
 
 def job_outcome(status, result):
@@ -457,11 +625,17 @@ def job_record(row, *, include_result=True, include_events=False, include_progre
         value['progress'].pop('solution', None)
     result = (row.result if result_summary is ... else result_summary) if include_result else (
         row.result if result_metadata is ... else result_metadata)
+    result = job_result_with_reconciliation(row, result)
     error_detail = job_error_detail(result) if include_error_detail else None
     if include_result:
         value['result'] = job_result_summary(result)
     else:
         result = value['result'] = job_result_metadata(result)
+        manifest = (result or {}).get('generation_manifest')
+        retained = manifest.get('result') if isinstance(manifest, dict) else None
+        if isinstance(retained, dict):
+            if (count := candidate_evidence_count(retained.get(CANDIDATE_EVIDENCE_REF))) is not None:
+                result['candidate_evidence_count'] = count
     if error_detail is not None:
         value['error_detail'] = error_detail
         if isinstance(value['result'], dict):

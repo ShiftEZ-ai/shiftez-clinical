@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -49,7 +50,7 @@ def test_missing_producer_and_duplicate_durations_are_refused():
         json.loads('{"a":1,"a":2}', object_pairs_hook=hosted_ci.unique_object)
 
 
-def test_success_requires_complete_original_execution(tmp_path):
+def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     report = tmp_path / "junit.xml"
     node = "tests/test_x.py::test_a"
     report.with_suffix(".selection.json").write_text(json.dumps([node]))
@@ -60,6 +61,170 @@ def test_success_requires_complete_original_execution(tmp_path):
         hosted_ci.require_execution(report, ["tests/test_missing.py"], rows)
     with pytest.raises(ValueError):
         hosted_ci.require_execution(report, ["tests/test_x.py"], lambda paths: [])
+
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parents[2] / "ci"))
+    import make_known_failures as maker
+    import trusted_ci
+
+    sources = tmp_path / "tests"
+    sources.mkdir()
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (sources / "test_x.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "def test_a():\n"
+        "    marker = Path('first-attempt')\n"
+        "    recovered = marker.exists()\n"
+        "    marker.touch()\n"
+        "    assert recovered\n"
+        "def test_always_red():\n"
+        "    assert False\n"
+        "@pytest.mark.parametrize('value', [0, 1])\n"
+        "def test_listed_red(value):\n"
+        "    assert value == 1\n"
+        "def test_always_green():\n"
+        "    pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    run = trusted_ci.invocation_receipt
+    listed_node = "tests/test_x.py::test_listed_red[0]"
+    listed = {maker.canonical_node(listed_node)}
+    candidate = {"replicas": [1], "smoke": False}
+    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None, candidate=candidate, listed=listed)
+    original = trusted_ci.canaries.report_cases(report, evidence)
+    assert evidence["exit_code"] == evidence["retry"]["exit_code"] == 1
+    assert trusted_ci.canaries.failed_nodes(original) == [node, "tests/test_x.py::test_always_red", listed_node]
+    failures = maker.retry_nodes(original, listed)
+    assert failures == [node, "tests/test_x.py::test_always_red"]
+    assert trusted_ci.canaries.recovered_nodes(report, evidence, failures, allow_retry=True) == {node}
+    assert sorted(path.name for path in tmp_path.glob("*.raw.xml")) == ["junit-retry.raw.xml", "junit.raw.xml"]
+    listed_only = run([listed_node], "unit", tmp_path / "listed.xml", [], "0", None, candidate=candidate, listed=listed)
+    assert listed_only["exit_code"] == 1 and "retry" not in listed_only
+    assert not (tmp_path / "listed-retry.xml").exists()
+    (tmp_path / "shard-receipt.json").write_text(json.dumps({
+        "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
+    }))
+    trusted_ci.canaries.verify_directory(tmp_path, allow_retry=True)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    single = run(["tests/test_x.py"], "unit", tmp_path / "push.xml", [], "0", None, candidate=candidate)
+    assert single["exit_code"] == 1 and "retry" not in single
+    assert not (tmp_path / "push-retry.xml").exists()
+
+
+@pytest.mark.parametrize("replicas,smoke,retry_expected,branch,event,retired,default", [
+    pytest.param([1], False, True, "dev", "pull_request", False, "dev", id="replicas0-False-True"),
+    pytest.param([1], True, False, "dev", "pull_request", False, "dev", id="replicas1-True-False"),
+    pytest.param([1, 2], False, False, "dev", "pull_request", False, "dev", id="replicas2-False-False"),
+    pytest.param([1], False, True, "dev", "pull_request", True, "dev", id="pr-retirement"),
+    pytest.param([1], False, True, "dev", "merge_group", True, "dev", id="group-retirement"),
+    pytest.param([1], False, True, "main", "merge_group", True, "dev", id="release-uses-accepted-dev"),
+    # After the rename main is the default, so its merge groups are integration and read the candidate.
+    pytest.param([1], False, True, "main", "merge_group", True, "main", id="renamed-main-group-retirement"),
+])
+def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
+        tmp_path, monkeypatch, replicas, smoke, retry_expected, branch, event, retired, default):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    path = "tests/test_x.py"
+    red = path + "::test_red[0]"
+    listed = path + "::test_listed"
+    quarantined = path + "::test_quarantined"
+    new_flake = path + "::test_new_flake"
+    candidate = {"sha": "a" * 40, "tree": "b" * 40, "base_sha": "c" * 40, "replicas": replicas, "smoke": smoke,
+                 "suites": {"unit": {"shards": [{"files": [path]}]}}}
+    calls = []
+
+    def invocation(targets, suite, report, extra, workers, base_targets, *, partial):
+        calls.append((targets, workers))
+        nodes = [red, listed, quarantined, new_flake] if targets == [path] else targets
+        cases = ET.Element("testsuite")
+        for node in nodes:
+            case = ET.SubElement(cases, "testcase", classname="tests.test_x", name=node.split("::")[1])
+            if targets == [path]:
+                ET.SubElement(case, "failure")
+        ET.ElementTree(cases).write(report)
+        report.with_suffix(".selection.json").write_text(json.dumps(nodes), encoding="utf-8")
+        report.with_suffix(".deselected.json").write_text("[]", encoding="utf-8")
+        return int(targets == [path])
+
+    known = {"schema": 2, "tree": "c" * 40, "root_evidence_sha256": "d" * 64, "cleanup_cap": 0,
+             "root_runs": [{"run_id": "1", "run_attempt": "1", "replica": i} for i in (1, 2)],
+             "fails": [{"node": listed, "class": "baseline"}], "unstable": []}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setattr(trusted_ci.policy, "event", lambda: {
+        "pull_request": {"base": {"ref": branch}}, "merge_group": {"base_ref": "refs/heads/" + branch},
+        "repository": {"default_branch": default},
+    })
+    release = branch == "main" and default != "main"
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("CI_UNIT_WORKERS", "4")
+    monkeypatch.setattr(sys, "argv", ["trusted_ci.py", "run", "--base-sha", "c" * 40,
+                                     "--suite", "unit", "--shard", "1", "--plan-sha256", hosted_ci.digest(candidate)])
+    monkeypatch.setattr(trusted_ci, "plan", lambda *_: candidate)
+    monkeypatch.setattr(trusted_ci, "invocation", invocation)
+    monkeypatch.setattr(trusted_ci.hardening, "load", lambda: {"node_census": False})
+    def read_file(sha, name):
+        assert sha in {candidate["sha"], candidate["base_sha"]}
+        if name == trusted_ci.policy.KNOWN:
+            return json.dumps(known).encode()
+        if name == trusted_ci.policy.QUARANTINE_RETIRED:
+            if release:
+                assert sha == candidate["base_sha"]
+            return json.dumps([quarantined] if retired and sha == candidate["sha"] else []).encode()
+        assert name == "tests/quarantine.json"
+        row = {"nodeid": quarantined, "reason": "baseline: reviewed", "owner": "maintainers",
+               "added": "2000-01-01", "expires": "2000-01-02", "issue": 123, "blocker": False}
+        flake = {**row, "nodeid": new_flake, "reason": "unstable: recovered", "recovered_runs": ["1"]}
+        return json.dumps([row, flake] if sha == candidate["sha"] else [row]).encode()
+
+    monkeypatch.setattr(trusted_ci.policy, "read_file", read_file)
+    trusted_ci.main()
+    receipt = json.loads((tmp_path / ".run/reports/shard-receipt.json").read_text(encoding="utf-8"))
+    assert receipt["reports"][0]["exit_code"] == 1
+    assert ("retry" in receipt["reports"][0]) == retry_expected
+    retried = [new_flake, quarantined, red] if retired and not release else [new_flake, red]
+    assert calls == [([path], "4")] + ([(retried, "0")] if retry_expected else [])
+    assert (tmp_path / ".run/reports/junit-retry.xml").exists() == retry_expected
+
+
+def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    sources = tmp_path / "tests"
+    sources.mkdir()
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\nmarkers = ["browser"]\n')
+    path = "tests/test_scoped.py"
+    (tmp_path / path).write_text("import pytest\n@pytest.mark.browser\ndef test_a():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
+    report = tmp_path / "junit.xml"
+    evidence = trusted_ci.invocation_receipt(
+        [path], "unit", report, [], "0", None, candidate={"replicas": [1]}, partial=True)
+    assert trusted_ci.canaries.report_cases(report, evidence, selected_scope={path}) == []
+    for scope in ((), {"tests/test_other.py"}):
+        with pytest.raises(ValueError, match="Incomplete execution"):
+            trusted_ci.canaries.report_cases(report, evidence, selected_scope=scope)
+    (tmp_path / "shard-receipt.json").write_text(json.dumps({
+        "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
+    }))
+    trusted_ci.canaries.verify_directory(tmp_path, partial=True)
+    with pytest.raises(ValueError, match="Reported node set differs"):
+        trusted_ci.canaries.verify_directory(tmp_path)
 
 
 @pytest.mark.parametrize("private,counts", [

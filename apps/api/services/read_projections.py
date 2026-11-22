@@ -1,9 +1,12 @@
 """Durable read work, stored best-effort; authoritative command checks never consume it."""
 import logging
+from contextlib import closing
+from sqlite3 import SQLITE_BUSY, SQLITE_LOCKED
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError, TimeoutError as PoolTimeout
 from apps.api import models as m
 from apps.api.settings import Settings, quota_policy_limit
+from apps.api.workspace_baselines import workspace_generation_defaults
 from packages.domain.input_manifest import digest, toolchain
 
 
@@ -21,7 +24,9 @@ def source_identity(db):
     return held['source']
 
 
-def input_stamp(db, workspace):
+def input_stamp(db, workspace, *, for_feasibility=False):
+    from apps.api.snapshots import draft_policy_hint
+
     # Keep strong references within this transaction (SQLAlchemy's identity map is weak).
     held = db.info.setdefault('read_projection_inputs', {})
     def get(cls, key):
@@ -35,17 +40,17 @@ def input_stamp(db, workspace):
     # which used to discard otherwise valid Postgres projections at restart.
     # Release preparation bumps the evaluator versions when their output
     # changes, so revision-keyed read work survives an API deploy safely.
+    policy_basis = draft_policy_hint(workspace)
+    # Feasibility excludes run objectives. Retain its existing revision stamp
+    # so only the snapshot needs to read the draft baseline.
     return digest([org.input_revision, org.availability_revision,
-        workspace.revision, workspace.content_revision, workspace.status, department.generation_defaults,
-        digest(toolchain(quota_policy_limit()))])
+        workspace.revision, workspace.content_revision, workspace.status,
+        department.generation_defaults if for_feasibility else workspace_generation_defaults(db, workspace, department),
+        digest(toolchain(quota_policy_limit())), *policy_basis.values()])
 
 
 def _store(db, audience, kind, values, stamps):
-    """Write disposable values in a short transaction of its own, skipping rows another transaction holds.
-
-    The reader's transaction never locks projection rows, so a writer (which holds the global write lock)
-    never waits for a read request to finish, and readers never wait for each other.
-    """
+    """Store disposable values, isolating a lock from the reader's work."""
     C = m.WorkspaceReadProjection
     bind = db.get_bind()
     engine = getattr(bind, 'engine', bind)
@@ -55,8 +60,29 @@ def _store(db, audience, kind, values, stamps):
         from sqlalchemy.dialects.sqlite import insert
         statement = insert(C).values([{'workspace_id': wid, 'audience': audience, 'kind': kind,
                                        'value': values[wid], 'stamp': stamps[wid]} for wid in values])
-        db.execute(statement.on_conflict_do_update(index_elements=['workspace_id', 'audience', 'kind'],
-                   set_={'value': statement.excluded.value, 'stamp': statement.excluded.stamp}))
+        connection = db.connection()
+        raw = connection.connection.driver_connection
+        try:
+            # In legacy SQLite mode a SELECT may not have started a transaction.
+            # Releasing an outermost SAVEPOINT would commit the cache before the caller commits.
+            if not raw.in_transaction:
+                connection.exec_driver_sql('BEGIN')
+            with closing(raw.cursor()) as cursor:
+                timeout = cursor.execute('PRAGMA busy_timeout').fetchone()[0]
+                cursor.execute('PRAGMA busy_timeout=0')
+                try:
+                    with connection.begin_nested():
+                        connection.execute(statement.on_conflict_do_update(
+                            index_elements=['workspace_id', 'audience', 'kind'],
+                            set_={'value': statement.excluded.value, 'stamp': statement.excluded.stamp}))
+                finally:
+                    cursor.execute(f'PRAGMA busy_timeout={timeout}')
+        except OperationalError as exc:
+            # The low byte is the primary result code, including for SQLITE_BUSY_SNAPSHOT.
+            if (getattr(exc.orig, 'sqlite_errorcode', 0) & 0xff) not in {SQLITE_BUSY, SQLITE_LOCKED}:
+                raise
+            db.info['read_projection_store_skipped'] = True
+            log.warning('read_projection_store_skipped', extra={'error_code': type(exc).__name__})
         return
     from sqlalchemy.dialects.postgresql import insert
     key = (C.audience == audience, C.kind == kind)
