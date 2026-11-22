@@ -3900,6 +3900,9 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .request-wishes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;color:var(--ink-2);font-size:13px}
 .request-wishes meter{width:140px;height:10px}
 .request-wish-words{flex:1 1 12rem;min-width:0} /* D-081: on a narrow toolbar the words take the next line with the calendar icon beside them, never the icon alone */
+/* A phone's toolbar puts its icon tools on the first row and Search on the second: the wish calendar with no points shown
+   beside it (a reviewer, or the calendar open) is one of those icons, never a row of its own under Search. */
+@media(max-width:720px){.dt-toolbar>.request-wishes:not(:has(>.request-wish-summary:not([hidden]))){order:-1;flex:none}}
 /* Equal tiles in even columns (C19): a kind never sits alone on a short row of uneven pills. */
 .request-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;border:0;margin:0;padding:0;grid-column:1/-1}
 .request-kinds legend{margin-bottom:8px;font-weight:600;color:var(--ink)}
