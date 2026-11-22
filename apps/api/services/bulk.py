@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from functools import partial
 import json
+import logging
 from time import monotonic
 from types import SimpleNamespace
 from typing import get_args
@@ -15,7 +16,7 @@ from packages.contracts import schemas as s
 from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
 from apps.api import models as m
 from apps.api.auth import require_role
-from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, Problem, require
+from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, VALUE_INVALID_MESSAGE, Problem, require, safe_message
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import snapshot_hash
 from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped
@@ -23,6 +24,7 @@ from .audit_log import event_action, subject_detail
 from .workspace_access import audit_envelope
 
 
+log = logging.getLogger(__name__)
 MODELS = {
     'programme_membership': m.ProgrammeMembership, 'rotation': m.Rotation,
     "membership": m.Membership, "eligibility": m.Eligibility, "grant": m.CapabilityGrant,
@@ -1425,7 +1427,11 @@ def _problem(error):
         return Problem(409, "INTEGRITY_CONFLICT", INTEGRITY_CONFLICT_MESSAGE)
     if isinstance(error, ValidationError):
         return Problem(422, "SCHEMA_INVALID", "; ".join(e["msg"].removeprefix("Value error, ") for e in error.errors()))
-    return Problem(422, "VALIDATION_ERROR", str(error))
+    if isinstance(error, ValueError):
+        return Problem(422, "VALIDATION_ERROR", safe_message(str(error)))
+    # Any other exception text can carry internal or submitted values; keep it out of row issues.
+    log.warning("bulk_row_error", extra={"error_code": type(error).__name__})
+    return Problem(422, "VALIDATION_ERROR", VALUE_INVALID_MESSAGE)
 
 
 def _details(error):

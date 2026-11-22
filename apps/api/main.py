@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -156,13 +156,6 @@ class BodyLimitMiddleware:
 
 # Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
 INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
-
-
-def safe_message(text: str) -> str:
-    """Our own messages are plain sentences; library errors quote the offending input (int('â€¦'), fromisoformat('â€¦'),
-    a union tag), so anything quoted (not an apostrophe inside a word), bracketed or escaped becomes a generic message."""
-    risky = re.search(r"[\x00-\x1f\"`\\<>{}\[\]]|(?<![A-Za-z])'|'(?![A-Za-z])", text or "")
-    return "A value is not valid for this request" if not text or risky else text[:300]
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
