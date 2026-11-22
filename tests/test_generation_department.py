@@ -112,7 +112,9 @@ def test_shared_clock_boundaries_and_early_restriction_check(h, monkeypatch):
     assert generate(data)['additions'] == []
     assert not trials  # Mandatory restriction is rejected before a full-rota trial.
     restriction['definition']['severity'] = 'advisory'
-    assert generate(data)['status'] == 'candidate_feasible'
+    # Safety kinds are always mandatory, so the same early exclusion applies.
+    assert generate(data)['additions'] == []
+    assert not trials
     restriction['definition']['severity'] = 'mandatory'
     restriction['definition']['exception_allowed'] = True  # historical flag cannot waive safety
     data['exceptions'].append({'id': str(uuid.uuid4()), 'status': 'approved',

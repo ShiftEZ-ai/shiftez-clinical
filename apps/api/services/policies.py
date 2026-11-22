@@ -56,6 +56,8 @@ def _activation_phase(db, name, function, *args, **kwargs):
 
 def policy_versions(db, actor, rows):
     """Approval labels on policy versions; absent historical evidence stays unknown."""
+    from packages.domain.conditions import effective_severity
+
     if not rows:
         return []
     ids = {row['id'] for row in rows}
@@ -145,8 +147,13 @@ def policy_versions(db, actor, rows):
                     or markers.get(row['id']) in archives)
         reason = ('Grouped imported requirements for review.' if row['definition'].get('merged_ids') else
                   'Imported scheduling requirement for review.') if imported else reasons.get(row['id'], row.get('source'))
+        definition = row['definition']
+        stored = definition.get('severity', 'mandatory')
+        severity = effective_severity(definition['rule']['kind'], stored)
         result.append({**row, 'approved_by_name': identities.get(approval_by, (None, None))[0],
-                       'approved_at': at, 'reason': reason})
+                       'approved_at': at, 'reason': reason,
+                       **({'effective_severity': severity, 'severity_reason': s.SAFETY_MANDATORY_REASON}
+                          if severity != stored else {})})
     return result
 
 

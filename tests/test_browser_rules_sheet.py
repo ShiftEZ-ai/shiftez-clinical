@@ -21,7 +21,8 @@ def rules(h):
     prog, _, _ = programme(h)
     cover = activate(h, propose(h, {'kind': 'minimum_cover', 'minimum': 2, 'aggregation': 'service_group'},
                                 {'conditions': tree(line('service_ids', *h.seed['services'][:2])), 'weekdays': [6, 0, 1, 2, 3]},
-                                name='UCC pooled cover', severity='advisory', strength='medium'))
+                                name='UCC pooled cover'))
+    activate(h, propose(h, {'kind': 'max_duties', 'maximum': 2}, name='Preferred duty limit', severity='advisory'))
     hours = activate(h, propose(h, {'kind': 'max_hours', 'hours': 6, 'window': 'day'}, {'conditions': tree(line('person_ids', a, b, c))},
                                 name='Daily hours', per_person=[{'person_id': b, 'amount': 8, 'ends_on': '2026-12-01'},
                                                                 {'person_id': c, 'amount': 7}]))
@@ -42,7 +43,8 @@ def test_rule_rows_marks_pills_and_reach(browser, live_server, h, width):
         navigate(page, 'rules')
         row = page.locator('.rule-item').filter(has_text='UCC pooled cover')
         expect(row.locator('.rl-text strong')).to_have_text(re.compile(r'^At least 2 people at .+ & .+ together$'))
-        expect(row.locator('.rl-mark')).to_have_text('Advisory')
+        # Safety kinds are always mandatory. The workload preference keeps the advisory mark.
+        expect(row.locator('.rl-mark')).to_have_text('Mandatory')
         expect(row.locator('.rule-num')).to_have_text('≥ 2')
         expect(row.locator('.rl-text span')).to_have_text('Sun–Thu · UCC pooled cover')   # the clinics are in the sentence, not again
         expect(row.locator('.rl-who')).to_contain_text('Everyone')

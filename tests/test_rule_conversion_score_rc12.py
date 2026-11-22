@@ -88,8 +88,9 @@ def department_mix(h):
         severity='advisory', strength='high', per_person=[{'person_id': people[n], 'amount': 6 if n in (22, 23) else None}
                                                        for n in range(38)])
     policies.append(target)
+    # Safety kinds are always mandatory. Keep the legacy rows and their inherited floor.
     policies.append(source(6201, {'kind': 'minimum_cover', 'minimum': 1}, listed_only=True,
-        severity='advisory', strength='high', per_person=[{'category_ids': [rank], 'service_ids': [service],
+        per_person=[{'category_ids': [rank], 'service_ids': [service],
             'amount': 3.0 if n == 0 else None, 'weekdays': [n]} for n in range(3)]))
     policies.extend(source(6300 + n, {'kind': 'catalogue', 'id': entry_id, 'lines': []})
                     for n, entry_id in enumerate(EMPTY_TYPES))
@@ -182,5 +183,10 @@ def test_legacy_cover_row_uses_the_resolved_minimum_or_advisory_target_slot(seve
                                       {'category_ids': [uid(13)], 'amount': None}])
     before = {'policies': [policy]}
     plan = plan_v2(before['policies'], department_id=policy['department_id'])
+    if severity == 'advisory':
+        # Safety kinds are always mandatory. Converting this hard minimum to a target would weaken it.
+        [blocked] = plan['blocked']
+        assert blocked['rule_id'] == policy['id'] and not plan['targets']
+        return
     assert not plan['blocked'], plan['blocked']
     assert strict_expanded(before, after_snapshot(before, plan))['equal']

@@ -23,13 +23,13 @@ from packages.domain.rule_migration_proof import _solve
 def test_omissions_name_exactly_the_inputs_proved_by_f5():
     omissions = {item['input']: item for item in GREEDY_NOT_APPLIED}
     assert omissions['wishes']['message'] == 'Dated wishes are not used to select assignments.'
+    # Safety kinds are always mandatory and are enforced by the basic scheduler.
     assert {key: set(item['kinds']) for key, item in omissions.items()} == {
         'wishes': {'prefer_off', 'prefer_on', 'prefer_shift_type', 'avoid_shift_type'},
         'work_patterns': {'run_length', 'days_off_run', 'weekend_shape', 'shift_succession', 'together_apart'},
         'fairness_targets': {'balance_goal'},
-        'advisory_limits': {'max_hours', 'max_duties', 'min_rest', 'forbidden_transition',
-                            'max_consecutive_days', 'max_consecutive_weekends', 'travel_buffer',
-                            'restriction', 'maximum_participants', 'block_quota'},
+        'advisory_limits': {'max_hours', 'max_duties', 'max_consecutive_days',
+                            'max_consecutive_weekends', 'travel_buffer', 'block_quota'},
     }
     assert 'advisory maxima only' in omissions['advisory_limits']['message']
     assert 'Quota minima and targets' in omissions['advisory_limits']['message']

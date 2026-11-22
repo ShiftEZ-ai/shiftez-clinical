@@ -383,23 +383,15 @@ def test_undo_cannot_reopen_withdrawn_accepted_pair_after_inputs_make_it_ineligi
 @pytest.mark.parametrize('kind', ['exchange', 'give'])
 def test_current_restrictions_block_mandatory_but_allow_advisory_pairs(h, severity, kind):
     pid, first, second, _ = source_pair(h)
-    rule = h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'},
-                    {'person_id': h.seed['people'][1]}, severity=severity)
+    rule = {'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'}
+    create = h.stored_advisory_safety if severity == 'advisory' else h.policy
+    create(rule, {'person_id': h.seed['people'][1]})
     choice = recipient(h.get('staff', '/api/swaps/options?assignment_id=' + first + '&recipient_id=' + h.seed['people'][1]
         + '&kind=' + kind), h.seed['people'][1])
-    if severity == 'mandatory':
-        assert choice['eligible'] is False and 'protected time' in choice['message']
-        assert any(f['code'] == 'RESTRICTION' and 'protected time' in f['message'] for f in choice['findings'])
-        assert h.command('staff', 'swap.offer', offer_payload(h, pid, first, kind), status=422)['error']['code'] == 'SWAP_INELIGIBLE'
-    else:
-        assert choice['eligible'] is True
-        row = offered(h, pid, first, kind=kind)
-        row = (transition(h, row, 'accept', 'staff_two') if kind == 'give' else
-               transition(h, row, 'counteroffer', 'staff_two', {'assignment_id': second, 'reason': 'Advisory is nonblocking'}))['swap']
-        row = transition(h, row, 'confirm')['swap']
-        prepared = transition(h, row, 'prepare', 'coordinator')
-        assert prepared['validation']['valid']
-        assert any(f['code'] == 'RESTRICTION' and f['severity'] == 'warning' for f in prepared['validation']['findings'])
+    # Safety kinds are always mandatory. A stored advisory restriction still blocks the swap.
+    assert choice['eligible'] is False and 'protected time' in choice['message']
+    assert any(f['code'] == 'RESTRICTION' and 'protected time' in f['message'] for f in choice['findings'])
+    assert h.command('staff', 'swap.offer', offer_payload(h, pid, first, kind), status=422)['error']['code'] == 'SWAP_INELIGIBLE'
 
 
 @pytest.mark.parametrize('changed_input,expected_code', [('eligibility', 'NOT_ELIGIBLE'), ('calendar', 'CALENDAR_CLOSED')])

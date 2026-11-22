@@ -28,7 +28,7 @@ def look(pill):
 
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_published_and_draft_footers_draw_the_same_could_improve(browser, live_server, h, scheme):
-    h.policy({'kind': 'restriction'}, {'person_id': h.seed['people'][0]}, severity='advisory')  # an advisory finding on each rota
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': h.seed['people'][0]}, severity='advisory')  # an advisory finding on each rota
     published = h.shift(h.workspace('One health published'))['workspace']
     h.lifecycle(published, 'validate')
     h.publish(h.detail(published)['workspace'])

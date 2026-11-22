@@ -18,8 +18,7 @@ def october_shortfalls(h):
                       "repeat": True, "window_alignment": "fixed", "window_days": 7,
                       "metric": "session_units", "comparison": "minimum", "amount": 6},
                      {"person_id": intern})
-    sport = h.policy({"kind": "minimum_cover", "minimum": 2},
-                     {"person_ids": fellows, "service_id": h.seed["services"][1]}, severity="advisory")
+    sport = h.cover_target(2, {"person_ids": fellows, "service_id": h.seed["services"][1]})
     workspace = h.workspace(start="2026-10-04", end="2026-10-18")
     for day in ("2026-10-04", "2026-10-05", "2026-10-11", "2026-10-12"):
         workspace = h.shift(workspace, start=day + "T08:00:00+03:00", end=day + "T12:00:00+03:00",

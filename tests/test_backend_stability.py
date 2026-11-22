@@ -279,7 +279,7 @@ def test_department_scale_activation_prepares_once_and_writes_briefly(backend, m
         same = feasibility_fingerprint(db, rows[0]) == currencies[rows[0].id]
     assert len(currencies) == len(rows)
     assert same
-    proposal = propose(h, {'kind': 'restriction'}, {'service_ids': [h.seed['services'][0]]}, severity='advisory')
+    proposal = propose(h, {'kind': 'max_duties', 'maximum': 0}, {'service_ids': [h.seed['services'][0]]}, severity='advisory')
     client = h.client('approver')
     command = Command(kind='policy.activate', target_id=proposal['id'], expected_revision=proposal['revision'],
                       payload={'reason': 'Independent scale review'})

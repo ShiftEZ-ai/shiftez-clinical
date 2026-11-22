@@ -4,8 +4,8 @@ import pytest
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.rule_catalogue import CATALOGUE_MAPPING, NEVER_OVERRIDDEN, RULE_CATALOGUE
-from packages.domain.rule_catalogue_migration import after_snapshot, plan_v2
-from packages.domain.rule_migration_proof import strict_expanded
+from packages.domain.conditions import active_rules
+from packages.domain.rule_catalogue_migration import plan_v2
 from tests.test_rule_catalogue_api import approve, line, propose
 from tests.test_rule_catalogue_v2_api import preview, proposed
 from tests.test_rule_catalogue_v2_proof import source as legacy_source, uid
@@ -21,6 +21,14 @@ V1_SAFETY_NUMBERS = [
     # Contract-advisory slots are scoring preferences under #144.
     for slot in slots if slot['kind'] in NEVER_OVERRIDDEN and not slot['advisory']
 ]
+
+
+def store_level(h, source, index, key):
+    # Safety kinds are always mandatory. Inject a stored level that pre-dates authoring validation.
+    source['definition']['rule']['lines'][index]['numbers'][key]['level'] = 'medium'
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Policy, source['id']).definition = source['definition']
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
 
 
 def assert_refused(h, source, reason):
@@ -49,21 +57,13 @@ def test_advisory_safety_conversion(h, kind):
             'starts_on': '2020-01-01', 'definition': {'rule': rule, 'severity': 'advisory'},
         }, status=422)
         assert rejected['error']['code'] == 'SCHEMA_INVALID'
-        assert any('are mandatory' in detail['message'] for detail in rejected['error']['details'])
+        assert any('Safety rules are always mandatory' in detail['message'] for detail in rejected['error']['details'])
         return
 
-    source = h.policy(rule, severity='advisory')
+    # Safety kinds are always mandatory. A stored cover minimum cannot become an advisory target.
+    source = (h.policy(rule, severity='advisory') if kind == 'spread_evenly'
+              else h.stored_advisory_safety(rule))
     assert source['definition']['severity'] == 'advisory'
-    if kind == 'minimum_cover':
-        # Under #144, advisory cover maps to the advisory-only target, which is not a safety number.
-        before = {'policies': [source]}
-        plan = plan_v2(before['policies'], department_id=source['department_id'])
-        assert not plan['blocked'], plan['blocked']
-        after = after_snapshot(before, plan)
-        [converted] = after['policies'][0]['definition']['rule']['lines']
-        assert converted['numbers'] == {'target': {'value': rule['minimum'], 'level': 'medium'}}
-        assert strict_expanded(before, after)['equal']
-        return
     reason = "'spread_evenly'" if kind == 'spread_evenly' else SAFETY_REVIEW_REASON
     assert_refused(h, source, reason)
 
@@ -74,12 +74,12 @@ def test_legacy_advisory_cover_converts_per_person_rows_and_inherited_default():
                                                          {'person_id': uid(13), 'amount': None}])
     before = {'policies': [source]}
     plan = plan_v2(before['policies'], department_id=source['department_id'])
-    assert not plan['blocked'], plan['blocked']
-    after = after_snapshot(before, plan)
-    explicit, inherited = after['policies'][0]['definition']['rule']['lines']
-    assert explicit['numbers'] == {'target': {'value': 3, 'level': 'high'}}
-    assert inherited['numbers'] == {'target': {'value': None, 'level': 'high'}}
-    assert strict_expanded(before, after)['equal']
+    # Safety kinds are always mandatory. Conversion cannot turn either minimum into a target.
+    assert not plan['targets'] and not plan['bindings']
+    [blocked] = plan['blocked']
+    assert blocked['rule_id'] == source['id'] and blocked['reason'] == SAFETY_REVIEW_REASON
+    assert [(p['definition']['rule']['minimum'], p['definition']['severity']) for p in active_rules([source])] == [
+        (3, 'mandatory'), (2, 'mandatory')]
 
 
 @pytest.mark.parametrize('entry_id,key,slot', V1_SAFETY_NUMBERS)
@@ -90,8 +90,9 @@ def test_v1_advisory_safety_conversion(h, entry_id, key, slot):
     if entry_id == 'companion_cover':
         settings['when_person_ids'] = [h.seed['people'][0]]
     source = approve(h, propose(h, entry_id, [
-        line(numbers={key: {'value': value, 'level': 'medium'}}, settings={kind: settings}),
+        line(numbers={key: {'value': value, 'level': 'mandatory'}}, settings={kind: settings}),
     ], catalogue_version=1)['record'])
+    store_level(h, source, 0, key)
     assert source['definition']['rule']['lines'][0]['numbers'][key]['level'] == 'medium'
     assert_refused(h, source, SAFETY_REVIEW_REASON)
 
@@ -100,9 +101,10 @@ def test_v1_advisory_safety_conversion(h, entry_id, key, slot):
 def test_v1_mixed_or_mandatory_safety_conversion(h, level):
     source = approve(h, propose(h, 'rest_between_duties', [
         line(numbers={'min': {'value': 20, 'level': 'mandatory'}}, weekdays=[0]),
-        line(numbers={'min': {'value': 12, 'level': level}}, weekdays=[1]),
+        line(numbers={'min': {'value': 12, 'level': 'mandatory'}}, weekdays=[1]),
     ], catalogue_version=1)['record'])
     if level == 'medium':
+        store_level(h, source, 1, 'min')
         assert_refused(h, source, SAFETY_REVIEW_REASON)
         return
 

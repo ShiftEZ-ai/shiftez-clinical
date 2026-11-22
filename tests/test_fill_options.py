@@ -244,10 +244,10 @@ def test_fill_options_keeps_dated_clinic_not_eligible_explicit(h):
 
 def companion_case(h, *, minimum=1, pooled=False):
     trigger, companion, _ = h.seed['people']
-    policy = h.policy({'kind': 'minimum_cover', 'minimum': minimum, 'when_person_ids': [trigger],
-                       'aggregation': 'service_group' if pooled else 'assignment'},
-                      {**({'person_id': companion} if minimum == 1 else {}),
-                       **({'service_id': h.seed['services'][0]} if pooled else {})}, severity='advisory')
+    scope = {**({'person_id': companion} if minimum == 1 else {}),
+             **({'service_id': h.seed['services'][0]} if pooled else {})}
+    policy = h.cover_target(minimum, scope, settings={'when_person_ids': [trigger],
+                             'aggregation': 'service_group' if pooled else 'assignment'})
     w = h.shift(h.workspace(), people=[trigger])['workspace']
     shift = h.detail(w)['shifts'][0]
     finding = next(f for f in w['validation']['findings'] if f['rule_id'] == policy['id'])
@@ -381,14 +381,15 @@ def test_warning_cover_line_in_a_mixed_policy_uses_its_matched_severity(h):
     data = h.snapshot(w)
     trigger, candidate, other = h.seed['people']
     rule = catalogue('people_per_session',
-        line(who=person(candidate), numbers={'min': {'value': 1, 'level': 'medium'}},
+        # Safety kinds are always mandatory. Score a target alongside the hard maximum.
+        line(who=person(candidate), numbers={'target': {'value': 1, 'level': 'medium'}},
              settings={'minimum_cover': {'when_person_ids': [trigger]}}),
         line(numbers={'max': {'value': 10, 'level': 'mandatory'}}))
     rule['department_id'] = data['workspace']['department_id']
     data['policies'] = [p for p in data['policies'] if p['id'] != old['rule_id']] + [rule]
     finding = next(f for f in evaluate(data)['findings'] if f['rule_id'] == rule['id'])
     assert finding['code'] == 'SCOPED_COVERAGE_GAP' and finding['severity'] == 'warning'
-    assert finding['detail']['line'] == 0 and finding['detail']['slot'] == 'min'
+    assert finding['detail']['line'] == 0 and finding['detail']['slot'] == 'target'
     shift = next(t for t in data['shifts'] if t['id'] == target['id'])
     rows, _ = staffing.check_people(data, shift, None, {candidate, other}, finding=finding)
     assert {r['person_id']: r['resolves'] for r in rows} == {candidate: True, other: False}

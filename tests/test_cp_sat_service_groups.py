@@ -47,8 +47,8 @@ def test_advisory_pooled_cover_uses_canonical_session_score_subject(h, intervals
 
     typ = h.configure('assignment_types', {'name': 'Optional pooled places', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 0, 'maximum': 1}]}})['record']['id']
-    h.policy({'kind': 'minimum_cover', 'minimum': 2, 'aggregation': 'service_group'},
-             {'service_ids': h.seed['services'][:2]}, severity='advisory')
+    # Safety kinds are always mandatory. Compare the objective for a pooled advisory target.
+    h.cover_target(2, {'service_ids': h.seed['services'][:2]}, settings={'aggregation': 'service_group'})
     workspace = h.workspace()
     for index in range(len(intervals)):
         workspace = h.shift(workspace, typ=typ, people=[], service=index % 2, location=index % 2)['workspace']

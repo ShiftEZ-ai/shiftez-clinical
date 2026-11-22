@@ -616,7 +616,7 @@ def _bound_policies(policies, context=None):
 
 def source_edits(copies):
     """Apply approved destination scopes and per-number strengths to legacy-shaped source copies."""
-    from .conditions import INTERNAL, _parts
+    from .conditions import INTERNAL, _parts, effective_severity
     partitioned = []
     for copy in copies:
         variants = copy.get('_v2_base_variants') if not copy.get('template_line') else None
@@ -665,6 +665,9 @@ def source_edits(copies):
         levels = {numbers[key].get('level') for key in keys if key in numbers and numbers[key].get('level') is not None}
         original = 'mandatory' if copy['definition']['severity'] == 'mandatory' else copy['definition'].get('strength') or 'medium'
         levels = levels or {original}
+        # A converted cover target retains its explicit advisory-only slot through legacy-shaped projection.
+        advisory_slot = (keys == ['target'] and kind == 'minimum_cover')
+        levels = {effective_severity(kind, level, advisory_slot=advisory_slot) for level in levels}
         for level in LEVELS:
             if level not in levels:
                 continue
@@ -710,6 +713,8 @@ def source_edits(copies):
                 # These copies are already split into bounds/targets; schema normalization can re-add empty fields.
                 d = {**d, 'rule': {k: v for k, v in d['rule'].items() if k not in ('target_amount', 'target_strength')}}
             item['definition'] = d
+            if advisory_slot:
+                item['_advisory_catalogue_slot'] = True
             out.append(item)
     return out
 
@@ -1246,6 +1251,10 @@ def _broader_levels(lines, by_number):
 
 def _levels(lines, n, k, broader, entry, slot, sources, keys, groups):
     """Fixed-level copies, selected at evaluation time from matching, dated source lines."""
+    from .conditions import effective_severity
+
+    if effective_severity(slot['kind'], None, advisory_slot=slot['advisory']) == 'mandatory':
+        return [('mandatory', None)]
     number = lines[n]['numbers'][k]
     if number.get('level', 'mandatory') is not None:
         return [(number.get('level', 'mandatory'), None)]
@@ -1384,6 +1393,8 @@ def _expand(policy, outrank=True, stored_goal=True):
 
 
 def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sources, selector, stored_goal=True):
+    from .conditions import effective_severity
+
     if line.get('_source_default_only') and (kind != 'block_quota' or not selector):
         return None
     d = policy['definition']
@@ -1434,6 +1445,7 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
     return {**policy, 'kind': kind, 'starts_on': starts_on, 'ends_on': ends_on,
             **({'_quota_full_window': quota_window} if quota_window else {}),
             '_catalogue_sources': sources,
+            **({'_advisory_catalogue_slot': True} if advisory and effective_severity(kind, 'advisory') == 'mandatory' else {}),
             # Conversion makes the original policy partition explicit; keep grouping metadata identical.
             **({'_fair_share_group': {'where': _group(d['rule'], line, numbers[0][2], list(line['numbers']),
                                                      default_partition=policy['id']),

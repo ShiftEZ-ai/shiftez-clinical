@@ -273,7 +273,9 @@ def test_rule_line_selection_groups_changes_into_governed_rule_proposal(h):
 @pytest.mark.parametrize("severity", ["advisory", "mandatory"])
 def test_bulk_operational_impact_uses_real_validator_messages_and_safe_resolutions(h, severity):
     h.configure("tags", {"name": "BulkAffected", "labels": ["people"]})
-    h.policy({"kind": "restriction"}, {"tags": ["BulkAffected"]}, severity=severity)
+    # Safety kinds are always mandatory. Use a workload cap to exercise the advisory resolution.
+    rule = {"kind": "restriction"} if severity == "mandatory" else {"kind": "max_duties", "maximum": 0}
+    h.policy(rule, {"tags": ["BulkAffected"]}, severity=severity)
     workspace = h.workspace()
     h.shift(workspace)
     person = next(p for p in h.get("coordinator", "/api/catalogues")["people"] if p["id"] == h.seed["people"][0])

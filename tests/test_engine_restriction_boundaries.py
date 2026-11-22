@@ -192,10 +192,6 @@ def test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_co
     before = generate(data, 3, workers=1, deterministic=True)
     dated_scope(data, person, "programme_ids", "join")
     after = generate(data, 3, workers=1, deterministic=True)
-    assert before["status"] == after["status"] == "candidate_feasible"
-    assert all([row["participant"]["person_id"] for row in result["additions"]] == [person]
-               for result in (before, after))
-    costs = [1 - result["objective_components"]["rules"]["value"] for result in (before, after)]
-    for result in (before, after):
-        assert result["compiled_component_values"]["rules"] == result["objective_components"]["rules"]["value"]
-    assert costs[0] == costs[1] > 0
+    # Safety kinds are always mandatory. The membership change cannot restore the excluded assignment.
+    assert before["status"] == after["status"] == "requirements_conflict"
+    assert not before["additions"] and not after["additions"]

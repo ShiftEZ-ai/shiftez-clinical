@@ -928,14 +928,49 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
     for issue in issues:
         issue['safety'] = safety.get(issue['rule_id'], False)
     pending = [issue for issue in issues if not issue.get('acknowledged')]
+    for entry in entries:
+        entry['numbers'] = _display_safety_slots(entry['numbers'])
+        for key in ('rule', 'proposed'):
+            if entry[key]:
+                entry[key] = _display_safety_levels(entry[key])
     return {"catalogue_version": version, "catalogue_counts": {**catalogue_counts(), 'in_force': len(in_force),
                 'lines': sum(row['lines'] for group in by_entry.values() for row in group)
                          + sum(row['lines'] for row in not_on_catalogue)},
-            "authorable_entries": list(RULE_CATALOGUE_V2),
+            "authorable_entries": [{**entry, 'numbers': _display_safety_slots(entry['numbers'])}
+                                   for entry in RULE_CATALOGUE_V2],
             "families": [{"id": f, "name": n} for f, n in FAMILIES], "entries": entries,
             'not_on_catalogue': not_on_catalogue if catalogue_id is None else [], "day": str(day),
             "attention": issues, "attention_counts": attention_counts(pending),
             **({'_live_definitions': live_definitions} if shared_body else {'source_options': source_options})}
+
+
+def _display_safety_slots(numbers):
+    from packages.domain.conditions import effective_severity
+
+    return {key: [{**slot, 'mandatory_reason': s.SAFETY_MANDATORY_REASON}
+                  if effective_severity(slot['kind'], None, advisory_slot=slot['advisory']) == 'mandatory' else slot
+                  for slot in slots] for key, slots in numbers.items()}
+
+
+def _display_safety_levels(policy):
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+    from packages.domain.conditions import effective_severity
+
+    definition = policy['definition']
+    rule = definition['rule']
+    entry = catalogue_entry(rule['id'], rule.get('catalogue_version', 1))
+    lines = []
+    for line in rule.get('lines') or []:
+        numbers = line.get('numbers') or {}
+        reasons = {}
+        for key, number in numbers.items():
+            if number.get('level') in (None, 'mandatory'):
+                continue
+            slot = slot_for_number(entry, key, rule, line, numbers)
+            if effective_severity(slot['kind'], number['level'], advisory_slot=slot['advisory']) == 'mandatory':
+                reasons[key] = s.SAFETY_MANDATORY_REASON
+        lines.append({**line, 'mandatory_reasons': reasons} if reasons else line)
+    return {**policy, 'definition': {**definition, 'rule': {**rule, 'lines': lines}}}
 
 
 def _catalogue_stamp(db, actor):
@@ -961,7 +996,7 @@ def _catalogue_stamp(db, actor):
             m.RuleAcknowledgement.department_id == actor.department_id)).one()
     # SQLAlchemy returns aggregate rows as Row objects; convert the workspace
     # row to primitives before using the stamp in the canonical digest.
-    return ('rules-in-force-v3', department.revision, department.catalogue_revision, organisation.revision,
+    return ('rules-in-force-v4', department.revision, department.catalogue_revision, organisation.revision,
             organisation.input_revision, organisation.availability_revision, tuple(workspaces), tuple(policies),
             tuple(acknowledgements))
 
@@ -1098,7 +1133,9 @@ def detail(db, actor, catalogue_id, version=1, day=None, policy_id=None, line_id
             'NOT_FOUND', 'Rule line not found', 404)
     found = None
     if selected is not None and selected['definition']['rule']['kind'] == 'catalogue' and actor.permits('coordinator', 'approver'):
-        found = _check(db, actor, entry, {**selected['definition']['rule'],
+        rule = selected['definition']['rule']
+        lines = [{k: v for k, v in line.items() if k != 'mandatory_reasons'} for line in rule.get('lines') or []]
+        found = _check(db, actor, entry, {**rule, 'lines': lines,
             'balance_between_people': selected['definition'].get('balance_between_people', True)}, people=people,
             policy_ends_on=selected.get('ends_on'), stored=True)
     reached = policy_reach(db, actor, day, workspace_id, starts_on, ends_on, True, selected['id'], line_id,
@@ -1523,7 +1560,8 @@ def propose(db, actor, command):
                 condition_references(db, actor, s.Conditions.model_validate(line[side]), reference_rows=reference_rows)
         for c in expand({"id": "", "definition": {**definition, "rule": {**definition["rule"], "on": True, "lines": [line]}}}):
             policy_references(db, actor, s.PolicyDefinition.model_validate(
-                {**c["definition"], "merged_ids": []}, context={'resolved_catalogue_line': True}), reference_rows=reference_rows)
+                {**c["definition"], "merged_ids": []}, context={'resolved_catalogue_line': True,
+                    'advisory_catalogue_slot': c.get('_advisory_catalogue_slot', False)}), reference_rows=reference_rows)
         if line.get("calendar_entry_id"):
             scoped(db, m.ProgrammeCalendarEntry, line["calendar_entry_id"], actor)
     row = m.Policy(department_id=actor.department_id, kind="catalogue", status="proposed", created_by=actor.identity_id,

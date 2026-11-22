@@ -59,7 +59,7 @@ def department(h, seed, people=20, days=7, rules='full', leave_rate=0.05, clinic
         ]
         advisory = [
             ('soft_week', {'kind': 'max_duties', 'maximum': 4, 'window': 'week'}, {}),
-            ('soft_rest', {'kind': 'min_rest', 'hours': 16}, {}),
+            ('soft_rest', {'kind': 'max_hours', 'hours': 6, 'window': 'day'}, {}),
             ('prefer_seed', {'kind': 'allocation_preference', 'priority': 5}, {'person_id': s['people'][2]}),
         ]
         chosen = mandatory if rules == 'full' else rng.sample(mandatory, rng.randint(3, len(mandatory)))
