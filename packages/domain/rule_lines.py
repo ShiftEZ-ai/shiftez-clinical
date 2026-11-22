@@ -1215,7 +1215,7 @@ def inherited(policy, would=None):
                         source = lines[src]
                         number = source['numbers'][k]
                         slot = _slot(entry, k, rule, source, source['numbers'])
-                        level = effective_severity(slot['kind'], number.get('level'), advisory_slot=slot['advisory'])
+                        level = effective_severity(slot['kind'], number.get('level', 'mandatory'), advisory_slot=slot['advisory'])
                         out.setdefault(line['id'], {})[k] = {**number, 'level': level, 'from': source['id']}
                     break
     return out
