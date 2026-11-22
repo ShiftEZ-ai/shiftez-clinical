@@ -19,7 +19,7 @@ from tests.scheduler_departments import apply, department
 
 
 def tier_loop_data(h):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     data['people'] = {pid: data['people'][pid] for pid in h.seed['people'][:2]}
     data['shifts'][0]['type_snapshot']['definition']['requirements'] = [

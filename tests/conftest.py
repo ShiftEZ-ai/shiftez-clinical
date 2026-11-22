@@ -248,6 +248,36 @@ class Harness:
                 assert process_one(self.app.state.engine)
         return self.command("approver","policy.activate",{"reason":"Independent synthetic review",**({"check_job_ids":checks} if checks else {})},proposal["id"],proposal["revision"])["record"]
 
+    def stored_advisory_safety(self, rule, scope=None):
+        """Retain a historical severity that current authoring refuses."""
+        policy = self.policy(rule, scope)
+        with transaction(self.app.state.engine, write=True) as db:
+            row = db.get(m.Policy, policy['id'])
+            row.definition = {**row.definition, 'severity': 'advisory'}
+            db.get(m.Organisation, self.seed['organisation_id']).input_revision += 1
+            policy['definition'] = row.definition
+        return policy
+
+    def cover_target(self, amount, scope=None, *, settings=None, strength='medium'):
+        from packages.domain.rule_catalogue_migration import who_where
+
+        scope = scope or {}
+        who, where = who_where(scope)
+        current = next(e['rule'] for e in self.get('coordinator', '/api/rules/catalogue')['entries']
+                       if e['id'] == 'people_per_session')
+        lines = list(current['definition']['rule']['lines']) if current else []
+        lines.append({'id': str(uuid.uuid4()), 'who': who, 'where': where,
+                      **{k: scope[k] for k in ('weekdays', 'start_time', 'end_time') if k in scope},
+                      'numbers': {'target': {'value': amount, 'level': strength}},
+                      'settings': {'minimum_cover': settings} if settings else {}})
+        proposal = self.command('coordinator', 'rule.propose', {
+            'catalogue_id': 'people_per_session', 'lines': lines, 'reason': 'Synthetic cover target',
+            'expected_policy_id': current['id'] if current else None,
+            'expected_revision': current['revision'] if current else None,
+        })['record']
+        return self.command('approver', 'policy.activate', {'reason': 'Independent synthetic review'},
+                            proposal['id'], proposal['revision'])['record']
+
     def snapshot(self,w):
         from apps.api.snapshots import domain_snapshot
         with transaction(self.app.state.engine) as db:

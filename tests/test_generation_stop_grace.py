@@ -75,7 +75,7 @@ def test_mid_solve_stop_wall_grace(h, request):
 @pytest.mark.parametrize('grace', [1, 10])
 @pytest.mark.parametrize('stop_at', ['callback', 'between_tiers'])
 def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypatch, grace, stop_at):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     data, update, solved, stops, kept = snapshot(h), {}, [], [], []
     data['generation_options'] = {'generation_stop_grace_seconds': grace}
     data['shifts'][0]['type_snapshot']['definition']['requirements'][0].update(minimum=0, target=1, maximum=1)

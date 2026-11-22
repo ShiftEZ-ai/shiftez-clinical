@@ -118,7 +118,7 @@ def test_zero_completion_allowance_does_not_start_native_solve():
 
 @pytest.mark.parametrize('case', ['completed', 'capped', 'no_incumbent', 'cancelled'])
 def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     workspace = h.shift(h.workspace(), people=[])['workspace']
     data = h.snapshot(workspace)
     data['generation_options'] = {'diagnostic_seconds': 1, 'shortlist_width': 0}
@@ -186,7 +186,7 @@ def test_stopped_generation_completion_status(h, clock, monkeypatch, case):
 
 @pytest.fixture
 def slow_default_completion(h, clock, monkeypatch):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     data = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     update, interrupted = {}, threading.Event()
     control = SolverControl(search_control=lambda: update)

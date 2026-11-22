@@ -110,7 +110,10 @@ def _fixed_overlap(h, kind='min_rest', severity='advisory'):
                 'to_location_id': h.seed['locations'][1]}
     elif kind == 'forbidden_transition':
         rule = {'kind': kind, 'from_type_ids': [optional], 'to_type_ids': [h.seed['type']], 'overtime_only': True}
-    pair_policy = h.policy(rule, severity=severity)
+    if severity == 'advisory' and kind != 'travel_buffer':
+        pair_policy = h.stored_advisory_safety(rule)
+    else:
+        pair_policy = h.policy(rule, severity=severity)
     overtime_policy = h.policy({'kind': 'allocation_overtime'}, severity='advisory')
     start, end = '2026-10-04T08:00:00+03:00', '2026-10-04T10:00:00+03:00'
     fixed = {'person_id': person, 'start': start, 'end': end, 'fixed': True,
@@ -155,7 +158,8 @@ def test_interleaved_fixed_focus_duties_keep_pair_rule_severity(h, kind, severit
     assert data == frozen
     assert result['removals'] == []
     assert not result.get('optimality_proven')
-    if severity == 'mandatory':
+    # Safety kinds are always mandatory. Travel buffer remains advisory when configured that way.
+    if severity == 'mandatory' or kind != 'travel_buffer':
         assert result['status'] == 'requirements_conflict' and not result['additions'], result
         return
     assert result['status'] == 'candidate_with_gaps', result

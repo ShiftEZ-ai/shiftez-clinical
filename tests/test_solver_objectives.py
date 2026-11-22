@@ -261,7 +261,8 @@ def test_wish_vs_three_extra_nights_uses_score_weights_and_reports_score_compone
 @pytest.mark.parametrize('factor, offset', [(1, 0), (2_000, 0), (200_000, 0), (200_000, 1)])
 def test_active_preference_weight_normalizes_the_objective_before_stability(h, coverage_weight, changed, expected, factor, offset):
     first, second = h.seed['people'][:2]
-    h.policy({'kind': 'maximum_participants', 'maximum': 0}, severity='advisory')
+    # Safety kinds are always mandatory. The required single seat misses this advisory target.
+    h.cover_target(2)
     h.policy({'kind': 'run_length', 'maximum': 2}, {'person_id': second}, severity='advisory')
     typ = h.configure('assignment_types', {'name': 'Exactly one place', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 1, 'maximum': 1}]}})['record']['id']

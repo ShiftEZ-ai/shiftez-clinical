@@ -394,7 +394,7 @@ def test_resolve_issues_has_no_repeated_reason_pills(browser, live_server, h, vi
 @pytest.mark.parametrize('view,scheme', TWO)
 def test_advisory_is_one_line_and_undoing_an_accept_keeps_the_proposal(browser, cp_server, h, view, scheme):
     person = h.seed['people'][0]
-    h.policy({'kind': 'restriction'}, {'person_id': person}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': person}, severity='advisory')
     w = h.shift(h.workspace('FM accept once'), people=[person])['workspace']
     w = h.shift(w, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00', people=[])['workspace']
     w = h.lifecycle(h.detail(w)['workspace'], 'validate')['workspace']

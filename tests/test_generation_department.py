@@ -112,7 +112,9 @@ def test_shared_clock_boundaries_and_early_restriction_check(h, monkeypatch):
     assert generate(data)['additions'] == []
     assert not trials  # Mandatory restriction is rejected before a full-rota trial.
     restriction['definition']['severity'] = 'advisory'
-    assert generate(data)['status'] == 'candidate_feasible'
+    # Safety kinds are always mandatory, so the same early exclusion applies.
+    assert generate(data)['additions'] == []
+    assert not trials
     restriction['definition']['severity'] = 'mandatory'
     restriction['definition']['exception_allowed'] = True  # historical flag cannot waive safety
     data['exceptions'].append({'id': str(uuid.uuid4()), 'status': 'approved',
@@ -610,8 +612,8 @@ def test_named_consultant_placement_adds_fellow_only_when_present_and_available(
     programme = h.configure('programmes', {'name': 'Longitudinal placement', 'starts_on': '2026-01-01'})['record']
     h.configure('programme_memberships', {'person_id': fellow, 'programme_id': programme['id'],
         'starts_on': '2026-01-01', 'ends_on': '2027-01-01'}, role='coordinator')
-    h.policy({'kind': 'minimum_cover', 'minimum': 1, 'when_person_ids': [consultant]},
-        {'programme_id': programme['id'], 'person_id': fellow, 'service_id': h.seed['services'][0]}, 'advisory')
+    h.cover_target(1, {'programme_id': programme['id'], 'person_id': fellow, 'service_id': h.seed['services'][0]},
+                   settings={'when_person_ids': [consultant]})
     duty = h.configure('assignment_types', {'name': 'Consultant placement fixture', 'starts_on': '2020-01-01',
         'definition': {'requirements': []}})['record']
     first = h.shift(h.workspace(), people=[consultant], typ=duty['id'])
