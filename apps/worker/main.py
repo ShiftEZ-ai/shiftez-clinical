@@ -805,13 +805,12 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
     job.completed_at = m.now()
     if job.kind == 'generation' and not error:
         from apps.api.errors import Problem
-        from apps.api.workspace_baselines import generation_manifest, verify_generation_snapshot
+        from apps.api.workspace_baselines import verify_generation_snapshot
+        from .generation_evidence import retain_completed_candidate_evidence
         try:
             workspace = db.get(m.Workspace, job.workspace_id)
             baseline = verify_generation_snapshot(db, workspace, job.input_snapshot)
-            manifest = generation_manifest(baseline, job.input_snapshot, job=job,
-                                            requester_id=job.requested_by, result=result,
-                                            status=job.status)
+            result, manifest = retain_completed_candidate_evidence(db, job, baseline, result)
             job.input_snapshot = {**job.input_snapshot, 'generation_manifest': manifest}
         except Problem as rejected:
             error, result, job.status = rejected.code, None, 'failed'
