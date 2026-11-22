@@ -176,7 +176,7 @@ def test_overnight_restriction_keeps_each_weekdays_clock_attribution(h, weekday,
     assert [(aware(f["start"]), aware(f["end"])) for f in findings] == [tuple(map(aware, expected))]
 
 
-def test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_cost(h):
+def test_unrelated_midnight_membership_does_not_multiply_advisory_workload_cost(h):
     from packages.domain.cp_sat import generate
 
     data = snapshot(h)
@@ -187,11 +187,16 @@ def test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_co
     data["people"][person]["tags"] = ["synthetic"]
     scope = {"person_id": person, "conditions": {"match": "all", "conditions": [
         {"field": "tags", "op": "any", "values": ["synthetic"]}]}}
-    data["policies"] = [policy(data, {"kind": "restriction"}, scope)]
+    # Safety restrictions are always mandatory. A workload limit can still test advisory cost.
+    data["policies"] = [policy(data, {"kind": "max_duties", "maximum": 0, "window": "day"}, scope)]
     data["policies"][0]["definition"]["severity"] = "advisory"
     before = generate(data, 3, workers=1, deterministic=True)
     dated_scope(data, person, "programme_ids", "join")
     after = generate(data, 3, workers=1, deterministic=True)
-    # Safety kinds are always mandatory. The membership change cannot restore the excluded assignment.
-    assert before["status"] == after["status"] == "requirements_conflict"
-    assert not before["additions"] and not after["additions"]
+    assert before["status"] == after["status"] == "candidate_feasible"
+    assert all([row["participant"]["person_id"] for row in result["additions"]] == [person]
+               for result in (before, after))
+    costs = [1 - result["objective_components"]["rules"]["value"] for result in (before, after)]
+    for result in (before, after):
+        assert result["compiled_component_values"]["rules"] == result["objective_components"]["rules"]["value"]
+    assert costs[0] == costs[1] > 0

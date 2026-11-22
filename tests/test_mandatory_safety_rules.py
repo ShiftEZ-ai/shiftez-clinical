@@ -3,11 +3,14 @@ import pytest
 
 from packages.contracts.schemas import PolicyDefinition
 from packages.domain.cp_sat import generate
+from packages.domain.generation import generate as greedy_generate
+from packages.domain.rule_groups import is_cap
 from packages.domain.score import schedule_score
 from packages.domain.time import aware
 from packages.domain.validation import evaluate
 from tests.clock_support import freeze_clock
-from tests.test_rule_catalogue_api import line
+from tests.test_conversion_safety_kinds import store_level
+from tests.test_rule_catalogue_api import approve, entry, line, propose
 from tests.test_rule_safety_audit import safety_settings
 
 
@@ -29,17 +32,17 @@ def rule_for(h, kind):
     return {'kind': kind, **settings}
 
 
-@pytest.mark.parametrize('kind,entry,slot,code', CASES, ids=[case[0] for case in CASES])
-def test_stored_advisory_safety_is_hard(h, monkeypatch, kind, entry, slot, code):
+def safety_workspace(h, monkeypatch, kind):
     freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
-    person = h.seed['people'][0]
     workspace = h.shift(h.workspace())['workspace']
     if kind in {'min_rest', 'forbidden_transition'}:
         workspace = h.shift(workspace, start='2026-10-05T04:00:00+03:00',
                             end='2026-10-05T08:00:00+03:00')['workspace']
-    policy = h.stored_advisory_safety(rule_for(h, kind))['id']
-    data = h.snapshot(workspace)
-    assert next(p for p in data['policies'] if p['id'] == policy)['definition']['severity'] == 'advisory'
+    return workspace
+
+
+def assert_hard_safety(h, workspace, data, policy, code):
+    person = h.seed['people'][0]
     findings = [f for f in evaluate(data)['findings'] if f.get('rule_id') == policy]
     trial = {**data, 'people': {person: data['people'][person]},
              'shifts': [{**shift, 'participants': []} for shift in data['shifts']]}
@@ -52,6 +55,26 @@ def test_stored_advisory_safety_is_hard(h, monkeypatch, kind, entry, slot, code)
     ) == ({(code, 'error')}, 'requirements_conflict', 'VALIDATION_FAILED')
     assert any(f.get('rule_id') == policy and f['code'] == code and f['severity'] == 'error'
                for f in refusal['error']['details']['findings'])
+    return trial
+
+
+@pytest.mark.parametrize('kind,entry,slot,code', CASES, ids=[case[0] for case in CASES])
+def test_stored_advisory_safety_is_hard(h, monkeypatch, kind, entry, slot, code):
+    workspace = safety_workspace(h, monkeypatch, kind)
+    policy = h.stored_advisory_safety(rule_for(h, kind))['id']
+    data = h.snapshot(workspace)
+    raw = next(p for p in data['policies'] if p['id'] == policy)
+    assert raw['definition']['severity'] == 'advisory'
+    trial = assert_hard_safety(h, workspace, data, policy, code)
+    if kind == 'min_rest':
+        greedy = greedy_generate(trial, 5, deterministic=True)
+        assert greedy['status'] == 'candidate_with_gaps'
+        assert len(greedy['additions']) == 1
+        assert all(f.get('rule_id') != policy for f in greedy['validation']['findings'])
+        mapped = h.get('coordinator', f"/api/workspaces/{workspace['id']}/rule-map")['rules']
+        assert next(r for r in mapped if r['id'] == policy)['severity'] == 'mandatory'
+    if kind == 'forbidden_transition':
+        assert is_cap(raw)
     saved = next(p for p in h.get('coordinator', '/api/policies?status=active')['policies'] if p['id'] == policy)
     assert saved['definition']['severity'] == 'advisory'
     assert saved['effective_severity'] == 'mandatory'
@@ -82,6 +105,68 @@ def catalogue_definition(h, kind, entry, slot, level):
     return {'rule': {'kind': 'catalogue', 'catalogue_version': 2, 'id': entry, 'lines': [
         line(numbers={slot: {'value': value, 'level': level}}, settings={kind: rule} if rule else {}),
     ]}}
+
+
+@pytest.mark.parametrize('kind,catalogue_id,slot,code', CASES, ids=[case[0] for case in CASES])
+def test_catalogue_stored_advisory_line_is_hard(h, monkeypatch, kind, catalogue_id, slot, code):
+    workspace = safety_workspace(h, monkeypatch, kind)
+    definition = catalogue_definition(h, kind, catalogue_id, slot, 'mandatory')
+    source = approve(h, propose(h, catalogue_id, definition['rule']['lines'], catalogue_version=2)['record'])
+    store_level(h, source, 0, slot)
+    data = h.snapshot(workspace)
+    raw = next(p for p in data['policies'] if p['id'] == source['id'])
+    assert raw['definition']['rule']['lines'][0]['numbers'][slot]['level'] == 'medium'
+    assert_hard_safety(h, workspace, data, source['id'], code)
+
+
+def test_safety_kinds_are_in_policy_capabilities(h):
+    from packages.contracts.schemas import ALWAYS_MANDATORY_KINDS
+
+    data = h.get('coordinator', '/api/policies/capabilities')
+    assert set(data['always_mandatory_kinds']) == ALWAYS_MANDATORY_KINDS
+
+
+def test_repropose_kept_safety_number_at_its_effective_level(h):
+    entry_id = 'people_per_session'
+    target = {'value': 3, 'level': 'high'}
+    broad = line(numbers={'min': {'value': 2, 'level': 'mandatory'}, 'target': target})
+    source = approve(h, propose(h, entry_id, [broad])['record'])
+    store_level(h, source, 0, 'min')
+    [kept] = source['definition']['rule']['lines']
+    added = line(weekdays=[1], numbers={'max': {'value': 5, 'level': 'mandatory'}})
+    client = h.client('coordinator')
+    check = client.post(f'/api/rules/catalogue/{entry_id}/check', json={'lines': [kept, added]})
+    assert check.status_code == 200 and not check.json()['issues']
+    changed = {**kept, 'numbers': {**kept['numbers'], 'min': {'value': 1, 'level': 'medium'}}}
+    check = client.post(f'/api/rules/catalogue/{entry_id}/check', json={'lines': [changed, added]})
+    assert check.status_code == 200
+    assert any('Safety rules are always mandatory' in issue['message'] for issue in check.json()['issues'])
+    result = propose(h, entry_id, [kept, added], policy_id=source['id'], revision=source['revision'])['record']
+    [fixed, other] = result['definition']['rule']['lines']
+    assert fixed['id'] == kept['id'] and other['id'] == added['id']
+    assert fixed['numbers'] == {'min': {'value': 2, 'level': 'mandatory'}, 'target': target}
+    saved = entry(h, entry_id)['rule']['definition']['rule']['lines'][0]
+    assert saved['numbers']['min']['level'] == 'medium'
+
+
+def test_inherited_safety_labels_use_effective_levels(h):
+    entry_id = 'people_per_session'
+    broad = line(numbers={'min': {'value': 2, 'level': 'mandatory'}, 'target': {'value': 3, 'level': 'high'}})
+    narrower = line(who={'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][0]]}]},
+                    numbers={'max': {'value': 4, 'level': 'mandatory'}})
+    blank = line(who={'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][1]]}]},
+                 numbers={'min': {'value': 2, 'level': 'mandatory'}})
+    source = approve(h, propose(h, entry_id, [broad, narrower, blank])['record'])
+    store_level(h, source, 0, 'min')
+    store_level(h, source, 2, 'min', None)
+    catalogue = entry(h, entry_id)
+    assert catalogue['inherited'][narrower['id']] == {
+        'min': {'value': 2, 'level': 'mandatory', 'from': broad['id']},
+        'target': {'value': 3, 'level': 'high', 'from': broad['id']},
+    }
+    saved = next(l for l in catalogue['rule']['definition']['rule']['lines'] if l['id'] == blank['id'])
+    assert saved['numbers']['min']['level'] is None
+    assert saved['mandatory_reasons'] == {'min': 'Safety rules are always mandatory'}
 
 
 @pytest.mark.parametrize('kind,entry,slot,code', CASES, ids=[case[0] for case in CASES])

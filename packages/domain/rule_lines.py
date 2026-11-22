@@ -1172,6 +1172,8 @@ def inherited(policy, would=None):
     nearest tier that sets it, covering its people today when `would` — line id → people — is given), as the resolver
     applies them. A broader explicit None leaves nothing to take; a broader line measuring something else (a daily
     limit beside a block quota) is not inherited — it applies on its own."""
+    from .conditions import effective_severity
+
     rule = policy['definition']['rule']
     entry = _entry(rule)
     lines = rule.get('lines') or []
@@ -1210,7 +1212,11 @@ def inherited(policy, would=None):
                 src = next((w for w in (holding(bucket, mine) if mine else sets[bucket]) if _meets(spans[n], spans[w])), None)
                 if src is not None:
                     if has_value(lines[src], k):
-                        out.setdefault(line['id'], {})[k] = {**lines[src]['numbers'][k], 'from': lines[src]['id']}
+                        source = lines[src]
+                        number = source['numbers'][k]
+                        slot = _slot(entry, k, rule, source, source['numbers'])
+                        level = effective_severity(slot['kind'], number.get('level'), advisory_slot=slot['advisory'])
+                        out.setdefault(line['id'], {})[k] = {**number, 'level': level, 'from': source['id']}
                     break
     return out
 

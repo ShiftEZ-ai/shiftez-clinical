@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 from datetime import date
 
 from packages.contracts.schemas import LINE_KINDS, LINE_SETTINGS, PER_PERSON_FIELD, PER_PERSON_KINDS, PolicyDefinition, PolicyInput, line_field
-from .conditions import INHERITED_LEVEL, OUTRANKED, OVERRIDDEN, OWN_LINE, _requirements, absolute_values, active_rules, has_each, has_session_lines, level_selector, source_index
+from .conditions import INHERITED_LEVEL, OUTRANKED, OVERRIDDEN, OWN_LINE, _requirements, absolute_values, active_rules, effective_severity, has_each, has_session_lines, level_selector, source_index
 from .quotas import window_blocks
 
 MAX_LINES = 2000        # per_person max_length
@@ -56,7 +56,8 @@ def normal(definition):
 
 def is_cap(policy):
     rule, definition = policy['definition']['rule'], policy['definition']
-    return (policy['status'] == 'active' and policy.get('active', True) and definition['severity'] == 'mandatory'
+    return (policy['status'] == 'active' and policy.get('active', True)
+            and effective_severity(rule['kind'], definition.get('severity')) == 'mandatory'
             and (rule['kind'] == 'block_quota' and rule['comparison'] in ('maximum', 'range') or rule['kind'] in CAP_KINDS))
 
 

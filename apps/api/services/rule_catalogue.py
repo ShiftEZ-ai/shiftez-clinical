@@ -1,6 +1,6 @@
 """The rule catalogue: rules in force moved into catalogue rules, with the proof."""
 from .workspace_access import shared_clause, shared_scope
-from packages.domain.conditions import scope_applies, scope_has_duty_witness
+from packages.domain.conditions import effective_severity, scope_applies, scope_has_duty_witness
 import json
 import copy
 import hashlib
@@ -717,6 +717,30 @@ def _proposal_line(line, previous):
             for key, value in after.items() if key in previous or value != before[key]}
 
 
+def _kept_safety_numbers(entry, rule, lines, previous):
+    """Carry forward an unchanged legacy number at the mandatory level it already applies at."""
+    from packages.contracts.rule_catalogue import slot_for_number
+
+    if not previous:
+        return lines
+    out = []
+    for line in lines:
+        try:
+            old = previous.get(line.get('id'), {})
+            numbers = line.get('numbers') or {}
+            kept = {}
+            for key, number in numbers.items():
+                if number == (old.get('numbers') or {}).get(key) and number.get('level') not in (None, 'mandatory'):
+                    slot = slot_for_number(entry, key, rule, line, numbers)
+                    if _safety_reason(slot):
+                        kept[key] = {**number, 'level': 'mandatory'}
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # The check endpoint accepts raw input. Let its normal validation report malformed lines.
+            kept = {}
+        out.append({**line, 'numbers': {**numbers, **kept}} if kept else line)
+    return out
+
+
 def _catalogue_definitions(rows):
     return {row.get('definition', {}).get('rule', {}).get('id'): row.get('definition', {}).get('rule')
             for row in rows or () if row.get('status') == 'active'
@@ -944,17 +968,19 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
             **({'_live_definitions': live_definitions} if shared_body else {'source_options': source_options})}
 
 
-def _display_safety_slots(numbers):
-    from packages.domain.conditions import effective_severity
+def _safety_reason(slot):
+    return (s.SAFETY_MANDATORY_REASON
+            if effective_severity(slot['kind'], None, advisory_slot=slot['advisory']) == 'mandatory' else None)
 
-    return {key: [{**slot, 'mandatory_reason': s.SAFETY_MANDATORY_REASON}
-                  if effective_severity(slot['kind'], None, advisory_slot=slot['advisory']) == 'mandatory' else slot
+
+def _display_safety_slots(numbers):
+    return {key: [{**slot, 'mandatory_reason': reason} if (reason := _safety_reason(slot)) else slot
                   for slot in slots] for key, slots in numbers.items()}
 
 
 def _display_safety_levels(policy):
     from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
-    from packages.domain.conditions import effective_severity
+    from packages.domain.rule_lines import has_value
 
     definition = policy['definition']
     rule = definition['rule']
@@ -964,11 +990,11 @@ def _display_safety_levels(policy):
         numbers = line.get('numbers') or {}
         reasons = {}
         for key, number in numbers.items():
-            if number.get('level') in (None, 'mandatory'):
+            if number.get('level') == 'mandatory' or not has_value(line, key):
                 continue
             slot = slot_for_number(entry, key, rule, line, numbers)
-            if effective_severity(slot['kind'], number['level'], advisory_slot=slot['advisory']) == 'mandatory':
-                reasons[key] = s.SAFETY_MANDATORY_REASON
+            if reason := _safety_reason(slot):
+                reasons[key] = reason
         lines.append({**line, 'mandatory_reasons': reasons} if reasons else line)
     return {**policy, 'definition': {**definition, 'rule': {**rule, 'lines': lines}}}
 
@@ -996,7 +1022,7 @@ def _catalogue_stamp(db, actor):
             m.RuleAcknowledgement.department_id == actor.department_id)).one()
     # SQLAlchemy returns aggregate rows as Row objects; convert the workspace
     # row to primitives before using the stamp in the canonical digest.
-    return ('rules-in-force-v4', department.revision, department.catalogue_revision, organisation.revision,
+    return ('rules-in-force-v5', department.revision, department.catalogue_revision, organisation.revision,
             organisation.input_revision, organisation.availability_revision, tuple(workspaces), tuple(policies),
             tuple(acknowledgements))
 
@@ -1278,10 +1304,11 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
     from .policies import people_data
     catalogue_id = entry["id"]
     from packages.domain.rule_lines import default_line_strengths, line_relations
-    given = body.get("lines") or []
     # Only new omitted levels acquire defaults; sparse historical lines keep their stored meaning.
     current = catalogue_version(db, actor, catalogue_id, 'active')
-    previous_ids = {line['id'] for line in current.definition['rule'].get('lines') or []} if current else set()
+    previous = {line['id']: line for line in current.definition['rule'].get('lines') or []} if current else {}
+    previous_ids = previous.keys()
+    given = _kept_safety_numbers(entry, body, body.get("lines") or [], previous)
     lines = with_blocks(catalogue_id, body.get("settings"), given, independence.today(db, actor.department_id), entry.get("catalogue_version", 1))
     dated = {line["id"]: [line["starts_on"], line["ends_on"]] for line, was in zip(lines, given) if isinstance(line, dict) and isinstance(was, dict)
              and (line.get("starts_on"), line.get("ends_on")) != (was.get("starts_on"), was.get("ends_on"))}
@@ -1523,6 +1550,9 @@ def propose(db, actor, command):
             "lines": with_blocks(value.catalogue_id, value.settings, [
                 _proposal_line(line, previous[line.id]) if line.id in previous else raw
                 for line, raw in zip(value.lines, authored)], start, value.catalogue_version)}
+    entry = catalogue_entry(value.catalogue_id, value.catalogue_version)
+    if entry is not None:
+        body['lines'] = _kept_safety_numbers(entry, body, body['lines'], previous)
     if value.catalogue_id == "overtime_offers":
         prior = {line.id: line.settings["allocation_overtime"]["volunteer_required"] for line in
                  s.CatalogueRule.model_validate(current.definition["rule"], context={"historical": True}).lines} if current else {}
@@ -1565,7 +1595,7 @@ def propose(db, actor, command):
         if line.get("calendar_entry_id"):
             scoped(db, m.ProgrammeCalendarEntry, line["calendar_entry_id"], actor)
     row = m.Policy(department_id=actor.department_id, kind="catalogue", status="proposed", created_by=actor.identity_id,
-                   name=catalogue_entry(value.catalogue_id, value.catalogue_version)["name"], owner=current.owner if current else "Department", source=value.reason,
+                   name=entry["name"], owner=current.owner if current else "Department", source=value.reason,
                    starts_on=current.starts_on if current else date.fromisoformat(conversion['effective_on']) if conversion else independence.today(db, actor.department_id),
                    ends_on=current.ends_on if current else None, active=True,
                    definition=stored_definition(definition))

@@ -23,9 +23,9 @@ V1_SAFETY_NUMBERS = [
 ]
 
 
-def store_level(h, source, index, key):
-    # Safety kinds are always mandatory. Inject a stored level that pre-dates authoring validation.
-    source['definition']['rule']['lines'][index]['numbers'][key]['level'] = 'medium'
+def store_level(h, source, index, key, level='medium'):
+    # Safety kinds are always mandatory. Recreate a legacy stored level independently of authoring validation.
+    source['definition']['rule']['lines'][index]['numbers'][key]['level'] = level
     with transaction(h.app.state.engine, write=True) as db:
         db.get(m.Policy, source['id']).definition = source['definition']
         db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1

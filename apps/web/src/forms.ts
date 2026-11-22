@@ -1588,7 +1588,7 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
   // covered from its first day), else today. A rota-scoped rule passes its own dates. The query asks only for rotas
   // running across today (ends after it, starts before it), so newer rotas cannot push the one being planned off the page.
   const day=today(ctx);
-  const [catalogue,planning]=await Promise.all([request<{rule_kinds:string[]}>('/api/policies/capabilities'),
+  const [catalogue,planning]=await Promise.all([request<{rule_kinds:string[];always_mandatory_kinds:string[]}>('/api/policies/capabilities'),
     scope.starts_on?null:get(`/api/workspaces?limit=100&current_only=true&start=${day}&end=${day}`).catch(()=>null)]);
   const from=(planning?.workspaces||[] as Row[]).filter((w:Row)=>['draft','submitted','approved'].includes(w.status)&&w.starts_on<day&&w.ends_on>day)
     .sort((a:Row,b:Row)=>a.starts_on<b.starts_on?-1:1)[0];
@@ -1624,13 +1624,16 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
     if(scope.kind)queueMicrotask(()=>{const r=type.wrap.querySelector<HTMLInputElement>(`input[value="${scope.kind}"]`);if(r){type.choose(scope.kind!);render();sayScope();setTimeout(()=>{if(config.offsetParent)config.scrollIntoView({block:'start'});},60);}});
     const config=el('div',{class:'span-2 form-grid'});let readRule=()=>({} as Record<string,unknown>),readPeople=():PersonAmount[]=>[],readListed=()=>false;
     function render(){queueMicrotask(syncStrength);config.replaceChildren();const value=type.input.value;severity.input.disabled=false;allowed.input.disabled=false;readPeople=()=>[];readListed=()=>false;
+      if(catalogue.always_mandatory_kinds.includes(value)){
+        severity.input.value='mandatory';severity.input.disabled=true;
+      }
       config.dataset.step=value==='block_quota'?'Limits':'Settings';
       if(RULE_HELP[value])config.append(el('p',{class:'hint span-2 rule-help'},RULE_HELP[value]));
       when.hidden=value==='balance_goal';  // a goal counts whole days; what it counts is chosen in its sentence
       scopeFields(value==='balance_goal');
       if(value==='allocation_preference'||value==='allocation_overtime'){
         severity.input.value='advisory';severity.input.disabled=true;allowed.input.checked=false;allowed.input.disabled=true;
-        const caps=multi('Required overtime limits',options(all(ctx,'policies').filter(p=>p.definition&&(p.definition.rule.kind==='block_quota'&&['maximum','range'].includes(p.definition.rule.comparison)||['forbidden_transition','max_consecutive_weekends'].includes(p.definition.rule.kind))&&p.definition.severity==='mandatory')));
+        const caps=multi('Required overtime limits',options(all(ctx,'policies').filter(p=>p.definition&&(p.definition.rule.kind==='block_quota'&&['maximum','range'].includes(p.definition.rule.comparison)||['forbidden_transition','max_consecutive_weekends'].includes(p.definition.rule.kind))&&(catalogue.always_mandatory_kinds.includes(p.definition.rule.kind)||p.definition.severity==='mandatory'))));
         const priority=field('Allocation priority','number',0,{min:-100,max:100,step:1,required:true});
         const overtimePriority=field('Overtime priority','number',0,{min:-100,max:100,step:1,required:true});
         const sessionPriority=field('Session selection priority','number',0,{min:-100,max:100,step:1,required:true});
@@ -1676,7 +1679,6 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
         triggers.wrap.classList.add('span-2');config.append(minimum.wrap,aggregation.wrap,coverNote,triggers.wrap,note('Leave empty to always require cover. If selected, any of these employees triggers the requirement; selected employees do not count toward the required other people.'),note('For a duty’s minimum, advisory target and maximum together, configure its Staffing intervals in Setup → Duty types. Minimum cover counts eligible and available people; a capacity limit counts scheduled participants.'),button('Choose staffing capacity instead',()=>{type.choose('maximum_participants');render();},'secondary small'));
         readRule=()=>({kind:value,minimum:Number(minimum.input.value),aggregation:aggregation.input.value,when_person_ids:triggers.values()});
       }else if(value==='supervision_limit'){
-        severity.input.value='mandatory';severity.input.disabled=true;allowed.input.checked=false;allowed.input.disabled=true;
         const mode=select('Supervision limit',[{value:'capacity',label:'Maximum trainees per supervisor'},{value:'allowed_ranks',label:'Allowed trainee ranks only'}],'capacity');
         const ranks=multi('Trainee ranks',rankOptions(ctx));
         const maximum=field('Maximum trainees per supervisor','number',2,{required:true,min:0,max:100,step:1});
@@ -1693,7 +1695,7 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
         const aggregation=select('Apply capacity per',[{value:'assignment',label:'Assignment'},{value:'service',label:'Clinic across concurrent assignments'}],'assignment');
         const extra=field('Permitted extra places','number',0,{min:0,max:100,step:1,required:true});
         const ranks=multi('Ranks permitted in extra places',rankOptions(ctx));
-        const syncOverflow=()=>{const enabled=Number(extra.input.value)>0;ranks.wrap.hidden=!enabled;severity.input.disabled=enabled;if(enabled)severity.input.value='mandatory';};
+        const syncOverflow=()=>{ranks.wrap.hidden=Number(extra.input.value)<=0;};
         extra.input.addEventListener('input',syncOverflow);syncOverflow();
         ranks.wrap.classList.add('span-2');config.append(maximum.wrap,aggregation.wrap,extra.wrap,ranks.wrap,note('Allocation tries normal places first. Extra places apply only to selected ranks and remain visible for review.'),note('Caps simultaneous scheduled participants matching the selected scope, even if they are unavailable or ineligible. This is separate from supervisor-to-trainee ratios.'),note('For a duty’s minimum, advisory target and maximum together, configure its Staffing intervals in Setup → Duty types.'),button('Choose eligible minimum cover instead',()=>{type.choose('minimum_cover');render();},'secondary small'));
         allowed.input.checked=false;allowed.input.disabled=true;readRule=()=>({kind:value,maximum:Number(maximum.input.value),aggregation:aggregation.input.value,overflow_maximum:Number(extra.input.value),overflow_category_ids:Number(extra.input.value)>0?ranks.values():[]});
