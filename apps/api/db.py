@@ -247,6 +247,9 @@ def _snapshot_row_is_read(session, shape, row, *, inserting=False, changes=None)
     state = inspect(row)
     current = state.attrs[name].loaded_value
     if current is NO_VALUE:
+        if state.persistent and changes is not None:
+            # A statement on an older table loads only scope columns; its predicate column may not exist: count it read.
+            return True
         if state.persistent:
             current = getattr(row, name)
         elif name not in state.dict:
@@ -265,6 +268,9 @@ def _snapshot_row_is_read(session, shape, row, *, inserting=False, changes=None)
 
 def _snapshot_projection_changes(session, shape, row, changes=None):
     if (projection := getattr(shape, 'projection', None)) is None:
+        return True
+    # A statement on an older table loads only scope columns; a read column it may lack cannot be read: advance.
+    if changes is not None and shape.columns & inspect(row).unloaded:
         return True
     current = {name: getattr(row, name) for name in shape.columns}
     if changes is None:

@@ -237,6 +237,42 @@ def test_reflected_session_dml_stamps_and_refreshes_target_rows(backend, writer)
         assert source.display_name == 'Synthetic stamp source'
 
 
+@pytest.mark.parametrize('cls,missing,changes,stamped', [
+    (m.Department, 'operating_calendar_id', {'wish_settings': {'types': {'prefer_off': {'default_points': 3}}}}, (1, 0)),
+    (m.AvailabilityPattern, 'status', {'weekdays': [2]}, (1, 1)),
+])
+def test_session_dml_on_an_older_table_never_reads_a_column_it_lacks(backend, cls, missing, changes, stamped):
+    """An upgrade writes through an older schema's table; a read-set column it lacks cannot be read, so the row advances."""
+    from sqlalchemy import Column, event as sa_event
+    h = backend
+    with transaction(h.app.state.engine, write=True) as db:
+        if cls is m.AvailabilityPattern:
+            row = m.AvailabilityPattern(id=m.uid(), department_id=h.seed['department_id'], person_id=h.seed['people'][1],
+                weekdays=[6], start_time='09:00', end_time='10:00', starts_on=datetime(2026, 10, 1).date(),
+                status='active', created_by=h.seed['identities']['staff'])
+            db.add(row)
+            db.flush()
+            target_id = row.id
+        else:
+            target_id = h.seed['department_id']
+    with transaction(h.app.state.engine, write=True) as db:
+        org = db.get(m.Organisation, h.seed['organisation_id'])
+        before = (org.input_revision, org.availability_revision)
+        table = Table(cls.__tablename__, MetaData(), *(Column(column.name, column.type, primary_key=column.primary_key)
+                                                       for column in cls.__table__.c if column.name != missing))
+        statements = []
+        connection = db.connection()
+        listener = lambda _conn, _cursor, statement, *_rest: statements.append(statement)
+        sa_event.listen(connection, 'before_cursor_execute', listener)
+        try:
+            db.execute(update(table).where(table.c.id == target_id).values(**changes))
+        finally:
+            sa_event.remove(connection, 'before_cursor_execute', listener)
+        # Reading the column fails on the older schema itself (no such column / UndefinedColumn).
+        assert not [statement for statement in statements if f'{cls.__tablename__}.{missing}' in statement]
+        assert (org.input_revision, org.availability_revision) == (before[0] + stamped[0], before[1] + stamped[1])
+
+
 def test_only_declared_exclusions_suppress_modified_rows(backend):
     h = backend
     with transaction(h.app.state.engine, write=True) as db:
