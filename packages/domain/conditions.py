@@ -1167,6 +1167,26 @@ def quota_day_scope(scope):
     return result
 
 
+def quota_target_scope(scope):
+    """Counting scope for target acceptance. Eligibility and line precedence are checked live."""
+    def project(node):
+        if 'conditions' not in node:
+            field = node['field']
+            if field == COUNT_BUCKET:
+                return project({'match': 'any', 'conditions': [
+                    _bound_bucket_tree(*_bucket_descriptor(value)) for value in absolute_values(node) or []]})
+            return None if field in PERSON_FIELDS or field in INTERNAL else node
+        kept = [condition for child in node['conditions'] if (condition := project(child)) is not None]
+        if len(kept) == 1 and node.get('count') != 'each':
+            return kept[0]
+        return {**node, 'conditions': kept} if kept else None
+
+    result = {k: v for k, v in scope.items() if k != 'conditions' and k not in PERSON_SCOPE_KEYS}
+    if scope.get('conditions') and (condition := project(scope['conditions'])) is not None:
+        result['conditions'] = condition
+    return result
+
+
 def scope_matches_throughout(data, scope, person_id, shift, a, b, *, rotation_at=None):
     """Counting, qualification and relaxation require the scope throughout the window.
 
