@@ -616,7 +616,9 @@ def matched_paths(tree, holds, key=None):
     check_count_bucket_budget(tree)
     out = []
     constrained = has_each(tree)
-    if key is not None and key not in bucket_keys(tree, holds):
+    if key == () and not constrained:
+        key = None  # An aggregate path needs only the ordinary condition match.
+    elif key is not None and key not in bucket_keys(tree, holds):
         return out
     def visit(node, path, required):
         if 'conditions' in node:

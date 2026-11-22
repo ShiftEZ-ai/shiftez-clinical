@@ -6,6 +6,11 @@ from sqlalchemy import func, select
 from apps.api import models as m
 from apps.api.serialization import record
 from packages.domain.people import current_people as project_people
+from packages.domain.validation import person_active_on
+
+
+def active_people_on(day):
+    return func.coalesce(person_active_on(m.Person.active, m.Person.inactive_from, day), False)
 
 
 def imported_aliases(db, actor):
@@ -43,16 +48,16 @@ def current_people_counts(db, actor, day=None):
     Keep the same date and active predicates as ``current_people`` while letting the
     database count the bounded department-scale rows.
     """
-    from zoneinfo import ZoneInfo
     day = day or m.now().astimezone(ZoneInfo(db.get(m.Organisation, actor.organisation_id).timezone)).date()
+    active_on_day = active_people_on(day)
     active = select(func.count(m.Person.id)).where(
-        m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True))
+        m.Person.organisation_id == actor.organisation_id, active_on_day)
     ranked = select(func.count(func.distinct(m.Membership.person_id))).join(
         m.Person, m.Person.id == m.Membership.person_id).join(
         m.Category, m.Category.id == m.Membership.category_id).where(
             m.Membership.department_id == actor.department_id,
             m.Category.department_id == actor.department_id,
-            m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True),
+            m.Person.organisation_id == actor.organisation_id, active_on_day,
             m.Membership.starts_on <= day,
             m.Membership.ends_on.is_(None) | (m.Membership.ends_on > day),
             m.Category.active.is_(True), m.Category.starts_on <= day,

@@ -20,8 +20,8 @@ from packages.domain.quotas import applicable_policies, evaluate_quotas, period_
 from packages.domain.reports import workload
 from packages.domain.time import aware, local_midnight, now, overlaps, union_hours
 from packages.domain.validation import (
-    ancestor_ids, evaluate, exception_for, index_person_rows, person_scope_ids, policy_applies, _policy_scope_key,
-    within_dates, workload_windows,
+    _policy_scope_key, ancestor_ids, evaluate, exception_for, index_person_rows, person_scope_ids,
+    within_dates, workload_selected, workload_windows,
 )
 from .common import scoped
 from .fairness import READERS, department_data, period_records, viewer
@@ -101,8 +101,7 @@ def _limit_usage(data, policy, person_id, entries, a, b):
     rule = policy['definition']['rule']
     zone = data['organisation']['timezone']
     week_start = data['organisation']['week_start']
-    selected = [(s, p, c, d) for s, p, c, d in entries if policy_applies(data, policy, person_id, s, c, d)
-                and (rule.get('include_overtime', True) or not p.get('overtime', False))]
+    selected, _ = workload_selected(data, policy, person_id, entries)
     windows = workload_windows(a, b, rule, zone, week_start) | {pair for _, _, c, d in selected
                for pair in workload_windows(c, d, rule, zone, week_start) if overlaps(a, b, *pair)}
     for start, end in sorted(windows):
@@ -257,7 +256,7 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
             'basis': 'Planned departmental work only. Hours split at local boundaries; duties count at their start. '
                      'Current publications only; a selected draft replaces its acknowledged publication. '
                      'Rota adjustments and target overrides apply only to the rota comparison. '
-                     'Limit windows use reserved duty envelopes. External work, attendance and payroll are excluded.',
+                     'Limit windows count reserved duty time, and external commitments where a limit does not depend on the kind of work.',
             'rule_basis': 'captured_rota_quotas' if chosen else 'current_rules', 'unsupported_metrics': ['nights'],
             'workspace': ({'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                            'starts_on': workspace.starts_on.isoformat(), 'ends_on': (hi if chosen else until(rota)).isoformat()}
