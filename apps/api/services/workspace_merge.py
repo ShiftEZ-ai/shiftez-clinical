@@ -101,7 +101,7 @@ def checked(db, data, content, bundles, choices, binding, *, for_apply=False):
         workspace.rule_adjustments, workspace.target_overrides = original
         db.flush()
     from .planning import complete_check
-    defaults = db.get(m.Department, workspace.department_id).generation_defaults
+    defaults = data['department'].get('generation_defaults')
     baseline = workspace.validation if complete_check(workspace.validation, data, defaults) else None
     from packages.domain.input_manifest import manifest
     after_data['workspace'] = {**after_data['workspace'], 'content_revision': workspace.content_revision + 1}
