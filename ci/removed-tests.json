@@ -63,6 +63,16 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_finding_causes.py::test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero[case-mkicgenckemaiffgbhhkdkigkfdfjbccepiinhmngenmhgmnfbjdicnjpcpcfobg]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_partial_leave_keeps_unreachable_minimum_cause_and_privacy, which keeps all five cause, eligibility, fix hint and privacy assertions. Full leave now also runs in test_leave_and_full_away_rotation_prorate_commitment_to_zero[leave] and asserts zero proration."
+    },
+    {
+      "node": "tests/test_finding_causes.py::test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero[case-onblpepinfnbnkpfklipjnohhfglmkdoegaeicdlkeaodfbehnbckkackphkgndo]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_leave_and_full_away_rotation_prorate_commitment_to_zero[away], which keeps all three assertions for zero quota, zero working days and no below-minimum finding."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
@@ -123,6 +133,11 @@
       "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
     },
     {
+      "node": "tests/test_quota_working_day_proration.py::test_leave_does_not_reduce_partial_window_commitment",
+      "owner": "maintainer",
+      "reason": "Merged into test_validator_away_kinds_prorate_partial_window_minimum_and_finding[approved_leave], which keeps the exact amount and proration metadata assertions with three working days and an amount of four under leave-aware proration."
+    },
+    {
       "node": "tests/test_rule_catalogue_audience.py::test_different_rights_have_separate_bodies_in_both_read_orders[case-hebibgoofehanmlbhoebkjkhpkfblijoondplpmlkaebljfgmegkdmlommhlging]",
       "owner": "maintainer",
       "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
@@ -151,6 +166,11 @@
       "node": "tests/test_working_policy.py::PolicyTests::test_checks_continues_for_audited_route_and_standalone_still_refuses",
       "owner": "maintainer",
       "reason": "Tier 1 changes no longer need the audited maintenance route: CODEOWNERS and code-owner review replace that refusal. The clean product change and the Tier 1 findings on both events are asserted in test_guard_allows_changes_in_owned_tier1_paths."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_runs_dev_wrapper_while_dev_has_the_old_guard",
+      "owner": "maintainer",
+      "reason": "Dev now runs the code-owner guard, so the Checks step's transitional branch for dev's old wrapper is removed; the step runs the guard directly, asserted in test_checks_runs_the_trusted_guard_before_fan_out and test_checks_runs_the_code_owner_guard_once_dev_has_it."
     },
     {
       "node": "tests/test_working_policy.py::PolicyTests::test_checks_stops_on_other_policy_refusals_before_fan_out",
