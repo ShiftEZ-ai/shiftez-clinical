@@ -466,3 +466,55 @@ def test_inactive_date_edit_reaches_an_open_draft_without_refresh_or_baseline_dr
         assert verify(baseline)['people'][person_id]['active'] is True
         current = snapshot_inputs(db, db.get(m.Organisation, h.seed['organisation_id']))
         assert not any(change['source'] == 'people' for change in _diff(baseline, workspace, current)[2])
+
+
+def _person_form_value(person, **changes):
+    """What the person edit form sends: every field it shows, plus the dated deactivation when Active is off."""
+    keys = ('display_name', 'colour', 'title', 'directory_section', 'work_phone', 'work_extension', 'staff_number',
+            'pager', 'directory_order', 'short_code', 'tags', 'rota_name', 'rota_aliases')
+    return {**{key: person[key] for key in keys}, 'active': person['active'], **changes}
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_form_dated_deactivation_round_trips_and_undo_restores_each_step(h):
+    from apps.api.auth import _local_today
+
+    with transaction(h.app.state.engine) as db:
+        today = _local_today(db, h.seed['department_id'])
+    first, moved = (today + timedelta(days=30)).isoformat(), (today + timedelta(days=45)).isoformat()
+    person = rows(h, 'people', h.seed['people'][:1])[0]
+    reply = h.configure('people', _person_form_value(person, active=False, inactive_from=first),
+                        person['id'], person['revision'], role='coordinator')
+    saved = rows(h, 'people', [person['id']])[0]
+    assert saved['active'] is False and saved['inactive_from'] == first
+    # Undo (the form's catalogue.update with the server's previous value) makes the person active again with no date.
+    undone = h.configure('people', reply['previous_value'], person['id'], reply['record']['revision'], role='coordinator')['record']
+    assert undone['active'] is True and undone['inactive_from'] is None
+
+    dated = h.configure('people', _person_form_value(undone, active=False, inactive_from=first),
+                        person['id'], undone['revision'], role='coordinator')['record']
+    # A later edit without the date (the form leaves an untouched field out) keeps the saved date.
+    kept = h.configure('people', _person_form_value(dated, title='Staff'), person['id'], dated['revision'], role='coordinator')['record']
+    assert kept['active'] is False and kept['inactive_from'] == first
+    reply = h.configure('people', _person_form_value(kept, inactive_from=moved), person['id'], kept['revision'], role='coordinator')
+    assert reply['record']['inactive_from'] == moved
+    back = h.configure('people', reply['previous_value'], person['id'], reply['record']['revision'], role='coordinator')['record']
+    assert back['active'] is False and back['inactive_from'] == first
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('bad', ['2026-02-30', '30/10/2026', 'next month'])
+def test_form_refuses_an_inactive_date_that_is_not_a_date(h, bad):
+    person = rows(h, 'people', h.seed['people'][:1])[0]
+    h.configure('people', _person_form_value(person, active=False, inactive_from=bad),
+                person['id'], person['revision'], role='coordinator', status=422)
+    assert rows(h, 'people', [person['id']])[0]['active'] is True
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_form_accepts_a_past_inactive_date(h):
+    """The API keeps a past date as given (history before it still counts), so the form allows one too."""
+    person = rows(h, 'people', h.seed['people'][:1])[0]
+    saved = h.configure('people', _person_form_value(person, active=False, inactive_from='2026-09-20'),
+                        person['id'], person['revision'], role='coordinator')['record']
+    assert saved['active'] is False and saved['inactive_from'] == '2026-09-20'
