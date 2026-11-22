@@ -5,7 +5,7 @@ import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
 import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
-import {command,get,instant,knownRevision,plainWords,request} from './api.js';
+import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
 import {operatingCalendarFields,resourceRequirementsBuilder} from './resource_forms.js';
@@ -232,7 +232,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
     const start=field(notice?'First day shown':'Effective from','date',preset?.starts_on||row?.starts_on||today(ctx),{required:true});
     const end=field(notice?'Last day shown (optional)':kind==='mentorships'?'Last day (included, optional)':'Effective until (included)','date',preset?.ends_on||row?.ends_on||'');lastDayIncluded(end.input);
     const dates=dateRange('Dates',start,end);
-    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??row?.active!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
+    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??(row?.configured_active??row?.active)!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
     const reason=field('Change reason','text','',{maxlength:500,placeholder:'Optional note, e.g. new clinic from October'});
     // Records that belong to one person (mentorship, programme membership, rotation) are created for many people at
     // once: pick them all, and one record is saved for each. Editing a saved record keeps its one person.
@@ -670,7 +670,7 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       const day=start.input.value;if(base||!day||sourceChosen)return;
       const id=(await get<{previous_workspace_id:string|null}>(`/api/workspaces?limit=1&copy_starts_on=${day}`).catch(()=>null))?.previous_workspace_id;
       if(!id||day!==start.input.value||sourceChosen)return;
-      if(!previous.some(r=>r.id===id)){const w=(await get<{workspace:Row}>(`/api/workspaces/${id}`).catch(()=>null))?.workspace;if(!w)return;previous.push(w);source.input.append(el('option',{value:w.id},rotaChoice(w).label));}
+      if(!previous.some(r=>r.id===id)){const w=(await rotaMeta(id).catch(()=>null))?.workspace;if(!w)return;previous.push(w);source.input.append(el('option',{value:w.id},rotaChoice(w).label));}
       source.input.value=id;fitSource();};
     const people=check('Include assigned people',false);
     const automate=check('Run auto-schedule after setup',true);
@@ -736,7 +736,8 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
     form.append(name.wrap,dateRange('Dates',start,end),fit);if(base)form.append(urgency.wrap,urgentReason.wrap);
     else form.append(setup.wrap,source.wrap,people.wrap,allTemplates.wrap,templates.wrap,automate.wrap);
     form.append(baseline);
-    return async()=>{if(!base&&setup.input.value==='patterns'&&!templateIds().length)throw new Error('Choose at least one recurring session.');
+    // "Use all" with none active is an empty rota, never a choice to make; only a hand-picked empty list asks for one.
+    return async()=>{if(!base&&setup.input.value==='patterns'&&!allTemplates.input.checked&&!templates.values().length)throw new Error('Choose at least one recurring session.');
       const fits=choice?.value();
       if(fits?.choice==='amend'){const p=(await get<{publications:Row[]}>('/api/publications')).publications.find(x=>x.id===fits.publication_id);if(p){form.closest('dialog')?.remove();return workspaceForm(ctx,p);}}
       const custom=customScope.input.checked,sources=scopeChecks.filter(f=>f.input.checked).map(f=>f.input.value);

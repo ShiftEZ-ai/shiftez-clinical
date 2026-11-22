@@ -99,6 +99,8 @@ export const waitingCount=(entries:Entry[],older:Row[])=>entries.filter(e=>e.pro
 // is proposed or discarded.
 const applied=new Set<string>();
 
+/** The Rules list's saved views (one shared read per session, table_view.ts fetchViews). */
+export const ruleTreeViews=()=>fetchViews<Saved>('rule-tree');
 /** `byQuestion`: the server's department projection (GET /api/rules-explained?group_by=question): the questions A–F in
  *  its order, one sentence per rule and the conflicts; null while that route is not served. */
 export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Options,canEdit:boolean,refresh:()=>Promise<void>,byQuestion:DepartmentRules|null=null){
@@ -217,7 +219,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     choices:all.filter(e=>!current(e)).map(e=>({value:e.id,label:e.name,group:COMMON.includes(e.id)?'Common first rules':families.get(e.family)||e.family,keywords:e.description}))
       .sort((a,b)=>Number(b.group==='Common first rules')-Number(a.group==='Common first rules')),onPick:id=>go('rules/'+id)}),'secondary');return b;}
   let saved:SavedView<Saved>[]=[];
-  void fetchViews<Saved>('rule-tree').then(v=>{saved=v;const open=openingView('rule-tree',saved);
+  void ruleTreeViews().then(v=>{saved=v;const open=openingView('rule-tree',saved);
     if(open!==undefined&&(open?.id||'')!==viewId){viewId=open?.id||'';Object.assign(s,open?stateOf(open.definition):{...DEFAULT,filters:{},then_sort:[]});save();rebuild();return;}
     if(viewId&&!saved.some(x=>x.id===viewId)){viewId='';save();}toolbar.sync();}).catch(()=>undefined);
   // Built once every helper below it is defined (its warn reads attentionNow at once): see the end of this function.

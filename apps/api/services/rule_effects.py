@@ -4,7 +4,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import defer, undefer
 
 from apps.api import models as m
@@ -180,8 +180,8 @@ def draft_line_effect(db, actor, catalogue_id, value):
                 'on': original.get('on', True), 'settings': original.get('settings') or {}, 'lines': checked['lines']}})
     effects = []
     for workspace in affected_workspaces(db, actor, [candidate]):
-        before = domain_snapshot(db, workspace)
-        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)])
+        before = domain_snapshot(db, workspace, mandatory_rules=False)
+        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)], mandatory_rules=False)
         effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
             'starts_on': str(workspace.starts_on), 'ends_on': str(workspace.ends_on),
             **effect_projection(before, evaluate(before), after, evaluate(after))})
@@ -372,36 +372,56 @@ def review(db, actor, policy_id):
     skipped_people = {}
     periods = changed_periods(db, actor, [policy], skipped_people=skipped_people)
     workspaces = affected_workspaces(db, actor, [policy], periods=periods)
-    from apps.api.snapshots import feasibility_fingerprints, snapshot_hash
+    from apps.api.snapshots import cheap_fingerprints, currency_hint, currency_match, snapshot_hash
     source_hash, checked_hash = snapshot_hash(record(policy)), snapshot_hash({**record(policy), 'status': 'active'})
-    current_inputs = feasibility_fingerprints(db, workspaces)
     frozen = m.Job.read_metadata['input_snapshot']
     candidate = [m.Job.department_id == actor.department_id, m.Job.kind == 'feasibility',
+        m.Job.workspace_id.in_([workspace.id for workspace in workspaces]),
         frozen['bindings'][0]['policy_id'].as_string() == policy.id,
         frozen['bindings'][0]['source_hash'].as_string() == source_hash,
         frozen['bindings'][0]['checked_hash'].as_string() == checked_hash,
         frozen['bindings'][0]['temporary_change'].as_boolean().is_(False),
         frozen['bindings'][1]['policy_id'].as_string().is_(None),
-        frozen['compiler_version'].as_string() == COMPILER_VERSION,
-        or_(False, *(and_(m.Job.workspace_id == wid, m.Job.input_fingerprint == fingerprint)
-              for wid, fingerprint in current_inputs.items()))]
-    # Existing jobs are the asynchronous effect transport; no solver runs in this read.
-    latest = select(m.Job.id, func.row_number().over(partition_by=m.Job.workspace_id,
-        order_by=(m.Job.created_at.desc(), m.Job.seq.desc())).label('position')).where(*candidate).subquery()
-    jobs = {job.workspace_id: job for job in db.scalars(select(m.Job).options(*CHECK_RECEIPT).join(latest, latest.c.id == m.Job.id)
-        .where(latest.c.position == 1))} if workspaces else {}
+        frozen['compiler_version'].as_string() == COMPILER_VERSION]
+    # Read the latest matching job and just its baseline manifest, leaving both large job columns deferred.
+    jobs, checks = {}, {}
+    if workspaces:
+        latest = select(m.Job.id, func.row_number().over(partition_by=m.Job.workspace_id,
+            order_by=(m.Job.created_at.desc(), m.Job.seq.desc())).label('position')).where(*candidate).subquery()
+        for job, manifest in db.execute(select(m.Job, m.Job.input_snapshot['baseline']['input_manifest'])
+                .options(*CHECK_RECEIPT).join(latest, latest.c.id == m.Job.id).where(latest.c.position == 1)):
+            jobs[job.workspace_id] = job
+            checks[job.workspace_id] = {'input_manifest': manifest}
+    currencies = cheap_fingerprints(db, workspaces, checks=checks, feasibility=True)
+    # Recurring blocking events can change the check inputs at midnight without a revision write.
+    hints = {workspace.id: currency_hint(db, workspace) for workspace in workspaces if workspace.id in currencies}
+
+    def current_hint(workspace_id, recorded):
+        expected = hints.get(workspace_id)
+        return (expected is not None and isinstance(recorded, dict)
+            and recorded.get('input_manifest_format') == expected['input_manifest_format']
+            and currency_match({'event_local_date': recorded.get('event_local_date')},
+                               {'event_local_date': expected.get('event_local_date')}))
+
     # A failed or unrelated later attempt cannot erase a proven contradiction for identical inputs.
-    contradictions = set(db.scalars(select(m.Job.workspace_id).where(*candidate, m.Job.status == 'succeeded',
-        m.Job.result_summary['result']['compiler_version'].as_string() == COMPILER_VERSION,
-        m.Job.result_summary['result']['newly_introduced_contradiction'].as_boolean().is_(True)).distinct())) if workspaces else set()
+    contradictions = set()
+    if currencies:
+        rows = db.execute(select(m.Job.workspace_id, m.Job.input_fingerprint, frozen['currency_hint']).where(
+            *candidate, m.Job.status == 'succeeded',
+            m.Job.result_summary['result']['compiler_version'].as_string() == COMPILER_VERSION,
+            m.Job.result_summary['result']['newly_introduced_contradiction'].as_boolean().is_(True)))
+        contradictions = {wid for wid, fingerprint, hint in rows
+                          if input_current(fingerprint, currencies.get(wid)) and current_hint(wid, hint)}
     effects = []
     for workspace in workspaces:
         matching = jobs.get(workspace.id)
         result = check_result(matching) if matching else None
-        receipt = (result or (matching.read_metadata or {}).get('input_snapshot') or {}) if matching else {}
-        if matching and not receipt_current(matching, receipt, current_inputs[workspace.id],
-                {policy.id: source_hash}, {policy.id: checked_hash}):
-            matching = None
+        if matching:
+            metadata = (matching.read_metadata or {}).get('input_snapshot') or {}
+            if (not current_hint(workspace.id, metadata.get('currency_hint'))
+                    or not receipt_current(matching, result or metadata, currencies.get(workspace.id),
+                                           {policy.id: source_hash}, {policy.id: checked_hash})):
+                matching = None
         effect = (checked_effect(result or {}) if matching and matching.status == 'succeeded' else None)
         effect = effect or {'status': ('unresolved' if matching.status == 'succeeded' else matching.status)
                             if matching else 'not_checked'}
@@ -431,6 +451,13 @@ def review(db, actor, policy_id):
             {**rule, 'balance_between_people': policy.definition.get('balance_between_people', True)},
             policy_ends_on=policy.ends_on).get('relations', {})
     summary = {}
+    not_checked_count = sum(effect['status'] == 'not_checked' for effect in effects)
+    # A policy with no retained check has historically returned no summary
+    # (for example an uncertain ended-person span). Keep that response shape;
+    # stale or legacy retained receipts get the explicit re-check prompt.
+    if not_checked_count and jobs:
+        summary.update({'not_checked_count': not_checked_count,
+                        'summary': f'{not_checked_count} drafts not yet re-checked · Check now'})
     if skipped_people:
         if len(skipped_people) == 1:
             from .people import visible_person
@@ -439,7 +466,7 @@ def review(db, actor, policy_id):
             reason = f"No check needed: {person['display_name']} left on {ends_on - timedelta(days=1)} and has no later placements."
         else:
             reason = f'No check needed: {len(skipped_people)} people left before these lines start and have no later placements.'
-        summary['summary'] = reason
+        summary.setdefault('summary', reason)
     return {'policy_id': policy.id, 'relations': relations, **summary,
             'effect': effects, 'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
             'can_decide': all(e['status'] not in {'queued', 'running'} and not e['activation_blocker'] for e in effects),

@@ -1,4 +1,4 @@
-import {el,button,icon,badge,plural,formatDay,formatTime,departmentTimeZone,formDialog,field,area,type Child,needText,needCount,needRow,legend,disabledWhy} from './dom.js';
+import {el,button,icon,badge,plural,formatDay,formatTime,departmentTimeZone,formDialog,field,area,type Child,needText,needCount,needRow,legend,disabledWhy,helpButton} from './dom.js';
 import {fixRow,type FixCause,type FixSummary,type FixHooks} from './fix_list.js';
 import {command,applyWrote} from './api.js';
 import {relaxSeed as readRelax,previewAdjustment,applyAdjustment,type Adjustment,type RankedFit} from './rule_check_api.js';
@@ -27,33 +27,43 @@ import type {Row} from './types.js';
  *  the strict phase's history; `strict_status` is kept as evidence only. */
 export type GenerationOutcome={status:'OPTIMAL'|'FEASIBLE'|'INFEASIBLE'|'UNKNOWN';candidate:'valid'|'with_gaps'|'none';strict_status:'INFEASIBLE'|null;optimality_proven:boolean};
 export interface RunFacts{scoreDelta:number|null;before:FixSummary|null;after:FixSummary|null;beforeCauses:FixCause[];afterCauses:FixCause[];changesByCause:Row[];
-  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null}
+  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null;/** The server's words when the run's Fix list was not prepared. */fixListMissing:string}
 export function runFacts(job:Row):RunFacts{
   const r:Row=job.result||{},s:Row=r.summary||{};
   type Listed={summary?:FixSummary;causes?:FixCause[]};
   const list=(x:Row|undefined):Listed|null=>x?(x.summary&&typeof x.summary==='object'?x as Listed:'must' in x?{summary:x as unknown as FixSummary}:null):null;
-  const before=list(r.fix_list_before??s.fix_list_before),after=list(r.fix_list_after??s.fix_list_after);
+  // #1160: a fallback (rota_summary.generation_fix_lists_fallback: a stopped run, or wording that failed) copies the
+  // rota's list into both sides, so the run's own Fix list is unknown: no before/after, never "nothing must be fixed".
+  const missing=typeof r.fix_list_fallback==='string'?r.fix_list_fallback:'';
+  const before=missing?null:list(r.fix_list_before??s.fix_list_before),after=missing?null:list(r.fix_list_after??s.fix_list_after);
   const conflict=r.conflict??((r.diagnostics||[]) as Row[]).find(d=>d?.strict_status==='INFEASIBLE')??null;
   // maintenance: open places and the uncapped score change travel beside the Fix lists.
   const num=(x:unknown)=>x==null?undefined:Number(x),ob=num(r.open_places_before),oa=num(r.open_places_after);
   return {scoreDelta:r.score_delta??null,before:before?.summary?{...before.summary,...(ob!=null?{places_open:ob}:{})}:null,after:after?.summary?{...after.summary,...(oa!=null?{places_open:oa}:{})}:null,beforeCauses:(before?.causes||[]) as FixCause[],afterCauses:(after?.causes||[]) as FixCause[],
-    changesByCause:Array.isArray(r.changes_by_cause??s.changes_by_cause)?(r.changes_by_cause??s.changes_by_cause):[],
-    conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null};
+    changesByCause:!missing&&Array.isArray(r.changes_by_cause??s.changes_by_cause)?(r.changes_by_cause??s.changes_by_cause):[],
+    conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null,fixListMissing:missing};
 }
 
-/** The immutable solver receipt shown on both the run card and its result dialog. */
+/** The immutable solver receipt shown on both the run card and its result dialog. The status is the proposal's final
+ *  truth (generation_outcome); the model's own status, when it differs, is named as the model's in the help, and only
+ *  an OPTIMAL outcome may say "proven best". */
 export function solverReceipt(job:Row):HTMLElement|null{
   if(job.kind&&job.kind!=='generation')return null;
-  const r:Row=job.result||{},status=String(r.solver_status||job.solver_status||r.generation_outcome?.status||'UNKNOWN');
+  const r:Row=job.result||{},model=String(r.solver_status||job.solver_status||''),status=String(r.generation_outcome?.status||model||'UNKNOWN');
   // D-126: refused before the solver ran (cp_sat.py invalid_inputs): say so in words; no solver status, error or score.
   if(r.status==='invalid_inputs'){const n=Array.isArray(r.issues)?r.issues.length:0;
     return el('p',{class:'solver-receipt',role:'status'},`Not run: the draft has ${n?plural(n,'conflict'):'conflicts'} the run must keep`);}
   const code=String(r.search_stop?.reason||job.search_stop?.reason||r.stop_reason||job.stop_reason||'unknown');
-  const stop=(GENERATION_STOP_REASONS as Record<string,string>)[code]||code;  // the contract's words for a typed reason
-  const saved=r.score??job.score??r.summary?.score_saved??r.summary?.score;
+  // An unproven 'optimal' has no contract word, so its clause is left out; an untyped code is said as stored.
+  const stop=stopWords(r,code)||(code==='optimal'?'':code);
+  // A stopped run's saved summary holds a capped score, never its final one.
+  const saved=r.score??job.score??(r.score_completed===false?null:r.summary?.score_saved??r.summary?.score);
   const value=typeof saved==='number'?saved:saved&&typeof saved==='object'?(saved.score??saved.uncapped_score):null;
-  const score=value==null?'no score: nothing placed':`score: ${value}`;
-  return el('p',{class:'solver-receipt',role:'status'},`Solver status: ${status} · Stop reason: ${stop} · ${score}`);
+  const score=value==null
+    ?(r.score_completed===false&&String(r.status).startsWith('candidate_')?'score unfinished':'no score: nothing placed')
+    :`score: ${value}`;
+  return el('p',{class:'solver-receipt',role:'status'},[`Solver status: ${status}`,stop&&`Stop reason: ${stop}`,score].filter(Boolean).join(' · '),
+    ...(model&&model!==status?[' ',helpButton('About Solver status',`The solver's own model ended ${model}, but the final proposal after checks is ${status}${status==='OPTIMAL'?'':', so it is not proven best'}.`)]:[]));
 }
 
 /** D16 "Relax for this rota" reviewed:
@@ -165,13 +175,24 @@ export function scoreTile(s:Row,rotaNow?:Row|null,strict=true):HTMLElement{
 export const isClash=(f:RunFacts)=>f.conflict?.strict_status==='INFEASIBLE'&&(f.outcome?f.outcome.candidate!=='valid':!(f.after&&!f.after.must));
 const policies=(c:Row|undefined)=>((c?.requirements||[]) as Row[]).filter(x=>x.kind==='policy');
 
+/** The contract's words for a stop reason (GENERATION_STOP_REASONS), read by the receipt and the panel header alike.
+ *  The worker sends 'optimal' when every model step was proven; it says "proven best" only when the final proposal is
+ *  (generation_outcome OPTIMAL), else ''. */
+/** The final proposal is proven best: its outcome's status is OPTIMAL (an outcome stored before it had a status says
+ *  optimality_proven); without an outcome, the result's own optimality_proven. Undefined when the result does not say. */
+const proven=(r:Row):boolean|undefined=>{const o=r.generation_outcome;
+  return o?(o.status?o.status==='OPTIMAL':o.optimality_proven===true):r.optimality_proven;};
+export function stopWords(r:Row,code:string):string{
+  if(code==='optimal'&&proven(r)===false)return '';
+  return (GENERATION_STOP_REASONS as Record<string,string>)[code]||'';
+}
 /** Why the search ended, as one short clause: the result's typed `search_stop.reason` in the contract's words
  *  (GENERATION_STOP_REASONS); a result stored before it existed is read from its own receipts (the objectives' and the
  *  fair share search's); '' when the result does not say (never guessed). */
 export function searchEnded(r:Row|null|undefined):string{
   if(!r)return '';
-  const typed=(GENERATION_STOP_REASONS as Record<string,string>)[String(r.search_stop?.reason||'')];if(typed)return typed;
-  if(r.generation_outcome?.optimality_proven===true||r.optimality_proven===true)return 'proven best for these priorities';
+  const typed=stopWords(r,String(r.search_stop?.reason||''));if(typed)return typed;
+  if(proven(r)===true)return GENERATION_STOP_REASONS.optimal;
   const rows=(r.objectives||[]) as Row[],reason=String(r.fair_share_search?.stop_reason||rows.map(x=>x.search?.stop_reason).find(Boolean)||'');
   if(reason==='operator_stop')return 'stopped by you';
   if(reason==='plateau'||rows.some(x=>x.stopped_without_improvement))return 'stopped when it stopped improving';

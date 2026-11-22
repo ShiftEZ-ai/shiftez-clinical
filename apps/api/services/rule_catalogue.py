@@ -84,8 +84,8 @@ def _solve_proof(db, actor, groups, proof):
     retire = [{**record(p), "status": "retired", "active": False} for p in db.scalars(select(m.Policy).where(m.Policy.id.in_(list(old) or [""])))]
     for r in proof["rotas"]:
         w = db.get(m.Workspace, r["workspace_id"])
-        before = domain_snapshot(db, w)
-        after = domain_snapshot(db, w, policy_overrides=retire + made)
+        before = domain_snapshot(db, w, mandatory_rules=False)
+        after = domain_snapshot(db, w, policy_overrides=retire + made, mandatory_rules=False)
         solve = lambda d, **o: cp_sat.generate(copy.deepcopy(d), 10, 1, deterministic=True, **o)  # noqa: E731
         solved = [solve(d) for d in (before, after)]
         r["cp_sat_status"] = solved[0].get("status")
@@ -96,7 +96,7 @@ def _solve_proof(db, actor, groups, proof):
             r["fill_status"] = solved[0].get("status")
             r["cp_sat_equal"] = r["cp_sat_equal"] and _result(solved[0]) == _result(solved[1])
         r["cp_sat_assignments"] = len(_result(solved[0])[1])
-        greedy = [generation.generate(copy.deepcopy(d)) for d in (before, after)]
+        greedy = [generation.generate(copy.deepcopy(d), 90, deterministic=True) for d in (before, after)]
         r["greedy_status"], r["greedy_assignments"] = greedy[0].get("status"), len(_result(greedy[0])[1])
         r["greedy_equal"] = _greedy_same(greedy)
         r["greedy_not_applied"] = greedy[0]['not_applied']
@@ -105,7 +105,7 @@ def _solve_proof(db, actor, groups, proof):
         refilled = [solve(d, diagnostic_proposal=True) for d in empty]
         r["refill_status"], r["refill_assignments"] = refilled[0].get("status"), len(_result(refilled[0])[1])
         r["refill_equal"] = _result(refilled[0]) == _result(refilled[1])
-        greedy = [generation.generate(copy.deepcopy(d)) for d in empty]
+        greedy = [generation.generate(copy.deepcopy(d), 90, deterministic=True) for d in empty]
         r["refill_greedy_status"], r["refill_greedy_assignments"] = greedy[0].get("status"), len(_result(greedy[0])[1])
         r["refill_greedy_equal"] = _greedy_same(greedy)
         r["refill_greedy_not_applied"] = greedy[0]['not_applied']
@@ -647,11 +647,11 @@ def _line_overlaps(row, would, *, outranked=None, both=None):
     return out
 
 
-def _line_replaces(row, would):
+def _line_replaces(row, would, *, by_number=None):
     """Per winning line: the broader lines and numeric slots replaced in the resolver's precedence partition."""
     from packages.domain.rule_lines import outranking_by_number
     lines, replaced = row['definition']['rule'].get('lines') or [], {}
-    for (n, key), winners in outranking_by_number(row).items():
+    for (n, key), winners in (outranking_by_number(row) if by_number is None else by_number).items():
         for w in winners:
             loser, winner = lines[n]['id'], lines[w]['id']
             if would.get(loser, set()) & would.get(winner, set()):
@@ -1201,6 +1201,21 @@ def _numbers_text(line):
     return ", ".join(f"{k} {n['value']:g}" if n.get("value") is not None else k for k, n in (line.get("numbers") or {}).items()) or "no number"
 
 
+# An empty list or table is said in plain words, never as the validator's text ("List should have at least 1 item").
+_EMPTY_WORDS = {'weekdays': 'Choose at least one day', 'numbers': 'Give the line a number',
+                'conditions': 'Add a condition or remove the empty group'}
+
+
+def _check_issue(error):
+    """One validation error of a checked rule, as an issue the line editor shows."""
+    message = error['msg'].removeprefix('Value error, ')
+    if error['type'] == 'too_short':
+        message = next((_EMPTY_WORDS[x] for x in reversed(error['loc']) if x in _EMPTY_WORDS), 'Choose at least one value')
+    if error['type'] == 'invalid_number_range':
+        return {'field': 'definition.rule.' + '.'.join(map(str, error['loc']))[len('rule.catalogue.'):], 'message': message}
+    return {'field': '.'.join(map(str, error['loc'])), 'code': 'INVALID_RULE_DEFINITION', 'message': message}
+
+
 def check(db, actor, catalogue_id, body):
     """What a catalogue rule with these lines would do, before anything is saved: duplicates (the same line twice on
     overlapping dates and days), overlaps (a more specific line outranking another, for how many people today, and what
@@ -1255,12 +1270,8 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
     except ValidationError as error:
         if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
             raise
-        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {}, "issues": [
-            ({"field": ("definition.rule." + ".".join(map(str, e["loc"]))[len("rule.catalogue."):]),
-              "message": e["msg"].removeprefix("Value error, ")}
-             if e['type'] == 'invalid_number_range' else
-             {"field": ".".join(map(str, e["loc"])), "code": "INVALID_RULE_DEFINITION", "message": e["msg"].removeprefix("Value error, ")})
-            for e in error.errors(include_input=False, include_url=False)]}
+        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {},
+                "issues": [_check_issue(e) for e in error.errors(include_input=False, include_url=False)]}
     definition = value.model_dump(mode="json")
     lines = definition["rule"]["lines"]
     counting = counting_attention({'definition': definition, 'ends_on': policy_ends_on})
@@ -1275,9 +1286,10 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
     if not issues and not duplicates:
         row = {"id": "00000000-0000-4000-9000-000000000000", "name": entry["name"], "kind": "catalogue", "status": "active", "active": True,
                "revision": 1, "department_id": actor.department_id, "starts_on": "2000-01-01", "ends_on": None, "definition": definition}
-        bounds = [bound for line in lines for bound in when(definition['rule'], line) if bound]
-        firsts = [when(definition['rule'], line)[0] for line in lines if when(definition['rule'], line)[0]]
-        lasts = [when(definition['rule'], line)[1] for line in lines if when(definition['rule'], line)[1]]
+        spans = [when(definition['rule'], line) for line in lines]
+        bounds = [bound for span in spans for bound in span if bound]
+        firsts = [start for start, _ in spans if start]
+        lasts = [end for _, end in spans if end]
         first = min(bounds) if bounds else independence.today(db, actor.department_id).isoformat()
         last = max(lasts) if lasts else (date.fromisoformat(str(first)) + timedelta(days=1)).isoformat()
         if first >= last and bounds:
@@ -1296,49 +1308,55 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
                     "issues": [{"field": "rule.lines", "code": "INVALID_RULE_DEFINITION", "message": str(error)}]}
         [row] = _tagged(data, [row])  # a #tag who is a group, as every check reads it
         would, _ = _reach(data, [row], a, b, include_held=False)
-        authored = default_line_strengths(definition['rule'], given, previous_ids, would)
-        for line, original, defaulted in zip(lines, given, authored):
-            if line['id'] not in previous_ids:
-                if not original.get('settings') and defaulted.get('settings'):
-                    line['settings'] = defaulted['settings']
-                for key, number in line['numbers'].items():
-                    if original['numbers'][key].get('level') is None:
-                        number['level'] = defaulted['numbers'][key].get('level', number['level'])
-        # Inherited settings can change the counting body and expose duplicates or invalid combinations.
-        try:
-            value = s.PolicyDefinition.model_validate(definition)
-        except ValidationError as error:
-            if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
-                raise
-            issues = [({'field': ('definition.rule.' + '.'.join(map(str, e['loc']))[len('rule.catalogue.'):]),
-                        'message': e['msg'].removeprefix('Value error, ')} if e['type'] == 'invalid_number_range' else
-                       {'field': '.'.join(map(str, e['loc'])), 'code': 'INVALID_RULE_DEFINITION',
-                        'message': e['msg'].removeprefix('Value error, ')})
-                      for e in error.errors(include_input=False, include_url=False)]
-        else:
-            definition = value.model_dump(mode='json')
-            lines = definition['rule']['lines']
-            issues = definition_issues(value)
+        defaults_changed = False
+        settings_available = definition['rule']['settings'] or any(line['settings'] for line in lines)
+        levels = {number['level'] for line in lines for number in line['numbers'].values()}
+        if settings_available or len(levels) > 1:
+            authored = default_line_strengths(definition['rule'], given, previous_ids, would)
+            for line, original, defaulted in zip(lines, given, authored):
+                if line['id'] not in previous_ids:
+                    settings = defaulted.get('settings')
+                    if not original.get('settings') and settings and line['settings'] != settings:
+                        line['settings'] = settings
+                        defaults_changed = True
+                    for key, number in line['numbers'].items():
+                        level = defaulted['numbers'][key].get('level', number['level'])
+                        if original['numbers'][key].get('level') is None and number['level'] != level:
+                            number['level'] = level
+                            defaults_changed = True
+        if defaults_changed:
+            # Inherited settings can change the counting body and expose duplicates or invalid combinations.
             try:
-                check_definition_count_budget(data, definition)
-            except ValueError as error:
-                issues.append({'field': 'rule.lines', 'code': 'INVALID_RULE_DEFINITION', 'message': str(error)})
-        counting = counting_attention({'definition': definition, 'ends_on': policy_ends_on})
-        duplicate_pairs = same_lines(definition['rule']) if not issues else []
-        duplicates = [{'lines': [k, n], 'line_ids': [lines[k]['id'], lines[n]['id']],
-                       'message': f'Lines {k + 1} and {n + 1} are the same line (what they count, who, where, days and dates overlap)'}
-                      for k, n in duplicate_pairs]
-        if issues or duplicates:
-            return {'duplicates': duplicates, 'overlaps': [], 'line_overlaps': {}, 'line_replaces': {}, 'warnings': [],
-                    'counting_attention': counting, 'dated': dated, 'inherited': {}, 'issues': issues,
-                    'lines': lines, 'relations': {}, 'line_specificity': {}}
-        row = {**row, 'definition': definition}
-        [row] = _tagged(data, [row])
+                value = s.PolicyDefinition.model_validate(definition)
+            except ValidationError as error:
+                if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
+                    raise
+                issues = [_check_issue(e) for e in error.errors(include_input=False, include_url=False)]
+            else:
+                definition = value.model_dump(mode='json')
+                lines = definition['rule']['lines']
+                issues = definition_issues(value)
+                try:
+                    check_definition_count_budget(data, definition)
+                except ValueError as error:
+                    issues.append({'field': 'rule.lines', 'code': 'INVALID_RULE_DEFINITION', 'message': str(error)})
+            counting = counting_attention({'definition': definition, 'ends_on': policy_ends_on})
+            duplicate_pairs = same_lines(definition['rule']) if not issues else []
+            duplicates = [{'lines': [k, n], 'line_ids': [lines[k]['id'], lines[n]['id']],
+                           'message': f'Lines {k + 1} and {n + 1} are the same line (what they count, who, where, days and dates overlap)'}
+                          for k, n in duplicate_pairs]
+            if issues or duplicates:
+                return {'duplicates': duplicates, 'overlaps': [], 'line_overlaps': {}, 'line_replaces': {}, 'warnings': [],
+                        'counting_attention': counting, 'dated': dated, 'inherited': {}, 'issues': issues,
+                        'lines': lines, 'relations': {}, 'line_specificity': {}}
+            row = {**row, 'definition': definition}
+            [row] = _tagged(data, [row])
         if reach_preview:
             from packages.domain.rule_map import reach
             details = reach(data, [row], a, b, details=True)['details'].get(row['id'], {'lines': []})
         rule, tagged = row["definition"]["rule"], row["definition"]["rule"]["lines"]
-        would, _ = _reach(data, [row], a, b, include_held=False)
+        if defaults_changed:
+            would, _ = _reach(data, [row], a, b, include_held=False)
         from packages.contracts.rule_catalogue import slot_for_number, staffing_pool_message
         for n, line in enumerate(lines):
             minimum = line['numbers'].get('min') or {}
@@ -1353,11 +1371,12 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
                 warnings.append({'kind': 'pool_shortfall', 'line': n, 'line_id': line['id'],
                     'required': minimum['value'], 'eligible_people': pool,
                     'message': staffing_pool_message(entry['name'], minimum['value'], pool)})
-        outranked, both = outranking(row), _both(row, would, same=duplicate_pairs if rule == definition['rule'] else None)
+        by_number = outranking_by_number(row)
+        outranked, both = outranking(row, by_number=by_number), _both(row, would, same=duplicate_pairs if rule == definition['rule'] else None)
         line_overlaps = _line_overlaps(row, would, outranked=outranked, both=both)
-        line_replaces = _line_replaces(row, would)
+        line_replaces = _line_replaces(row, would, by_number=by_number)
         replaced = {}
-        for line_index, k in outranking_by_number(row):
+        for line_index, k in by_number:
             replaced.setdefault(line_index, set()).add(k)
         inherited_now = inherited(row, would)
         for n, wins in outranked.items():

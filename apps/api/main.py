@@ -49,14 +49,14 @@ from .version import __version__, build
 from .rate_limit import enforce, session_identity
 from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
-from .serialization import record, job_record, json_value
+from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
 from .settings import Settings
 from .read_io import IndependentFileResponse, IndependentStaticFiles, background_io
 from packages.web_assets import WEB, asset_url, available_bundle_version
 from .schema import supported_revision
 from .snapshots import (domain_snapshot,
-                        publication_snapshot, workspace_shifts, fingerprint, snapshot_hash)
+                        publication_snapshot, fingerprint, snapshot_hash)
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
@@ -68,6 +68,7 @@ from .services import reviews, swaps, planner_tools, availability, operations as
 from .services import table_views, availability_patterns, independence, monitors
 from .services import collection_filters
 from .services import auth_configuration
+from .services import home as home_service, read_projection_warming, workspace_detail
 from .services.catalogue_version import department_version
 from . import live as live_updates
 
@@ -190,6 +191,19 @@ def create_app(settings: Settings | None = None, engine=None):
     oidc_browser_cookie = "__Host-rota_oidc_browser" if secure else "rota_oidc_browser"
     oidc_reauth_cookie = "__Host-rota_oidc_reauthenticate" if secure else "rota_oidc_reauthenticate"
     oidc_logout_cookie = "__Host-rota_oidc_logout" if secure else "rota_oidc_logout"
+
+    def schema_ready(db):
+        db.execute(text("SELECT 1"))
+        return list(db.scalars(text("SELECT version_num FROM alembic_version"))) == [schema_revision]
+
+    def warm_worker():
+        with transaction(engine) as db:
+            if not schema_ready(db):
+                log.error("api_process_warmup_failed", extra={"error_code": "SCHEMA_UNAVAILABLE"})
+                return "failed"
+        read_projection_warming.warm_process(engine)
+        return "done"
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import asyncio
@@ -212,14 +226,22 @@ def create_app(settings: Settings | None = None, engine=None):
                 signal.signal(sig, on_shutdown)
                 previous_handlers[sig] = previous
         try:
+            # Availability beats warmth: a failed warm-up is logged loudly and the process serves cold.
+            try:
+                app.state.process_warmed = await background_io(warm_worker)
+            except Exception as exc:
+                app.state.process_warmed = "failed"
+                log.error("api_process_warmup_failed", exc_info=exc, extra={"error_code": type(exc).__name__})
             yield
         finally:
+            app.state.process_warmed = None
             for sig, previous in previous_handlers.items():
                 signal.signal(sig, previous)
             live.detach(asyncio.get_running_loop())
 
     app = FastAPI(title="Rota", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.engine, app.state.settings = engine, settings
+    app.state.process_warmed = None
     from .memory import MemoryReclamationMiddleware
     app.add_middleware(MemoryReclamationMiddleware, threshold_mb=settings.memory_reclaim_threshold_mb)
     app.add_middleware(BodyLimitMiddleware, maximum=settings.max_body_bytes)
@@ -304,6 +326,12 @@ def create_app(settings: Settings | None = None, engine=None):
         static = request.url.path.startswith("/assets/") and response.status_code < 400
         route = request.scope.get("route")
         cache_control = response.headers.get("Cache-Control", "no-cache" if static else "no-store")
+        # Server time (application and database) only on replies to a signed-in session, so a slow call can be split from
+        # its network path. Never on identity routes or any unauthenticated reply: separate timings there would sharpen
+        # account probing (OWASP information exposure).
+        if (getattr(request.state, "session_authenticated", False) and request.url.path.startswith("/api/")
+                and not request.url.path.startswith(("/api/account-links/", "/api/account/password"))):
+            response.headers["Server-Timing"] = f"app;dur={(time.monotonic() - started) * 1000:.1f}, db;dur={db_metrics['ms']:.1f}"
         response.headers.update({"X-Correlation-ID": correlation, "Cache-Control": cache_control, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
                                  "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
@@ -397,11 +425,11 @@ def create_app(settings: Settings | None = None, engine=None):
         return {"status": "alive", "version": __version__}
 
     def readiness(service=False):
+        if app.state.process_warmed is None:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         try:
             with transaction(engine) as db:
-                db.execute(text("SELECT 1"))
-                versions = list(db.scalars(text("SELECT version_num FROM alembic_version")))
-                if versions != [schema_revision]:
+                if not schema_ready(db):
                     return JSONResponse({"status": "unavailable"}, status_code=503)
                 if service:
                     from .services.operations import worker_state
@@ -409,7 +437,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         return JSONResponse({"status": "unavailable"}, status_code=503)
         except SQLAlchemyError:
             return JSONResponse({"status": "unavailable"}, status_code=503)
-        return {"status": "ready"}
+        return {"status": "ready", "warm": "failed"} if app.state.process_warmed == "failed" else {"status": "ready"}
 
     @app.get("/health/ready")
     async def ready():
@@ -831,8 +859,9 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             org = db.get(m.Organisation, actor.organisation_id)
+            department = db.get(m.Department, actor.department_id)
             return {"identity_id": actor.identity_id, "display_name": actor.display_name,
-                    "department": record(db.get(m.Department, actor.department_id)), "organisation": record(org),
+                    "department": record(department), "organisation": record(org),
                     "catalogue_version": department_version(db, actor.department_id),
                     "roles": sorted(actor.roles), "person_id": actor.person_id,
                     "permissions": sorted(name for name in s.PERMISSION_NAMES if actor.permits(*s.PERMISSIONS[name])),
@@ -1240,16 +1269,16 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get("/api/home")
     def home_summary(request: Request):
         """Home: role-scoped counts and short lists of what needs this person (services/home.py)."""
-        from .services.home import home
         with transaction(engine) as db:
-            return home(db, actor_for(request, db), settings=settings)
+            actor = actor_for(request, db)
+            db.info['_request_parents'] = {}
+            return home_service.home(db, actor, settings=settings)
 
     @app.get('/api/home/rotas', response_model=s.HomeRotaList)
     def home_rotas(request: Request, start: s.date, end: s.date,
                    limit: int = Query(100, ge=1, le=100), offset: int = Query(0, ge=0, le=1_000_000)):
-        from .services.home import rota_strip
         with transaction(engine) as db:
-            return rota_strip(db, actor_for(request, db), start, end, limit, offset)
+            return home_service.rota_strip(db, actor_for(request, db), start, end, limit, offset)
 
     @app.get("/api/integrations/github", response_model=s.GithubIntegrationStatus)
     def github_integration_status(request: Request):
@@ -1365,11 +1394,13 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor)['people']
+            current = current_people(db, actor, today)['people']
             aliases = imported_aliases(db, actor)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
+                if not employee_number_redacted:
+                    person['configured_active'] = person['active']
                 person.update(current.get(person['id'], {}))
                 person['employee_number_redacted'] = employee_number_redacted
             from .services.people import visible_people
@@ -1614,13 +1645,14 @@ def create_app(settings: Settings | None = None, engine=None):
         """Active people, with the same field visibility as the people catalogue."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
+            from .services.independence import today
+            from .services.people import active_people_on, current_people, visible_people
+            day = today(db, actor.department_id)
             rows = list(db.execute(select(m.Person.id, *(getattr(m.Person, f) for f in DIRECTORY_FIELDS)).where(
-                m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True)).order_by(
+                m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            from .services.people import current_people
-            current = current_people(db, actor)['people']
-            from .services.people import visible_people
+            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}
@@ -1984,6 +2016,7 @@ def create_app(settings: Settings | None = None, engine=None):
             archived_only = archived_only or archived
             representation = [limit, offset, start, end, current_only, archived, include_archived, archived_only, q,
                               copy_starts_on, search_options.model_dump(mode="json") if search_options else None]
+            db.info['_request_parents'] = {}
             tag = workspace_list_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
@@ -2325,7 +2358,7 @@ def create_app(settings: Settings | None = None, engine=None):
                       for p in shift["participants"]]
             return {"fresh": fresh, "checked": bool(validation), "people": people, "active_rules": len({p["id"] for p in policies})}
 
-    @app.get("/api/workspaces/{workspace_id}/rule-map")
+    @app.get("/api/workspaces/{workspace_id}/rule-map", response_model=s.RuleMapResponse)
     def workspace_rule_map(workspace_id: str, request: Request):
         """Which rules touch which sessions, people and days of this rota, and the marks that explain them
         (own numbers, overrides, exceptions, this rota's changes). Unchanged rules, people and sessions: 304."""
@@ -2358,7 +2391,7 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.read_projections import cached as cached_projection
             prepared = {}
             def build_map(_):
-                data = domain_snapshot(db, workspace, include_fairness=False)
+                data = domain_snapshot(db, workspace, include_fairness=False, mandatory_rules=False, rule_map_bindings=True)
                 prepared['data'] = data
                 return rule_map(data, originals)
             result = cached_projection(db, [workspace.id], 'rule_map', {workspace.id: tag},
@@ -2461,7 +2494,6 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
                           query: s.WorkspacePartQuery = Depends()):
-        from .services import workspace_detail
         from .services.conditional_reads import conditional_json, conditional_response, revision_etag
         from .services.workspace_reads import fast_etag
         with transaction(engine) as db:
@@ -2504,7 +2536,6 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_role(actor, "coordinator", "approver", "programme_lead", "auditor")
             if view == 'compact':
-                from .services.workspace_detail import compact
                 from .services.conditional_reads import conditional_json, conditional_response, revision_etag
                 from .services.workspace_reads import fast_etag
                 workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
@@ -2514,17 +2545,17 @@ def create_app(settings: Settings | None = None, engine=None):
                 if isinstance(cached, Response):
                     return cached
                 response.headers.update(cached)
-                return conditional_json(request, s.WorkspaceCompactDetail.model_validate(compact(db, actor, workspace)), actor,
+                return conditional_json(request, s.WorkspaceCompactDetail.model_validate(workspace_detail.compact(db, actor, workspace)), actor,
                                         tag=tag)
-            from .services.conditional_reads import conditional_response
+            from .services.conditional_reads import conditional_response, revision_etag
             from .services.workspace_reads import fast_etag
             workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
                 defer(m.Workspace.validation), defer(m.Workspace.review_snapshot)))
             fast_tag = fast_etag(db, actor, workspace, include_job_state=True)
-            cached = conditional_response(request, fast_tag)
+            tag = revision_etag("workspace-schedule", fast_tag) if view == "schedule" else fast_tag
+            cached = conditional_response(request, tag)
             if isinstance(cached, Response):
                 return cached
-            response.headers.update(cached)
             # The validator above reads only scalar metadata. Hydrate the large JSON
             # columns only for a 200 response that will actually project them.
             db.refresh(workspace, attribute_names=("validation", "review_snapshot"))
@@ -2580,23 +2611,23 @@ def create_app(settings: Settings | None = None, engine=None):
             # Staff wishes on the rota's days (markers in the planner); they change without the rota changing.
             from .services.wishes import planner_effects, snapshot_wishes
             from .services.published_changes import review_payload
-            data.update(review_payload(db, workspace, actor))
             canonical = db.info.get('read_snapshots', {}).get(workspace.id)
-            wishes = (canonical['wishes'] if canonical is not None and workspace.status == 'draft'
-                      else snapshot_wishes(db, [workspace.department_id], workspace))
-            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
-                              if workspace.status == 'draft' else wishes)
+            use_canonical = canonical is not None and workspace.status == 'draft'
+            wishes = (canonical['wishes'] if use_canonical else snapshot_wishes(db, [workspace.department_id], workspace))
             from .snapshots import project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
-            own_shifts = None
-            if canonical is not None and workspace.status == "draft":
+            if use_canonical:
                 focus = set(canonical.get("focus_ids") or ())
                 own_shifts = [row for row in canonical.get("shifts", ()) if row.get("id") in focus]
-            data["shifts"] = project_series_shifts(
-                                                   db, workspace,
-                                                   workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts,
-                                                   external_out=external_context if data["wishes"] else None)
+            else:
+                own_shifts = workspace_detail.full_shifts(db, workspace.id)
+            projected = project_series_shifts(db, workspace, own_shifts, external_out=external_context if wishes else None)
+            # A canonical check may use a narrower set of sessions than the review diff.
+            data.update(review_payload(db, workspace, actor, projected_shifts=None if use_canonical else projected))
+            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
+                              if workspace.status == 'draft' else wishes)
+            data["shifts"] = projected
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
             data['shifts'] = session_actions(db, actor, data['shifts'])
@@ -2614,7 +2645,12 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
-            return data
+        if view == "schedule":
+            from .serialization import schedule_projection
+            data = schedule_projection(data)
+        result = JSONResponse(projection_json_value(data))
+        result.headers.update(cached)
+        return result
 
     @app.get("/api/publications")
     def publications(request: Request):
@@ -2930,6 +2966,7 @@ def create_app(settings: Settings | None = None, engine=None):
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
+            db.info['_request_parents'] = {}
             from .services.read_projections import cached_department
             return cached_department(
                 db, actor, 'requests', tag,
@@ -2960,12 +2997,12 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             from .services.conditional_reads import conditional_response
-            tag = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
-            cached = conditional_response(request, tag)
+            validator = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+            cached = conditional_response(request, validator[0])
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
-            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on)
+            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on, validator=validator)
 
     @app.get("/api/fairness/exposure", response_model=s.FairnessExposure)
     def fairness_exposure(request: Request, response: Response, rows: str | None = Query(None, max_length=20000), cols: str | None = Query(None, max_length=20000),
@@ -3977,7 +4014,11 @@ def create_app(settings: Settings | None = None, engine=None):
         require(not fold or ordered, "INVALID_SORT", "Folded history uses newest changes first")
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            require_permission(actor, "audit.read")
+            # Without audit access a person reads only their own self-approved decisions (Home's row), not who else acted.
+            own = not actor.permits(*s.PERMISSIONS["audit.read"])
+            if own:
+                require(f["self_approved"], "FORBIDDEN", "Your current role does not permit this action", 403)
+                f, people = {**f, "actor_id": actor.identity_id}, False
             query, zone = audit_query(db, actor, f)
             if run_id:
                 query = audit_log.expand(query, run_id)

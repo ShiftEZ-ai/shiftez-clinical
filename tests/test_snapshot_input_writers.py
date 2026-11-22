@@ -19,6 +19,7 @@ NON_INPUT_CORE_TABLES = {
     m.AuthLoginEvent.__tablename__: 'Authentication history retention is independent of scheduling inputs.',
     m.WorkspaceReadProjection.__tablename__: 'Derived read-cache upserts never write canonical inputs.',
     m.ReadProjectionWarmCursor.__tablename__: 'Derived warm-cursor and supersession done-marker progress never changes scheduling inputs.',
+    m.JobCandidateEvidence.__tablename__: 'Completed job evidence is a derived output independent of scheduling inputs.',
 }
 
 
@@ -169,6 +170,21 @@ def test_guard_rejects_core_and_legacy_bulk_bypasses(source):
 ])
 def test_guard_accepts_event_paths_and_named_non_input_exceptions(source):
     assert not input_write_bypasses(source)[0]
+
+
+# Request-scoped authority memos clear only on session events (apps/api/db.py), so these tables need the same guard.
+REQUEST_MEMO_TABLES = (m.Department, m.Organisation, m.RoleBinding, m.SelfApprovalPermission)
+
+
+@pytest.mark.parametrize('model', REQUEST_MEMO_TABLES, ids=lambda model: model.__tablename__)
+def test_guard_rejects_connection_dml_to_request_memo_tables(model):
+    assert model.__tablename__ not in NON_INPUT_CORE_TABLES
+    name, table = model.__name__, model.__tablename__
+    for source in (f'connection.execute(update(m.{name}).values(revoked=True))',
+                   f'db.connection().execute(delete(m.{name}.__table__))',
+                   f'db.execute(text("UPDATE {table} SET revoked = true"))',
+                   f'connection.exec_driver_sql("DELETE FROM {table}")'):
+        assert input_write_bypasses(source)[0], source
 
 
 def test_raw_ledger_exception_is_one_stamped_adapter_only():

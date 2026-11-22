@@ -8,6 +8,7 @@ SQLite: BEGIN IMMEDIATE is a tested local-development analogue, not production.
 """
 from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
+from functools import cache
 import logging
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from threading import Lock, get_native_id
 import time
 from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
-from sqlalchemy.orm import Session, with_loader_criteria
+from sqlalchemy.orm import Session, load_only, with_loader_criteria
 from .errors import Problem
 from .settings import Settings
 
@@ -44,6 +45,8 @@ def filter_withdrawn_relationships(state):
             m.Mentorship, live_mentorship_clause(), include_aliases=True))
 
 
+# Reuse the SQL predicate and evaluate current rows on every read.
+@cache
 def live_mentorship_clause():
     """Owned attachments follow live rotations; adopted or independently edited mentorships stay live."""
     from . import models as m
@@ -53,6 +56,23 @@ def live_mentorship_clause():
     active = exists(select(1).select_from(links.join(rotations, rotations.c.id == links.c.rotation_id)).where(
                     links.c.mentorship_id == m.Mentorship.id, rotations.c.withdrawn.is_(False))).correlate_except(links, rotations)
     return or_(~owned, active)
+
+
+@event.listens_for(Session, 'loaded_as_persistent')
+def retain_request_parent(session, row):
+    # Session.get uses a weak identity map. Keep these already-loaded rows alive.
+    parents = session.info.get('_request_parents')
+    if parents is not None:
+        from .models import Department, Organisation
+        if isinstance(row, (Department, Organisation)):
+            parents[type(row), row.id] = row
+
+
+def current_request_parent(db, model, ident):
+    """Preserve the original read point for settings used in an authority decision."""
+    if '_request_authority' not in db.info:
+        db.info.get('_request_parents', {}).pop((model, ident), None)
+    return db.get(model, ident)
 
 
 def _invalidate_snapshot_input_caches(session, organisation_ids=None):
@@ -112,6 +132,13 @@ def _snapshot_input_parent_paths(cls):
     return [('department_id', m.Department)]
 
 
+def _notice_receipt(row):
+    """An announcement's receipt (delivered, read, acknowledged) is no scheduling input; only an event's reply is.
+    A person's first read of a notice moved the availability revision, and every open page read everything again."""
+    from . import models as m
+    return isinstance(row, m.AnnouncementReceipt) and row.content_id is not None
+
+
 def _snapshot_input_scope_columns(cls):
     from . import models as m
     return ({'id'} if cls is m.Organisation else {'organisation_id'} if hasattr(cls, 'organisation_id')
@@ -127,7 +154,9 @@ def _snapshot_input_organisation_ids(session, row, related=None):
         if key not in related:
             related[key] = next((r for r in session.new if isinstance(r, cls) and r.id == ident), None)
             if related[key] is None:
-                related[key] = session.get(cls, ident, execution_options={'include_withdrawn': True})
+                options = ([] if cls is m.Organisation else
+                           [load_only(*(getattr(cls, name) for name in _snapshot_input_scope_columns(cls)))])
+                related[key] = session.get(cls, ident, options=options, execution_options={'include_withdrawn': True})
             if cls is m.Organisation and related[key] is not None:
                 # The identity map is weak; one import flush per row must not reload this parent.
                 _snapshot_stamp_state(session)['organisations'][ident] = related[key]
@@ -181,14 +210,36 @@ def snapshot_input_listener_classes():
     return {cls: category for _name, cls, category, *_ in snapshot_input_specs()}
 
 
-def _snapshot_attribute_changes(name, old, new, exclusions):
-    if name in exclusions:
+def _snapshot_attribute_changes(row, name, old, new, exclusions):
+    from . import models as m
+    # A selected operating calendar makes weekend days display-only.
+    if name in exclusions or (name == 'weekend_days' and isinstance(row, m.Department)
+                              and row.operating_calendar_id is not None):
         return False
     keys = {key.split('.', 1)[1] for key in exclusions if key.startswith(name + '.')}
     if keys and isinstance(old, (dict, type(None))) and isinstance(new, (dict, type(None))):
         return ({key: value for key, value in (old or {}).items() if key not in keys}
                 != {key: value for key, value in (new or {}).items() if key not in keys})
     return True
+
+
+def _wish_reservation(validation):
+    wishes = validation.get('wishes') if isinstance(validation, dict) else None
+    # The reader sorts reserved wishes by unique id, so list order is not part of the read.
+    return {wish['id']: wish for wish in wishes} if isinstance(wishes, list) else wishes
+
+
+def _wish_reservation_changes(row, name, old, new):
+    """snapshot_wishes reads a settled rota's stored check `wishes` as every other rota's wish reservation.
+
+    `validation` stays excluded otherwise: draft check saves and unchanged reservations do not stamp.
+    """
+    from . import models as m
+    from .services.wishes import SETTLED
+    if name != 'validation' or not isinstance(row, m.Workspace) or row.status not in SETTLED:
+        return False
+    from sqlalchemy.orm.attributes import NO_VALUE
+    return old is NO_VALUE or new is NO_VALUE or _wish_reservation(old) != _wish_reservation(new)
 
 
 @event.listens_for(Session, 'before_flush')
@@ -200,18 +251,25 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
     specs = {cls: (category, exclusions) for _name, cls, category, _scope, _shape, exclusions in snapshot_input_specs()}
     general, availability, related = set(), set(), {}
     for row in (*session.new, *session.dirty, *session.deleted):
+        if isinstance(row, (m.Department, m.Organisation, m.RoleBinding, m.SelfApprovalPermission)):
+            session.info.get('_request_parents', {}).clear()
+            session.info.get('_request_authority', {}).clear()
         spec = specs.get(type(row))
         if spec is None:
             continue
         # A proposal does not change operative inputs or invalidate its own conversion proof.
         if isinstance(row, m.CatalogueConversion) and row in session.new and row.status == 'proposed':
             continue
+        if _notice_receipt(row):
+            continue
         category, exclusions = spec
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
-            if not any(attribute.history.has_changes() and _snapshot_attribute_changes(
-                    attribute.key, attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,
-                    getattr(row, attribute.key), exclusions) for attribute in state.attrs):
+            if not any(attribute.history.has_changes() and (
+                    _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
+                    or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))
+                    for attribute in state.attrs
+                    for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)):
                 continue
         if isinstance(row, m.Organisation) and row in session.new and row.id is None:
             row.id = m.uid()
@@ -238,6 +296,12 @@ def stamp_snapshot_input_statement(execution):
     from sqlalchemy.sql.elements import BindParameter
     statement, session = execution.statement, execution.session
     table = getattr(statement, 'table', None)
+    from .models import Department, Organisation, RoleBinding, SelfApprovalPermission
+    if table is not None and getattr(table, 'name', None) in (
+            Department.__tablename__, Organisation.__tablename__, RoleBinding.__tablename__,
+            SelfApprovalPermission.__tablename__):
+        session.info.get('_request_parents', {}).clear()
+        session.info.get('_request_authority', {}).clear()
     spec = next((spec for spec in snapshot_input_specs() if spec[1].__tablename__ == getattr(table, 'name', None)), None)
     if spec is None:
         return
@@ -252,7 +316,8 @@ def stamp_snapshot_input_statement(execution):
     def changed_values(row_parameters):
         return {name: row_parameters.get(value.key, value.value) if isinstance(value, BindParameter) else NO_VALUE
                 for name, value in values.items()}
-    if execution.is_update and values and set(values) <= exclusions:
+    if execution.is_update and values and set(values) <= exclusions and not (
+            cls.__tablename__ == 'workspaces' and 'validation' in values):
         return
     if session.autoflush and execution.execution_options.get('autoflush', True):
         session.flush()
@@ -281,8 +346,18 @@ def stamp_snapshot_input_statement(execution):
             scope_columns = _snapshot_input_scope_columns(cls)
             query = (select(*(getattr(cls, name) for name in sorted(scope_columns))).distinct()
                      if execution.is_delete else select(cls))
-            if statement.whereclause is not None:
-                query = query.where(statement.whereclause)
+            whereclause = statement.whereclause
+            if not execution.is_orm_statement and table is not cls.__table__:
+                from sqlalchemy.sql.visitors import replacement_traverse
+                if execution.is_update:
+                    # Historical tables can predate columns on the current mapper.
+                    query = query.options(load_only(*(getattr(cls, name) for name in sorted(scope_columns))))
+                if whereclause is not None:
+                    whereclause = replacement_traverse(whereclause, {}, lambda element:
+                        cls.__table__.c.get(getattr(element, 'key', None))
+                        if getattr(element, 'table', None) is table else None)
+            if whereclause is not None:
+                query = query.where(whereclause)
             query_parameters = parameters
             if isinstance(parameters, list):
                 primary_key = inspect(cls).primary_key
@@ -301,6 +376,8 @@ def stamp_snapshot_input_statement(execution):
                           if execution.is_delete and not execution.is_orm_statement else [])
         unresolved_ownership, updated_columns = [], {}
         for row in candidates:
+            if _notice_receipt(row):
+                continue
             if by_id:
                 parameters_for_row = by_id.get(getattr(row, 'id', None), parameter_rows[0])
             else:
@@ -314,7 +391,8 @@ def stamp_snapshot_input_statement(execution):
                     changes = {name: value for name, value in parameters_for_row.items()
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
-                if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
+                if changes and not any(_snapshot_attribute_changes(row, name, getattr(row, name), value, exclusions)
+                                       or _wish_reservation_changes(row, name, getattr(row, name), value)
                                        for name, value in changes.items()):
                     continue
             resolved = _snapshot_input_organisation_ids(session, row, related)
@@ -326,7 +404,8 @@ def stamp_snapshot_input_statement(execution):
                 if any(value is NO_VALUE and name in _snapshot_input_scope_columns(cls) for name, value in changes.items()):
                     ids.update(_unresolved_snapshot_input(session, row, related))
                     unresolved_ownership.append(row)
-                replacement = cls(**{**{column.key: getattr(row, column.key) for column in inspect(cls).columns}, **constants})
+                replacement = cls(**{name: constants.get(name, getattr(row, name))
+                                     for name in _snapshot_input_scope_columns(cls)})
                 resolved = _snapshot_input_organisation_ids(session, replacement, related)
                 ids.update(resolved if resolved is not None else _unresolved_snapshot_input(session, replacement, related))
         result = execution.invoke_statement()
@@ -557,6 +636,8 @@ def retain_snapshot_input_savepoint(session, transaction):
 
 @event.listens_for(Session, 'after_soft_rollback')
 def discard_rolled_back_snapshot(session, previous_transaction):
+    session.info.get('_request_parents', {}).clear()
+    session.info.get('_request_authority', {}).clear()
     session.info.pop('write_domain_snapshots', None)
     session.info.pop('_live_safety_sources', None)
     session.info.pop('_activation_projection_cache', None)
@@ -577,6 +658,9 @@ def discard_rolled_back_snapshot_inputs(session):
 @event.listens_for(Session, 'after_transaction_end')
 def discard_finished_snapshot_input_state(session, transaction):
     if transaction.parent is None:
+        session.info.pop('_request_parents', None)
+        session.info.pop('_request_authority', None)
+        session.info.pop('_request_workspace_criteria', None)
         session.info.pop('_snapshot_input_revisions', None)
 
 
@@ -613,6 +697,8 @@ def transaction(engine, write: bool = False, *, deadline=None, context=None, ser
              "lock_deadline": started + settings.command_write_budget_ms / 1000}
     phase = "pool"
     session = Session(engine, expire_on_commit=False)
+    if request_db_time_ms.get() is not None:
+        session.info['_request_workspace_criteria'] = {}
     if deadline is not None:
         session.info['_check_budget'] = lambda: _remaining(deadline)
     try:
@@ -652,6 +738,10 @@ def transaction(engine, write: bool = False, *, deadline=None, context=None, ser
                         session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": WRITE_LOCK_KEY})
             state["serializing"] = False
             if serialize:
+                if request_db_time_ms.get() is not None:
+                    # Application writes to these rows hold this lock until transaction end.
+                    session.info['_request_parents'] = {}
+                    session.info['_request_authority'] = {}
                 log.info("write_lock_acquired", extra={**state["context"], "backend_pid": state.get("backend_pid"),
                          "lock_wait_ms": round((time.monotonic() - phase_started) * 1000, 2)})
             if engine.dialect.name == "postgresql" and state["context"].get("lock_diagnostic"):

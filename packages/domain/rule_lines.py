@@ -1017,21 +1017,22 @@ def outranking_by_number(policy):
     for (k, _), group in _by_number(rule).items():
         if _slot(entry, k, rule, lines[group[0]], list(lines[group[0]].get('numbers') or {}))['kind'] in NEVER_OVERRIDDEN:
             continue
-        higher = {t: [w for w in group if tiers[w] > t] for t in (1, 2)}  # a person line (3) is never outranked
-        for n in group:
-            level = lines[n]['numbers'][k].get('level', 'mandatory')
-            wins = [w for w in higher.get(tiers[n], ()) if _meets(spans[n], spans[w]) and
-                    (level is None or lines[w]['numbers'][k].get('level', 'mandatory') is None or
-                     (level == 'mandatory') == (lines[w]['numbers'][k].get('level', 'mandatory') == 'mandatory'))]
-            if wins:
-                out[(n, k)] = wins
-    return dict(sorted(out.items()))
+        levels = {n: lines[n]['numbers'][k].get('level', 'mandatory') for n in group}
+        for n, w in _pairs(group, spans):
+            if tiers[n] == tiers[w]:
+                continue
+            if tiers[n] > tiers[w]:
+                n, w = w, n
+            level, higher = levels[n], levels[w]
+            if level is None or higher is None or (level == 'mandatory') == (higher == 'mandatory'):
+                out.setdefault((n, k), []).append(w)
+    return {key: sorted(winners) for key, winners in sorted(out.items())}
 
 
-def outranking(policy):
+def outranking(policy, *, by_number=None):
     """{line index: [winning line indexes]} — the lines a more specific line takes at least one number from."""
     out = {}
-    for (n, _), wins in outranking_by_number(policy).items():
+    for (n, _), wins in (outranking_by_number(policy) if by_number is None else by_number).items():
         out.setdefault(n, set()).update(wins)
     return {n: sorted(w) for n, w in sorted(out.items())}
 
@@ -1040,14 +1041,26 @@ def line_relations(policy, would=None):
     """Editor provenance from the same groups, date spans and expansion used by active_rules."""
     rule = policy['definition']['rule']
     lines = rule.get('lines') or []
-    spans = _spans(rule, lines, policy)
-    out = {}
+    tiers = [tier(line) for line in lines]
+    if len(set(tiers)) < 2:
+        return {}
+    broader = [[] for _ in lines]
+    for left, right in _pairs(range(len(lines)), _spans(rule, lines, policy)):
+        if tiers[left] < tiers[right]:
+            broader[right].append(left)
+        elif tiers[right] < tiers[left]:
+            broader[left].append(right)
+    out, groups = {}, {}
+    def group(n, key):
+        if (n, key) not in groups:
+            line = lines[n]
+            groups[n, key] = _group(rule, line, key, list(line['numbers']))
+        return groups[n, key]
     for n, line in enumerate(lines):
         candidates = []
         strictest = {}
-        for k, other in enumerate(lines):
-            if tier(other) >= tier(line) or not _meets(spans[n], spans[k]):
-                continue
+        for k in broader[n]:
+            other = lines[k]
             if would is not None and not (would.get(line['id'], set()) & would.get(other['id'], set())):
                 continue
             shared = set(line['numbers']) & set(other['numbers'])
@@ -1057,8 +1070,7 @@ def line_relations(policy, would=None):
                 and sorted(line.get('weekdays') or range(7)) == sorted(other.get('weekdays') or range(7))
                 and line.get('start_time', '00:00') == other.get('start_time', '00:00')
                 and line.get('end_time', '24:00') == other.get('end_time', '24:00'))
-            same_settings = all(_group(rule, line, key, list(line['numbers'])) ==
-                                _group(rule, other, key, list(other['numbers'])) for key in shared)
+            same_settings = all(group(n, key) == group(k, key) for key in shared)
             strength = {key: other['numbers'][key].get('level', 'mandatory') for key in shared}
             same_strength = all(line['numbers'][key].get('level') is None or
                 (line['numbers'][key].get('level', 'mandatory') == 'mandatory') ==
@@ -1080,7 +1092,7 @@ def line_relations(policy, would=None):
                         effective[key] = values[0]
                 if reason is not None and key in {'min', 'max'}:
                     strictest.setdefault(key, []).extend(values)
-            candidates.append((reason is None, same_where, same_settings, tier(other), -k,
+            candidates.append((reason is None, same_where, same_settings, tiers[k], -k,
                 {'line_id': other['id'], 'line_no': k + 1, 'overrides': reason is None, 'reason': reason,
                  'fix': 'match_strength' if reason == 'strength_differs' else 'match_settings' if reason == 'settings_differ' and same_where else None,
                  'default_settings': deepcopy(_settings(rule, other)), 'default_severity': strength,
@@ -1104,14 +1116,18 @@ def default_line_strengths(rule, given, previous_ids=(), would=None):
     policy = {'id': 'preview', 'definition': {'rule': {**rule, 'lines': normalized}},
               'starts_on': None, 'ends_on': None}
     relations = line_relations(policy, would)
-    for line in lines:
+    changed = False
+    for n, line in enumerate(lines):
         relation = relations.get(line['id'])
         if (line['id'] not in previous_ids and not line.get('settings')
                 and line.get('measure') is None and line.get('period') is None and relation
                 and relation['reason'] in (None, 'settings_differ', 'strength_differs')):
             line['settings'] = deepcopy(relation['default_settings'])
-    policy['definition']['rule']['lines'] = [RuleLine.model_validate(line).model_dump(mode='json') for line in lines]
-    relations = line_relations(policy, would)
+            if line['settings'] != normalized[n]['settings']:
+                normalized[n] = RuleLine.model_validate(line).model_dump(mode='json')
+                changed = True
+    if changed:
+        relations = line_relations(policy, would)
     for line in lines:
         relation = relations.get(line['id'])
         if line['id'] in previous_ids or not relation or relation['reason'] not in (None, 'strength_differs'):
@@ -1157,6 +1173,11 @@ def inherited(policy, would=None):
     tiers = [tier(line) for line in lines]
     if len(set(tiers)) < 2:
         return {}
+    numbers = [set(line.get('numbers') or {}) for line in lines]
+    differing = set.union(*numbers) - set.intersection(*numbers)
+    possible = [key for key in entry['numbers'] if key != 'apply' and key in differing]
+    if not possible:
+        return {}
     spans, out, sets, held = _spans(rule, lines, policy), {}, {}, {}
     for (k, group), members in _by_number(rule).items():  # (group, number, tier): the lines that set it, in order
         for w in members:
@@ -1173,8 +1194,8 @@ def inherited(policy, would=None):
     for n, line in enumerate(lines):
         mine = (would or {}).get(line['id'])
         keys = [k for k in (line.get('numbers') or {}) if k in entry['numbers']]
-        for k in entry['numbers']:
-            if k == 'apply' or k in (line.get('numbers') or {}):
+        for k in possible:
+            if k in (line.get('numbers') or {}):
                 continue
             group = _group(rule, line, k, keys + [k])  # what this number would count on this line
             for t in range(tiers[n] - 1, 0, -1):  # the nearest tier that sets it; within it, the first line
@@ -1296,6 +1317,13 @@ def expand(policy, outrank=True, *, stored_goal=True):
     return out
 
 
+def prepare_catalogue_rule(policy):
+    # Cross-tier overlap can be quadratic. Prime its primitive definitions without computing precedence.
+    lines = policy['definition']['rule'].get('lines') or []
+    outrank = len({tier(line) for line in lines}) <= 1
+    _expanded(json.dumps(policy, sort_keys=True, default=str), outrank, True)
+
+
 @lru_cache(maxsize=64)
 def _expanded(text, outrank=True, stored_goal=True):
     return tuple(_expand(json.loads(text), outrank, stored_goal))
@@ -1311,9 +1339,17 @@ def _expand(policy, outrank=True, stored_goal=True):
     sources = _source_lines(policy)
     source_keys = [source_key(policy, line) for line in lines]
     level_groups = {}
-    beaten = outranking_by_number(policy) if outrank and not policy.get('_zero_max_projection') else {}
+    beaten = outranking_by_number(policy) if outrank else {}
     broader = _broader_levels(lines, _by_number(rule)) if any(v.get('level', 'mandatory') is None for line in lines
                                                                for v in (line.get('numbers') or {}).values()) else {}
+    # An inherited advisory line cannot replace a mandatory zero.
+    inherited_winners = {w for (n, k), winners in beaten.items() if k == 'max'
+                         and lines[n]['numbers'][k].get('value') == 0
+                         for w in winners if lines[w]['numbers'][k].get('level', 'mandatory') is None}
+    winner_levels = {w: dict(_levels(lines, w, 'max', broader, entry,
+        _slot(entry, 'max', rule, lines[w], list(lines[w]['numbers'])), sources, source_keys, level_groups))
+        for w in sorted(inherited_winners)}
+    live_zero_lines = set(policy.get('_live_zero_line_ids', ()))
     plans = []  # per line: {(kind, fixed, level, winners): [first key, [(slot, value, key)]]}
     for n, line in enumerate(lines):
         settings, groups, keys = _settings(rule, line), {}, list(line.get('numbers') or {})
@@ -1325,9 +1361,14 @@ def _expand(policy, outrank=True, stored_goal=True):
             for level, selector in _levels(lines, n, key, broader, entry, slot, sources, source_keys, level_groups):
                 if policy.get('_zero_max_projection') and level != 'mandatory':
                     continue
+                if key == 'max' and level == 'mandatory' and line['id'] in live_zero_lines:
+                    continue
                 if slot['advisory'] and level == 'mandatory':
                     raise ValueError(f"{entry['name']}: a {key.replace('_', ' ')} here is a preference, not mandatory")
-                winners = tuple(beaten.get((n, key), ()))
+                winners = tuple((w, None) for w in beaten.get((n, key), ()))
+                if key == 'max' and level == 'mandatory' and number.get('value') == 0:
+                    winners = tuple((w, winner_levels.get(w, {}).get('mandatory')) for w, _ in winners
+                                    if 'mandatory' in winner_levels.get(w, (lines[w]['numbers'][key].get('level', 'mandatory'),)))
                 group = groups.setdefault((slot['kind'], json.dumps(slot['fixed'], sort_keys=True), level, winners, selector), [key, []])
                 group[1].append((slot, number.get('value'), key))
         plans.append((settings, groups))
@@ -1343,7 +1384,7 @@ def _expand(policy, outrank=True, stored_goal=True):
 
 
 def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sources, selector, stored_goal=True):
-    if line.get('_source_default_only'):
+    if line.get('_source_default_only') and (kind != 'block_quota' or not selector):
         return None
     d = policy['definition']
     advisory = any(slot['advisory'] for slot, _, _ in numbers)
@@ -1377,10 +1418,13 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
         valid = _valid(json.dumps({**valid, 'rule': {**block, 'starts_on': a, 'ends_on': b}}, sort_keys=True, default=str))
         if selector and b is not None:
             sources[source_key(policy, line)]['inherit'][numbers[0][2]]['block'] = (a, b)
+    if line.get('_source_default_only'):
+        return None
     scope = valid['scope']
     if winners:
-        people = sorted({p for w in winners if unconditional_people(lines[w]) for p in named_people(lines[w])}) if kind == 'block_quota' else []
-        dynamic = [source_key(policy, lines[w]) for w in winners if not (kind == 'block_quota' and unconditional_people(lines[w]))]
+        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])}
+        people = sorted({p for w in direct for p in named_people(lines[w])})
+        dynamic = [guard or source_key(policy, lines[w]) for w, guard in winners if w not in direct]
         extra = ([{'field': 'person_ids', 'op': 'none', 'values': people}] if people else []) + (
             [{'field': OUTRANKED, 'op': 'none', 'values': dynamic}] if dynamic else [])
         scope = {**scope, 'conditions': {'match': 'all', 'conditions': ([scope['conditions']] if scope.get('conditions') else []) + extra}}

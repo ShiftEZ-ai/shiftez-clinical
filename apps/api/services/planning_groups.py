@@ -354,8 +354,11 @@ def require_change_authority(db, actor, workspace, before, *, after=None, sessio
     return authority
 
 
-def guard_changes(db, actor, workspace, before, *, review_rejection=False):
+def guard_changes(db, actor, workspace, before, *, review_rejection=False, generation_apply=False):
     """All manual, import, bulk, Undo and generation writes converge on planning.changed."""
+    if generation_apply and actor.permits('admin'):
+        require_edit(db, actor, workspace)
+        return _AUTHORITY_COMPLETE
     context = require_change_authority(db, actor, workspace, before, review_rejection=review_rejection)
     db.info['_planning_group_authority_contexts'].pop(workspace.id, None)
     if context is _AUTHORITY_COMPLETE:
@@ -383,7 +386,8 @@ def guard_changes(db, actor, workspace, before, *, review_rejection=False):
 def _generation_group_context(db, actor, workspace, value):
     """Acquire the cheap group decision shared by enqueue and worker preparation."""
     access = require_edit(db, actor, workspace)
-    if access['purpose'] != 'integrated' or (coordinator(db, actor) and value.planning_group_version_id is None):
+    if access['purpose'] != 'integrated' or (value.planning_group_version_id is None
+            and (actor.permits('admin') or coordinator(db, actor))):
         require(value.planning_group_version_id is None, 'GROUP_VERSION_SCOPE', 'Group runs require the department rota', 422)
         return None, None, {}, False
     versions = load_groups(db, actor.department_id, starts_on=workspace.starts_on, ends_on=workspace.ends_on)
@@ -394,63 +398,99 @@ def _generation_group_context(db, actor, workspace, value):
         return None, versions, {}, False
     definition = selected_group['definition']
     editors = set(definition['owner_identity_ids']) | set(definition.get('co_editor_identity_ids', []))
-    require(definition.get('active', True) and actor.identity_id in editors,
+    require(definition.get('active', True) and (actor.permits('admin') or actor.identity_id in editors),
             'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
     default_scope = value.generation_scope is None
     scope = value.generation_scope or s.GenerationScope(conditions=definition['membership'])
     lookahead = value.lookahead or settings_definition(db, actor.department_id)['group_lookahead']
     value.lookahead = lookahead
-    selected = value.session_ids or list(db.scalars(select(m.Shift.id).where(
-        m.Shift.workspace_id == workspace.id).order_by(m.Shift.start, m.Shift.id)))
     return selected_group, versions, {
         'planning_group_version_id': selected_group['id'],
         'planning_group_id': selected_group['group_id'],
         'lookahead': lookahead,
         'planning_context': {'group_version_id': selected_group['id'], 'group_id': selected_group['group_id'],
-            'protection': scope.protection, 'selected_session_ids': sorted(selected)},
+            'protection': scope.protection},
     }, default_scope
 
 
-def guard_generation(db, actor, workspace, snapshot, value, *, enqueue=False):
+def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
+    from packages.domain.generation_scope import has_population, population_candidates, selected_session_ids
+
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
-    if enqueue:
+    enqueue = snapshot is None
+    check_nonempty = enqueue and value.generation_scope is not None
+    if versions is None and not check_nonempty:
         return metadata
-    if versions is None:
-        return
-    from packages.domain.generation_scope import population_allows
-    resolver = GroupResolver(snapshot, versions)
+    if enqueue:
+        from apps.api.snapshots import domain_snapshot
+        snapshot = domain_snapshot(db, workspace, include_fairness=False,
+                                   include_objectives=False, include_fairness_history=False)
     scope = (s.GenerationScope(conditions=selected_group['definition']['membership'])
              if default_scope else value.generation_scope)
     requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None}
-    selected = set(value.session_ids or snapshot['focus_ids'])
+    selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
+    candidates = None
+    if enqueue and selected_group:
+        from .planning_preparation import command_compute
+        state = db.info.get('_planning_preparation') or {}
+        candidates = command_compute(db, 'generation_population', snapshot,
+            lambda: population_candidates(requested, selected), final=True, refresh_on_replay=True,
+            input_token=state.get('generation_snapshot_key'), options=(requested['generation_scope'], sorted(selected)))
+    if versions is not None:
+        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope,
+                                            candidates=candidates)
+    if check_nonempty:
+        requested['generation_session_ids'] = selected
+        require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',
+                'No people match this group during the selected duties; change the population or duty selection', 422)
+    if selected_group:
+        metadata['planning_context']['selected_session_ids'] = sorted(selected)
+        if not enqueue and not frozen:
+            snapshot.update({**metadata,
+                'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
+                'planning_group_versions': versions})
+            if default_scope:
+                snapshot['generation_scope'] = requested['generation_scope']
+    return metadata
+
+
+def _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope, *, candidates=None):
+    from packages.domain.generation_scope import population_allows
+
+    resolver = GroupResolver(snapshot, versions)
+    admin = actor.permits('admin')
     population = {}
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
             continue
         population[shift['id']] = []
-        for pid in snapshot['people']:
-            if not population_allows(requested, shift, pid):
-                continue
+        people = (candidates[shift['id']] if candidates is not None else
+                  (pid for pid in snapshot['people'] if population_allows(requested, shift, pid)))
+        for pid in people:
             primary = resolver.primary(pid, shift)
-            if default_scope and (primary is None or primary['group_id'] != selected_group['group_id']):
+            if selected_group is not None and (default_scope or admin) and (
+                    primary is None or primary['group_id'] != selected_group['group_id']):
                 continue
-            require(primary is not None and actor.identity_id in primary['editor_identity_ids']
+            require(primary is not None and (admin or actor.identity_id in primary['editor_identity_ids'])
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
-    if selected_group:
-        snapshot.update({**metadata,
-            'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
-            'planning_group_versions': versions,
-            'planning_context': {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}})
-        if default_scope:
-            snapshot['generation_scope'] = scope.model_dump(mode='json')
+    return population
+
+
+def guard_frozen_generation(db, actor, workspace, snapshot):
+    value = s.JobInput(workspace_id=workspace.id, kind='generation',
+                       generation_scope=snapshot.get('generation_scope'),
+                       planning_group_version_id=snapshot.get('planning_group_version_id'),
+                       lookahead=snapshot.get('lookahead'))
+    guard_generation(db, actor, workspace, snapshot, value, frozen=True)
 
 
 def guard_job_control(db, actor, job):
     workspace = scoped(db, m.Workspace, job.workspace_id, actor)
     access = require_edit(db, actor, workspace)
-    require(access['purpose'] != 'integrated' or coordinator(db, actor) or job.requested_by == actor.identity_id,
+    require(job.requested_by == actor.identity_id or (job.kind == 'generation' and actor.permits('admin'))
+            or unrestricted(db, actor, access),
             'GROUP_JOB_AUTHORITY', 'Control your own group run or ask the Rota Coordinator', 403)
 
 

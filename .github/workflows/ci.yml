@@ -29,7 +29,7 @@ jobs:
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: refs/heads/dev
+        ref: refs/heads/${{ github.event.repository.default_branch }}
         path: .trusted-controls
         fetch-depth: 1
         persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: refs/heads/dev
+        ref: refs/heads/${{ github.event.repository.default_branch }}
         path: .trusted-controls
         fetch-depth: 0
         persist-credentials: false
@@ -118,48 +118,19 @@ jobs:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
             output.write("python=" + str(binary / "python3") + chr(10))
         PY
+    - name: Install the trusted workflow parser
+      if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      working-directory: .trusted-controls
+      run: |
+        "${{ steps.policy-python.outputs.python }}" -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
+        printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Enforce working policy before test fan-out
       if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
       working-directory: .trusted-controls
       env:
         POLICY_WORKFLOW_SHA: ${{ github.workflow_sha }}
-      run: |
-        "${{ steps.policy-python.outputs.python }}" -I - <<'PY'
-        import os
-        import subprocess
-        import sys
-
-        sys.path.insert(0, ".github/scripts")
-        import working_policy as policy
-
-        findings_report = policy.findings_report
-        audited_route = "Tier 1 control changes require the audited maintenance route"
-        audited = False
-
-        def check_findings(*args, **kwargs):
-            global audited
-            report = findings_report(*args, **kwargs)
-            if report["branch"] != "dev" or not report["tier1"] or os.getenv("TRUSTED_BOOTSTRAP") == "true":
-                return report
-            if any(row["path"] == policy.KNOWN for row in report["tier1"]):
-                old = policy.read_file(report["target_sha"], policy.KNOWN)
-                new = policy.read_file(report["candidate_tree"], policy.KNOWN)
-                if not policy.renewal_only(old, new):
-                    raise ValueError("Known-failures changes must only remove entries or renew expiry through review")
-            audited = True
-            # Keep the recorded findings and let the guard check the remaining policy rules.
-            return {**report, "tier1": []}
-
-        policy.findings_report = check_findings
-        try:
-            policy.guard()
-        except (ValueError, KeyError, TypeError, SyntaxError, subprocess.CalledProcessError) as error:
-            raise SystemExit("Working policy refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__)) from None
-        if audited:
-            print(audited_route)
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                summary.write("\n" + audited_route + ". Continuing Checks for audited maintenance.\n")
-        PY
+        GITHUB_TOKEN: ${{ github.token }}
+      run: '"${{ steps.policy-python.outputs.python }}" -I .github/scripts/working_policy.py guard'
     - name: Select the exact candidate from protected configuration
       id: select
       working-directory: .
@@ -177,14 +148,14 @@ jobs:
       id: context
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
     - name: Plan unit and browser shards by committed duration
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       id: plan
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
         MEASUREMENT: ${{ steps.select.outputs.measurement }}
       run: python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" plan --base-sha "$BASE_SHA" --measurement "$MEASUREMENT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-plan-${{ github.run_attempt }}
         path: candidate/.run/reports/shard-plan.json
@@ -234,7 +205,7 @@ jobs:
         PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/public-ci-playwright
       run: python -m playwright install --no-shell chromium
     - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-      if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && steps.dependency-cache.outputs.cache-hit != 'true'
+      if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.dependency-cache.outputs.cache-hit != 'true'
       with:
         path: |-
           ${{ runner.temp }}/public-ci-wheels
@@ -243,35 +214,112 @@ jobs:
 
           ${{ runner.temp }}/public-ci-playwright
         key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
+    - name: Download browser system packages
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
+      run: |
+        apt_work=$(mktemp -d "$RUNNER_TEMP/ci-apt.XXXXXX")
+        chmod 755 "$apt_work" # The APT download sandbox must be able to reach the lists and archives.
+        apt_bundle="$RUNNER_TEMP/public-ci-apt"
+        mkdir -p "$apt_work/lists" "$apt_work/archives" "$apt_bundle"
+        printf '%s\n' "${ImageVersion:?Hosted image version is missing}" > "$apt_bundle/image-version"
+        printf '%s\tpriority:%s\n' \
+          'https://mirrors.edge.kernel.org/ubuntu/' 1 \
+          'https://mirror.us.leaseweb.net/ubuntu/' 2 \
+          'https://archive.ubuntu.com/ubuntu/' 3 > "$apt_work/mirrors.list"
+        for suite in noble noble-updates noble-backports noble-security; do
+          printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe restricted multiverse\n' \
+            "$apt_work/mirrors.list" "$suite"
+        done > "$apt_work/ubuntu.list"
+        export APT_CONFIG="$apt_work/apt.conf"
+        cat > "$APT_CONFIG" <<EOF
+        Dir::Etc::sourcelist "$apt_work/ubuntu.list";
+        Dir::Etc::sourceparts "-";
+        Dir::State::lists "$apt_work/lists";
+        Acquire::Languages "none";
+        Acquire::Retries "1";
+        Acquire::http::Timeout "15";
+        Acquire::https::Timeout "15";
+        APT::Update::Error-Mode "any";
+        EOF
+
+        apt_retry() {
+          local attempt
+          for attempt in 1 2 3; do
+            # Checks has a 10-min job limit; a fetch that cannot finish leaves the shards their logged fallback.
+            if timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG" "$@"; then return 0; fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Browser APT $1 failed in 3 attempts"
+              return 1
+            fi
+            echo "::warning::Browser APT $1 attempt $attempt failed or stalled; retrying"
+          done
+        }
+
+        read_plan() {
+          # The pinned Playwright dry run reports the simulated transaction and exits 1 when packages are missing.
+          local status=0 line
+          local header='^Missing system dependencies \(([1-9][0-9]*)\):$'
+          local package='^  ([a-z0-9][a-z0-9+.-]+(:amd64)?)$'
+          local -a lines
+          LC_ALL=C python -m playwright install-deps --dry-run chromium > "$apt_work/plan" || status=$?
+          mapfile -t lines < "$apt_work/plan"
+          if [ "$status" = 0 ] && [ "${#lines[@]}" = 1 ] && [ "${lines[0]}" = 'All system dependencies are installed.' ]; then
+            return 0
+          fi
+          [ "$status" = 1 ] && [[ ${lines[0]:-} =~ $header ]] && [ "${BASH_REMATCH[1]}" = "$((${#lines[@]} - 1))" ] || return 1
+          for line in "${lines[@]:1}"; do
+            [[ $line =~ $package ]] || return 1
+            packages+=("${BASH_REMATCH[1]}")
+          done
+        }
+
+        if ! apt_retry update; then
+          echo '::warning::Browser APT index refresh failed; browser shards will use fallback'
+          exit 0
+        fi
+        packages=()
+        if ! read_plan; then
+          echo '::warning::Playwright system package plan was invalid; browser shards will use fallback'
+          exit 0
+        fi
+        if [ "${#packages[@]}" -eq 0 ]; then exit 0; fi
+        if ! apt_retry install --download-only -y --no-install-recommends -o "Dir::Cache::archives=$apt_work/archives" "${packages[@]}"; then
+          echo '::warning::Browser APT package download failed; browser shards will use fallback'
+          exit 0
+        fi
+        # Keep APT's lock and sandbox-only partial directory out of the artifact.
+        shopt -s nullglob
+        debs=("$apt_work/archives/"*.deb)
+        if [ "${#debs[@]}" -gt 0 ]; then cp -- "${debs[@]}" "$apt_bundle/"; fi
     - name: Archive the shared downloads
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: |
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-dependencies.tar" runtime-archives public-ci-wheels public-ci-npm/_cacache
-        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright
+        tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright public-ci-apt
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-dependencies-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-dependencies.tar
         if-no-files-found: error
         retention-days: 1
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-browser-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-browser.tar
         if-no-files-found: error
         retention-days: 1
     - name: Reject environment and status destination URLs
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
     - name: Build web assets and compiled client modules
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: |
         python scripts/build_web.py
         python scripts/compiled_client.py stamp
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-web-${{ github.run_attempt }}
         path: candidate/apps/web/dist/
@@ -282,7 +330,7 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
-      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}
@@ -309,7 +357,7 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
-      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}
@@ -344,7 +392,7 @@ jobs:
     - unit
     - browser
     if: >-
-      always() && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      always() && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       && (github.event_name != 'schedule' || needs.checks.result != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -397,6 +445,16 @@ jobs:
       with:
         pattern: ci-test-${{ github.run_attempt }}-*
         path: .candidate-evidence/test-results
+    - name: Install the trusted pinned Python for the workflow inventory
+      if: github.event_name == 'pull_request'
+      working-directory: .trusted-verdict
+      run: python3 .github/scripts/hosted_ci.py runtime --tool python
+    - name: Install the trusted workflow parser
+      if: github.event_name == 'pull_request'
+      working-directory: .trusted-verdict
+      run: |
+        python -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
+        printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Trusted source/node/canary/allowance verdict
       env:
         GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
@@ -426,7 +484,7 @@ jobs:
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
       && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
-      && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
+      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -533,8 +591,6 @@ jobs:
     - synchronize
     - reopened
     - ready_for_review
-    - labeled
-    - unlabeled
   merge_group:
     types:
     - checks_requested
@@ -543,7 +599,9 @@ jobs:
   - cron: '0 2 * * *'
   push:
     branches:
+    # shortcut: dev is removed after the default branch is renamed to main.
     - dev
+    - main
 defaults:
   run:
     working-directory: candidate

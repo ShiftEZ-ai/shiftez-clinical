@@ -1,6 +1,5 @@
 """Retry only reviewed flaky failures on non-partitioned PR/dev pushes; retain both attempts and report FLAKY."""
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -165,21 +164,26 @@ def run_tests(args):
         flaky = []
         quarantined = case_properties(report, "fmuc_quarantine") if report.exists() else {}
         eligible_event = os.getenv("GITHUB_EVENT_NAME") == "pull_request" or (
-            os.getenv("GITHUB_EVENT_NAME") == "push" and os.getenv("GITHUB_REF") == "refs/heads/dev")
+            os.getenv("GITHUB_EVENT_NAME") == "push" and os.getenv("GITHUB_REF") == default_ref())
         if (not single_attempt and not partitioned and eligible_event and status == 1 and report.exists()
                 and os.getenv("GITHUB_JOB") not in ("cpu-budget", "solver-cap")):
             last_failed = Path(cache) / "v/cache/lastfailed"
             failed = {node: True for node, row in cases([report]).items() if row["outcome"] == "failed"}
             no_retry = case_properties(report, "fmuc_no_retry")
+            from ci.quarantine_registry import canonical_node, utc_today
             from tests.quarantine import entries
             # The reviewed registry is the classification source; issue observations alone are advisory.
+            today = utc_today()
             try:
-                classified = entries(root / "tests/quarantine.json",
-                                     datetime.now(timezone.utc).date(), current=False)  # real clock: registry expiry is UTC policy
+                classified = entries(root / "tests/quarantine.json", today)
             except (ValueError, OSError) as exc:
                 classified = {}
                 print("Retry classification unavailable: " + type(exc).__name__, file=sys.stderr)
-            retryable = {node: True for node in failed if node in classified and node not in no_retry}
+            # The legacy wrapper only retries during the reviewed retry window.
+            eligible = {node for node, row in classified.items() if row["expires"] > today.isoformat()}
+            parametrized = {node.partition("[")[0] for node in eligible if "[" in node}
+            retryable = {node: True for node in failed if node not in no_retry and (
+                node in eligible or node.partition("[")[0] in parametrized and canonical_node(node) in eligible)}
             if retryable:
                 # A teardown skip can clear pytest's cache after a call failure; JUnit retains the failure wave.
                 last_failed.parent.mkdir(parents=True, exist_ok=True)
@@ -328,6 +332,14 @@ def issue(directory):
     payload = {"title": "Flaky tests", "body": body, "state": "open",
                "labels": sorted({"flaky", *(label["name"] for label in (found or {}).get("labels", []))})}
     api("PATCH" if found else "POST", f"/issues/{found['number']}" if found else "/issues", payload)
+
+
+def default_ref():
+    """The repository default branch from the trusted event payload; None (never eligible) when it is missing."""
+    try:
+        return "refs/heads/" + json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())["repository"]["default_branch"]
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
 
 
 def main(argv):

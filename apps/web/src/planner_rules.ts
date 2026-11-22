@@ -22,10 +22,10 @@ export type Num={field:string;value:number;maximum?:number|null;unit:string;stri
 /** The rota's workload targets dock (app.ts): rules for this rota are this panel's, the server's rule map. */
 export const ROTA_TARGETS='Workload targets for this rota';
 export type MapRule={id:string;name:string;kind:string;severity:string;strength?:string;safety:boolean;exception_allowed:boolean;adjustable:boolean;overridable?:boolean;
-  number:Num|null;department_value:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
+  number:Num|null;department_value:number|null;binding_value?:number|null;adjusted:null|{mode:'set'|'off';amount:number|null;by:string|null;by_name?:string|null;at:string|null;applied?:boolean};off:boolean;workspace_only:boolean;
   overrides:string[];overridden_by:string[];person_side?:boolean;session_side?:boolean;starts_on?:string;ends_on?:string|null;block?:[string,string]|null;
   named:{people:string[];services:string[];locations:string[];types:string[];weekdays:number[]|null;dated:boolean};
-  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:Row[];
+  sessions:number[];people:Record<string,[number,number][]>;replaced:Record<string,[number,number][]>;days:number[];lines:(Row & {binding_value?:number|null})[];
   /** Who follows a line that names no person (a programme's or ranks' line): [first day, end day, index into lines]. */
   line_people?:Record<string,[number,number,number][]>;
   /** Sessions where a person's days say the rule holds but that session does not (a skill held at other clinics only). */
@@ -74,10 +74,11 @@ type Item={rule:MapRule;why:'named'|'applies';number:Num|null;own?:Row;binding?:
 // One loaded map per rota version; the request itself revalidates with the ETag, so an unchanged rota is not resent.
 let map:RuleMap|null=null,mapKey='',loading:Promise<RuleMap>|null=null,loadingKey='';
 /** The explainer's sentences by rule for the loaded rota version (rules_explained.ts): each row says its rule in them. */
-let said:Map<string,ExplainedRule>|null=null,saidKey='',conflicts:Conflict[]=[];
+let said:Map<string,ExplainedRule>|null=null,saidKey='',conflicts:Conflict[]=[],overlaps=new Map<string,Map<string,number>>();
 function loadSentences(){
-  if(!dataNow)return;const k=keyOf(dataNow);if(saidKey===k)return;saidKey=k;said=null;conflicts=[];
-  rotaSentences(dataNow.workspace.id,k).then(reply=>{if(saidKey!==k)return;said=new Map((reply.rules??[]).map(r=>[r.rule_id,r]));conflicts=reply.conflicts??[];if(pinned)drawPanel();},
+  if(!dataNow)return;const k=keyOf(dataNow);if(saidKey===k)return;saidKey=k;said=null;conflicts=[];overlaps=new Map();
+  rotaSentences(dataNow.workspace.id,k).then(reply=>{if(saidKey!==k)return;said=new Map((reply.rules??[]).map(r=>[r.rule_id,r]));
+    const all=reply.conflicts??[];overlaps=ownOverlaps(all);conflicts=all.filter(c=>c.rule_ids[0]!==c.rule_ids[1]);if(pinned)drawPanel();},
     ()=>{if(saidKey===k)saidKey='';});  // the rows keep the client's sentence; the next draw asks again
 }
 /** A marker with its days as a set and its place in the map's order (every result keeps the server's order). */
@@ -280,7 +281,17 @@ function markersAt(t:Target):Marker[]{
 const unitWord=(n:Num)=>n.unit==='hours'?'h':n.unit==='minutes'?'min':n.value===1&&n.maximum==null?n.unit==='people'?'person':n.unit.replace(/ies$/,'y').replace(/s$/,''):n.unit;
 export const ruleNumber=(n:Num|null)=>numText(n);
 const numOne=(v:number)=>Number.isInteger(v)?String(v):v.toFixed(1);
-const numText=(n:Num|null)=>n?`${numOne(n.value)}${n.maximum!=null?`–${numOne(n.maximum)}`:""} ${unitWord(n)}`.trim():"";
+const numRange=(n:Num)=>`${numOne(n.value)}${n.maximum!=null?`–${numOne(n.maximum)}`:""}`;
+const numText=(n:Num|null)=>n?`${numRange(n)} ${unitWord(n)}`.trim():"";
+/** The live value when it differs from the number shown (a safety rule's map may already show the live value). */
+const bindsNow=(n:Num|null,binds?:number|null)=>n&&binds!=null&&binds!==n.value?binds:null;
+const both=(n:Num,binds:number)=>`${numRange(n)}, now binds ${numText({...n,value:binds,maximum:null})}`;
+/** A number a revised mandatory rule now binds stricter than the draft captured (the rule map's binding_value): both. */
+export const numBoth=(n:Num|null,binds?:number|null)=>{const v=bindsNow(n,binds);return v!=null?'captured '+both(n!,v):numText(n);};
+/** The same as a sentence for secondary text; nothing when the captured number still binds. */
+export const bindsNote=(n:Num|null,binds?:number|null)=>{const v=bindsNow(n,binds);return v!=null?`Captured ${both(n!,v)}.`:'';};
+/** The binding value for the number shown: a person's own line's, else the rule's. */
+const bindsOf=(r:MapRule,own?:Row)=>(own?own.binding_value:r.binding_value)??null;
 const STATE:Record<string,[string,string,string]>={breach:['err','!','Broken'],warning:['warn','!','Warning'],met:['ok','✓','Met'],unchecked:['na','–','Not checked yet'],off:['na','–','Switched off for this rota'],replaced:['na','↷','Replaced here']};
 const markerWhat:Record<string,string>={template_line:'Own number',override:'Replaced here',exception:'Person exception',rota_adjustment:'Changed for this rota',target_override:'Target changed for this rota'};
 /** Who made a change: "You", the server's name for them, or nothing (an identity id is never shown). */
@@ -303,7 +314,7 @@ export function ruleSummary(t:Target):Node[]{
     named&&t.kind!=='rota'?el('span',{class:'muted'},` · ${named} specific to ${targetWords(t)}`):'');
   const lines=items.slice(0,4).map(i=>{const [tone,glyph]=STATE[i.state];
     return el('li',{class:'rk-hc-line '+tone},stateMark(i),el('span',{class:'rk-hc-name truncate'},i.rule.name),
-      i.number?el('span',{class:'rk-num'},numText(i.number)):'',i.binding?el('span',{class:'rk-win'},'strictest'):'');});
+      i.number?el('span',{class:'rk-num'},numBoth(i.number,bindsOf(i.rule,i.own))):'',i.binding?el('span',{class:'rk-win'},'strictest'):'');});
   const more=items.length>4?[el('li',{class:'hc-more'},overflowMore(items.length-4,['rule','rules'],{as:'span',cls:''}))]:[];
   const ex=marks.slice(0,2).map(m=>el('li',{class:'rk-hc-line mark'},el('span',{class:'rk-dot','aria-hidden':'true'},icon('fork')),el('span',{class:'rk-hc-name'},m.text,m.by?el('small',{},markerWho(m)):'')));
   return [head,el('ul',{class:'rk-hc-lines'},...lines,...more,...ex),...(marks.length>2?[overflowMore(marks.length-2,['exception','exceptions'],{as:'span',cls:'rk-hc-more'})]:[]),
@@ -363,7 +374,7 @@ export function selectTicked(ids:string[]){
 /** Puts the ticked sessions held now into the open panel's selection; true when the panel must redraw. */
 function applyTicked():boolean{
   if(!pinned||!dataNow||pinned.workspace!==dataNow.workspace.id)return false;
-  const byId=new Map(dataNow.shifts.map(x=>[String(x.id),x])),ts=tickedIds.map(id=>byId.get(id)).filter((x):x is Row=>!!x).map(sessionTarget);
+  const byId=new Map(dataNow.shifts.map(x=>[String(x.id),x])),ts=tickedIds.map(id=>byId.get(id)).filter(x=>x!==undefined).map(sessionTarget);
   // None ticked: a panel showing the ticked set goes back to the rota's rules; one showing a clicked selection stays.
   if(!ts.length){if(!pinned.ticked)return false;pinned.target={kind:'rota',label:'Rules in this rota'};pinned.sel=undefined;pinned.ticked=false;return true;}
   pinned.target=ts[0];pinned.sel=ts;pinned.ticked=true;return true;
@@ -588,7 +599,8 @@ function drawPanel(focus=false){
     {
       // One list (CONTRACT §10): what needs fixing, then what changed here, then the rest folded under one worded
       // toggle. A search shows every match unfolded.
-      const changedHere=(i:Item)=>changed(i.rule)||marked.has(i.rule.id)||!!i.rule.proposal;
+      // A rule whose lines overlap stays in view on the rota's list: its row is where the overlap is said.
+      const changedHere=(i:Item)=>changed(i.rule)||marked.has(i.rule.id)||!!i.rule.proposal||t.kind==='rota'&&!!overlapWords(said?.get(i.rule.id),overlaps.get(i.rule.id));
       // DL-037: a rule the explainer could not word is never folded away, safety rules first (as the subtitle counts).
       const bad=shown.filter(i=>['breach','warning'].includes(i.state));
       const unexp=shown.filter(i=>!bad.includes(i)&&i.state!=='replaced'&&said?.get(i.rule.id)?.unexplained).sort((a,b)=>+b.rule.safety-+a.rule.safety);
@@ -680,13 +692,13 @@ function cellDetails(t:Target):HTMLElement{
   const facts=factsAt([t]);
   if(!list.length)return el('div',{},facts||'',el('p',{class:'muted rk-none'},'No session here.'));
   return el('div',{},facts||'',...list.map(s=>{const open=button('Open session',()=>{if(!sessionOpener?.(s))notify('Open the planner to see this session.','info');},'ghost small');
-    return el('section',{class:'rk-session','aria-label':s.type_snapshot.name},el('h3',{class:'rk-h3'},s.type_snapshot.name),
+    return el('section',{class:'rk-session','aria-label':s.type_snapshot.name},el('h3',{class:'rk-h3'},String(s.type_snapshot.name)),
       el('p',{class:'rk-session-facts'},[`${formatTime(s.start,z)}–${formatTime(s.end,z)}`,name('locations',s.location_id),...(s.service_ids||[]).map((id:string)=>name('services',id))].filter(Boolean).join(' · ')),
-      (s.participants||[]).length?el('ul',{class:'rk-people'},...(s.participants as Row[]).map(p=>el('li',{},personLink(p.person_id,name('people',p.person_id)||'Someone',v=>ctxNow?.navigate(v))))):el('p',{class:'muted'},'No one yet'),open);}));
+      (s.participants||[]).length?el('ul',{class:'rk-people'},...s.participants.map(p=>el('li',{},personLink(p.person_id,name('people',p.person_id)||'Someone',v=>ctxNow?.navigate(v))))):el('p',{class:'muted'},'No one yet'),open);}));
 }
 /** A person's duties in this rota, in date order: each opens its session. */
 function dutiesOf(personId:string):HTMLElement{
-  const z=zone(),mine=(dataNow?.shifts||[]).filter(s=>(s.participants||[]).some((p:Row)=>p.person_id===personId)).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
+  const z=zone(),mine=(dataNow?.shifts||[]).filter(s=>s.participants.some(p=>p.person_id===personId)).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
   if(!mine.length)return el('p',{class:'muted rk-none'},'No duties in this rota.');
   return el('ul',{class:'rk-rules rk-duties'},...mine.map(s=>{const b=el('button',{type:'button',class:'link-button'},`${formatDate(s.start,z)} · ${formatTime(s.start,z)}–${formatTime(s.end,z)} · ${s.type_snapshot.name}`);
     b.addEventListener('click',()=>{if(!sessionOpener?.(s))notify('Open the planner to see this session.','info');});return el('li',{},b);}));
@@ -723,8 +735,10 @@ const stop=(s:string)=>/[.!?…”]$/.test(s.trim())?s.trim():s.trim()+'.';
 /** shortcut: until the explainer serves a selection's rows (`target=` with `status.sentence` and `changed`, agreed with
  *  LEAD-RULES-CONFIG), the browser words the status from the rule map and its findings and picks the rule's sentence by
  *  its line; delete this with numberFor, stack and findingsFor when those fields land. */
-function wordsOf(i:Item,marked=false):Words{
+function wordsOf(i:Item,marked=false,rota=false):Words{
   const r=i.rule,line=String(i.own?.id||''),told=said?.get(r.id),list=told?.sentences,p=hooksNow?.policy(r.id);
+  // The whole rota: overlapping lines of one rule are its row, with each line's number and why the strictest binds.
+  const lap=rota?overlapWords(told,overlaps.get(r.id)):null;
   const byLine=list?.find(x=>!!line&&!!x.source_line_ids?.includes(line)),s=byLine||(!i.own&&list?.length===1?list[0]:undefined);
   // A person's own line without a line sentence (a template rule's per-person or rank table): the rule's sentence with
   // THEIR number, never the department's nor another line's sentence (the rule's only sentence may be someone else's row).
@@ -732,12 +746,32 @@ function wordsOf(i:Item,marked=false):Words{
     ?hooksNow!.sentence({...p.definition.rule,[r.number.field]:i.number.value},p.definition):'';
   // The line's own sentence, else the rule's summary (live 235391b: 14 of 17 rows fell back to catalogue text). The
   // rule's own wording only while the explainer has not answered (or failed), never beside its answer.
-  const text=stop(own||s?.text||told?.summary_sentence||(p?hooksNow!.sentence(p.definition.rule,p.definition):r.name));
+  const text=lap?lap.text:stop(own||s?.text||told?.summary_sentence||(p?hooksNow!.sentence(p.definition.rule,p.definition):r.name));
   const state=i.state==='breach'?counted(i.errors,'Not met.','Not met # times.'):i.state==='warning'?counted(i.warnings,'Could be better.','Could be better in # places.')
     :i.state==='off'?'Switched off for this rota.':i.state==='replaced'?'A more specific rule decides here.':i.state==='unchecked'?'Not checked yet.':'Met.';
-  const notes=[r.adjusted&&i.state!=='off'&&r.adjusted.applied!==false?'Changed for this rota.':'',marked?'An exception applies here.':'',
+  const notes=[lap?.why||'',bindsNote(i.number,bindsOf(r,i.own)),r.adjusted&&i.state!=='off'&&r.adjusted.applied!==false?'Changed for this rota.':'',marked?'An exception applies here.':'',
     r.proposal?'A change is waiting for approval.':'',i.of?`Applies to ${i.hits} of ${i.of}.`:''];
-  return {text,status:[state,...notes].filter(Boolean).join(' '),changed:changed(r)||marked||!!r.proposal,unexplained:!!told?.unexplained};
+  return {text,status:[state,...notes].filter(Boolean).join(' '),changed:changed(r)||marked||!!r.proposal||!!lap,unexplained:!!told?.unexplained};
+}
+/** One rule's overlapping lines (the server's conflicts naming the same rule twice, one per pair of lines): per rule,
+ *  each line once with its department-wide number. They are that rule's row, never rows of their own. */
+export function ownOverlaps(cs:Conflict[]):Map<string,Map<string,number>>{
+  const out=new Map<string,Map<string,number>>();
+  for(const c of cs)if(c.rule_ids[0]===c.rule_ids[1]){const m=out.get(c.rule_ids[0])||new Map<string,number>();
+    c.line_ids.forEach((id,n)=>m.set(id,c.line_refs[n]));out.set(c.rule_ids[0],m);}
+  return out;
+}
+/** Where lines overlap, every one of them applies and the strictest binds (AGENTS §3); said once per rule. */
+export const OVERLAP_WHY='Where these lines overlap, all of them apply, so the strictest binds.';
+/** A rule with overlapping lines, said once: the explainer's sentence of each overlapping line (its number, in the
+ *  server's words and order), then why the strictest binds; opened, which lines (by number). Null when the explainer
+ *  has no sentence for them. */
+export function overlapWords(told:ExplainedRule|undefined,lines:Map<string,number>|undefined){
+  const xs=lines&&told?.sentences.filter(x=>x.source_line_ids?.some(id=>lines.has(id)))||[];
+  if(!xs.length)return null;
+  const refs=[...new Set(lines!.values())].sort((a,b)=>a-b).map(n=>'#'+n);
+  return {text:xs.map(x=>stop(x.text)).join(' '),why:OVERLAP_WHY,
+    lines:`Lines ${refs.length>1?refs.slice(0,-1).join(', ')+' and '+refs[refs.length-1]:refs[0]} overlap.`};
 }
 /** A conflict row: the server's sentence; opened, the two line numbers (the only place lines are numbered) and how much
  *  of the rota it reaches, then Open both. */
@@ -760,7 +794,7 @@ function conflictRow(c:Conflict,key:Legend,both:()=>void):HTMLElement{
 const lockMark=(key?:Legend)=>{const m=()=>el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter'},icon('lock'));
   return key?key.mark(m(),'safety',el('span',{class:'rk-lockmark','aria-hidden':'true'},icon('lock')),'Can only be made stricter'):m();};
 function ruleRow(i:Item,t:Target,redraw:()=>void,key?:Legend,marked=false):HTMLElement{
-  const r=i.rule,[tone]=STATE[i.state],open=openRules.has(r.id),locked=lock?.rule===r.id,w=wordsOf(i,marked);
+  const r=i.rule,[tone]=STATE[i.state],open=openRules.has(r.id),locked=lock?.rule===r.id,w=wordsOf(i,marked,t.kind==='rota');
   const head=el('button',{type:'button',class:'rk-row-head','aria-expanded':String(open),...(open?{'aria-controls':'rk-d-'+r.id}:{})},
     stateMark(i,key),el('span',{class:'rk-row-text'},el('span',{class:'rk-row-sentence'},w.unexplained?unexplainedLine():w.text),' ',el('span',{class:'rk-status'},w.status)),
     r.safety?lockMark(key):'');
@@ -799,7 +833,7 @@ function ruleDetail(i:Item,t:Target,redraw:()=>void):HTMLElement{
 function detailWords(i:Item,t:Target):string[]{
   const r=i.rule,line=String(i.own?.id||''),list=said?.get(r.id)?.sentences;
   const byLine=list?.find(x=>!!line&&!!x.source_line_ids?.includes(line)),s=byLine||(!i.own&&list?.length===1?list[0]:undefined);
-  const dept=r.adjusted?.mode==='set'&&r.department_value!=null&&r.number?`: ${numText({...r.number,value:r.department_value,maximum:null})}`:'';
+  const dept=r.adjusted?.mode==='set'&&r.department_value!=null&&r.number?`: ${numBoth({...r.number,value:r.department_value,maximum:null},r.binding_value)}`:'';
   const source=r.workspace_only?'From a rule added for this rota only.'
     :`From the department rule${s&&s.who&&s.who!=='Everyone'?' for '+s.who:''}${s&&s.where&&s.where!=='All clinics and duties'?' at '+s.where:''}${!byLine&&i.own?` (${lineWords(i.own)})`:''}${dept}`;
   const adjustments=adjustmentsOf(r).map(a=>{const who=byWho(a.by,a.by_name),person=a.person_id?fullNameOf(ctxNow?.catalogues.people.find(p=>p.id===a.person_id)):'';
@@ -809,8 +843,9 @@ function detailWords(i:Item,t:Target):string[]{
     return `${was==null?'Changed':now>was?'Raised':now<was?'Lowered':'Set'}${was!=null?' from '+numOne(was):''} to ${numOne(now)} for this rota${tail}`;});
   const marks=markersAt(t).filter(m=>m.rule_id===r.id&&m.kind!=='rota_adjustment').map(m=>`${markerWhat[m.kind]||'Exception'}: ${m.text}. ${markerWho(m)}`);
   const override=r.overrides.length?'This overrides a more general rule here.':i.binding?'It is the strictest rule of its kind here, so it decides.':i.looser?'A stricter rule of its kind decides here.':'';
+  const lap=t.kind==='rota'?overlapWords(said?.get(r.id),overlaps.get(r.id))?.lines??'':'';
   const stale=r.adjusted?.applied===false?'The department rule applies. The older adjustment is not applied.':'';
-  return [source,stale,...adjustments,adjustments.length?reviewState()[0]:'',...marks,r.proposal?`${proposalWords(r.proposal)}: a change waiting for approval`:'',override].filter(Boolean).map(stop);
+  return [source,lap,stale,...adjustments,adjustments.length?reviewState()[0]:'',...marks,r.proposal?`${proposalWords(r.proposal)}: a change waiting for approval`:'',override].filter(Boolean).map(stop);
 }
 /** The opened row's ⋯: open the rule, show it on the schedule, change it for this rota (stricter only for a safety rule),
  *  an exception (never for safety), or propose it for everyone. A disabled item says why. */
@@ -862,11 +897,12 @@ function rotaOnly(r:MapRule):HTMLElement{
   const title=el('span',{class:'rk-act-title'},label);
   box.append(title);
   if(r.adjustable&&r.number&&!(r.adjusted&&r.adjusted.applied===false)){
-    const n=el('input',{type:'number',class:'rk-num-input',min:r.safety&&r.number.stricter==='higher'?(r.department_value??r.number.value):0,...(r.safety&&r.number.stricter==='lower'?{max:r.department_value??r.number.value}:{}),step:'any',value:String(r.number.value),'aria-label':`New number for “${r.name}” in this rota`,required:true}) as HTMLInputElement;
+    const now=bindsNow(r.number,r.binding_value);
+    const n=el('input',{type:'number',class:'rk-num-input',min:r.safety&&r.number.stricter==='higher'?(r.department_value??r.number.value):0,...(r.safety&&r.number.stricter==='lower'?{max:r.department_value??r.number.value}:{}),step:'any',value:String(r.number.value),'aria-label':`New number for “${r.name}” in this rota${now!=null?`, ${numBoth(r.number,now)}`:''}`,required:true}) as HTMLInputElement;
     const use=el('button',{type:'submit',class:'button primary small'},'Use for this rota');
     box.addEventListener('submit',e=>{e.preventDefault();if(!n.reportValidity()||!why.reportValidity())return;const v=Number(n.value);if(!n.value||v===r.number!.value){n.focus();return;}
       use.disabled=true;apply('set',v).catch(err=>{use.disabled=false;notify((err as Error).message,'error',undefined,err);});});
-    box.append(el('span',{class:'rk-inline-row'},n,el('span',{class:'muted'},r.number.unit),use));
+    box.append(el('span',{class:'rk-inline-row'},n,el('span',{class:'muted'},r.number.unit+(now!=null?`, now binds ${numOne(now)}`:'')),use));
   }
   box.append(why);
   const back=r.adjusted?button('Back to the department rule',act('clear'),'secondary small'):null;
