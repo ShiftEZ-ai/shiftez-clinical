@@ -34,7 +34,7 @@ def card_etag(db, actor, person, upcoming=3):
         "person-card", person.id, actor.identity_id, actor.person_id, sorted(actor.roles), upcoming,
         person.revision, tuple(contact_stamp), tuple(publication_stamp),
         department.revision, department.catalogue_revision, organisation.revision,
-        organisation.input_revision, organisation.availability_revision,
+        m.now().astimezone(ZoneInfo(organisation.timezone)).date(), organisation.input_revision, organisation.availability_revision,
         live.activity(db, actor.department_id))
 
 
@@ -44,7 +44,7 @@ def read(db, actor, person_id, upcoming=3, *, person=None):
     day = m.now().astimezone(ZoneInfo(zone)).date()
     first, tomorrow, end = day, day + timedelta(days=1), day + timedelta(days=366)
     lo, hi = local_midnight(first, zone), local_midnight(tomorrow, zone)
-    facts = current_people(db, actor, person_ids={person_id})['people'].get(person_id, {})
+    facts = current_people(db, actor, day, person_ids={person_id})['people'].get(person_id, {})
     entry = visible_people(db, actor, [{**record(person), **facts}])[0]
     # Current reference labels are small, scoped acquisitions; no programme or rank lists are copied into the client.
     for field, cls in (('category', m.Category), ('programme', m.Programme),
@@ -71,7 +71,7 @@ def read(db, actor, person_id, upcoming=3, *, person=None):
     ids = {p['person_id'] for duty in chosen for p in duty['participants']}
     names = {r.id: {'person_id': r.id, 'display_name': r.display_name, 'short_code': r.short_code}
              for r in db.scalars(select(m.Person).where(m.Person.id.in_(ids)))} if ids else {}
-    team_facts = current_people(db, actor, person_ids=ids)['people'] if ids else {}
+    team_facts = current_people(db, actor, day, person_ids=ids)['people'] if ids else {}
     for pid, name in names.items():
         name['rank'] = team_facts.get(pid, {}).get('display_title', '')
     places = dict(db.execute(select(m.Location.id, m.Location.name).where(
