@@ -975,6 +975,8 @@ function because<T extends HTMLButtonElement>(b:T,why:string,more:Child[]=[],at?
   ensureReasonObserver();
   reasons.set(b,{why,more,at});sayReason(b);return b;
 }
+/** Each held control's reason now: a press says the words it is described with at that moment. */
+const heldWhy=new WeakMap<HTMLElement,string>();
 /** A control in place but not usable yet (DL-007; D59: the whole rota still loading): aria-disabled, so it keeps its
  *  focus and its tip, with `why` as its description; a press only says why again and never runs later. A field is
  *  read-only meanwhile. Drawn again once usable, so it is never released here. */
@@ -982,8 +984,10 @@ export function notYet<T extends HTMLElement>(n:T,why:string):T{
   n.setAttribute('aria-disabled','true');n.dataset.tip=why;if(n instanceof HTMLInputElement)n.readOnly=true;
   // A menu item's reason is its tip and its press (a menu holds only items).
   if(!n.matches('[role^=menuitem]')){sayWhy(n,why);whyOf.get(n)!.classList.add('sr-only');}
+  // Held again (its reason moved on, e.g. the check started): the words change, the one press listener stays.
+  const held=heldWhy.has(n);heldWhy.set(n,why);if(held)return n;
   // Capture, on the control itself: before its own click handler (and the footer's delegated one), which never runs.
-  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(why,'info');},true);  // visible, and said (a toast is a status)
+  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(heldWhy.get(n)!,'info');},true);  // visible, and said (a toast is a status)
   return n;
 }
 /** A disabled button's reason is visible beside it and referenced by aria-describedby. */

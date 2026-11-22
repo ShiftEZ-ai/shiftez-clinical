@@ -213,8 +213,8 @@ export const approveAndActivate=(policyId:string,revision:number,reason:string|n
  *  (a check's finding counts are another unit than the footer's causes, so none stand in). A provisional check
  *  (scope command_changes) with its job listed says that job's words (`provisional`); with none listed it is "Waiting to
  *  check" until the rota's job list is read (`partial`, `jobsRead`); read with no live check job in it, nothing proves a
- *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, or its take-over
- *  failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
+ *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, cancelled, or its
+ *  take-over failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
  *  `whole`: the whole rota is read (a window keeps its counts). */
 export type FooterCheck='stalled'|'checking'|'provisional'|'not-checked'|'counts'|'waiting'|'checked'|'stale'|'check-now'|'needs-check';
 export function footerCheck(s:{stalled:boolean;checking:boolean;provisional:boolean;checked:boolean;counts:boolean;
