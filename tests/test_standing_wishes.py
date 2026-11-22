@@ -524,7 +524,8 @@ def test_reopening_neighbouring_rota_reconciles_generation_without_losing_eviden
     before_submit = h.snapshot(settled)
     settled = h.lifecycle(settled, 'submit')['workspace']
     submitted = h.snapshot(settled)
-    assert submitted['organisation']['input_revision'] == before_submit['organisation']['input_revision'] + 1
+    # 17 Nov oracle (#1171): no other rota reads the status of this lone rota yet; the later reopen still advances.
+    assert submitted['organisation']['input_revision'] == before_submit['organisation']['input_revision']
     assert settled['submitted_fingerprint'] == submitted['fingerprint']
     assert [w['first_day'] for w in expanded(h, settled)] == ['2026-10-19']
     if settled_status == 'approved':
