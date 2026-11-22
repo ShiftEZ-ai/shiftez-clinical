@@ -16,7 +16,7 @@ import canary_evidence
 import node_census
 import hardening
 from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, require_pr_merge, settings
-from quarantine_registry import QUARANTINE, expired_issue_summary, utc_today
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
 from latest_reports import earlier_reports, validate_selected_reports
 import stale_evidence
 
@@ -193,7 +193,7 @@ def main():
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
     release = branch == "main"
-    quarantine_nodes, quarantine = quarantine_policy(base, base if release else candidate, old, current)
+    quarantine_registry, quarantine = quarantine_policy(base, base if release else candidate, old, current)
     if quarantine:
         maker.write_summary_lines([expired_issue_summary(quarantine, utc_today())])
     retry = maker.retry_run(plan)
@@ -225,8 +225,8 @@ def main():
         data_root = Path(scratch).resolve()
         assert data_root.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve())
         for path in policy.LISTS:
-            if path == QUARANTINE:
-                continue  # The validated registry is passed directly to the verifier.
+            if path in {QUARANTINE, QUARANTINE_RETIRED}:
+                continue  # The verifier receives the effective quarantine directly.
             raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch=='dev' else policy.read_file(base, path)
             if raw is not None:
                 policy.decode(raw)
@@ -245,7 +245,7 @@ def main():
             evidence = maker.ReportEvidence()
             runs = maker.collect_reports(plan, reports, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
                                          output, listed=failure_nodes | quarantine.keys(),
-                                         evidence=evidence, quarantine_nodes=quarantine_nodes)
+                                         evidence=evidence, quarantine_nodes=quarantine_registry.keys())
             if flags['node_census']:
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
@@ -281,7 +281,7 @@ def main():
                         "--unstable-expires-on", str(config["unstable_expires_on"] or ""),
                         "--cleanup-issue", str(config["cleanup_issue"] or 0)]
             maker.main(runs=compared, evidence=evidence, product_errors=product_errors,
-                       quarantine=quarantine, release=release,
+                       quarantine=quarantine, release=release, quarantine_registry=quarantine_registry,
                        **stale_options(kind, branch, data, base, candidate, scope))
             verdict = policy.decode((output / "verdict.json").read_bytes())
             if partial:

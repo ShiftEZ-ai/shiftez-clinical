@@ -173,6 +173,11 @@
       "reason": "Tier 1 changes no longer need the audited maintenance route: CODEOWNERS and code-owner review replace that refusal. The clean product change and the Tier 1 findings on both events are asserted in test_guard_allows_changes_in_owned_tier1_paths."
     },
     {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_runs_dev_wrapper_while_dev_has_the_old_guard",
+      "owner": "maintainer",
+      "reason": "Dev now runs the code-owner guard, so the Checks step's transitional branch for dev's old wrapper is removed; the step runs the guard directly, asserted in test_checks_runs_the_trusted_guard_before_fan_out and test_checks_runs_the_code_owner_guard_once_dev_has_it."
+    },
+    {
       "node": "tests/test_working_policy.py::PolicyTests::test_checks_stops_on_other_policy_refusals_before_fan_out",
       "owner": "maintainer",
       "reason": "The Checks-step wrapper that ran the guard for the audited Tier 1 route is removed with that route; the same four refusals (known-failures addition, agent file, syntax error, preview history) are asserted directly against the guard in test_guard_keeps_other_policy_refusals."
