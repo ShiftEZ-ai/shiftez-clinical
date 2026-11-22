@@ -189,7 +189,15 @@ def test_department_search_maximum_is_audited_undoable_and_cannot_be_overridden_
 
 
 def test_generation_queue_uses_the_draft_baseline_after_department_defaults_change(budget_h):
-    h = budget_h
+    assert_generation_uses_captured_defaults(budget_h)
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_postgres_generation_uses_captured_defaults(budget_h):
+    assert_generation_uses_captured_defaults(budget_h)
+
+
+def assert_generation_uses_captured_defaults(h):
     workspace = h.shift(h.workspace(), people=[])['workspace']
     with transaction(h.app.state.engine) as db:
         baseline = db.scalar(select(m.WorkspaceBaseline).where(
@@ -201,10 +209,13 @@ def test_generation_queue_uses_the_draft_baseline_after_department_defaults_chan
 
     me = h.get('admin', '/api/me')
     changed = h.command('admin', 'department.settings', {**department_settings(h),
-        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4}},
+        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4,
+                                'scoring': {'wish_debt_cap': 7}}},
         h.seed['department_id'], me['organisation']['revision'])
     assert changed['department']['generation_defaults']['max_search_minutes'] == 4
     assert captured['max_search_minutes'] != 4
+    current = changed['department']['generation_defaults']
+    assert h.get('admin', '/api/me')['department']['generation_defaults'] == current
 
     job = h.command('coordinator', 'job.create', {
         'workspace_id': workspace['id'], 'kind': 'generation'}, revision=workspace['revision'])['job']
@@ -223,6 +234,56 @@ def test_generation_queue_uses_the_draft_baseline_after_department_defaults_chan
                                include_fairness=False, include_objectives=False)
         assert GenerationOptions.model_validate(
             data['department']['generation_defaults']).model_dump(mode='json') == captured
+        assert data['department']['generation_defaults'] == data['generation_options']
+        assert GenerationOptions.model_validate(data['generation_options']).model_dump(mode='json') == manifest['generation']['defaults']
+        live = domain_snapshot(db, db.get(m.Workspace, workspace['id']), current_scheduling=True,
+                               include_fairness=False, include_objectives=False)
+        assert live['department']['generation_defaults'] == current
+        assert live['generation_options'] == current
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine) as db:
+        prepared = db.get(m.Job, job['id']).input_snapshot
+        assert GenerationOptions.model_validate(prepared['department']['generation_defaults']).model_dump(mode='json') == captured
+        assert prepared['generation_defaults'] == prepared['generation_options'] == captured
+        assert prepared['generation_manifest']['generation']['defaults'] == captured
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_generation_queue_uses_refreshed_department_defaults(budget_h):
+    h = budget_h
+    workspace = h.workspace()
+    previous_hash = workspace['snapshot_hash']
+    workspace = h.shift(workspace, people=[])['workspace']
+    me = h.get('admin', '/api/me')
+    changed = h.command('admin', 'department.settings', {**department_settings(h),
+        'generation_defaults': {'search_minutes': 3, 'max_search_minutes': 4,
+                                'scoring': {'wish_debt_cap': 7}}},
+        h.seed['department_id'], me['organisation']['revision'])
+    current = changed['department']['generation_defaults']
+    resolved = GenerationOptions.model_validate(current).model_dump(mode='json')
+    workspace = h.refresh_draft_baseline(workspace)
+    assert workspace['snapshot_hash'] != previous_hash
+    job = h.command('coordinator', 'job.create', {
+        'workspace_id': workspace['id'], 'kind': 'generation'}, revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine) as db:
+        snapshot = domain_snapshot(db, db.get(m.Workspace, workspace['id']),
+                                   include_fairness=False, include_objectives=False)
+        saved = db.get(m.Job, job['id']).input_snapshot
+        assert snapshot['department']['generation_defaults'] == snapshot['generation_options'] == current
+        assert saved['generation_defaults'] == saved['generation_manifest']['generation']['defaults'] == resolved
+        assert GenerationOptions.model_validate(snapshot['department']['generation_defaults']).model_dump(mode='json') == resolved
+        assert saved['baseline']['hash'] == workspace['snapshot_hash']
+        verify_generation_snapshot(db, db.get(m.Workspace, workspace['id']), saved)
+    with transaction(h.app.state.engine, write=True) as db:
+        claim = claim_job(db)
+    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+    with transaction(h.app.state.engine) as db:
+        prepared = db.get(m.Job, job['id']).input_snapshot
+        assert prepared['department']['generation_defaults'] == current
+        assert prepared['generation_defaults'] == prepared['generation_options'] == resolved
+        assert prepared['generation_manifest']['generation']['defaults'] == resolved
 
 
 def test_department_name_change_cannot_bypass_resolved_search_limit_validation(budget_h):
@@ -369,19 +430,30 @@ def test_continue_refuses_changed_model_inputs(budget_h, change, code):
             assert continued.input_snapshot['generation_defaults'] == previous.input_snapshot['generation_defaults']
 
 
-def test_increasing_runtime_limit_preserves_preparation_fingerprint_and_continue_uses_new_limit(budget_h):
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_continue_keeps_the_captured_runtime_limit_and_preparation_fingerprint(budget_h):
     h = budget_h
-    workspace, job = start(h)
+    me = h.get('admin', '/api/me')
+    # Save explicit defaults first so the later change alters only the runtime limit.
+    initial = h.command('admin', 'department.settings', {**department_settings(h),
+        'generation_defaults': {'max_search_minutes': 45}}, h.seed['department_id'], me['organisation']['revision'])
+    _, job = start(h)
+    limit = initial['department']['generation_defaults']['max_search_minutes']
+    assert job['effective_options']['max_search_minutes'] == limit
     exhausted(h, job, {'model': 'preserved'})
     me = h.get('admin', '/api/me')
     saved = h.command('admin', 'department.settings', {**department_settings(h),
         'generation_defaults': {'max_search_minutes': 90}}, h.seed['department_id'], me['organisation']['revision'])
     assert saved['organisation']['input_revision'] == me['organisation']['input_revision']
-    rejected = h.command('coordinator', 'job.continue', {'minutes': 91, 'reason': 'More than current limit'},
-        job['id'], status=422)
-    assert rejected['error']['code'] == 'SEARCH_MINUTES_LIMIT'
-    continued = h.command('coordinator', 'job.continue', {'minutes': 90, 'reason': 'Use new runtime limit'}, job['id'])['job']
-    assert continued['effective_options']['max_search_minutes'] == 90
+    assert saved['department']['generation_defaults']['max_search_minutes'] == 90 > limit
+    # The draft owns its search limit, including when an existing run is continued.
+    for minutes in (90, 91):
+        rejected = h.command('coordinator', 'job.continue', {'minutes': minutes, 'reason': 'More than captured limit'},
+            job['id'], status=422)
+        assert rejected['error']['code'] == 'SEARCH_MINUTES_LIMIT'
+    continued = h.command('coordinator', 'job.continue',
+        {'minutes': limit, 'reason': 'Use captured runtime limit'}, job['id'])['job']
+    assert continued['effective_options']['max_search_minutes'] == limit
     assert continued['input_fingerprint'] == job['input_fingerprint']
 
 
