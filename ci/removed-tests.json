@@ -1,13 +1,6 @@
 {
   "schema": 2,
-  "removed": [
-    {
-      "file": "tests/test_codeowners.py",
-      "node_count": 21,
-      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this file's tests of their content and matching have nothing left to assert. Its 21 nodes are listed in removed_nodes; Tier 1 classification stays asserted in tests/test_working_policy.py.",
-      "synthetic_version_owed": false
-    }
-  ],
+  "removed": [],
   "removed_nodes": [
     {
       "node": "tests/test_autoschedule_budget_api.py::test_increasing_runtime_limit_preserves_preparation_fingerprint_and_continue_uses_new_limit",
