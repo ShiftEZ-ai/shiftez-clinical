@@ -113,6 +113,9 @@ def test_randomized_relational_fixture_matches_full_and_edit_stores_current_comp
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', count)
     assert modes and modes[-1]['complete']
+    # Design decision: a saved check reuses the prior complete check (validation.incremental_edit_scope) instead of
+    # closing over every person and date a rule reaches. Its scope is the edited people and the sessions overlapping
+    # the edit, so the former all-people, six-session and seven-date scope assertions no longer hold.
     assert modes[-1]['people'] == {p['person_id'] for p in target['participants']}
     assert modes[-1]['shifts'] == {row['id'] for row in rows if row['start'] == target['start']}
     assert not result['validation'].get('scope') and 'score' in result['validation']

@@ -671,6 +671,11 @@
       "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
       "owner": "maintainer",
       "reason": "A change to an owned Tier 1 path is no longer refused; it passes the guard and is flagged for code-owner review. The Tier 1 and Tier 2 findings are asserted in test_guard_keeps_owned_tier1_and_tier2_findings."
+    },
+    {
+      "node": "tests/test_planning_incremental.py::test_department_assignment_check_closes_over_global_rules_and_matches_full_evaluation",
+      "owner": "maintainer",
+      "reason": "Renamed to test_department_assignment_check_limits_global_rules_to_edited_people_and_matches_full_evaluation: saved checks reuse the prior complete check for unedited people instead of closing over every session a global rule reaches; the equality with the full evaluation is kept."
     }
   ]
 }

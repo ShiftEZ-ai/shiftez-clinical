@@ -191,8 +191,12 @@ def test_department_assignment_check_reuses_sessions_and_matches_full_evaluation
     assert canonical(result) == canonical(full)
 
 
-def test_department_assignment_check_closes_over_global_rules_and_matches_full_evaluation(department_assignment_check):
+def test_department_assignment_check_limits_global_rules_to_edited_people_and_matches_full_evaluation(
+        department_assignment_check):
     full, result, calls, _, _, setups = department_assignment_check
+    # Design decision: incremental_edit_scope replaces the rule-map closure for saved checks. A rule that reaches
+    # all 450 sessions re-evaluates only the edited people and overlapping sessions; the rest comes from the prior
+    # complete check, and the result must still equal the full evaluation.
     assert calls[-1] and 0 < len(calls[-1]['people']) < 10
     assert 0 < len(setups) == len(calls[-1]['shifts']) < 10
     assert canonical(result) == canonical(full)
