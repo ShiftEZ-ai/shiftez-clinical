@@ -266,6 +266,7 @@ def test_weekend_days_are_one_audited_department_setting_that_leaves_rotas_alone
     w = h.shift(h.workspace('Weekend check', start='2026-10-11', end='2026-10-18'),
         start='2026-10-11T08:00:00+03:00', end='2026-10-11T12:00:00+03:00')['workspace']
     w = h.lifecycle(h.lifecycle(w, 'submit')['workspace'], 'approve', 'approver')['workspace']
+    org = h.get('admin', '/api/me')['organisation']
     payload = {'department_name': dept['name'], 'department_revision': dept['revision'], 'organisation_name': org['name'],
                'timezone': org['timezone'], 'week_start': org['week_start'], 'reason': 'Weekend is Saturday and Sunday'}
     for bad in ([5, 5], [7], [-1]):

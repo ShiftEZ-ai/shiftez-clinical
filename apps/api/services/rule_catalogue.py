@@ -1201,6 +1201,21 @@ def _numbers_text(line):
     return ", ".join(f"{k} {n['value']:g}" if n.get("value") is not None else k for k, n in (line.get("numbers") or {}).items()) or "no number"
 
 
+# An empty list or table is said in plain words, never as the validator's text ("List should have at least 1 item").
+_EMPTY_WORDS = {'weekdays': 'Choose at least one day', 'numbers': 'Give the line a number',
+                'conditions': 'Add a condition or remove the empty group'}
+
+
+def _check_issue(error):
+    """One validation error of a checked rule, as an issue the line editor shows."""
+    message = error['msg'].removeprefix('Value error, ')
+    if error['type'] == 'too_short':
+        message = next((_EMPTY_WORDS[x] for x in reversed(error['loc']) if x in _EMPTY_WORDS), 'Choose at least one value')
+    if error['type'] == 'invalid_number_range':
+        return {'field': 'definition.rule.' + '.'.join(map(str, error['loc']))[len('rule.catalogue.'):], 'message': message}
+    return {'field': '.'.join(map(str, error['loc'])), 'code': 'INVALID_RULE_DEFINITION', 'message': message}
+
+
 def check(db, actor, catalogue_id, body):
     """What a catalogue rule with these lines would do, before anything is saved: duplicates (the same line twice on
     overlapping dates and days), overlaps (a more specific line outranking another, for how many people today, and what
@@ -1255,12 +1270,8 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
     except ValidationError as error:
         if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
             raise
-        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {}, "issues": [
-            ({"field": ("definition.rule." + ".".join(map(str, e["loc"]))[len("rule.catalogue."):]),
-              "message": e["msg"].removeprefix("Value error, ")}
-             if e['type'] == 'invalid_number_range' else
-             {"field": ".".join(map(str, e["loc"])), "code": "INVALID_RULE_DEFINITION", "message": e["msg"].removeprefix("Value error, ")})
-            for e in error.errors(include_input=False, include_url=False)]}
+        return {"duplicates": [], "overlaps": [], "line_overlaps": {}, "line_replaces": {}, "warnings": [], "counting_attention": [], "dated": dated, "inherited": {},
+                "issues": [_check_issue(e) for e in error.errors(include_input=False, include_url=False)]}
     definition = value.model_dump(mode="json")
     lines = definition["rule"]["lines"]
     counting = counting_attention({'definition': definition, 'ends_on': policy_ends_on})
@@ -1320,11 +1331,7 @@ def _check(db, actor, entry, body, people=None, reach_preview=False, *, policy_e
             except ValidationError as error:
                 if not stored and any(e['type'] == s.BALANCE_SHARE_OFFERED_METRIC for e in error.errors()):
                     raise
-                issues = [({'field': ('definition.rule.' + '.'.join(map(str, e['loc']))[len('rule.catalogue.'):]),
-                            'message': e['msg'].removeprefix('Value error, ')} if e['type'] == 'invalid_number_range' else
-                           {'field': '.'.join(map(str, e['loc'])), 'code': 'INVALID_RULE_DEFINITION',
-                            'message': e['msg'].removeprefix('Value error, ')})
-                          for e in error.errors(include_input=False, include_url=False)]
+                issues = [_check_issue(e) for e in error.errors(include_input=False, include_url=False)]
             else:
                 definition = value.model_dump(mode='json')
                 lines = definition['rule']['lines']
