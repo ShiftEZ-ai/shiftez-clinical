@@ -27,8 +27,7 @@ def b7_department(request, scale_harness):
     weekly = h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-18',
         'repeat': True, 'window_alignment': 'fixed', 'window_days': 7,
         'metric': 'session_units', 'comparison': 'minimum', 'amount': 6}, {'person_id': intern})
-    sport = h.policy({'kind': 'minimum_cover', 'minimum': 2},
-        {'person_ids': fellows, 'service_id': h.seed['services'][1]}, severity='advisory')
+    sport = h.cover_target(2, {'person_ids': fellows, 'service_id': h.seed['services'][1]})
     missing = h.configure('assignment_types', {'name': 'Synthetic B7 absent service', 'starts_on': '2020-01-01',
         'definition': {'requirements': []}})['record']
     data['types'][missing['id']] = missing
@@ -184,8 +183,7 @@ def test_october_job_result_applies_reachable_quota_and_fellow_targets_after_rel
         'definition': {'requirements': [], 'session_units': 1}})['record']
     quota = h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
         'metric': 'session_units', 'comparison': 'minimum', 'amount': 6}, {'person_id': intern})
-    h.policy({'kind': 'minimum_cover', 'minimum': 2},
-        {'person_ids': fellows, 'service_id': h.seed['services'][1]}, severity='advisory')
+    h.cover_target(2, {'person_ids': fellows, 'service_id': h.seed['services'][1]})
     workspace = h.workspace()
     for day in range(4, 10):
         workspace = h.shift(workspace, start=f'2026-10-{day:02}T08:00:00+03:00',

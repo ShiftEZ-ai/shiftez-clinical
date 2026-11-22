@@ -60,7 +60,8 @@ def test_approved_listed_quota_rows_keep_independent_dates_and_settings(h, same_
 
     snapshot = h.snapshot(workspace)
     assert compatibility_issues(snapshot) == []
-    copies = [copy for copy in active_rules(snapshot) if copy['id'] == original['id']]
+    copies = sorted((copy for copy in active_rules(snapshot) if copy['id'] == original['id']),
+                    key=lambda copy: copy['template_line']['line'])
     assert [copy['template_line']['line'] for copy in copies] == [0, 1]
     assert [copy['template_line']['person_id'] for copy in copies] == [first, first if same_person else second]
     # Compare complete primitive rule bodies with separately approved native facts.
@@ -212,6 +213,8 @@ def test_converted_listed_prorated_target_keeps_operative_header_and_override_ad
     first_target = next(row for row in fractional['validation']['quota_report']['rows']
                         if row['policy_id'] == original['id'] and row['person_id'] == first)
     assert first_target['metric'] == 'duties' and first_target['amount'] == 4.57
+    assert fractional['workspace']['target_overrides'][0]['policy_revision'] == first_target['policy_revision'] == original['revision']
+    assert not any(f['code'] == 'TARGET_OVERRIDE_STALE' for f in fractional['validation']['findings'])
     workspace = fractional['workspace']
     updated = h.command('coordinator', 'workspace.target_override', payload,
                         workspace['id'], workspace['revision'])

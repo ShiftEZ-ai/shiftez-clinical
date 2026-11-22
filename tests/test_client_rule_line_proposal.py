@@ -22,3 +22,16 @@ console.log(JSON.stringify(lineProposal(draft,lines)));
     body = json.loads(result.stdout.strip().splitlines()[-1])
     assert body == {'on': on, 'lines': [{'id': 'a'}, {'id': 'b'}], 'settings': {'block_quota': {'metric': 'duties'}},
                     'balance': False, 'seen': ['a']}
+
+
+@pytest.mark.parametrize('lines,on', [([{'id': 'a'}], True), ([], False)], ids=['first-line', 'no-line'])
+def test_the_first_line_of_a_rule_never_in_force_turns_it_on(client_modules, lines, on):
+    """#1200: a rule with no version yet (baseId null) is turned on by its first line; a rule in force keeps its own."""
+    script = FAKE_DOM + f"""
+const {{lineProposal}}=await import({json.dumps((client_modules / 'rule_catalogue.js').as_uri())});
+const draft={{on:false,lines:[],settings:{{}},balance:true,base:null,baseId:null,seen:[]}};
+console.log(JSON.stringify(lineProposal(draft,{json.dumps(lines)}).on));
+"""
+    result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) is on

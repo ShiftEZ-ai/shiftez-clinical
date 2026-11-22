@@ -577,7 +577,7 @@ def test_every_view_draws_visible_rows(browser, live_server, h, layer):
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_published_session_details_show_the_live_check(browser, live_server, h, scheme):
     """maintenance review: a published-only session's details show the published rota's live check, not "Not checked yet"."""
-    h.policy({'kind': 'restriction'}, {'person_id': h.seed['people'][0]}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': h.seed['people'][0]}, severity='advisory')
     w = h.shift(h.workspace('Published with a warning'))['workspace']
     h.lifecycle(w, 'validate')
     h.publish(h.detail(w)['workspace'])

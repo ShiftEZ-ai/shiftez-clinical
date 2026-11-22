@@ -176,7 +176,7 @@ def test_overnight_restriction_keeps_each_weekdays_clock_attribution(h, weekday,
     assert [(aware(f["start"]), aware(f["end"])) for f in findings] == [tuple(map(aware, expected))]
 
 
-def test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_cost(h):
+def test_unrelated_midnight_membership_does_not_multiply_advisory_workload_cost(h):
     from packages.domain.cp_sat import generate
 
     data = snapshot(h)
@@ -187,7 +187,8 @@ def test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_co
     data["people"][person]["tags"] = ["synthetic"]
     scope = {"person_id": person, "conditions": {"match": "all", "conditions": [
         {"field": "tags", "op": "any", "values": ["synthetic"]}]}}
-    data["policies"] = [policy(data, {"kind": "restriction"}, scope)]
+    # Safety restrictions are always mandatory. A workload limit can still test advisory cost.
+    data["policies"] = [policy(data, {"kind": "max_duties", "maximum": 0, "window": "day"}, scope)]
     data["policies"][0]["definition"]["severity"] = "advisory"
     before = generate(data, 3, workers=1, deterministic=True)
     dated_scope(data, person, "programme_ids", "join")

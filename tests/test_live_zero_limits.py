@@ -644,6 +644,12 @@ def test_target_override_changes_captured_target_but_cannot_waive_live_zero(h):
                and 'current department rule' in f['message'] for f in evaluate(data)['findings'])
     for generate in (greedy_generate, cp_sat_generate):
         assert generate(empty_for_person(data, h.seed['people'][0]), 2)['additions'] == []
+    updated = h.command('coordinator', 'workspace.target_override', {'policy_id': source['id'],
+        'person_id': h.seed['people'][0], 'amount': 4.57, 'reason': 'Reconfirm the captured target'},
+        draft['id'], draft['revision'])
+    assert any(row['comparison'] == 'target' and row['amount'] == 4.57
+               for row in updated['validation']['quota_report']['rows'])
+    assert any(f['code'] == 'QUOTA_ABOVE_MAXIMUM' for f in updated['validation']['findings'])
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)

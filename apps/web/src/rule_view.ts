@@ -50,7 +50,7 @@ export function allLimits(definition:Row):Limits[]{
 }
 /** One piece of a rule's numbers: its text ("3", "2↰", "1–2"), its strength (`level`: "mandatory", an advisory level,
  *  null taken from the broader line; absent on a separator) and, for a number taken from a broader line, that line. */
-export type NumberPart={text:string;from?:string;level?:string|null};
+export type NumberPart={text:string;from?:string;level?:string|null;reason?:string};
 /** A strength in words: "Mandatory", "Advisory · high", "Inherited strength". */
 export const levelWords=(level:string|null|undefined)=>level==='mandatory'?'Mandatory':level==='advisory'?'Advisory':level==='off'?'Off':level?`Advisory · ${(STRENGTH_LABELS[level as keyof typeof STRENGTH_LABELS]||level).toLowerCase()}`:'Inherited strength';
 /** Rule numbers, one style everywhere: min – max → target as "1 – 2", "≥ 1", "≤ 5",
@@ -62,7 +62,7 @@ export function rangeParts(min:NumberPart|null,max:NumberPart|null,target:Number
   return out;
 }
 /** The strengths of numbered parts: one when they agree (shown once, after them), else null (shown after each). */
-const oneLevel=(parts:NumberPart[])=>{const ls=[...new Set(parts.filter(x=>x.level!=null).map(x=>x.level))];return ls.length===1?{level:ls[0]}:ls.length?null:undefined;};
+const oneLevel=(parts:NumberPart[])=>{const ls=[...new Set(parts.filter(x=>x.level!=null).map(x=>x.level))];return ls.length===1?{level:ls[0],reason:parts.find(x=>x.reason)?.reason}:ls.length?null:undefined;};
 /** "≥ 11 · Mandatory", "≤ 6 duties per week · Mandatory", "2 – 5 mandatory → 4 advisory · medium": numbers (then
  *  what they count, `unit`) with their strength in words (titles, search, sentences). */
 export function partsText(parts:NumberPart[],unit=''):string{
@@ -84,14 +84,18 @@ export const setAdvisoryWeights=(w:Record<string,number>|undefined)=>{weights={.
 export const levelTip=(level:string|null|undefined)=>level==='mandatory'?'Must hold: the auto-schedule never breaks it'
   :!level||level==='off'||level==='advisory'?'':weights[level]&&weights.low?`Counts ${Math.round(weights[level]/weights.low)}× a low advisory rule in the schedule score`
   :'Its weight in the schedule score is set in Configuration › Auto-schedule & scoring';
-export const levelBadge=(level:string|null|undefined)=>{const tip=levelTip(level);
-  return badge(levelWords(level),'','rc-level',{tip,'data-level':level==='mandatory'?'mandatory':level?'advisory':'inherit','data-strength':level||undefined});};
+export const levelBadge=(level:string|null|undefined,reason?:string)=>{
+  const label=badge(levelWords(level),'','rc-level',{tip:reason||levelTip(level),
+    'data-level':level==='mandatory'?'mandatory':level?'advisory':'inherit','data-strength':level||undefined});
+  if(reason)label.append(el('span',{class:'sr-only'},`. ${reason}`));
+  return label;
+};
 /** Rule numbers drawn: plain text in the UI font, tabular numerals, weight 500 (`.rule-num`; never a pill, never mono);
  *  an inherited number muted, its tooltip naming the line it comes from (`from`); the strength badge after them. */
 export function numbersEl(parts:NumberPart[],from:(id:string)=>string=()=>'a broader line'):HTMLElement{
   if(!parts.length)return el('span',{class:'rule-num muted'},'—');
   const one=oneLevel(parts),num=(x:NumberPart)=>x.from?inheritedEl(x.text,from(x.from)):x.text;
-  return el('span',{class:'rule-num'},...parts.flatMap((x,i)=>one===null&&x.level!=null&&runEnds(parts,i)?[num(x),' ',levelBadge(x.level)]:[num(x)]),...(one?[' ',levelBadge(one.level)]:[]));
+  return el('span',{class:'rule-num'},...parts.flatMap((x,i)=>one===null&&x.level!=null&&runEnds(parts,i)?[num(x),' ',levelBadge(x.level,parts.find(p=>p.level===x.level&&p.reason)?.reason)]:[num(x)]),...(one?[' ',levelBadge(one.level,one.reason)]:[]));
 }
 const inheritedEl=(text:string,source:string)=>el('span',{class:'rc-inh','data-tip':`Inherited from ${source}`,'aria-label':`${text.replace('↰','')}, inherited from ${source}`},text);
 /** A checked copy's numbers (Which rule applies?): "≤ 5" and its strength. */

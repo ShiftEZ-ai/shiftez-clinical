@@ -4225,6 +4225,10 @@ b.tl-more{color:var(--accent-text)}
 .rc-prop-warnings{margin:0;padding:0;list-style:none;display:grid;gap:4px;font-size:12.5px}
 .rc-prop-warnings li{display:flex;gap:6px;align-items:flex-start}
 .rc-prop-warnings li>.icon{flex:none;width:14px;height:14px;margin-top:2px;color:var(--warn-text)}
+/* Lines that give way: plain information in the waiting notice, never its warning colour; one short line each. */
+.rc-prop-gives{margin:0;padding:0;list-style:none;display:grid;gap:2px;font-size:12.5px;color:var(--ink-2)}
+.rc-prop-gives:not(:last-child){margin-bottom:8px}
+.rc-prop-gives li{overflow-wrap:anywhere}
 .rc-prop-who{margin:0;font-size:12.5px}
 .rc-prop-reason{overflow-wrap:anywhere}
 /* A rule number's strength in words (never a "!" to decode): Mandatory solid, Advisory outline, inherited dashed. */

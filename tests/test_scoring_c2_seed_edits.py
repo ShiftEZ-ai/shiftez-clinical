@@ -59,6 +59,7 @@ def test_deleting_a_seeded_line_sticks_through_approved_revisions(h, deleted):
             'reason': 'Keep the approved removal of a seeded preference'})['record']
         current = h.command('approver', 'policy.activate', {'reason': 'Independent removal review'},
             proposal['id'], proposal['revision'])['record']
+        workspace = h.refresh_draft_baseline(workspace)
         data = h.snapshot(workspace)
         current = next(p for p in h.get('admin', '/api/policies?status=active')['policies'] if p['id'] == current['id'])
         assert {line['id'] for line in current['definition']['rule']['lines']} == {line['id'] for line in kept}

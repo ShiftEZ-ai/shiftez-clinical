@@ -252,7 +252,7 @@ def test_december_requirements_conflict_cannot_be_applied_or_change_the_draft(h)
     with transaction(h.app.state.engine, write=True) as db:
         row = m.Job(department_id=workspace['department_id'], workspace_id=workspace['id'],
                     requested_by=h.seed['identities']['coordinator'], kind='generation', status='succeeded',
-                    input_fingerprint=source['fingerprint'], input_snapshot={},
+                    input_fingerprint=source['fingerprint'], input_snapshot=source,
                     result={'status': 'requirements_conflict', 'additions': [], 'removals': []})
         db.add(row)
         db.flush()
@@ -390,7 +390,7 @@ def test_top_person_reason_names_the_person_already_working_then(h):
 
 def test_panel_acceptance_exposes_the_resolve_key_and_persists_with_undo(h):
     person = h.seed['people'][0]
-    h.policy({'kind': 'restriction'}, {'person_id': person}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': person}, severity='advisory')
     workspace = h.shift(h.workspace(), people=[person])['workspace']
     job = run_job(h, workspace)
     acceptance = job['advisory_acceptance']
@@ -410,7 +410,7 @@ def test_panel_acceptance_exposes_the_resolve_key_and_persists_with_undo(h):
 
 
 def test_proposal_only_advisory_can_be_accepted_only_after_apply(h):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     workspace = h.shift(h.workspace(), people=[])['workspace']
     job = run_job(h, workspace)
     assert job['advisory_acceptance']['issues']

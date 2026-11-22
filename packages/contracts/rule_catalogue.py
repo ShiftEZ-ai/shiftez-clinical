@@ -9,7 +9,7 @@ number has several slots, a line's effective settings choose: the first slot who
 from copy import deepcopy
 from typing import get_args, get_origin
 
-from .schemas import (NEVER_OVERRIDDEN, PATTERN_WISH_KINDS, WORKLOAD_COUNT_KINDS, Conditions, RuleLine, RulePrimitive,
+from .schemas import (ALWAYS_MANDATORY_KINDS, NEVER_OVERRIDDEN, PATTERN_WISH_KINDS, WORKLOAD_COUNT_KINDS, Conditions, RuleLine, RulePrimitive,
                       WorkloadPeriod, WishKind, GenerationNotApplied)
 
 FAMILIES = (('staffing', 'Staffing on a session'), ('workload', 'Workload over time'), ('pattern', 'Work pattern'),
@@ -175,7 +175,7 @@ GREEDY_NOT_APPLIED = [item.model_dump(mode='json') for item in (
     GenerationNotApplied(input='advisory_limits', kinds=sorted({slot['kind']
         for entry in RULE_CATALOGUE if 'mandatory' in entry['levels']
         for slots in entry['numbers'].values() for slot in slots
-        if not slot['advisory'] and slot['kind'] not in {'minimum_cover', 'supervision_limit', 'team_lead_requirement'}}),
+        if not slot['advisory'] and slot['kind'] not in ALWAYS_MANDATORY_KINDS}),
         message='Advisory limits are not used to select assignments; for block quotas this means advisory maxima only. '
                 'Quota minima and targets, coverage needs, allocation preferences and mandatory limits are still used.'),
 )]

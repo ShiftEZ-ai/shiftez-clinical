@@ -275,8 +275,8 @@ def test_diagnostic_proposal_score_matches_full_rota_after_apply_with_kept_scope
 
 
 def test_valid_schedule_survives_timeout_while_improving(h, monkeypatch):
-    # Desired cover makes the first objective nonempty; the advisory restriction leaves a nonzero weighted loss.
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    # Desired cover makes the first objective nonempty; the advisory workload cap leaves a nonzero weighted loss.
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     w = h.shift(h.workspace(), people=[])['workspace']
     data = h.snapshot(w)
     data['shifts'][0]['type_snapshot']['definition']['requirements'][0].update(minimum=0, target=1, maximum=1)
@@ -620,14 +620,13 @@ def test_distinct_capabilities_cannot_be_filled_by_one_person(h):
 
 def test_soft_rest_never_weakens_a_mandatory_rest_rule(h):
     person = h.seed['people'][0]
-    h.policy({'kind': 'min_rest', 'hours': 24}, severity='advisory')
+    h.stored_advisory_safety({'kind': 'min_rest', 'hours': 24})
     w = h.shift(h.workspace(), people=[])['workspace']
     w = h.shift(w, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00', people=[])['workspace']
     data = h.snapshot(w)
     data['people'] = {person: data['people'][person]}
-    result = generate(data, 5)
-    assert result['status'] == 'candidate_feasible'
-    assert any(f['code'] == 'MIN_REST' and f['severity'] == 'warning' for f in result['validation']['findings'])
+    # Safety kinds are always mandatory, including a stored advisory minimum rest.
+    assert generate(data, 5)['status'] == 'requirements_conflict'
     next(p for p in data['policies'] if p['kind'] == 'min_rest')['definition']['severity'] = 'mandatory'
     assert generate(data, 5)['status'] == 'requirements_conflict'
 
@@ -683,9 +682,9 @@ def test_next_day_prohibition_is_separate_from_elapsed_rest(h):
     data['people'] = {person: data['people'][person]}
     assert generate(data, 5)['status'] == 'requirements_conflict'  # 28 hours rest still prohibits this next-day pair.
     next(p for p in data['policies'] if p['kind'] == 'forbidden_transition')['definition']['severity'] = 'advisory'
+    # Safety kinds are always mandatory, including a stored advisory next-day combination.
     result = generate(data, 5)
-    assert result['status'] == 'candidate_feasible'
-    assert any(f['code'] == 'FORBIDDEN_TRANSITION' for f in result['validation']['findings'])
+    assert result['status'] == 'requirements_conflict'
 
 
 def test_consecutive_days_include_protected_history_and_exact_exception_window(h):

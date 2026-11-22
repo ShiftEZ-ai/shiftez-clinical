@@ -307,7 +307,8 @@ def test_swap_checks_only_changed_days_and_people_but_keeps_full_publication(req
     monkeypatch.setattr(planning, "evaluate", checked)
     typ = h.configure("assignment_types", {"name": "Unrelated synthetic duty", "starts_on": "2020-01-01",
                                           "definition": {}})["record"]
-    h.policy({"kind": "minimum_cover", "minimum": 2}, {"assignment_type_id": typ["id"]}, severity="advisory")
+    # Safety kinds are always mandatory. This unrelated duty has a cover target.
+    h.cover_target(2, {"assignment_type_id": typ["id"]})
     pid, first, second, _ = source_pair(h)
     # An ordinary amendment adds an unrelated day to the publication before consent starts.
     w = h.workspace(base=pid)

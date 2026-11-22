@@ -5,6 +5,7 @@ import pytest
 from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, navigate, new_draft, save_dialog, sign_in  # noqa: F401
+from .test_publish_revised_mandatory import revise
 
 pytestmark = pytest.mark.browser
 
@@ -62,5 +63,26 @@ def test_custom_draft_baseline_survives_reload_and_opens_refresh_review(browser,
                 expect(refresh.get_by_role("status")).to_have_text("Choose an outcome for each conflict")
         for words in ("frozen snapshot", "The preview is read-only", "No source groups", "source group"):
             expect(refresh).not_to_contain_text(words)
+    finally:
+        context.close()
+
+
+def test_submit_refusal_offers_refresh_for_a_revised_department_limit(browser, live_server, h):
+    policy = h.policy({'kind': 'max_duties', 'maximum': 2, 'window': 'week'})
+    draft = h.shift(h.workspace('Review after a rule change'))['workspace']
+    draft = h.shift(draft, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00')['workspace']
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        navigate(page, f"planner/{draft['id']}")
+        page.get_by_role('button', name='Submit for review…', exact=True).click()
+        dialog = page.get_by_role('dialog', name=f"Submit {draft['name']} for review", exact=True)
+        submit = dialog.get_by_role('button', name='Submit for review', exact=True)
+        expect(submit).to_be_enabled()
+
+        revise(h, policy, 1, field='maximum')
+        submit.click()
+        expect(dialog).to_contain_text('A department rule changed')
+        dialog.get_by_role('button', name='Refresh', exact=True).click()
+        expect(page.get_by_role('dialog', name='Refresh draft baseline', exact=True)).to_be_visible()
     finally:
         context.close()

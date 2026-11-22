@@ -242,6 +242,46 @@ def _wish_reservation_changes(row, name, old, new):
     return old is NO_VALUE or new is NO_VALUE or _wish_reservation(old) != _wish_reservation(new)
 
 
+def _unread_status_change(session, row, changed):
+    """Other rotas read a rota's status only in snapshot_wishes' settled reservation, over each reader's wish-budget
+    window: [period start of its first day, period end of its last day), as snapshot_wishes computes it. A status-only
+    write that meets no such window changes no other rota's snapshot. The rota's own status change is covered by its
+    workspace revision and draft policy basis in its stamps, not by the input revision."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from . import models as m
+    # A reflected DML row loads only scope columns; without its dates, advance (fail safe) rather than load more.
+    if (not isinstance(row, m.Workspace) or set(changed) != {'status'}
+            or {'starts_on', 'ends_on'} & inspect(row).unloaded):
+        return False
+    from .services.wishes import period_of, scoring
+    from .workspace_baselines import latest_many
+    W, B = m.Workspace, m.WorkspaceBaseline
+    reach = timedelta(days=92)  # A wish period is at most a quarter, so no window reaches further.
+    with session.no_autoflush:
+        readers = session.execute(select(W.id, W.starts_on, W.ends_on).where(
+            W.department_id == row.department_id, W.id != row.id, W.archived_at.is_(None),
+            W.starts_on < row.ends_on + reach, W.ends_on > row.starts_on - reach)).all()
+        if not readers:
+            return True
+        department = session.get(m.Department, row.department_id)
+        week_start = session.get(m.Organisation, department.organisation_id).week_start
+        current = scoring(session, row.department_id).wish_period
+        # A rota's baseline may freeze older scoring settings; an absent period there means the default month.
+        baselines = latest_many(session, [reader.id for reader in readers])
+        path = ('departments', row.department_id, 'generation_defaults', 'scoring', 'wish_period')
+        frozen = dict(session.execute(select(B.workspace_id, B.canonical_payload[path].as_string()).where(
+            B.id.in_([baseline.id for baseline in baselines.values()]))).all()) if baselines else {}
+    for reader in readers:
+        for period in {current, *([frozen.get(reader.id) or 'month'] if reader.id in baselines else [])}:
+            settings = SimpleNamespace(wish_period=period)
+            lo = period_of(reader.starts_on, settings, week_start)[0]
+            hi = period_of(reader.ends_on - timedelta(days=1), settings, week_start)[1]
+            if row.starts_on < hi and row.ends_on > lo:
+                return False
+    return True
+
+
 @event.listens_for(Session, 'before_flush')
 def stamp_snapshot_inputs(session, _flush_context, _instances):
     """Every registry mutation stamps unless all changed attributes are excluded."""
@@ -265,11 +305,12 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         category, exclusions = spec
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
-            if not any(attribute.history.has_changes() and (
-                    _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
-                    or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))
-                    for attribute in state.attrs
-                    for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)):
+            changed = [attribute.key for attribute in state.attrs
+                       for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)
+                       if attribute.history.has_changes() and (
+                           _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
+                           or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))]
+            if not changed or _unread_status_change(session, row, changed):
                 continue
         if isinstance(row, m.Organisation) and row in session.new and row.id is None:
             row.id = m.uid()
@@ -391,9 +432,10 @@ def stamp_snapshot_input_statement(execution):
                     changes = {name: value for name, value in parameters_for_row.items()
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
-                if changes and not any(_snapshot_attribute_changes(row, name, getattr(row, name), value, exclusions)
-                                       or _wish_reservation_changes(row, name, getattr(row, name), value)
-                                       for name, value in changes.items()):
+                changed = [name for name, value in changes.items()
+                           if _snapshot_attribute_changes(row, name, getattr(row, name), value, exclusions)
+                           or _wish_reservation_changes(row, name, getattr(row, name), value)]
+                if changes and (not changed or _unread_status_change(session, row, changed)):
                     continue
             resolved = _snapshot_input_organisation_ids(session, row, related)
             if resolved is None:
@@ -638,6 +680,7 @@ def retain_snapshot_input_savepoint(session, transaction):
 def discard_rolled_back_snapshot(session, previous_transaction):
     session.info.get('_request_parents', {}).clear()
     session.info.get('_request_authority', {}).clear()
+    session.info.pop('_baseline_hints', None)
     session.info.pop('write_domain_snapshots', None)
     session.info.pop('_live_safety_sources', None)
     session.info.pop('_activation_projection_cache', None)
@@ -660,6 +703,7 @@ def discard_finished_snapshot_input_state(session, transaction):
     if transaction.parent is None:
         session.info.pop('_request_parents', None)
         session.info.pop('_request_authority', None)
+        session.info.pop('_baseline_hints', None)
         session.info.pop('_request_workspace_criteria', None)
         session.info.pop('_snapshot_input_revisions', None)
 

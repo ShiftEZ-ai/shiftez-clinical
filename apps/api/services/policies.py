@@ -56,6 +56,8 @@ def _activation_phase(db, name, function, *args, **kwargs):
 
 def policy_versions(db, actor, rows):
     """Approval labels on policy versions; absent historical evidence stays unknown."""
+    from packages.domain.conditions import effective_severity
+
     if not rows:
         return []
     ids = {row['id'] for row in rows}
@@ -145,8 +147,13 @@ def policy_versions(db, actor, rows):
                     or markers.get(row['id']) in archives)
         reason = ('Grouped imported requirements for review.' if row['definition'].get('merged_ids') else
                   'Imported scheduling requirement for review.') if imported else reasons.get(row['id'], row.get('source'))
+        definition = row['definition']
+        stored = definition.get('severity', 'mandatory')
+        severity = effective_severity(definition['rule']['kind'], stored)
         result.append({**row, 'approved_by_name': identities.get(approval_by, (None, None))[0],
-                       'approved_at': at, 'reason': reason})
+                       'approved_at': at, 'reason': reason,
+                       **({'effective_severity': severity, 'severity_reason': s.SAFETY_MANDATORY_REASON}
+                          if severity != stored else {})})
     return result
 
 
@@ -1507,7 +1514,7 @@ def grouping_proof(db, actor, groups, model=False, score_may_move=False):
                                      mandatory_rules=False)
         a, b = evaluate(before_data), evaluate(after_data)
         diff = same_checks(a, b, id_map)
-        score = lambda data, validation: schedule_score(data, validation, department.generation_defaults)["score"]
+        score = lambda data, validation: schedule_score(data, validation, data["department"].get("generation_defaults"))["score"]
         result["rotas"].append({"workspace_id": w.id, "name": w.name, "status": w.status, **diff,
                                 "findings": len(a["findings"]), "findings_after": len(b["findings"]), "quota_rows": len((a.get("quota_report") or {}).get("rows", [])),
                                 "solver_inputs_equal": expanded(before_data["policies"], id_map, week_start) == expanded(after_data["policies"], None, week_start),

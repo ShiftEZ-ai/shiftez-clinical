@@ -355,8 +355,11 @@ def test_replace_refuses_new_candidate_warnings_even_when_the_person_stays_the_s
     w = leave_rota(h, days=('04',))
     keys = [issue_key(f) for f in issues(h, w, 'UNAVAILABLE')]
     first = preview(h, w, keys)
-    h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '00:00', 'end_time': '24:00'},
-             {'person_ids': [jordan, taylor]}, severity='advisory')
+    # Safety kinds are always mandatory. A workload cap provides the new warning.
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'},
+             {'person_ids': [jordan, taylor], 'weekdays': [6]}, severity='advisory')
+    w = h.refresh_draft_baseline(w)
+    w = h.lifecycle(w, 'validate')['workspace']
     again = preview(h, w, keys)
     assert first['plan'][0]['replacement_id'] == again['plan'][0]['replacement_id'] == min(
         (jordan, taylor), key=lambda pid: best_order_key(0, 0, pid, first['plan'][0]['shift_id']))

@@ -596,19 +596,16 @@ def continue_generation(db, actor, command, settings):
             and (previous.result or {}).get('algorithm_version', COMPILER_VERSION) == COMPILER_VERSION,
             'STALE_SCHEDULER', 'The scheduler changed; start a fresh run', 409)
     baseline_defaults, _ = baseline_generation_context(db, workspace)
-    saved_defaults = s.GenerationOptions.model_validate(snapshot.get('generation_defaults') or {})
     options = s.GenerationOptions.model_validate(snapshot.get('generation_options') or {})
     from packages.domain.solver_resume import resume_key
     current_snapshot = {**snapshot, 'generation_defaults': baseline_defaults.model_dump(mode='json')}
     require(resume_key(snapshot, options, False, False) == resume_key(current_snapshot, options, False, False),
             'STALE_INPUTS', 'The draft scheduling inputs changed; start a fresh run', 409)
-    live_defaults = s.GenerationOptions.model_validate(generation_defaults_record(
-        db.get(m.Department, actor.department_id).generation_defaults) or {})
     minutes = value.minutes if value.minutes is not None else options.search_minutes
-    require(minutes <= live_defaults.max_search_minutes, 'SEARCH_MINUTES_LIMIT',
-            f'Search time cannot exceed the department maximum of {live_defaults.max_search_minutes} minutes', 422)
+    require(minutes <= baseline_defaults.max_search_minutes, 'SEARCH_MINUTES_LIMIT',
+            f'Search time cannot exceed the captured maximum of {baseline_defaults.max_search_minutes} minutes', 422)
     snapshot['generation_options'] = {**options.model_dump(mode='json'),
-        'max_search_minutes': live_defaults.max_search_minutes}
+        'max_search_minutes': baseline_defaults.max_search_minutes}
     if value.minutes is not None:
         snapshot['generation_options']['search_minutes'] = value.minutes
     if (previous.result or {}).get('status') == 'requirements_conflict' and has_generation_checkpoint(previous):
@@ -617,8 +614,7 @@ def continue_generation(db, actor, command, settings):
         snapshot['diagnostic_proposal'] = True
         snapshot['generation_options'] = {**s.GenerationOptions.model_validate(
             snapshot.get('generation_options') or {}).model_dump(mode='json'), 'on_conflict': 'continue_flagged'}
-    snapshot['generation_defaults'] = {**saved_defaults.model_dump(mode='json'),
-                                       'max_search_minutes': live_defaults.max_search_minutes}
+    snapshot['generation_defaults'] = baseline_defaults.model_dump(mode='json')
     if value.minutes is not None:
         snapshot['generation_options_overridden'] = True
     previous_continuation = (snapshot.get('continuation') or {}).get('total_search_seconds', 0)

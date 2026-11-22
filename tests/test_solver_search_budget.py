@@ -346,7 +346,7 @@ def test_stopped_resume_reports_valid_incumbent_without_completed_score(h, monke
 
 def test_resumed_full_candidate_is_never_narrowed_or_made_worse(h, monkeypatch):
     from tests.scheduler_departments import department
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     data, _ = department(h, 7, people=10, days=2, rules='none', leave_rate=0)
     data['generation_options'] = {'shortlist_width': 1}
     saved = []
