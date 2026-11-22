@@ -28,7 +28,7 @@ const account=deferred(),lists=deferred(),calls=[];
 const flush=()=>new Promise(r=>setImmediate(r));  // every pending continuation runs (no time passes)
 let generation=0,me={roles:['coordinator']},accessRead={},inPlace=scenario==='local',
     view=scenario==='local'?'schedule':'people',routeParts=[],plannerMemo={},refreshForeground=scenario!=='quiet'?'people/':null,
-    refreshFailed=false,refreshSkipped=false,redrawOwed=false,readCount=0,
+    refreshFailed=false,pageFailed=false,refreshSkipped=false,redrawOwed=false,readCount=0,
     refreshScopes=scenario==='scoped-lists'?new Set(['rules']):undefined;
 const savedKinds=new Set(scenario==='local'?['shift.update']:[]);
 const sessionKey=()=>generation,pageStep=()=>'people/',readAfresh=()=>{},redraw=()=>calls.push('redraw'),
