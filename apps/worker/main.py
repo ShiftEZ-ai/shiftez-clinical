@@ -715,7 +715,7 @@ def claim_job(db, *, recovering_worker=None):
             "search_control": job.search_control, "progress": job.progress}
 
 
-def check_inputs_unchanged(db, workspace, stamp, checked):
+def check_inputs_unchanged(db, workspace, stamp):
     """True when the inputs a check read are provably the writer's, so its manifest needs no rebuild.
 
     Mirrors the API writer (commands.py): the preparation stamp (input revisions, every department's
@@ -723,18 +723,18 @@ def check_inputs_unchanged(db, workspace, stamp, checked):
     projections over the window the check's token covers are the same at the check's start and now.
     Anything else takes the full rebuild.
     """
-    if stamp is None or 'selection' not in checked:
+    if stamp is None or stamp[2] is None:
         return False
     from datetime import datetime
     from apps.api.services import events
     from apps.api.snapshots import currency_match, preparation_stamp, snapshot_department_ids, snapshot_window
-    since, recorded = stamp
+    since, recorded, window = stamp
     current = preparation_stamp(db, workspace)
     if not currency_match(current, recorded):
         return False
     organisation = db.get(m.Organisation, db.get(m.Department, workspace.department_id).organisation_id)
-    # The snapshot widens its window to block-quota periods; its manifest records the window it read.
-    lo, hi = (datetime.fromisoformat(checked['selection'][key]) for key in ('start', 'end'))
+    # The snapshot widens its window to block-quota periods; its manifest recorded the window it read.
+    lo, hi = (datetime.fromisoformat(value) for value in window)
     if 'event_local_date' not in current and (lo, hi) == snapshot_window(workspace, organisation.timezone):
         return True
     # Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
@@ -793,8 +793,7 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
                 or ('previous_check' in claim
                     and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
                 or (current_manifest := result['input_manifest']
-                    if 'input_manifest' in result and check_inputs_unchanged(db, workspace, claim.get('check_stamp'),
-                                                                     result['input_manifest'])
+                    if 'input_manifest' in result and check_inputs_unchanged(db, workspace, claim.get('check_stamp'))
                     else domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
@@ -1679,11 +1678,15 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     # Fix-list receipts depend on the evidence and acknowledgements seen by this check.
                     claim['previous_check'] = (workspace.validation, workspace.accepted_issues)
                     since = m.now()
-                    result = revalidate(db, workspace, store=False, include_internal=True)
+                    read = []
+                    result = revalidate(db, workspace, store=False, include_internal=True, data_out=read)
                     check_cancelled()
                     # Read in this same snapshot, so the finish writer can skip rebuilding unchanged inputs.
                     from apps.api.snapshots import preparation_stamp
-                    claim['check_stamp'] = (since, preparation_stamp(db, workspace))
+                    selection = (read[0].get('input_manifest') or {}).get('selection') if read else None
+                    read.clear()  # Keep only the window, not the whole snapshot, through the finish.
+                    claim['check_stamp'] = (since, preparation_stamp(db, workspace),
+                                            selection and (selection['start'], selection['end']))
         except Exception as exc:
             error = error or (getattr(exc, 'code', type(exc).__name__)
                               if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
