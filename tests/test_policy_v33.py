@@ -39,6 +39,21 @@ class V33Tests(unittest.TestCase):
                 trusted_ci.select()
                 self.assertEqual(output.call_args.args[0]['measurement'],'false')
                 self.assertEqual(output.call_args.args[0]['candidate_sha'],'a'*40)
+    def test_root_measurement_dispatches_only_from_the_default_branch(self):
+        path=self.folder/'event.json'
+        for default in ('dev','main',None):
+            path.write_text(json.dumps({'inputs':{'root_measurement':'true'},'repository':{'default_branch':default}}))
+            for ref in ('refs/heads/dev','refs/heads/main'):
+                with self.subTest(default=default,ref=ref), \
+                     patch.dict(os.environ,{'GITHUB_EVENT_PATH':str(path),'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':ref}), \
+                     patch.object(trusted_ci,'settings',return_value={'unit_shards':1,'browser_shards':1}), \
+                     patch.object(trusted_ci,'pinned_root',return_value={'sha':'c'*40}), \
+                     patch.object(trusted_ci.subprocess,'check_output',return_value='b'*40),patch.object(trusted_ci,'output') as output:
+                    if ref=='refs/heads/'+str(default):
+                        trusted_ci.select()
+                        self.assertEqual(output.call_args.args[0]['candidate_sha'],'c'*40)
+                    else:
+                        with self.assertRaises(ValueError): trusted_ci.select()
     def test_every_private_agent_variant_is_a_guard_refusal(self):
         cases = set(names.AGENT_FILES) | set(names.AGENT_SPECIAL_PATHS)
         for directory in names.AGENT_DIRECTORIES:
@@ -97,15 +112,16 @@ class V33Tests(unittest.TestCase):
                         self.assertNotIn(job_id, saves)
                         saves[job_id] = step['if']
         self.assertEqual(restores, {('ci.yml', 'checks')})
-        self.assertEqual(saves, {('ci.yml', 'checks'): "github.event_name == 'push' && github.ref == 'refs/heads/dev' && "
+        self.assertEqual(saves, {('ci.yml', 'checks'): "github.event_name == 'push' && github.ref == "
+                                "format('refs/heads/{0}', github.event.repository.default_branch) && "
                                 "steps.dependency-cache.outputs.cache-hit != 'true'"})
         self.assertEqual(keys, {"public-ci-${{ runner.os }}-${{ runner.arch }}-"
                                 "${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', "
                                 "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertIn('dev', doc['on']['push']['branches'])
+        self.assertEqual(doc['on']['push']['branches'], ['dev', 'main'])
         for job in ('unit', 'browser', 'static', 'result'):
-            self.assertIn("(github.event_name != 'push' || github.ref != 'refs/heads/dev')", doc['jobs'][job]['if'])
+            self.assertIn("(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))", doc['jobs'][job]['if'])
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')

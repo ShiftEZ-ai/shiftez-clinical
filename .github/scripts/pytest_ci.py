@@ -164,7 +164,7 @@ def run_tests(args):
         flaky = []
         quarantined = case_properties(report, "fmuc_quarantine") if report.exists() else {}
         eligible_event = os.getenv("GITHUB_EVENT_NAME") == "pull_request" or (
-            os.getenv("GITHUB_EVENT_NAME") == "push" and os.getenv("GITHUB_REF") == "refs/heads/dev")
+            os.getenv("GITHUB_EVENT_NAME") == "push" and os.getenv("GITHUB_REF") == default_ref())
         if (not single_attempt and not partitioned and eligible_event and status == 1 and report.exists()
                 and os.getenv("GITHUB_JOB") not in ("cpu-budget", "solver-cap")):
             last_failed = Path(cache) / "v/cache/lastfailed"
@@ -332,6 +332,14 @@ def issue(directory):
     payload = {"title": "Flaky tests", "body": body, "state": "open",
                "labels": sorted({"flaky", *(label["name"] for label in (found or {}).get("labels", []))})}
     api("PATCH" if found else "POST", f"/issues/{found['number']}" if found else "/issues", payload)
+
+
+def default_ref():
+    """The repository default branch from the trusted event payload; None (never eligible) when it is missing."""
+    try:
+        return "refs/heads/" + json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())["repository"]["default_branch"]
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
 
 
 def main(argv):

@@ -169,7 +169,8 @@ class PublicV32Cases(unittest.TestCase):
             return self.root['tree'] if args[-1]=='HEAD^{tree}' else 'tests/test_policy_importer_v32.py\ntests/test_browser_recurring_sessions.py' if args[0]=='ls-files' else self.root['sha']
         durations={'suites':{'unit':{'files':{'tests/test_policy_importer_v32.py':1.0}},'browser':{'files':{'tests/test_browser_recurring_sessions.py':1.0}}}}
         base, candidate, head = self.root['base_sha'], self.root['sha'], 'd' * 40
-        payload = {'pull_request': {'base': {'ref': 'dev', 'sha': base}, 'head': {'sha': head}, 'labels': []}}
+        payload = {'pull_request': {'base': {'ref': 'dev', 'sha': base}, 'head': {'sha': head}, 'labels': []},
+                   'repository': {'default_branch': 'dev'}}
         git_rows = {
             'rev-list': f'{candidate} {base} {head}'.encode(),
             'diff': b'',
