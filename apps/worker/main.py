@@ -727,18 +727,17 @@ def check_inputs_unchanged(db, workspace, stamp):
         return False
     from datetime import datetime
     from apps.api.services import events
-    from apps.api.snapshots import currency_match, preparation_stamp, snapshot_department_ids, snapshot_window
+    from apps.api.snapshots import currency_match, preparation_stamp, snapshot_department_ids
     since, recorded, window = stamp
     current = preparation_stamp(db, workspace)
     if not currency_match(current, recorded):
         return False
-    organisation = db.get(m.Organisation, db.get(m.Department, workspace.department_id).organisation_id)
+    organisation_id = db.get(m.Department, workspace.department_id).organisation_id
     # The snapshot widens its window to block-quota periods; its manifest recorded the window it read.
+    # Always compare: the hint drops the local date after the window ends, yet an overnight occurrence still counts.
     lo, hi = (datetime.fromisoformat(value) for value in window)
-    if 'event_local_date' not in current and (lo, hi) == snapshot_window(workspace, organisation.timezone):
-        return True
     # Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
-    department_ids = snapshot_department_ids(db, organisation.id)
+    department_ids = snapshot_department_ids(db, organisation_id)
     return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
             == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
 

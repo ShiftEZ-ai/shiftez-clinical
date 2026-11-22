@@ -260,3 +260,32 @@ def test_another_departments_counter_moving_during_the_check_keeps_the_same_dirt
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Department, other_id)
         assert [other_id, row.revision, row.catalogue_revision] in stored
+
+
+@pytest.mark.parametrize('later, rebuilds, outcome', [
+    # The overnight occurrence (Sunday 22:00 to Monday 02:00 local) ends during the check.
+    ('2026-10-12T03:00:00+03:00', 1, 'failed'),
+    # Nothing ends: the projection is unchanged and the check is current as computed.
+    ('2026-10-12T01:30:00+03:00', 0, 'succeeded'),
+])
+def test_an_overnight_occurrence_ending_after_the_window_end_follows_the_clock_like_the_full_rebuild(
+        h, clock, during_finish, both_paths, later, rebuilds, outcome):
+    event(h, event_type(h, blocks_duties=True, default_audience={'everyone': True}),
+          start='2026-10-04T22:00:00+03:00', end='2026-10-05T02:00:00+03:00',
+          repeat=repeat(days=[{'weekday': 6, 'start_time': '22:00', 'end_time': '02:00'}]))
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(delete(m.EventOccurrence))
+    # Its window ends Monday 12 October 00:00 local (ends_on + 32 days).
+    workspace = h.workspace('Window ended', start='2026-09-03', end='2026-09-10')
+    job = check(h, workspace)
+    # Move the clock only after every API call: the check reads at Monday 01:00, the first local day past the window.
+    clock['value'] = datetime.fromisoformat('2026-10-12T01:00:00+03:00')
+    with transaction(h.app.state.engine) as db:
+        # The compact hint has no local date here; only the projection sees the clock.
+        assert 'event_local_date' not in snapshots.currency_hint(db, db.get(m.Workspace, workspace['id']))
+    during_finish(lambda: clock.update(value=datetime.fromisoformat(later)))
+    status = settle(h, job, both_paths)
+    assert both_paths['rebuilds'] == rebuilds
+    assert status['status'] == outcome
+    if outcome == 'failed':
+        assert status['error_code'] == 'STALE_INPUTS'
