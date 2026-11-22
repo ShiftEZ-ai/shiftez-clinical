@@ -1021,7 +1021,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     rule_map_bindings: bool = False, include_manifest: bool = True,
                     fairness_goals_out: list[dict] | None = None) -> dict:
     current_scheduling = current_scheduling or current_goals
-    if current_scheduling:
+    if current_goals:
+        from .workspace_baselines import workspace_generation_context
+        department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
+    elif current_scheduling:
         department, org = db.execute(select(m.Department, m.Organisation)
             .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
             .where(m.Department.id == workspace.department_id)).one()
@@ -1099,12 +1102,12 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result.update({"workspace": record(workspace, exclude=("validation",)), "department": record(department),
                    "operational": operational,
                    "quota_policy_limit": quota_policy_limit()})
-    from .workspace_baselines import frozen_department_settings, workspace_generation_defaults
+    from .workspace_baselines import CAPTURED_GENERATION_STATES, frozen_department_settings, workspace_generation_defaults
     department_settings = result['department']
     if baseline is not None:
         frozen = frozen_department_settings(result, workspace.department_id, baseline.included_sources)
         department_settings = {**department_settings, **frozen}
-        if workspace.status in ('draft', 'submitted', 'approved'):
+        if workspace.status in CAPTURED_GENERATION_STATES:
             defaults = workspace_generation_defaults(db, workspace, department, frozen_settings=frozen)
             department_settings['generation_defaults'] = defaults
         elif current_generation_defaults:
@@ -1112,7 +1115,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
     elif current_goals:
-        department_settings['generation_defaults'] = workspace_generation_defaults(db, workspace, department)
+        department_settings['generation_defaults'] = goal_defaults
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
     # A published rota keeps the rules it was approved under: rules activated, changed or retired later

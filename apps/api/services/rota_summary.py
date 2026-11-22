@@ -2,7 +2,7 @@
 from sqlalchemy import func, select
 from apps.api import models as m
 from apps.api.snapshots import cheap_fingerprints, domain_snapshot, fingerprints, workspace_shifts
-from apps.api.workspace_baselines import workspace_generation_defaults
+from apps.api.workspace_baselines import workspace_generation_context, workspace_generation_defaults
 from packages.domain.rota_summary import cause_summary, rota_summary, rota_coverage_gaps, fix_list_context, remember_fix_list
 from packages.domain.score import schedule_score, score_dependencies, settings_of, VERSION as SCORE_VERSION
 from packages.domain.validation import evaluate
@@ -111,15 +111,14 @@ def current_check(db, workspace, current_fingerprint=None):
 
 
 def summary_check(db, workspace, *, include_shifts=True):
-    department = db.get(m.Department, workspace.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    # Hold the parent rows for the fingerprint and snapshot reads in this session.
+    department, organisation, defaults = workspace_generation_context(db, workspace)
     current_fingerprint = cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}).get(workspace.id)
     if current_fingerprint is None:
         current_fingerprint = fingerprints(db, [workspace])[workspace.id]
     validation = workspace.validation
     check_job = checking_workspaces(db, [workspace.id]).get(workspace.id)
     checking = bool(check_job and check_job['checking'])
-    defaults = workspace_generation_defaults(db, workspace, department)
     reuse = not workspace.base_publication_id and reusable_check(validation, current_fingerprint, defaults)
     shifts = workspace_shifts(db, workspace.id) if reuse and include_shifts else None
     # A complete full check covers even cancelled/closed focus sessions. Missing rows are not a fresh summary.
