@@ -212,6 +212,8 @@ def test_converted_listed_prorated_target_keeps_operative_header_and_override_ad
     first_target = next(row for row in fractional['validation']['quota_report']['rows']
                         if row['policy_id'] == original['id'] and row['person_id'] == first)
     assert first_target['metric'] == 'duties' and first_target['amount'] == 4.57
+    assert fractional['workspace']['target_overrides'][0]['policy_revision'] == first_target['policy_revision'] == original['revision']
+    assert not any(f['code'] == 'TARGET_OVERRIDE_STALE' for f in fractional['validation']['findings'])
     workspace = fractional['workspace']
     updated = h.command('coordinator', 'workspace.target_override', payload,
                         workspace['id'], workspace['revision'])
