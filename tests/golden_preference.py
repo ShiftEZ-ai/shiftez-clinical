@@ -78,7 +78,11 @@ def check_preference(data, ids, spec):
     priorities, swapped_priorities = priority['priorities'], priority['swapped_priorities']
     assert data['generation_options']['scoring']['weights']['preferences'] == on_weight
     assert data['generation_options']['scoring']['weights']['stability'] == stable
-    data = _options(deepcopy(data), on_weight, stable)
+    hard = _options(deepcopy(data), on_weight, stable)
+    safety = next(p for p in hard['policies'] if p['id'] == ids['safety'])
+    assert safety['definition']['severity'] == 'mandatory'
+    # Safety kinds are always mandatory. Omit the rule entirely in the preference-only counterfactual.
+    data = {**hard, 'policies': [p for p in hard['policies'] if p['id'] != safety['id']]}
     assert [next(p for p in data['policies'] if p['id'] == ids[key])['definition']['rule']['priority']
             for key in ('pref', 'prefer_backup')] == priorities
 
@@ -104,8 +108,6 @@ def check_preference(data, ids, spec):
     all_alternative = _witness(data, ids, (c, c, c))
     assert _score(all_alternative, baseline)['components']['preferences']['value'] == maths['all_alternative']
 
-    hard = deepcopy(data)
-    next(p for p in hard['policies'] if p['id'] == ids['safety'])['definition']['severity'] = 'mandatory'
     broken = _witness(hard, ids, (a, a, a))
     witness = expected['validator']
     assert any(f['code'] == witness['code'] and f['person_id'] == ids[witness['person']]

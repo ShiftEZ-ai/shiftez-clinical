@@ -58,7 +58,7 @@ def test_inherited_safety_number_displays_as_mandatory(browser, live_server, h):
     try:
         navigate(page, 'rules/people_per_session')
         inherited = page.locator('#main .rule-num').filter(has=page.locator('.rc-inh', has_text='2↰'))
-        expect(inherited.locator('.rc-level')).to_have_text('Mandatory')
+        expect(inherited.locator('.rc-level[data-level="mandatory"]')).to_contain_text('Mandatory')
     finally:
         context.close()
 

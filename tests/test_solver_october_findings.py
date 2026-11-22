@@ -83,7 +83,8 @@ def test_october_diagnostics_use_the_relevant_and_earlier_objective_receipts(oct
 def test_mandatory_scoped_cover_uses_coverage_priority(october_shortfalls):
     data, _, _, sport, _ = october_shortfalls
     data = copy.deepcopy(data)
-    next(p for p in data["policies"] if p["id"] == sport)["definition"]["severity"] = "mandatory"
+    [line] = next(p for p in data["policies"] if p["id"] == sport)["definition"]["rule"]["lines"]
+    line["numbers"] = {"min": {"value": line["numbers"]["target"]["value"], "level": "mandatory"}}
     rows = explain_unmet_requirements(data, evaluate(data), objectives(
         coverage=False, stalled={"coverage"}))
     targets = [row for row in rows if row["rule_id"] == sport]

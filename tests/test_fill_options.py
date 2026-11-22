@@ -405,7 +405,8 @@ def test_unevaluated_target_resolution_is_unknown(h, unknown):
         finding = {**finding, 'code': 'QUOTA_BELOW_MINIMUM'}
     elif unknown == 'ordered_population':
         policy = next(p for p in data['policies'] if p['id'] == finding['rule_id'])
-        policy['definition']['rule']['selection_order'] = [
+        target_line = policy['definition']['rule']['lines'][finding['detail']['line']]
+        target_line['settings']['minimum_cover']['selection_order'] = [
             {'match': 'all', 'conditions': [{'field': 'person_ids', 'op': 'any', 'values': [candidate]}]}]
     elif unknown == 'ineligible':
         data['people'][candidate]['active'] = False

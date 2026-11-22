@@ -12,7 +12,8 @@ from .test_bulk_nested_limits import limits
 
 def sessions(h, *, issues=False):
     if issues:
-        h.policy({"kind": "max_duties", "maximum": 0, "window": "day"}, {"person_id": h.seed["people"][0]}, severity="advisory")
+        # A cover target gives each session its own warning and stable issue key.
+        h.cover_target(2)
     first = h.shift(h.workspace())
     second = h.shift(first["workspace"], start="2026-10-05T08:00:00+03:00", end="2026-10-05T12:00:00+03:00")
     return second["workspace"], [first["shifts"][0], second["shifts"][0]]

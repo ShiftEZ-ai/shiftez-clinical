@@ -612,8 +612,8 @@ def test_named_consultant_placement_adds_fellow_only_when_present_and_available(
     programme = h.configure('programmes', {'name': 'Longitudinal placement', 'starts_on': '2026-01-01'})['record']
     h.configure('programme_memberships', {'person_id': fellow, 'programme_id': programme['id'],
         'starts_on': '2026-01-01', 'ends_on': '2027-01-01'}, role='coordinator')
-    h.policy({'kind': 'minimum_cover', 'minimum': 1, 'when_person_ids': [consultant]},
-        {'programme_id': programme['id'], 'person_id': fellow, 'service_id': h.seed['services'][0]}, 'advisory')
+    h.cover_target(1, {'programme_id': programme['id'], 'person_id': fellow, 'service_id': h.seed['services'][0]},
+                   settings={'when_person_ids': [consultant]})
     duty = h.configure('assignment_types', {'name': 'Consultant placement fixture', 'starts_on': '2020-01-01',
         'definition': {'requirements': []}})['record']
     first = h.shift(h.workspace(), people=[consultant], typ=duty['id'])

@@ -1,9 +1,9 @@
 {
   "id": "A-PREF-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Preference (weight, boundaries and safety)",
   "intent": "Positive allocation priority changes choices under pressure, while mandatory protection wins.",
-  "pressure": "Three editable backup assignments are uniquely preserved by stability when preference weight is zero; priority nine outweighs priority one when enabled.",
+  "pressure": "Three editable backup assignments are uniquely preserved by stability when preference weight is zero. Priority nine outweighs priority one when enabled. The preference-only counterfactual omits the mandatory Sunday restriction.",
   "covers": {
     "kind.allocation_preference": [
       "counterfactual",
@@ -308,7 +308,7 @@
           "scope": {
             "person_id": "$p0"
           },
-          "severity": "advisory",
+          "severity": "mandatory",
           "workspace_id": "$workspace"
         }
       }
