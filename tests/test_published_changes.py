@@ -122,6 +122,27 @@ def test_change_list_shared_hidden_review_publish_diff_and_undo(h):
     assert issued_rows[1]['participants'][0]['person_id'] == h.seed['people'][1]
 
 
+def test_amendment_submit_refuses_stale_review_counters(h, monkeypatch):
+    pub, shifts = issued(h)
+    draft = change(h, pub, shifts[0])
+    lifecycle = published_changes.planning.lifecycle
+
+    def move_revision_after_check(db, actor, command):
+        result = lifecycle(db, actor, command)
+        # Inject drift in this transaction because the input row is already locked.
+        db.get(m.Organisation, actor.organisation_id).availability_revision += 1
+        db.flush()
+        return result
+
+    monkeypatch.setattr(published_changes.planning, 'lifecycle', move_revision_after_check)
+    reply = h.command('coordinator', 'publication.changes.submit', {'reason': 'Review published cover'},
+                      target=pub, revision=draft['workspace']['revision'], status=409)
+    assert reply['error']['code'] == 'STALE_INPUTS'
+    assert reply['error']['details']['recoverable']
+    pending = h.get('coordinator', f'/api/publications/{pub}/pending-changes')
+    assert [(row['id'], row['status']) for row in pending['changes']] == [(draft['change']['id'], 'draft')]
+
+
 def test_urgent_not_offered_until_versioned_route_is_activated(h):
     pub, shifts = issued(h)
     result = change(h, pub, shifts[0])
