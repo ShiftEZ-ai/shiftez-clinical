@@ -1507,7 +1507,7 @@ def grouping_proof(db, actor, groups, model=False, score_may_move=False):
                                      mandatory_rules=False)
         a, b = evaluate(before_data), evaluate(after_data)
         diff = same_checks(a, b, id_map)
-        score = lambda data, validation: schedule_score(data, validation, department.generation_defaults)["score"]
+        score = lambda data, validation: schedule_score(data, validation, data["department"].get("generation_defaults"))["score"]
         result["rotas"].append({"workspace_id": w.id, "name": w.name, "status": w.status, **diff,
                                 "findings": len(a["findings"]), "findings_after": len(b["findings"]), "quota_rows": len((a.get("quota_report") or {}).get("rows", [])),
                                 "solver_inputs_equal": expanded(before_data["policies"], id_map, week_start) == expanded(after_data["policies"], None, week_start),

@@ -2,6 +2,7 @@
 from sqlalchemy import func, select
 from apps.api import models as m
 from apps.api.snapshots import cheap_fingerprints, domain_snapshot, fingerprints, workspace_shifts
+from apps.api.workspace_baselines import workspace_generation_context, workspace_generation_defaults
 from packages.domain.rota_summary import cause_summary, rota_summary, rota_coverage_gaps, fix_list_context, remember_fix_list
 from packages.domain.score import schedule_score, score_dependencies, settings_of, VERSION as SCORE_VERSION
 from packages.domain.validation import evaluate
@@ -104,21 +105,21 @@ def current_check(db, workspace, current_fingerprint=None):
             and (check.get('quota_report') or {}).get('context_complete',
                 (check.get('quota_report') or {}).get('complete', True)))
     else:
-        reuse = reusable_check(check, current, department.generation_defaults)
+        reuse = reusable_check(check, current, workspace_generation_defaults(db, workspace, department))
     return bool(reuse and {r['shift_id'] for r in check.get('coverage', [])} == set(db.scalars(
         select(m.Shift.id).where(m.Shift.workspace_id == workspace.id))))
 
 
 def summary_check(db, workspace, *, include_shifts=True):
-    department = db.get(m.Department, workspace.department_id)
-    organisation = db.get(m.Organisation, department.organisation_id)
+    # Hold the parent rows for the fingerprint and snapshot reads in this session.
+    department, organisation, defaults = workspace_generation_context(db, workspace)
     current_fingerprint = cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}).get(workspace.id)
     if current_fingerprint is None:
         current_fingerprint = fingerprints(db, [workspace])[workspace.id]
     validation = workspace.validation
     check_job = checking_workspaces(db, [workspace.id]).get(workspace.id)
     checking = bool(check_job and check_job['checking'])
-    reuse = not workspace.base_publication_id and reusable_check(validation, current_fingerprint, department.generation_defaults)
+    reuse = not workspace.base_publication_id and reusable_check(validation, current_fingerprint, defaults)
     shifts = workspace_shifts(db, workspace.id) if reuse and include_shifts else None
     # A complete full check covers even cancelled/closed focus sessions. Missing rows are not a fresh summary.
     reuse = reuse and (not include_shifts or
@@ -158,7 +159,7 @@ def summary_check(db, workspace, *, include_shifts=True):
                 if data is None:
                     data = domain_snapshot(db, workspace)
                 check = evaluate(data)
-                check['score'] = schedule_score(data, check, department.generation_defaults)
+                check['score'] = schedule_score(data, check, data['department'].get('generation_defaults'))
                 check['fix_list_context'] = fix_list_context(data)
                 check['evaluated_at'] = m.now().isoformat()
                 remember_fix_list(workspace.validation, check, accepted_issues=workspace.accepted_issues or [])
@@ -167,7 +168,7 @@ def summary_check(db, workspace, *, include_shifts=True):
         value = cached(db, {workspace.id: workspace}, 'summary_check', {workspace.id:
             # The current fingerprint carries the versioned toolchain.  Do not
             # invalidate this durable projection for a source-only deployment.
-            digest([current_fingerprint, department.generation_defaults, workspace.validation,
+            digest([current_fingerprint, defaults, workspace.validation,
                     workspace.status, workspace.submitted_fingerprint, workspace.base_publication_id,
                     base_until.isoformat() if base_until else None])}, build)[workspace.id]
         validation, shifts = value['validation'], value['shifts']
@@ -199,7 +200,7 @@ def workspace_validation(db, workspace):
     data = db.info.get('read_snapshots', {}).get(workspace.id)
     if data is None:
         data = domain_snapshot(db, workspace)
-    defaults = data['generation_options']
+    defaults = data['department'].get('generation_defaults')
     def build(_wid):
         complete = evaluate(data)
         return schedule_score(data, complete, defaults)

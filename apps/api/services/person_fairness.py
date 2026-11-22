@@ -33,7 +33,7 @@ def standing(db, actor, person_id, workspace_id=None, starts_on=None, ends_on=No
     if workspace is None:
         return {'person_id': person_id, 'peers_visible': peers, 'workspace': None, 'goals': []}
     # As on the fairness dashboard, standing uses today's active goals; publication trends retain their recorded aims.
-    data = domain_snapshot(db, workspace, current_scheduling=True)
+    data = domain_snapshot(db, workspace, current_goals=True)
     from packages.domain.validation import index_person_rows
     data['_person_rows'] = index_person_rows(data)
     data['_policy_applies_cache'] = {}

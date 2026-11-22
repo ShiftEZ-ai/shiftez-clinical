@@ -1256,8 +1256,13 @@ export const ackKey=(x:Row)=>`${x.line_id}>${(x.winner_ids as string[]).join(','
 /** The check in words (the server numbers lines in the order they were added, which a sorted table does not show). */
 export function checkWords(e:RuleCatalogueEntry,lines:()=>RuleLine[],names:Namer){
   const said=(id:string)=>{const l=lines().find(x=>x.id===id);return l?`“${lineWords(e,l,names)}”`:'A line';};
+  // A line in brief, as the relation row says the broader one (who and number, no strength); in full where two read alike.
+  const brief=(l:RuleLine)=>`${treeText(l.who,names,'Everyone',4)} ${numberParts(l,undefined,appliesWord(e)).map(x=>x.text).join('')}`.trim();
+  const short=(id:string)=>{const all=lines(),l=all.find(x=>x.id===id);if(!l)return 'A line';const b=brief(l);return all.some(x=>x!==l&&brief(x)===b)?said(id):b;};
   return {same:(d:Row)=>`${said(d.line_ids[0])} is there twice: what it counts, who, where, days and dates overlap`,
     over:(x:Row)=>`${said(x.line_id)} gives way to ${(x.winner_ids as string[]).map(said).join(' and ')}${(x.numbers as string[]|undefined)?.length?` on its ${(x.numbers as string[]).join(' and ')}`:''} for ${plural(x.people,'person','people')} today`,
+    /** "Everyone ≤ 5 gives way to Senior grade ≤ 6 for 11 people": an overlap in one short line, as information. */
+    gives:(x:Row)=>`${short(x.line_id)} gives way to ${(x.winner_ids as string[]).map(short).join(' and ')} for ${plural(x.people,'person','people')}`,
     warn:(w:Row)=>w.kind==='pool_shortfall'?String(w.message):w.kind==='both'?`${said(w.other_id)} and ${said(w.line_id)} both apply to ${plural(w.people,'person','people')} today: neither is more specific, so each of their numbers holds`
       :w.kind==='inherits'?`${said(w.line_id)} inherits ${Object.entries(w.inherited as Record<string,number>).map(([k,v])=>`${k} ${v}`).join(' and ')} from ${said(w.other_id)}, which contradicts its own numbers: give it None`
       :`${said(w.line_id)} is narrower but weaker than ${said(w.other_id)}: safety lines all apply, so the broader one still binds`};
@@ -1679,11 +1684,12 @@ function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,
   const c=p.check as Check|undefined,words=checkWords(e,()=>now,names);
   const said=c?[...c.duplicates.map(words.same),...c.issues.map(x=>String(x.message)),...c.warnings.map(words.warn)]:[];  // a winning exception is no warning; equal tiers come as warnings
   // Which line each proposed line gives way to: the approver still sees it, as information (no alert, nothing to tick).
-  const gives=c?c.overlaps.map(words.over):[];
+  const gives=c?c.overlaps.map(words.gives):[];
+  // The plain lines first, apart from the warnings' label and count, so they never read as warnings.
   const checked=said.length||gives.length?el('div',{class:'rc-prop-check'},
+    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},t)),['line','lines']))]:[]),
     ...(said.length?[el('p',{class:'dt-pop-label'},`The check · ${plural(said.length,'warning')}`),
-      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[]),
-    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},el('span',{},t+'.'))),['line','lines']))]:[])):'';
+      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[])):'';
   const table=changes.length?changeTable(ctx,e,changes,unchanged,names,openTag,(rule.settings||{}) as Settings,key):'';
   const who=el('p',{class:'rc-prop-who muted'},mine?'You proposed it':`Proposed by ${p.created_by_name||'another person'}`,p.created_at?` · ${formatDate(String(p.created_at),departmentTimeZone())}`:'',  // the department's day, not UTC's
     p.source?el('span',{class:'rc-prop-reason',title:String(p.source)},` · “${String(p.source)}”`):'',

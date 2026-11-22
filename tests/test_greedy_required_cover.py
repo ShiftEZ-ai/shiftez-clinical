@@ -239,11 +239,44 @@ def test_required_cover_timeout_keeps_an_already_validated_repair(h, monkeypatch
         return {'status': status, 'additions': [], 'removals': []}
     monkeypatch.setattr(cp_sat, 'generate', stopped)
     result = generation.generate(data, 10)
-    assert result['status'] == 'unknown_time_limit'
+    assert result['status'] == 'candidate_feasible'
+    assert result['score_completed'] is False
     assert result['validation']['valid']
     assert len(result['additions']) == 3
     assert result['unmet_requirements'] == []
     assert result['message'] == 'Search time expired. The complete validated rota is retained; score optimization is unfinished.'
+
+
+@pytest.mark.parametrize(('outcome', 'expected_status'), [
+    ('complete', 'candidate_feasible'),
+    ('partial', 'unknown_time_limit'),
+    ('none', 'unknown_time_limit'),
+    ('cancelled', 'cancelled'),
+])
+def test_required_cover_repair_stop_status(h, monkeypatch, outcome, expected_status):
+    from packages.domain import cp_sat
+
+    data, _ = stranding_world(h)
+    complete = cp_sat.generate(data, 10, workers=1, feasibility_only=True) if outcome in {'complete', 'cancelled'} else None
+    initial = generation._generate_with_redistribution(data, 0 if outcome == 'none' else 5)
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *_, **kwargs: initial)
+    cancelled = threading.Event()
+
+    def stop_repair(*args, _control, **kwargs):
+        _control.validated_result = complete
+        if outcome == 'cancelled':
+            cancelled.set()
+            return {'status': 'cancelled'}
+        return {'status': 'unknown_time_limit'}
+
+    monkeypatch.setattr(cp_sat, 'generate', stop_repair)
+    result = generation.generate(data, 10, cancelled=cancelled.is_set)
+    assert result['status'] == expected_status
+    assert bool(result['additions']) is (outcome != 'none')
+    assert result['validation']['valid'] is (complete is not None)
+    if outcome == 'complete':
+        assert result['solver_status'] == 'FEASIBLE'
+        assert result['score_completed'] is False
 
 
 @pytest.mark.parametrize('phase', ['placement', 'repair'])
