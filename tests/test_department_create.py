@@ -70,8 +70,8 @@ def test_only_operator_may_create_department(department_h, role):
 @pytest.mark.parametrize(('environment', 'deployment', 'allowed'), [
     ('production', 'production', False), ('test', 'production', False), ('development', 'production', False),
     ('production', 'development', False), ('production', 'test', False), ('production', '', False),
-    ('production', 'unknown', False), ('production', 'dev', True), ('test', 'test', True),
-    ('development', 'development', True),
+    ('production', 'unknown', False), ('production', 'dev', True), ('production', 'stg', True), ('production', 'staging', False),
+    ('test', 'test', True), ('development', 'development', True),
 ])
 def test_deployment_guard_uses_existing_deployment_identity(department_h, environment, deployment, allowed):
     h = department_h
