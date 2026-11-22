@@ -149,6 +149,9 @@ def test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflic
         expect(waiting.locator('.rc-prop-warnings li')).to_have_count(len(proposed['check']['warnings']))
         expect(waiting.locator('.rc-prop-gives li')).to_have_count(len(proposed['check']['overlaps']))
         expect(waiting.locator('.rc-prop-warnings')).not_to_contain_text('gives way to')
+        # Each in one short line, who and number only (issue #1047): no where, days or validity.
+        expect(waiting.locator('.rc-prop-gives')).to_contain_text('Everyone ≤ 6 gives way to')
+        expect(waiting.locator('.rc-prop-gives')).not_to_contain_text('all clinics')
         expect(waiting.locator('.rc-prop-check')).to_contain_text('both apply to 1 person today')
         expect(waiting.get_by_role('button', name='Review and approve')).to_be_visible()
     finally:
