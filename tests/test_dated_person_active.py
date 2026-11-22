@@ -376,8 +376,10 @@ def test_inactivity_migration_is_nullable_additive_and_has_one_head():
     config.set_main_option('script_location', str(safety.VERSIONS.parent))
     graph = ScriptDirectory.from_config(config)
     head, = graph.get_heads()
-    assert head == supported_revision() == '0150_person_inactive_from'
-    assert graph.get_revision(head).down_revision == '0148_bulk_analyze'
+    assert head == supported_revision()
+    revision = '0150_person_inactive_from'
+    assert graph.get_revision(revision).down_revision == '0148_bulk_analyze'
+    assert revision in {node.revision for node in graph.iterate_revisions(head, 'base')}
 
 
 def test_inactivity_migration_retains_existing_rows_without_backfill():

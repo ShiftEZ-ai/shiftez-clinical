@@ -136,6 +136,34 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
     assert result['search_stop']['reason'] == result['stop_reason'] == 'operator_stop'
 
 
+def test_stop_during_coverage_at_its_floor_keeps_coverage_proven(h, monkeypatch):
+    h.policy({'kind': 'restriction'}, severity='advisory')
+    data, update = snapshot(h), {}
+    data['generation_options'] = {'generation_stop_grace_seconds': 10}
+    native_solve = cp_model.CpSolver.solve
+
+    def solve(solver, model, callback=None):
+        status = native_solve(solver, model, callback)
+        # Model an interrupted search retaining a zero-deficit incumbent without a solver proof.
+        return cp_model.FEASIBLE if update and status == cp_model.OPTIMAL else status
+
+    def progress(row):
+        if (row['stage'] == 'improving' and row['objective_names'][row['tier']] == 'coverage'
+                and row.get('objective_value') == 0):
+            update['stop'] = True
+
+    monkeypatch.setattr(cp_model.CpSolver, 'solve', solve)
+    result = cp_sat.generate(data, 5, progress=progress, search_control=lambda: update)
+    assert update['stop']
+    assert result['status'] == 'candidate_feasible' and result['validation']['valid']
+    coverage, = [row for row in result['objectives'] if row['name'] == 'coverage']
+    assert coverage['value'] == 0 and coverage['proven_optimal']
+    assert coverage['search_status'] == 'FEASIBLE'
+    assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
+    assert result['search_stop']['reason'] == 'operator_stop'
+    assert not any('coverage was not proven' in warning for warning in result.get('warnings', ()))
+
+
 def test_stop_after_all_tiers_proven_keeps_optimal_reason(h):
     update = {}
 
