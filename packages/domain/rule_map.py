@@ -1146,9 +1146,15 @@ def _reach_workload_observations(data, policy, pid, entries, a, b):
         observations = [(run[0], run[-1] + timedelta(days=1), consecutive_day_count(rule, len(run), ordinary))
                         for run, ordinary in workload_day_observations(selected, zone)]
     else:
-        observations = [(run[0][0], run[-1][0] + timedelta(days=rule['weekend_days']), len(run))
-                        for run in workload_weekend_runs(data, policy, pid, selected, focus)
-                        if not rule['overtime_only'] or any(overtime for _, overtime, _ in run[-(rule['maximum'] + 1):])]
+        targets = {s['id'] for s, p, lo, hi in entries if s['id'] in focus
+                   and policy_applies(data, policy, pid, s, lo, hi)
+                   and (rule.get('include_overtime', True) or not p['overtime'])}
+        observations = []
+        for run in workload_weekend_runs(data, policy, pid, selected, targets):
+            window = run[-(rule['maximum'] + 1):]
+            if any(focused for _, _, focused in window) and (
+                    not rule['overtime_only'] or any(overtime for _, overtime, _ in window)):
+                observations.append((run[0][0], run[-1][0] + timedelta(days=rule['weekend_days']), len(run)))
     for first, last, actual in observations:
         lo, hi = local_midnight(first, zone), local_midnight(last, zone)
         if overlaps(a, b, lo, hi):
