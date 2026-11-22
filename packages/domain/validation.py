@@ -1326,7 +1326,7 @@ def workload_weekend_runs(data, policy, pid, selected, focus):
     run = []
     for first in sorted(weekends):
         rows = weekends[first]
-        observation = (first, any(row[1]['overtime'] for row in rows), any(row[0]['id'] in focus for row in rows))
+        observation = (first, any(row[1].get('overtime', False) for row in rows), any(row[0]['id'] in focus for row in rows))
         run = run + [observation] if run and (first - run[-1][0]).days == 7 else [observation]
         yield tuple(run)
 
@@ -1414,7 +1414,7 @@ def workload_selected(data, policy, pid, entries):
     kind = rule['kind']
     selected = list(entries) if kind == 'min_rest' else [(s, p, a, b) for s, p, a, b in entries
         if workload_matches(data, policy, pid, s, a, b)
-        and (rule.get('include_overtime', True) or not p['overtime'])]
+        and (rule.get('include_overtime', True) or not p.get('overtime', False))]
     unknown = []
     for r in person_rows(data, 'availability', pid):
         if r['kind'] != 'external_commitment':
