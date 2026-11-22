@@ -919,3 +919,23 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
         assert refused == []
     finally:
         context.close()
+
+
+def test_a_rota_months_ahead_is_offered_for_review_on_home(browser, live_server, h):
+    """A submitted rota three months ahead waits in Needs you as Rota to review, and Review opens its review."""
+    start = local_today() + timedelta(days=99)
+    at = lambda hour: f'{start.isoformat()}T{hour:02}:00:00+03:00'
+    w = h.workspace('Far review rota', start.isoformat(), (start + timedelta(days=7)).isoformat())
+    w = h.lifecycle(h.shift(w, start=at(8), end=at(12))['workspace'], 'submit')['workspace']
+    context, page = sign_in(browser, live_server, 'approver', DESKTOP)
+    try:
+        navigate(page, 'home')
+        row = needs(page, 'Rota to review')
+        expect(row).to_contain_text('Far review rota')
+        row.get_by_role('button', name=re.compile('^Review')).click()
+        dialog = page.get_by_role('dialog', name='Approve rota')
+        expect(dialog).to_be_visible()
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
+        expect(page).to_have_url(re.compile('edit=' + re.escape(w['id'])))
+    finally:
+        context.close()

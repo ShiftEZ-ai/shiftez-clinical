@@ -12,6 +12,7 @@ from packages.domain.rule_catalogue_migration import after_snapshot, census, pla
 from packages.domain.rule_lines import fact_policy, tier
 from packages.domain.rule_migration_proof import strict_expanded, strict_proof
 from packages.domain.validation import evaluate
+from .test_conversion_safety_kinds import SAFETY_REVIEW_REASON
 from .test_rule_catalogue_v2_domain import catalogue, line, who
 from .test_rule_catalogue_v2_proof import source, uid
 
@@ -25,7 +26,7 @@ SAFETY_SLOTS = [(entry, key, slot) for entry in RULE_CATALOGUE
 @pytest.mark.parametrize('entry,key,slot', SAFETY_SLOTS,
                          ids=[f"{entry['id']}-{key}-{slot['kind']}" for entry, key, slot in SAFETY_SLOTS])
 @pytest.mark.parametrize('level', ['mandatory', *ADVISORY])
-def test_every_safety_slot_stays_a_rule_line_at_any_stored_level(entry, key, slot, level):
+def test_safety_slot_requires_mandatory_level_to_convert(entry, key, slot, level):
     settings = copy.deepcopy(entry['default_settings'])
     for kind, fields in entry['needs'].items():
         settings.setdefault(kind, {}).update({field: [uid(600), uid(601)] if field.endswith('_ids') else uid(600)
@@ -42,21 +43,25 @@ def test_every_safety_slot_stays_a_rule_line_at_any_stored_level(entry, key, slo
     assert census([original])['lines'][0]['classification'] != 'person_fact'
     plan = plan_v2([original], department_id=uid(10))
     assert not plan['scheduling_facts']
+    # Issue #144 refuses advisory safety numbers before target validation or rule-line conversion.
+    if level != 'mandatory':
+        [blocked] = plan['blocked']
+        assert blocked['rule_id'] == original['id']
+        assert blocked['reason'] == SAFETY_REVIEW_REASON
+        assert not plan['targets'] and not plan['bindings']
+        return
+    assert not plan['blocked'], plan['blocked']
     target = plan['targets'][0]['payload']['definition']['rule']
     [converted] = target['lines']
     assert tier(converted) == 3
-    assert converted['numbers'][key]['level'] == level
-    if level not in entry['levels']:
-        assert {blocked['kind'] for blocked in plan['blocked']} == {'contract'}
-        return
-    assert not plan['blocked'], plan['blocked']
+    assert converted['numbers'][key]['level'] == 'mandatory'
     before = {'policies': [original]}
     assert strict_expanded(before, after_snapshot(before, plan))['equal']
 
 
-@pytest.mark.parametrize('level', ADVISORY)
+@pytest.mark.parametrize('level', ['mandatory', *ADVISORY])
 @pytest.mark.parametrize('named_person', [False, True])
-def test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings(h, level, named_person):
+def test_calendar_linked_keep_off_requires_mandatory_level_to_convert(h, level, named_person):
     workspace = h.workspace()
     h.shift(workspace)
     before = h.snapshot(workspace)
@@ -66,8 +71,15 @@ def test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings(
     before.update(policies=[original], source_bindings=[], scheduling_facts=[])
     assert census([original])['lines'][0]['classification'] == 'v2_workload_limit'
     plan = plan_v2(before['policies'], department_id=workspace['department_id'])
-    assert not plan['blocked'], plan['blocked']
     assert not plan['scheduling_facts']
+    # Issue #144 refuses advisory keep-off restrictions, so findings parity applies to mandatory conversions.
+    if level != 'mandatory':
+        [blocked] = plan['blocked']
+        assert blocked['rule_id'] == original['id']
+        assert blocked['reason'] == SAFETY_REVIEW_REASON
+        assert not plan['targets'] and not plan['bindings']
+        return
+    assert not plan['blocked'], plan['blocked']
     target = plan['targets'][0]['payload']['definition']['rule']
     assert target['id'] == 'workload_limit'
     [converted] = target['lines']
@@ -86,10 +98,17 @@ def test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings(
     {'match': 'all', 'conditions': [{'field': 'programme_ids', 'op': 'any', 'values': [uid(101)]}]}])
 @pytest.mark.parametrize('calendar', [None, uid(300)])
 @pytest.mark.parametrize('level', ['mandatory', *ADVISORY])
-def test_protected_time_becomes_protected_data_with_its_safety_restriction(audience, calendar, level):
+def test_protected_time_requires_mandatory_level_to_convert(audience, calendar, level):
     original = catalogue('protected_time', [line(uid(200), {'apply': {'value': None, 'level': level}},
         audience, settings={'restriction': {'leave_buffer_days': 1}}, calendar_entry_id=calendar)])
     plan = plan_v2([original], department_id=uid(10))
+    # Issue #144 refuses advisory protected-time restrictions before converting them to rules or facts.
+    if level != 'mandatory':
+        [blocked] = plan['blocked']
+        assert blocked['rule_id'] == original['id']
+        assert blocked['reason'] == SAFETY_REVIEW_REASON
+        assert not plan['targets'] and not plan['bindings'] and not plan['scheduling_facts']
+        return
     if calendar is None and (audience is None or tier({'who': audience}) != 3):
         assert not plan['blocked'], plan['blocked']
         assert not plan['scheduling_facts']

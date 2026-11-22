@@ -17,7 +17,8 @@ from .conditions import (INHERITED_LEVEL, OUTRANKED, OVERRIDDEN, OWN_LINE, absol
                          active_rules, has_session_lines, scope_applies, scope_tree,
                          scope_has_duty_witness)
 from .rule_map import rule_number
-from .validation import index_person_rows, within_dates
+from .time import local_midnight
+from .validation import index_person_rows, person_active_end, within_dates
 
 logger = logging.getLogger(__name__)
 
@@ -752,24 +753,26 @@ def _selector_tokens(value):
 
 
 def _people_for_who(data, tokens, first, last):
-    all_people = {pid for pid, person in data.get('people', {}).items() if person.get('active', True)}
+    zone = data['organisation']['timezone']
+    active_ends = {pid: end for pid, person in data.get('people', {}).items()
+                   if (end := person_active_end(person, last, zone)) is not None and first < end}
     if not tokens:
-        return all_people
+        return set(active_ends)
     people = set()
     rows = data.get('_person_rows') or index_person_rows(data)
     for token in tokens:
         kind, _, ident = token.partition(':')
         if kind == 'person' or token in data.get('people', {}):
-            if ident in data.get('people', {}) and data['people'][ident].get('active', True):
+            if ident in active_ends:
                 people.add(ident)
-            elif token in data.get('people', {}) and data['people'][token].get('active', True):
+            elif token in active_ends:
                 people.add(token)
             continue
         category = ident if kind == 'rank' else token
         if category not in data.get('categories', {}):
             continue
-        for pid in all_people:
-            if any(row.get('category_id') == category and within_dates(row, first, last, data['organisation']['timezone'])
+        for pid, end in active_ends.items():
+            if any(row.get('category_id') == category and within_dates(row, first, end, zone)
                    for row in rows['memberships'].get(pid, ())):
                 people.add(pid)
     return people
@@ -806,6 +809,9 @@ def _scope_reaches_person(data, scope, person_id, first, last):
     inspect.  The rule-map's duty-witness projection handles that case with the
     same evaluator and virtual duty contexts.
     """
+    last = person_active_end(data['people'].get(person_id), last, data['organisation']['timezone'])
+    if last is None or first >= last:
+        return False
     if not has_session_lines(scope_tree(scope)):
         return scope_applies(data, scope, person_id, None, first, last)
     try:
@@ -877,10 +883,8 @@ def explain_rules(data, *, who=None, where=None, rota=True):
     data = {**data, 'policies': catalogue_display_policies(data.get('policies') or [], data)}
     workspace = data['workspace']
     zone = data['organisation']['timezone']
-    first = __import__('packages.domain.time', fromlist=['local_midnight']).local_midnight(
-        date.fromisoformat(str(workspace['starts_on'])), zone)
-    last = __import__('packages.domain.time', fromlist=['local_midnight']).local_midnight(
-        date.fromisoformat(str(workspace['ends_on'])), zone)
+    first = local_midnight(date.fromisoformat(str(workspace['starts_on'])), zone)
+    last = local_midnight(date.fromisoformat(str(workspace['ends_on'])), zone)
     tokens = _selector_tokens(who)
     selected = _people_for_who(data, tokens, first, last)
     where_tokens = _where_tokens(where)
@@ -901,7 +905,9 @@ def explain_rules(data, *, who=None, where=None, rota=True):
         if not _where_matches(data, scope, where_tokens):
             continue
         if tokens:
-            matches = {pid for pid in selected if _scope_reaches_person(runtime, scope, pid, first, last)}
+            start = max(first, local_midnight(date.fromisoformat(str(copy['starts_on'])), zone)) if copy.get('starts_on') else first
+            end = min(last, local_midnight(date.fromisoformat(str(copy['ends_on'])), zone)) if copy.get('ends_on') else last
+            matches = {pid for pid in selected if _scope_reaches_person(runtime, scope, pid, start, end)}
             if not matches:
                 continue
         else:

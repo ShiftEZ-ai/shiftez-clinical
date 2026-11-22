@@ -9,7 +9,7 @@ import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reas
 import {get,request,command,onSessionReset,ApiError} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
-import type {Row,WorkspaceData} from './types.js';
+import type {PlannerSession,Row,WorkspaceData} from './types.js';
 import {setSessionOpener,tag,ruleSummary,pin,assignmentRules,sessionRules,dayTitle,addsToSelection,selectSession,sessionSelected,type Target as RuleTarget} from './planner_rules.js';
 import {supervisedBy,teamOrder,teamGroups,teamText,shownPeople,leadContext,leadState,leadNeed,type TeamEntry,type LeadState} from './planner_teams.js';
 import {teamView,teamProblem,teamLabel,teamIssue,rankOn,BOX_CODES,statesShortfall,TEAM_LAYOUT_DEFAULT,type TeamProblem,type TeamLayout} from './team_view.js';
@@ -237,7 +237,7 @@ export function openAssignment(shift:Row,assignment:string):boolean{
  *  of two letters or more is a word of the name. Then it says nothing more and is not repeated under the name. */
 export const spells=(code:string,name:string)=>{const words=new Set(name.toLowerCase().split(/[^\p{L}\p{N}]+/u)),own=code.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w=>w.length>1);
   return own.length>0&&own.every(w=>words.has(w));};
-export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;name:(id:string)=>string;code?:(id:string)=>string;refresh:()=>unknown;fresh?:boolean;person?:(p:Row)=>Node|null;
+export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;name:(id:string)=>string;code?:(id:string)=>string;refresh:()=>unknown;fresh?:boolean;kept?:boolean;person?:(p:Row)=>Node|null;
   /** false: the panel around it already says the double bookings. */clash?:boolean}){
   const box=el('div',{class:'wk-session'}),zone=ctx.me.organisation.timezone;
   const marks=[isClosed(shift)?statusChip('Closed'):'',shift.locked?statusChip('Locked'):''].filter(Boolean);
@@ -264,7 +264,9 @@ export function sessionSummary(ctx:Context,shift:Row,o:{validation?:Row|null;nam
         partial?el('small',{class:'muted'},partial):''),...[o.person?.(p)].filter((n):n is Node=>!!n)];}):emptyLine('No people assigned'),key.root);
   // Its checks inline (not behind a disclosure): the findings of the rota's last check on this session.
   const found=((o.validation?.findings||[]) as Row[]).filter(f=>f.shift_id===shift.id);
-  box.append(el('h3',{class:'wk-h3'},'Checks'),!o.validation?el('p',{class:'muted'},'Not checked yet'):o.fresh===false?el('p',{class:'muted'},'The rota changed since the last check.'):
+  // While only the window is in (kept), the last check's findings show as such: nothing changed, the rest is loading.
+  box.append(el('h3',{class:'wk-h3'},'Checks'),!o.validation?el('p',{class:'muted'},'Not checked yet'):o.kept?el('div',{},el('p',{class:'muted'},'From the last check'),
+      found.length?issueList(found.map(f=>findingIssue(f,f.person_id?o.name(f.person_id):'')),{limit:12}):''):o.fresh===false?el('p',{class:'muted'},'The rota changed since the last check.'):
     found.length?issueList(found.map(f=>findingIssue(f,f.person_id?o.name(f.person_id):'')),{limit:12}):el('p',{class:'muted'},'Passes every check'));
   return box;
 }
@@ -323,7 +325,7 @@ export function resolveQueue(data:WorkspaceData,only=resolve.active?resolve.only
     const c=cover.get(s.id),role=roleGap(data,s.id,c);
     if(c?.gap)out.push({key:'gap:'+s.id,kind:'fill',shift:s,label:role?ROLE_GAP_WORDS[role]:'Open place'});
     for(const f of findings.get(s.id)||[]){
-      const p=s.participants.find((x:Row)=>x.person_id===f.person_id),key=`rule:${s.id}:${f.person_id}`;
+      const p=s.participants.find(x=>x.person_id===f.person_id),key=`rule:${s.id}:${f.person_id}`;
       if(p&&!seen.has(key)){seen.add(key);out.push({key,kind:'person',shift:s,assignment:p.id,label:f.message});}
     }
   }
@@ -346,6 +348,14 @@ export function coverOf(data:WorkspaceData){
     out.set(r.shift_id,c);
   }
   for(const c of out.values()){if(c.scheduled===Infinity)c.scheduled=0;if(c.available===Infinity)c.available=0;}
+  // Someone absent now (leave or a rotation found after the check, a reported Can't make it) is struck through on the
+  // grid, so they fill no place either: never more places filled than the people on the session who are not absent.
+  // A check that already knew of the absence counted it, and the smaller of the two counts it once.
+  for(const s of data.shifts||[]){const c=out.get(s.id);if(!c)continue;
+    const away=absentFrom(s,[]),present=s.participants.filter(p=>!away.has(p.person_id)).length;
+    if(present>=c.available)continue;
+    c.available=present;const open=Math.max(0,c.required-present);
+    if(open>c.open){c.open=open;c.gap=true;}c.basic=Math.max(c.basic,open);}
   return out;
 }
 /** Puts a person's new row in a group of a people grid (Timeline, Counts) in name order: the live auto-schedule view adds
@@ -651,7 +661,7 @@ export function plannerPanels(ctx:Context,data:WorkspaceData,period:Period,hooks
     else if(panel&&shift){
       // ↑ ↓ step through the sessions the view shows (its filters), each as held now; one gone since is skipped.
       const byId=new Map(now.shifts.map(s=>[s.id,s]));
-      const range=data.shifts.filter(s=>!s.context&&days.includes(dayOf(s))).map(s=>now===data?s:byId.get(s.id)).filter((s):s is Row=>!!s)
+      const range=data.shifts.filter(s=>!s.context&&days.includes(dayOf(s))).map(s=>now===data?s:byId.get(s.id)).filter(s=>s!==undefined)
         .sort((a,b)=>String(a.start).localeCompare(String(b.start))||String(a.id).localeCompare(String(b.id)));
       const aside=sessionPanel(ctx,now,shift,panel,hooks,{time:`${formatTime(shift.start,zone)}–${formatTime(shift.end,zone)}`,day:dayLabel(shift),place:placeName(shift),cover:cover.get(shift.id),rulesFor,close:closePanel,open:openPanel,range,highlight:()=>highlightFocus(root,w.id)});
       if(resolve.active&&queue.length){
@@ -1534,9 +1544,9 @@ function onGrid(shift:Row,leaving:(string|undefined)[],joining=''):()=>void{
 type Duty={s:Row;parts:[number,number][]};
 /** The Planner's sessions: `rota` is everything shown to this account (person facts); `unfiltered` is what the grid
  *  starts from, after My duties (`mine`: the viewer's person id) and the draft-only List view, before the toolbar's filters. */
-export function plannerSessions(shifts:Row[],mine:string|null,listDraft:boolean):{rota:Row[];unfiltered:Row[]}{
+export function plannerSessions(shifts:PlannerSession[],mine:string|null,listDraft:boolean){
   const base=listDraft?shifts.filter(s=>!s.context):shifts;
-  return {rota:shifts,unfiltered:mine?base.filter(s=>s.participants.some((p:Row)=>p.person_id===mine)):base};
+  return {rota:shifts,unfiltered:mine?base.filter(s=>s.participants.some(p=>p.person_id===mine)):base};
 }
 /** A person's attended intervals (ms) per session of a rota: presence segments, else their own start–end, else the
  *  session's (the same intervals as packages/domain/participation.py); published context and closed sessions excluded. */

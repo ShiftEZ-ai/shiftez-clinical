@@ -15,7 +15,7 @@ from packages.contracts.rule_catalogue import GREEDY_NOT_APPLIED
 from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
-from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
+from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified, person_active_for_interval
 from .validation import coverage_boundary_inputs, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
@@ -906,11 +906,12 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
     if session_data['policies']:
         for shift in shifts:
             scores = []
-            for pid, person in data['people'].items():
+            a, b = aware(shift['start']), aware(shift['end'])
+            for pid in data['people']:
                 if interrupted():
                     timed_out = True
                     break
-                if person['active'] and population_allows(data, shift, pid):
+                if person_active_for_interval(data, pid, a, b) and population_allows(data, shift, pid):
                     score = allocation_tier(session_data, shift, pid)
                     scores.append(score)
                     if tiered:
@@ -1005,7 +1006,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
         # the run: decide it once per session, not for every person at every seat.
         a, b = aware(shift['start']), aware(shift['end'])
         candidates = stage_people[stage, shift['id']] if stage is not None else data['people']
-        pool = [pid for pid in candidates if population_allows(data, shift, pid) and data['people'][pid]['active'] and series_candidate_allowed(data, shift, pid)
+        pool = [pid for pid in candidates if population_allows(data, shift, pid) and person_active_for_interval(data, pid, a, b) and series_candidate_allowed(data, shift, pid)
                 and qualified(data, pid, shift, shift['type_snapshot']['definition'], a, b)
                 and not rotation_blocks(data, pid, a, b) and not restriction_blocks(data, pid, shift, a, b)
                 and not any(overlaps(a, b, aware(r['start']), aware(r['end'])) for r in person_rows(data, 'availability', pid))]

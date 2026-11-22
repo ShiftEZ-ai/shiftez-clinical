@@ -1215,15 +1215,16 @@ BULK_REVERSE_FUNCTIONS = {kind: partial(_registered_reverse, kind) for kind in s
 
 
 def _run_item(db, actor, item, value, settings, batch_id):
-    had_self_approval = "self_approved" in db.info
-    previous = deepcopy(db.info.get("self_approved"))
+    audit_keys = ("self_approved", "entered_on_behalf_by")
+    previous = {key: deepcopy(db.info[key]) for key in audit_keys if key in db.info}
     try:
         return _dispatch_item(db, actor, item, value, settings, batch_id)
     except Exception:
-        if had_self_approval:
-            db.info["self_approved"] = previous
-        else:
-            db.info.pop("self_approved", None)
+        for key in audit_keys:
+            if key in previous:
+                db.info[key] = previous[key]
+            else:
+                db.info.pop(key, None)
         raise
 
 
@@ -1367,7 +1368,9 @@ def _dispatch_item(db, actor, item, value, settings, batch_id):
             **subject_detail(db, command.kind, reply, department_id=actor.department_id),
                     **({"context_check_evidence": reply["context_check_evidence"]} if reply.get("context_check_evidence") else {}),
                     **({"resolved_finding": item["resolved_issue"]} if item.get("resolved_issue") else {}),
-                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {})},
+                    **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                    **({"entered_on_behalf_by": sorted(enterers)}
+                       if (enterers := db.info.pop("entered_on_behalf_by", None)) else {})},
             correlation_id=db.info.get("correlation_id") or "bulk-preview")))
         if not before or after.get("id") == before.get("id"):
             current = after or current
@@ -1562,6 +1565,7 @@ def _planned_items(value, items, suggestions=None, only=None):
     for index, original in enumerate(items):
         preview = suggestions.get(index, {})
         status, item, extra = "execute", original, []
+        chosen = None
         if (only is not None and index not in only) or (value.get("apply_ready_only") and suggestions and
                 preview.get("result") not in {"ready", "unchanged", "waiting"}):
             status = "staged"
@@ -1580,7 +1584,9 @@ def _planned_items(value, items, suggestions=None, only=None):
                     continue
             if status == "execute" and preview.get("result") == "problem":
                 status = "problem"
-        plan[index] = {"item": item, "extra": extra, "status": status}
+        plan[index] = {"item": item, "extra": extra, "status": status,
+                       **({"resolution_issue": preview["issues"][0]}
+                          if chosen and preview.get("issues") else {})}
     return plan
 
 
@@ -2090,7 +2096,32 @@ def _simulate_rows(db, actor, value, items, settings, only=None, undo_source=Non
     """Use the existing operational catalogue evaluator for the combined proposed change."""
     sources = _impact_sources(db, actor, value, items)
     rows = _preview_rows(db, actor, value, items, settings, only, undo_source)
-    return _attribute_impacts(db, actor, value, items, rows, sources, undo_source)
+    result = _attribute_impacts(db, actor, value, items, rows, sources, undo_source)
+    trial = db.info.pop("_bulk_preview_trial", None)
+    if trial:
+        savepoint, previous, state, plan = trial
+        for row in result[0]:
+            entry = plan.get(row["index"], {})
+            if not row.get("issues") and entry.get("resolution_issue"):
+                row["issues"] = [entry["resolution_issue"]]
+        stamped_organisations = tuple((db.info.get("_snapshot_input_revisions") or {})
+                                      .get("organisations", {}).values())
+        savepoint.rollback()
+        _restore_preview_metadata(db, previous, state)
+        # Rollback restores the row but leaves before_flush counters in the identity map.
+        with db.no_autoflush:
+            for organisation in stamped_organisations:
+                db.expire(organisation, ["input_revision", "availability_revision"])
+                db.refresh(organisation, ["input_revision", "availability_revision"])
+        try:
+            _prepare_approval_context(db, actor, value, plan, settings)
+        except Problem as error:
+            _problem(error)
+            for row in result[0]:
+                if row["index"] in _details(error).get("approval_indexes", []):
+                    issue = _relationship_resolutions(db, actor, items[row["index"]], value, _issue(error))
+                    row.update(result="problem", issues=[issue])
+    return result
 
 
 def _copy_preview_metadata(value):
@@ -2179,6 +2210,7 @@ def _preview_diagnostics(db, actor, value, items, settings, only=None, undo_sour
                 pass
         except ValidationError:
             pass
+        trial, previous, trial_state = db.begin_nested(), _copy_preview_metadata(db.info), db.info.get("bulk")
         for index, original in enumerate(items):
             if only is not None and index not in only:
                 continue
@@ -2196,7 +2228,7 @@ def _preview_diagnostics(db, actor, value, items, settings, only=None, undo_sour
                 with _preview_savepoint(db):
                     row, _ = _run_item(db, actor, original, value, settings, None)
                     if original.get("resolved_issue"):
-                        row.update(issues=union_issues[index]["issues"])
+                        row.update(issues=union_issues.get(index, {}).get("issues", row.get("issues", [])))
             except Exception as caught:
                 error = _problem(caught)
                 try:
@@ -2241,14 +2273,7 @@ def _preview_diagnostics(db, actor, value, items, settings, only=None, undo_sour
                     if checked is not None:
                         reply.update(overlap_conflicts=checked['conflicts'], conflicts=checked['conflicts'],
                                      conflict_token=context['checked']['conflict_token'])
-        try:
-            _prepare_approval_context(db, actor, value, plan, settings)
-        except Problem as error:
-            _problem(error)
-            for row in rows:
-                if row["index"] in _details(error).get("approval_indexes", []):
-                    issue = _relationship_resolutions(db, actor, items[row["index"]], value, _issue(error))
-                    row.update(result="problem", issues=[issue])
+        db.info["_bulk_preview_trial"] = (trial, previous, trial_state, plan)
     return rows
 
 

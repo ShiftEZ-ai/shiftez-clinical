@@ -1,5 +1,5 @@
 """Schedule ranges and layouts from View settings: Month as week bands with "+N more", 3 days and Custom ranges, the
-Days & time page (weekdays, week start, time window) kept in a saved view, and the key pinned and wrapping."""
+Days & time page (weekdays, week start, time window) kept in a saved view, and the key pinned on one line with overflow."""
 import os
 import re
 import pytest
@@ -48,10 +48,11 @@ def test_month_is_the_week_grid_in_bands_with_more(browser, live_server, h):
         choose_radio(view_settings(page.locator(".planner-toolbar")), "Density", "Compact")
         close_popover(page)
         expect(grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · ")).locator(".pchip:not(.more)")).to_have_count(3)
-        # pinned under the schedule; wraps, never scrolls or cuts an entry
+        # Pinned under the schedule; one line, with full entries in its overflow popover.
         key = page.locator("#main .view-legend:visible").first
         expect(key).to_be_visible()
-        assert key.evaluate("k => [getComputedStyle(k).position, getComputedStyle(k).flexWrap]") == ["sticky", "wrap"]
+        assert key.evaluate("k => [getComputedStyle(k).position, getComputedStyle(k).flexWrap]") == ["sticky", "nowrap"]
+        assert grid.evaluate("g => g.compareDocumentPosition(document.querySelector('#main .view-legend')) & Node.DOCUMENT_POSITION_FOLLOWING")
         state = legend_state(page)
         assert not state["clipped"], state["clipped"]
         assert not state["cut"], state["cut"]

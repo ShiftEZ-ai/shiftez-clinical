@@ -15,9 +15,10 @@ import subprocess
 import tomllib
 import sys
 from urllib.request import Request, urlopen
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import node_census
 import hardening
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_retired
 
 from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_agent_path, private_ignore_content
 
@@ -58,7 +59,6 @@ SHRINK_ONLY = {
     "ci/hosted-env-exceptions.json": ("exceptions",),
     "ci/unstable-seeds.json": ("nodes",),
 }
-QUARANTINE = "tests/quarantine.json"
 QUARANTINE_DAYS = 30
 MARKER = "ci/working-rules.json"
 CONTRACT = {"schema": 4, "ci_result_contract": "failclosed-main-reviewed-errors-v32"}
@@ -71,7 +71,7 @@ LISTS = {
     "ci/root-run-evidence.json": False, NODE_LEDGER: False,
     "ci/hosted-env-exceptions.json": False,
     "ci/unstable-seeds.json": True, "ci/hosted-durations.json": True,
-    "tests/quarantine.json": True,
+    QUARANTINE: True, QUARANTINE_RETIRED: True,
 }
 
 
@@ -113,6 +113,21 @@ def read_file(revision, path):
     return git("show", revision + ":" + path)
 
 
+def retired_at_revision(revision, *, allow_legacy=True):
+    try:
+        raw = read_file(revision, QUARANTINE_RETIRED)
+        if raw is None and allow_legacy:
+            source = read_file(revision, ".github/scripts/working_policy.py")
+            # QUARANTINE_RETIRED was introduced with the list and must remain the activation marker.
+            if source and b"QUARANTINE_RETIRED" not in source:
+                return None, {}
+        return raw, decode_retired(raw)
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("Cannot read trusted quarantine retired list: " + QUARANTINE_RETIRED) from None
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid quarantine retired list {QUARANTINE_RETIRED}: {error}") from None
+
+
 def known_failure_classes(raw):
     data = decode(raw) if raw else {}
     return {entry["node"]: entry.get("class", "unstable" if key == "unstable" else None)
@@ -130,7 +145,7 @@ def moved_failure_classes(before, after):
     return {node: cls for node, cls in known_failure_classes(before).items() if node not in after}
 
 
-def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
+def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw, *, retired=frozenset()):
     """Keep or remove existing quarantine entries; add only entries MOVED from known failures or recovered FLAKES."""
     def encoded(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -154,6 +169,8 @@ def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
             if encoded(entry) != existing[node]:
                 raise ValueError(QUARANTINE + " may not edit an existing entry: " + node)
             continue
+        if node in retired:
+            raise ValueError(QUARANTINE + " may not re-add a retired entry: " + node)
         issue, owner, reason = entry.get("issue"), entry.get("owner"), entry.get("reason")
         if type(issue) is not int or issue < 1:
             raise ValueError(QUARANTINE + " additions need an issue number of at least 1: " + node)
@@ -189,6 +206,33 @@ def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
             continue
         raise ValueError(QUARANTINE + " may only add entries moved from " + KNOWN
                          + " with their class, or recovered flakes with run evidence: " + node)
+
+
+def quarantine_retired_change(before_raw, after_raw, registry_before, registry_after):
+    try:
+        before = decode_retired(before_raw) if before_raw is not None else {}
+        after = decode_retired(after_raw)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid {QUARANTINE_RETIRED}: {error}") from None
+    append_only = QUARANTINE_RETIRED + " is append-only"
+    base_entries = {entry["nodeid"]: entry for entry in decode(registry_before)}
+    removed = before.keys() - after.keys()
+    if removed:
+        remaining_nodes = {entry["nodeid"] for entry in decode(registry_after)}
+        if removed & remaining_nodes:
+            raise ValueError(append_only + "; remove the same nodes from " + QUARANTINE + " before or with compaction")
+    retained = [(node, token) for node, token in before.items() if node in after]
+    if (list(after.items())[:len(retained)] != retained
+            or before_raw is not None and before == after and before_raw != after_raw):
+        raise ValueError(append_only + "; existing entries must stay byte-unchanged and in order")
+    for node in after.keys() - before.keys():
+        if node not in base_entries:
+            raise ValueError(append_only + "; new entry is absent from the base " + QUARANTINE + ": " + node)
+        row = base_entries[node]
+        if row["blocker"]:
+            raise ValueError(append_only + "; release blockers may not be retired: " + node)
+        if row["reason"].split(":", 1)[0].strip() not in {"baseline", "baseline-error"}:
+            raise ValueError(append_only + "; only baseline or baseline-error entries may be retired: " + node)
 
 
 def removal_only(before_raw, after_raw, entry_keys=("fails", "unstable")):
@@ -688,12 +732,26 @@ def accepted_dev_commit(candidate_tree, dev_tip):
     raise ValueError("Release head tree is not an accepted tree on dev")
 
 
+def default_branch(data):
+    # The integration branch is the repository default from the trusted event payload, never PR content.
+    branch = (data.get("repository") or {}).get("default_branch")
+    if branch not in {"dev", "main"}:
+        raise ValueError("Unexpected repository or default branch")
+    return branch
+
+
+def working_branches(default):
+    # shortcut: main is the release branch and preview a promotion branch only while the default is dev;
+    # once the default is main both paths are unreachable, and the next CI change deletes them.
+    return {default} if default == "main" else {default, "main", "preview"}
+
+
 def event():
     data = decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     repo = data["repository"]
-    if (repo["id"] != REPOSITORY or repo["full_name"] != "ShiftEZ-ai/shiftez-clinical"
-            or repo["default_branch"] != "dev"):
+    if repo["id"] != REPOSITORY or repo["full_name"] != "ShiftEZ-ai/shiftez-clinical":
         raise ValueError("Unexpected repository or default branch")
+    default_branch(data)
     return data
 
 
@@ -755,7 +813,7 @@ def bootstrap(data, kind, base):
     if os.getenv("TRUSTED_BOOTSTRAP") != "true":
         return False
     pr = data.get("pull_request", {})
-    if (kind != "pull_request" or pr.get("base", {}).get("ref") != "dev"
+    if (kind != "pull_request" or pr.get("base", {}).get("ref") != default_branch(data)
             or pr["base"]["repo"]["id"] != REPOSITORY or pr["head"]["repo"]["id"] != REPOSITORY
             or os.environ["GITHUB_RUN_ATTEMPT"] != "1"
             or git("rev-list", "--parents", "-n", "1", base).decode().split() != [base]
@@ -769,11 +827,13 @@ def bootstrap(data, kind, base):
 
 def guard():
     data = event()
+    default = default_branch(data)
+    targets = working_branches(default) - {"preview"}
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
         pr = data["pull_request"]
         branch = pr["base"]["ref"]
-        if branch not in {"dev", "main"}:
+        if branch not in targets:
             print("Policy is not required for this PR target")
             return
         if pr["base"]["repo"]["id"] != REPOSITORY or type(data["number"]) is not int or data["number"] < 1:
@@ -784,11 +844,11 @@ def guard():
         candidate = merge_tree(base, head)
         candidate_sha = None
         comparison = base + "..." + head
-        if branch == "dev" and pr["head"]["repo"]["id"] == REPOSITORY and pr["head"]["ref"] == "preview":
+        if branch == default and pr["head"]["repo"]["id"] == REPOSITORY and pr["head"]["ref"] == "preview":
             raise ValueError("Preview is never promoted into dev")
     elif kind == "merge_group":
         group = data["merge_group"]
-        if group["base_ref"] not in {"refs/heads/dev", "refs/heads/main"}:
+        if group["base_ref"] not in {"refs/heads/" + name for name in targets}:
             raise ValueError("Unexpected queue target")
         branch = group["base_ref"].removeprefix("refs/heads/")
         base, head = commit(group["base_sha"]), commit(group["head_sha"])
@@ -807,8 +867,8 @@ def guard():
             workflow_privacy.check(read_file(candidate, path).decode("utf-8"))
     migration_floor(migrations(base), migrations(candidate))
     initial = bootstrap(data, kind, base)
-    if branch == "main":
-        dev_tip = fetch("refs/heads/dev")
+    if branch != default:  # the release branch main, only while the default is dev
+        dev_tip = fetch("refs/heads/" + default)
         source = accepted_dev_commit(candidate, dev_tip)
         if candidate != tree(head):
             raise ValueError("Main would add content beyond the accepted dev tree")
@@ -854,13 +914,17 @@ def guard():
             old, new = read_file(base, path), read_file(candidate, path)
             if path == KNOWN and removal_only(old, new):
                 level, reason = 0, "Known-failures entry removal only"
+            elif not initial and path == QUARANTINE_RETIRED:
+                quarantine_retired_change(old, new, read_file(base, QUARANTINE), read_file(candidate, QUARANTINE))
+                level, reason = 0, "Quarantine retirement or compaction after registry removal"
             elif not initial and path == NODE_LEDGER:
                 if not hardening.load()["node_census"] or node_census.ledger_additions(old, new) is None:
                     raise ValueError(NODE_LEDGER + " may only add removed nodes for census verification")
                 level, reason = 2, "Node-ledger additions only; CI must prove each node disappears in this candidate"
             else:
                 if not initial and path == QUARANTINE:
-                    quarantine_change(old, new, read_file(base, KNOWN), read_file(candidate, KNOWN))
+                    _, retired = retired_at_revision(base)
+                    quarantine_change(old, new, read_file(base, KNOWN), read_file(candidate, KNOWN), retired=retired)
                 if not initial and path in SHRINK_ONLY and not removal_only(old, new, SHRINK_ONLY[path]):
                     raise ValueError(path + " may only remove existing entries")
                 level, reason = tier(path, old, new, inventory)
@@ -887,14 +951,15 @@ def guard():
         policy_base = head
     receipts = {}
     for path, required in LISTS.items():
-        raw = read_file(policy_base, path)
-        if raw is None:
-            if required:
-                raise ValueError("Required policy list is absent")
-            receipts[path] = "ABSENT"
+        if path == QUARANTINE_RETIRED:
+            raw, _ = retired_at_revision(policy_base)
         else:
-            decode(raw)
-            receipts[path] = hashlib.sha256(raw).hexdigest()
+            raw = read_file(policy_base, path)
+            if raw is None and required:
+                raise ValueError("Required policy list is absent")
+            if raw is not None:
+                decode(raw)
+        receipts[path] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
     print(json.dumps({"branch": branch, "target_sha": base, "policy_input_sha": policy_base,
                       "head_sha": head, "candidate_sha": candidate_sha, "candidate_tree": candidate, "lists": receipts,
                       "workflow_source_sha": os.getenv("POLICY_WORKFLOW_SHA", "UNKNOWN")}, sort_keys=True))
@@ -903,6 +968,7 @@ def guard():
 
 def ci_context():
     data = event()
+    default = default_branch(data)
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
         branch, base = data["pull_request"]["base"]["ref"], commit(data["pull_request"]["base"]["sha"])
@@ -910,20 +976,21 @@ def ci_context():
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
     elif kind == "schedule":
-        branch, base = "dev", commit(git("rev-parse", "HEAD").decode().strip())
+        branch, base = default, commit(git("rev-parse", "HEAD").decode().strip())
     else:
         branch, base = os.environ["GITHUB_REF"].removeprefix("refs/heads/"), commit(git("rev-parse", "HEAD").decode().strip())
-    if branch not in {"dev", "preview", "main"}:
-        raise ValueError("CI supports only the three working branches")
+    if branch not in working_branches(default):
+        raise ValueError("CI supports only the working branches")
     census_base = commit(data["before"]) if kind=="push" else base
-    if branch == "main":
-        base = accepted_dev_commit(tree("HEAD"), fetch("refs/heads/dev"))
+    release = branch == "main" and default != "main"
+    if release:
+        base = accepted_dev_commit(tree("HEAD"), fetch("refs/heads/" + default))
     elif branch == "preview":
-        base = fetch("refs/heads/dev")
+        base = fetch("refs/heads/" + default)
     elif kind == "push":
         base = commit(data["before"])
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-        output.write("census_base_sha=" + census_base + "\nbase_sha=" + base + "\nrelease=" + str(branch == "main").lower() + "\n")
+        output.write("census_base_sha=" + census_base + "\nbase_sha=" + base + "\nrelease=" + str(release).lower() + "\n")
 
 
 def main():

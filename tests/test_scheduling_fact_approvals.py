@@ -316,7 +316,7 @@ def test_alternate_proposer_account_is_visible_but_not_decidable_or_counted(h):
     with transaction(h.app.state.engine, write=True) as db:
         db.get(m.Identity, h.seed["identities"]["coordinator"]).person_id = person
     identity(h, "alternate_approver", ["approver"], person=person)
-    fact = propose(h)
+    fact = propose(h, person=person)
     ordinary = leave(h)
     listed = read(h, "alternate_approver")
     item = next(row for row in listed["items"] if row["id"] == fact["id"])

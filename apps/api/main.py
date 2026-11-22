@@ -1394,11 +1394,13 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor)['people']
+            current = current_people(db, actor, today)['people']
             aliases = imported_aliases(db, actor)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
+                if not employee_number_redacted:
+                    person['configured_active'] = person['active']
                 person.update(current.get(person['id'], {}))
                 person['employee_number_redacted'] = employee_number_redacted
             from .services.people import visible_people
@@ -1643,13 +1645,14 @@ def create_app(settings: Settings | None = None, engine=None):
         """Active people, with the same field visibility as the people catalogue."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
+            from .services.independence import today
+            from .services.people import active_people_on, current_people, visible_people
+            day = today(db, actor.department_id)
             rows = list(db.execute(select(m.Person.id, *(getattr(m.Person, f) for f in DIRECTORY_FIELDS)).where(
-                m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True)).order_by(
+                m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            from .services.people import current_people
-            current = current_people(db, actor)['people']
-            from .services.people import visible_people
+            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}
@@ -2544,12 +2547,13 @@ def create_app(settings: Settings | None = None, engine=None):
                 response.headers.update(cached)
                 return conditional_json(request, s.WorkspaceCompactDetail.model_validate(workspace_detail.compact(db, actor, workspace)), actor,
                                         tag=tag)
-            from .services.conditional_reads import conditional_response
+            from .services.conditional_reads import conditional_response, revision_etag
             from .services.workspace_reads import fast_etag
             workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
                 defer(m.Workspace.validation), defer(m.Workspace.review_snapshot)))
             fast_tag = fast_etag(db, actor, workspace, include_job_state=True)
-            cached = conditional_response(request, fast_tag)
+            tag = revision_etag("workspace-schedule", fast_tag) if view == "schedule" else fast_tag
+            cached = conditional_response(request, tag)
             if isinstance(cached, Response):
                 return cached
             # The validator above reads only scalar metadata. Hydrate the large JSON
@@ -2607,22 +2611,23 @@ def create_app(settings: Settings | None = None, engine=None):
             # Staff wishes on the rota's days (markers in the planner); they change without the rota changing.
             from .services.wishes import planner_effects, snapshot_wishes
             from .services.published_changes import review_payload
-            data.update(review_payload(db, workspace, actor))
             canonical = db.info.get('read_snapshots', {}).get(workspace.id)
-            wishes = (canonical['wishes'] if canonical is not None and workspace.status == 'draft'
-                      else snapshot_wishes(db, [workspace.department_id], workspace))
-            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
-                              if workspace.status == 'draft' else wishes)
+            use_canonical = canonical is not None and workspace.status == 'draft'
+            wishes = (canonical['wishes'] if use_canonical else snapshot_wishes(db, [workspace.department_id], workspace))
             from .snapshots import project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
-            if canonical is not None and workspace.status == "draft":
+            if use_canonical:
                 focus = set(canonical.get("focus_ids") or ())
                 own_shifts = [row for row in canonical.get("shifts", ()) if row.get("id") in focus]
             else:
                 own_shifts = workspace_detail.full_shifts(db, workspace.id)
-            data["shifts"] = project_series_shifts(db, workspace, own_shifts,
-                                                   external_out=external_context if data["wishes"] else None)
+            projected = project_series_shifts(db, workspace, own_shifts, external_out=external_context if wishes else None)
+            # A canonical check may use a narrower set of sessions than the review diff.
+            data.update(review_payload(db, workspace, actor, projected_shifts=None if use_canonical else projected))
+            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
+                              if workspace.status == 'draft' else wishes)
+            data["shifts"] = projected
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
             data['shifts'] = session_actions(db, actor, data['shifts'])
@@ -2640,6 +2645,9 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
+        if view == "schedule":
+            from .serialization import schedule_projection
+            data = schedule_projection(data)
         result = JSONResponse(projection_json_value(data))
         result.headers.update(cached)
         return result
@@ -2989,12 +2997,12 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             from .services.conditional_reads import conditional_response
-            tag = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
-            cached = conditional_response(request, tag)
+            validator = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+            cached = conditional_response(request, validator[0])
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
-            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on)
+            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on, validator=validator)
 
     @app.get("/api/fairness/exposure", response_model=s.FairnessExposure)
     def fairness_exposure(request: Request, response: Response, rows: str | None = Query(None, max_length=20000), cols: str | None = Query(None, max_length=20000),

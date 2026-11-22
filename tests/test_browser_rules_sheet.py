@@ -6,6 +6,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from .legend_guard import legend_entries
 from .test_alpha_calendar import programme
 from .test_browser import browser, live_server, sign_in, navigate, open_rule  # noqa: F401
 from .test_rule_conditions import line, tree
@@ -53,7 +54,11 @@ def test_rule_rows_marks_pills_and_reach(browser, live_server, h, width):
         expect(page.locator('.rule-item').filter(has_text='Weekly duties').locator('.rule-num')).to_have_text('2 – 6 → 4 duties')
         rest = page.locator('.rule-item').filter(has_text='Rest between duties')
         expect(rest.locator('.rl-mark')).to_have_text('Waiting for approval')
-        expect(page.locator('.rl-legend li')).to_have_text(['Waiting for approval', 'Mandatory', 'Advisory', '≥ 2Minimum · ≤ maximum · → target'])
+        key = page.locator('.rl-legend')
+        if width == 390:
+            expect(key.locator('.lg-more > button')).to_be_visible()
+        with legend_entries(page, key) as entries:
+            expect(entries).to_have_text(['Waiting for approval', 'Mandatory', 'Advisory', '≥ 2Minimum · ≤ maximum · → target'])
         # Group heads: a coloured square per topic, the count and what waits there.
         head = page.locator('.rule-group-toggle').filter(has_text='Limits & rest')
         expect(head.locator('.rule-group-icon')).to_have_class('rule-group-icon duty-indigo')
@@ -101,6 +106,7 @@ def test_rule_sheet_sections_range_bar_exceptions_and_draft_days(browser, live_s
         expect(sheet.get_by_role('button', name='New line')).to_be_visible()
         # The draft: a bar per day; a's three long days are short.
         section = sheet.locator('.rl-sec').filter(has_text='In November draft')
+        section.get_by_role('button', name='Show effect in November draft', exact=True).click()
         expect(section.locator('.rl-day')).to_have_count(7)
         expect(section.locator('.rl-day.short')).to_have_count(3)
         expect(section.locator('.rl-health-count')).to_have_text('4 of 7 days met')

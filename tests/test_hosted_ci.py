@@ -117,12 +117,18 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     assert not (tmp_path / "push-retry.xml").exists()
 
 
-@pytest.mark.parametrize(("replicas", "smoke", "retry_expected"), [
-    ([1], False, True),
-    ([1], True, False),
-    ([1, 2], False, False),
+@pytest.mark.parametrize("replicas,smoke,retry_expected,branch,event,retired,default", [
+    pytest.param([1], False, True, "dev", "pull_request", False, "dev", id="replicas0-False-True"),
+    pytest.param([1], True, False, "dev", "pull_request", False, "dev", id="replicas1-True-False"),
+    pytest.param([1, 2], False, False, "dev", "pull_request", False, "dev", id="replicas2-False-False"),
+    pytest.param([1], False, True, "dev", "pull_request", True, "dev", id="pr-retirement"),
+    pytest.param([1], False, True, "dev", "merge_group", True, "dev", id="group-retirement"),
+    pytest.param([1], False, True, "main", "merge_group", True, "dev", id="release-uses-accepted-dev"),
+    # After the rename main is the default, so its merge groups are integration and read the candidate.
+    pytest.param([1], False, True, "main", "merge_group", True, "main", id="renamed-main-group-retirement"),
 ])
-def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, monkeypatch, replicas, smoke, retry_expected):
+def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
+        tmp_path, monkeypatch, replicas, smoke, retry_expected, branch, event, retired, default):
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
     import trusted_ci
 
@@ -153,7 +159,12 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, mon
              "fails": [{"node": listed, "class": "baseline"}], "unstable": []}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setattr(trusted_ci.policy, "event", lambda: {
+        "pull_request": {"base": {"ref": branch}}, "merge_group": {"base_ref": "refs/heads/" + branch},
+        "repository": {"default_branch": default},
+    })
+    release = branch == "main" and default != "main"
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     monkeypatch.setenv("CI_UNIT_WORKERS", "4")
@@ -166,6 +177,10 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, mon
         assert sha in {candidate["sha"], candidate["base_sha"]}
         if name == trusted_ci.policy.KNOWN:
             return json.dumps(known).encode()
+        if name == trusted_ci.policy.QUARANTINE_RETIRED:
+            if release:
+                assert sha == candidate["base_sha"]
+            return json.dumps([quarantined] if retired and sha == candidate["sha"] else []).encode()
         assert name == "tests/quarantine.json"
         row = {"nodeid": quarantined, "reason": "baseline: reviewed", "owner": "maintainers",
                "added": "2000-01-01", "expires": "2000-01-02", "issue": 123, "blocker": False}
@@ -177,7 +192,8 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(tmp_path, mon
     receipt = json.loads((tmp_path / ".run/reports/shard-receipt.json").read_text(encoding="utf-8"))
     assert receipt["reports"][0]["exit_code"] == 1
     assert ("retry" in receipt["reports"][0]) == retry_expected
-    assert calls == [([path], "4")] + ([([new_flake, red], "0")] if retry_expected else [])
+    retried = [new_flake, quarantined, red] if retired and not release else [new_flake, red]
+    assert calls == [([path], "4")] + ([(retried, "0")] if retry_expected else [])
     assert (tmp_path / ".run/reports/junit-retry.xml").exists() == retry_expected
 
 
