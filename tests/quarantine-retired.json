@@ -20,5 +20,6 @@
   "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-mkfppbppcabfgbijfpkgigggallpgkgdjmkcahjjakpggbflfhhjpinmimdgkmfi]",
   "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-mpgodohjhhplhgjdaihbiipbijpppbealppgbnmdlldelapligcfjmihkbcandic]",
   "tests/test_autosched_reuse_p0.py::test_followup_rejects_stale_or_ineligible_evidence[case-naidddbipfeognjcdfmdgcoednpfpnafjhbihocmlcahjgodonemleghfpkkklia]",
-  "tests/test_autosched_reuse_p0.py::test_followup_runtime_budget_change_does_not_invalidate_candidate_facts"
+  "tests/test_autosched_reuse_p0.py::test_followup_runtime_budget_change_does_not_invalidate_candidate_facts",
+  "tests/test_score_check_parser.py::test_fuzzy_matching_normalizes_aliases_but_never_confidently_accepts_typoes"
 ]

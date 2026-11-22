@@ -38,7 +38,7 @@ def test_dated_deactivation_saves_survives_reload_and_undo_restores_it(browser, 
         expect(form).to_have_count(0)
         expect(page.locator('#toast-tray .toast').filter(has_text='saved and is live')).to_be_visible()
         saved = _saved(h, p['id'])
-        assert saved['active'] is False and saved['inactive_from'] == first, saved
+        assert saved['configured_active'] is False and saved['inactive_from'] == first, saved
 
         page.reload()
         expect_loaded(page, 'people')
@@ -53,7 +53,7 @@ def test_dated_deactivation_saves_survives_reload_and_undo_restores_it(browser, 
         toast.get_by_role('button', name='Undo', exact=True).click()
         expect(page.locator('#toast-tray')).to_contain_text('Undone')
         restored = _saved(h, p['id'])
-        assert restored['active'] is False and restored['inactive_from'] == first, restored
+        assert restored['configured_active'] is False and restored['inactive_from'] == first, restored
 
         page.reload()
         expect_loaded(page, 'people')
@@ -78,6 +78,6 @@ def test_an_inactive_date_that_is_not_a_date_is_said_beside_the_field(browser, l
         expect(date).to_be_focused()
         expect(form.locator('.field-error').filter(has_text='Enter a date')).to_be_visible()
         assert not sent
-        assert _saved(h, p['id'])['active'] is True
+        assert _saved(h, p['id'])['configured_active'] is True
     finally:
         context.close()
