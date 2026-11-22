@@ -77,8 +77,9 @@ def test_score_check_exclusion_keeps_unproved_department_changes_stamped(backend
         org = db.get(m.Organisation, h.seed['organisation_id'])
         department = db.get(m.Department, h.seed['department_id'])
         before = org.input_revision, org.availability_revision
-        changes = {'score_check_enabled': not department.score_check_enabled,
-                   'event_horizon_days': department.event_horizon_days + 1}
+        # A read scheduling input beside the excluded toggle: switching to the weekend fallback changes currency.
+        assert department.operating_calendar_id is not None
+        changes = {'score_check_enabled': not department.score_check_enabled, 'operating_calendar_id': None}
         if writer == 'orm':
             for key, value in changes.items():
                 setattr(department, key, value)
