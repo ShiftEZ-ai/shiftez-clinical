@@ -89,7 +89,7 @@ import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
 import {notificationsPanel,notificationPolicyPage,unreadCount} from './notifications.js';
 import {autoSameSessions} from './scoreCheckApi.js';
-import {allLimits,levelWords,limitPill,numbersEl,copyNumbers,numbersBlock,perWords,whoShort,whereShort,whoWhen,healthStrip,plainLines,exceptionList,exceptionsEditor,ruleSentence as sentenceOf,ruleDetails,quotaAmount,quotaPeriod,lineSessions,orderedLines} from './rule_view.js';
+import {allLimits,levelBadge,limitPill,numbersEl,copyNumbers,numbersBlock,perWords,whoShort,whereShort,whoWhen,healthStrip,plainLines,exceptionList,exceptionsEditor,ruleSentence as sentenceOf,ruleDetails,quotaAmount,quotaPeriod,lineSessions,orderedLines} from './rule_view.js';
 import {scorePill,scoreWhy,shownScore,scoreDelta} from './score.js';
 import {fairnessPage,resetFairness,restoreFairnessViews,nothingPublished} from './fairness.js';
 import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
@@ -5800,7 +5800,7 @@ function rulePanel(family:Row[],title:string,ruleName:string,position:PanelPosit
   const policy=family[0],d=policy.definition,state=family.length>1?plural(family.length,'copy','copies'):policy.status==='active'?`Effective from ${formatDate(policy.starts_on)}`:ruleState(policy);
   const ids=family.map(p=>p.id).join(' ');
   dockPanel({key:'rule',className:'rule-sheet',title,width:600,position,mark:ruleMark(ids),
-    sub:el('span',{class:'rl-meta'},badge(levelWords(d.severity==='mandatory'?'mandatory':d.strength||'medium')),el('span',{},state),el('span',{'aria-hidden':'true'},'·'),el('span',{},ruleName)),
+    sub:el('span',{class:'rl-meta'},levelBadge((policy.effective_severity??d.severity)==='mandatory'?'mandatory':d.strength||'medium',policy.severity_reason),el('span',{},state),el('span',{'aria-hidden':'true'},'·'),el('span',{},ruleName)),
     build:dock=>{dock.panel.dataset.ruleIds=ids;build(dock);}});
 }
 /** Close the rule panel when it shows one of these rules (a newer proposal replaced it, or the reader left for the Schedule). */
@@ -6404,7 +6404,7 @@ async function rulesPage(target:HTMLElement){
     const entry=catalogueEntryOf(rule),title=entry?.name||plain.replace(/\.$/,'');
     const trouble=family.flatMap(p=>problems.get(p.id)||[]);
     const waiting=family.filter(p=>p.status==='proposed'),live=family.filter(p=>p.status!=='retired');
-    const mark=trouble.length?'attn':waiting.length?'prop':policy.definition.severity==='mandatory'?'mand':'adv';
+    const mark=trouble.length?'attn':waiting.length?'prop':(policy.effective_severity??policy.definition.severity)==='mandatory'?'mand':'adv';
     const keyMark=markEl(mark);keyMark.querySelector('.sr-only')!.remove();keyMark.removeAttribute('title');keyMark.setAttribute('aria-hidden','true');
     const merged=(policy.definition.merged_ids||[]).length,previousVersion=policy.definition.replaces_id?pool().find(p=>p.id===policy.definition.replaces_id):undefined;
     // Retired and declined rules say so (History); a rule simply in force or waiting says nothing more (its mark does).
@@ -6442,7 +6442,7 @@ async function rulesPage(target:HTMLElement){
   const familySheet=(family:Row[],title:string,ruleName:string,position?:PanelPosition)=>{
     const policy=family[0],key=VALUE_KEY[policy.definition.rule.kind];
     rulePanel(family,title,ruleName,position,({body})=>{
-      const content=el('div',{class:'rule-detail-content'},ruleFacts([['Classification',policy.definition.severity==='mandatory'?'Mandatory':'Advisory'],['Exception requests',allowsException(policy)?'Allowed with approval':'Not allowed']]));
+      const content=el('div',{class:'rule-detail-content'},ruleFacts([['Classification',levelBadge(policy.effective_severity??policy.definition.severity,policy.severity_reason)],['Exception requests',allowsException(policy)?'Allowed with approval':'Not allowed']]));
       const groupable=LINE_KINDS.includes(policy.definition.rule.kind)&&family.filter(p=>p.status==='active').length>1;
       content.append(ruleLinesTable(family,key,retireOrDecline),
         ...(canPropose&&groupable?[el('div',{class:'actions'},el('span',{class:'muted'},'These copies say the same thing for different people or dates.'),
@@ -6465,7 +6465,7 @@ async function rulesPage(target:HTMLElement){
       });return;}
     const optioned=rulesView.search_options&&recordMatcher(search.input.value,rulesView.search_options);
     const lines=pool().filter(p=>(status==='attention'?needs(p):status?p.status===status:p.status!=='retired')&&(!day||p.starts_on<=day&&(!p.ends_on||day<p.ends_on))&&(rulesView.search_options?!optioned||optioned(policyRecord(p)):!query||text(p).includes(query))
-      &&(!rulesView.topics.length||rulesView.topics.includes(ruleTopic(p.definition.rule).name))&&(!rulesView.severity.length||rulesView.severity.includes(p.definition.severity))&&namesMatch(p,rulesView.who));
+      &&(!rulesView.topics.length||rulesView.topics.includes(ruleTopic(p.definition.rule).name))&&(!rulesView.severity.length||rulesView.severity.includes(p.effective_severity??p.definition.severity))&&namesMatch(p,rulesView.who));
     // Rules that have several lines anywhere (e.g. one waiting, the rest active): a lone line still reads as a line of that rule.
     const sizes=new Map<string,number>();for(const p of pool())if(status==='retired'?p.status==='retired':p.status!=='retired'){const k=familyKey(p);sizes.set(k,(sizes.get(k)||0)+1);}
     const entries=families(lines).map(f=>f.sort((a,b)=>String(a.starts_on).localeCompare(String(b.starts_on))));
@@ -6480,7 +6480,7 @@ async function rulesPage(target:HTMLElement){
       :empty('No matching rules','Change the search, the filters or the effective date.',null,'search'));return;}
     // Groups (topic by default: one definition, RULE_TOPICS; or mandatory/advisory; or none), each collapsible with its
     // count and what waits in it; big groups show 50 at a time. Within a group: by name, people reached or start date.
-    const groupOf=(f:Row[]):string=>rulesView.group==='severity'?(f[0].definition.severity==='mandatory'?'Mandatory':'Advisory'):rulesView.group==='topic'?ruleTopic(f[0].definition.rule).name:'';
+    const groupOf=(f:Row[]):string=>rulesView.group==='severity'?((f[0].effective_severity??f[0].definition.severity)==='mandatory'?'Mandatory':'Advisory'):rulesView.group==='topic'?ruleTopic(f[0].definition.rule).name:'';
     const groupNames=rulesView.group==='severity'?['Mandatory','Advisory']:rulesView.group==='topic'?topicNames:[''];
     const byGroup=new Map<string,Row[][]>(groupNames.map(t=>[t,[]]));
     for(const f of entries)byGroup.get(groupOf(f))!.push(f);

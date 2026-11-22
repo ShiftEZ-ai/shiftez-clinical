@@ -379,19 +379,21 @@ def test_undo_cannot_reopen_withdrawn_accepted_pair_after_inputs_make_it_ineligi
     assert h.get('staff', '/api/swaps/' + withdrawn['id'])['swap'] == withdrawn
 
 
-@pytest.mark.parametrize('severity', ['mandatory', 'advisory'])
+@pytest.mark.parametrize('severity', ['mandatory', 'advisory', 'advisory_workload'])
 @pytest.mark.parametrize('kind', ['exchange', 'give'])
 def test_current_restrictions_block_mandatory_but_allow_advisory_pairs(h, severity, kind):
     pid, first, second, _ = source_pair(h)
-    rule = h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'},
-                    {'person_id': h.seed['people'][1]}, severity=severity)
-    choice = recipient(h.get('staff', '/api/swaps/options?assignment_id=' + first + '&recipient_id=' + h.seed['people'][1]
-        + '&kind=' + kind), h.seed['people'][1])
-    if severity == 'mandatory':
-        assert choice['eligible'] is False and 'protected time' in choice['message']
-        assert any(f['code'] == 'RESTRICTION' and 'protected time' in f['message'] for f in choice['findings'])
-        assert h.command('staff', 'swap.offer', offer_payload(h, pid, first, kind), status=422)['error']['code'] == 'SWAP_INELIGIBLE'
+    scope = {'person_id': h.seed['people'][1]}
+    if severity == 'advisory_workload':
+        scope['weekdays'] = [6]
+        h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, scope, severity='advisory')
     else:
+        rule = {'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'}
+        create = h.stored_advisory_safety if severity == 'advisory' else h.policy
+        create(rule, scope)
+    choice = recipient(h.get('staff', '/api/swaps/options?assignment_id=' + first + '&recipient_id=' + scope['person_id']
+        + '&kind=' + kind), scope['person_id'])
+    if severity == 'advisory_workload':
         assert choice['eligible'] is True
         row = offered(h, pid, first, kind=kind)
         row = (transition(h, row, 'accept', 'staff_two') if kind == 'give' else
@@ -399,7 +401,13 @@ def test_current_restrictions_block_mandatory_but_allow_advisory_pairs(h, severi
         row = transition(h, row, 'confirm')['swap']
         prepared = transition(h, row, 'prepare', 'coordinator')
         assert prepared['validation']['valid']
-        assert any(f['code'] == 'RESTRICTION' and f['severity'] == 'warning' for f in prepared['validation']['findings'])
+        assert any(f['code'] == 'MAX_DUTIES' and f['severity'] == 'warning' for f in prepared['validation']['findings'])
+        return
+
+    # Safety kinds are always mandatory. A stored advisory restriction still blocks the swap.
+    assert choice['eligible'] is False and 'protected time' in choice['message']
+    assert any(f['code'] == 'RESTRICTION' and 'protected time' in f['message'] for f in choice['findings'])
+    assert h.command('staff', 'swap.offer', offer_payload(h, pid, first, kind), status=422)['error']['code'] == 'SWAP_INELIGIBLE'
 
 
 @pytest.mark.parametrize('changed_input,expected_code', [('eligibility', 'NOT_ELIGIBLE'), ('calendar', 'CALENDAR_CLOSED')])

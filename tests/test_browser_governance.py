@@ -217,7 +217,7 @@ def agreed_swap_pages(browser, live_server, h, contexts, errors, *, unrelated_ga
     if unrelated_gap:
         typ = h.configure("assignment_types", {"name": "Unrelated advisory duty", "starts_on": "2020-01-01",
                                               "definition": {}})["record"]
-        h.policy({"kind": "minimum_cover", "minimum": 2}, {"assignment_type_id": typ["id"]}, severity="advisory")
+        h.cover_target(2, {"assignment_type_id": typ["id"]})
         third_day = (day+timedelta(days=2)).isoformat()
         w = h.shift(w, third_day+"T08:00:00+03:00", third_day+"T12:00:00+03:00",
                     people=[h.seed["people"][2]], typ=typ["id"])["workspace"]
@@ -705,7 +705,7 @@ def test_approve_rota_pressed_stays_held_when_the_page_redraws_during_its_review
 def test_approve_dialog_shows_the_same_summary_as_submit(browser, live_server, h, scheme, viewport):
     """SR-32 / A5–A6: the approver decides on the summary the coordinator submitted with (one component): the same tiles
     and the Fix list's gate, without the coordinator's Open fix list."""
-    h.policy({'kind': 'minimum_cover', 'minimum': 2}, {'assignment_type_id': h.seed['type']}, severity='advisory')
+    h.cover_target(2, {'assignment_type_id': h.seed['type']})
     w = h.shift(h.workspace('Same summary rota'))['workspace']  # one of two wished-for people: a warning, not a block
     h.lifecycle(w, 'validate')
     contexts = []

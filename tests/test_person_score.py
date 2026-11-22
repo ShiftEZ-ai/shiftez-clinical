@@ -236,7 +236,8 @@ def test_person_score_offers_partial_fill_when_a_duty_needs_two_people(h):
 
 def test_person_score_marks_session_advisory_warning_on_complete_trial(h):
     pid, peer = h.seed['people'][:2]
-    h.policy({'kind': 'maximum_participants', 'maximum': 1}, severity='advisory')
+    # Safety kinds are always mandatory. A person's advisory workload limit still warns on placement.
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': pid}, severity='advisory')
     typ = h.configure('assignment_types', {'name': 'Advisory session warning', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 2}]}})['record']['id']
     workspace = h.shift(h.workspace(), typ=typ, people=[peer])['workspace']

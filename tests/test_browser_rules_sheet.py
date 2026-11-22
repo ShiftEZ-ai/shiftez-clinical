@@ -21,7 +21,8 @@ def rules(h):
     prog, _, _ = programme(h)
     cover = activate(h, propose(h, {'kind': 'minimum_cover', 'minimum': 2, 'aggregation': 'service_group'},
                                 {'conditions': tree(line('service_ids', *h.seed['services'][:2])), 'weekdays': [6, 0, 1, 2, 3]},
-                                name='UCC pooled cover', severity='advisory', strength='medium'))
+                                name='UCC pooled cover'))
+    activate(h, propose(h, {'kind': 'max_duties', 'maximum': 2}, name='Preferred duty limit', severity='advisory'))
     hours = activate(h, propose(h, {'kind': 'max_hours', 'hours': 6, 'window': 'day'}, {'conditions': tree(line('person_ids', a, b, c))},
                                 name='Daily hours', per_person=[{'person_id': b, 'amount': 8, 'ends_on': '2026-12-01'},
                                                                 {'person_id': c, 'amount': 7}]))
@@ -42,7 +43,10 @@ def test_rule_rows_marks_pills_and_reach(browser, live_server, h, width):
         navigate(page, 'rules')
         row = page.locator('.rule-item').filter(has_text='UCC pooled cover')
         expect(row.locator('.rl-text strong')).to_have_text(re.compile(r'^At least 2 people at .+ & .+ together$'))
-        expect(row.locator('.rl-mark')).to_have_text('Advisory')
+        # Safety kinds are always mandatory. The workload preference keeps the advisory mark.
+        expect(row.locator('.rl-mark')).to_have_text('Mandatory')
+        preferred = page.locator('.rule-item').filter(has_text='Preferred duty limit')
+        expect(preferred.locator('.rl-mark')).to_have_text('Advisory')
         expect(row.locator('.rule-num')).to_have_text('≥ 2')
         expect(row.locator('.rl-text span')).to_have_text('Sun–Thu · UCC pooled cover')   # the clinics are in the sentence, not again
         expect(row.locator('.rl-who')).to_contain_text('Everyone')
@@ -73,7 +77,32 @@ def test_rule_rows_marks_pills_and_reach(browser, live_server, h, width):
         page.locator('.rule-toolbar').get_by_role('button', name='Group: Mandatory or advisory').click()
         page.get_by_role('menuitemradio', name='No grouping').click()
         expect(page.locator('.rule-group-name')).to_have_count(0)
-        expect(page.locator('.rule-item')).to_have_count(6)  # Five authored rules plus seeded Fair share.
+        expect(page.locator('.rule-item')).to_have_count(7)  # Six authored rules plus seeded Fair share.
+    finally:
+        context.close()
+
+
+def test_legacy_safety_rules_keep_classification_mandatory(browser, live_server, h):
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules')
+        page.get_by_role('button', name='Add rule', exact=True).click()
+        form = page.get_by_role('dialog', name='Add rule')
+        form.get_by_role('radio', name='Maximum number of duties', exact=True).check()
+        classification = form.get_by_label('Classification', exact=True)
+        classification.select_option('advisory')
+        form.get_by_role('radio', name='Maximum people', exact=True).check()
+        expect(classification).to_have_value('mandatory')
+        expect(classification).to_be_disabled()
+        overflow = form.get_by_label('Permitted extra places', exact=True)
+        overflow.fill('1')
+        overflow.fill('0')
+        expect(classification).to_be_disabled()
+        form.get_by_role('radio', name='Time restriction', exact=True).check()
+        expect(classification).to_have_value('mandatory')
+        expect(classification).to_be_disabled()
+        form.get_by_role('radio', name='Maximum number of duties', exact=True).check()
+        expect(classification).to_be_enabled()
     finally:
         context.close()
 

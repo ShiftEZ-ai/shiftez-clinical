@@ -48,6 +48,7 @@ def test_explicit_lead_goal_keeps_defaults_outside_its_coverage(h, seeder, cover
             db.expire_all()
         assert record(db.get(m.Policy, original['id'])) == original
 
+    workspace = h.refresh_draft_baseline(workspace)
     default_id = scoring_defaults.line_id(h.seed['department_id'], 'lead:' + h.seed['type'])
 
     def default_intervals(workspace):
@@ -101,7 +102,7 @@ def test_catalogue_start_does_not_clip_earlier_defaults(h, seeder):
         start, end = f'2026-09-{day:02}T08:00:00+03:00', f'2026-09-{day:02}T12:00:00+03:00'
         workspace = h.shift(workspace, start=start, end=end, people=[{
             'person_id': h.seed['people'][0], 'start': start, 'end': end, 'team_lead': True}])['workspace']
-    data = h.snapshot(workspace)
+    data = h.snapshot(h.refresh_draft_baseline(workspace))
     defaults = [p for p in data['policies'] if p['id'] in {
         scoring_defaults.line_id(h.seed['department_id'], key)
         for key in ('workload', 'lead:' + h.seed['type'], 'lead-cap:' + h.seed['type'])}]
