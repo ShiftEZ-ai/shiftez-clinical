@@ -152,7 +152,7 @@ class ImporterV34Tests(unittest.TestCase):
         self.assertCountEqual(source_runs, [44114266718, 44131154009])
 
         # One merge group runs the full suite on 73 shards balanced from these durations (more browser shards
-        # cannot shorten the one longest file); dev PRs size affected selections from duration up to the full-run counts.
+        # cannot shorten the one longest file); default-branch PRs size affected selections from duration up to the full-run counts.
         config = json.loads(durations.with_name('bootstrap-settings.json').read_text(encoding='utf-8'))
         self.assertEqual(config['merge_group_shards'], {'unit_shards': 34, 'browser_shards': 39})
         self.assertEqual((config['unit_shards'], config['browser_shards']), (25, 18))

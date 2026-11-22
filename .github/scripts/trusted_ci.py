@@ -24,7 +24,7 @@ from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
-# A dev PR never runs the whole suite (the merge queue does). Each former full-run trigger adds its class's unit
+# A PR into the default branch never runs the whole suite (the merge queue does). Each former full-run trigger adds its class's unit
 # tests, found by what the test text names: pipeline/policy tests, contract tests, migration tests.
 # The same pattern as the static step's merge-group pipeline-test grep in ci.yml (a test keeps them equal).
 PIPELINE_TESTS = re.compile(r"make_known_failures|trusted_ci|trusted_verdict|canary_evidence|latest_reports"
