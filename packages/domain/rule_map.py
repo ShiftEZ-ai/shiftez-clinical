@@ -6,7 +6,7 @@ import json
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from packages.contracts.schemas import safety_rule
-from .conditions import COUNT_BUCKET, OVERRIDDEN, OWN_LINE, PERSON_FIELDS, _bucket_descriptor, absolute_values, active_rules, bucket_atoms, bucket_count, change_points, has_session_lines, scope_tree, selector_sources, scope_applies, scope_has_duty_witness, scope_matches_throughout, scope_segments
+from .conditions import COUNT_BUCKET, OVERRIDDEN, OWN_LINE, PERSON_FIELDS, _bucket_descriptor, absolute_values, active_rules, bucket_atoms, bucket_count, change_points, effective_severity, has_session_lines, scope_tree, selector_sources, scope_applies, scope_has_duty_witness, scope_matches_throughout, scope_segments
 from .time import aware, local_midnight
 from .recurrence import inactive, usual_assignee_ids
 from .validation import ALL_DAYS, ancestor_ids, category_scope_ids, every_day_all_day, index_person_rows, named_people, person_active_end, person_scope_ids, policy_applies, restricted_intervals, scope_intervals, session_scope, within_dates
@@ -642,7 +642,7 @@ def rule_map(data, originals=None, *, reach_only=False):
         adjusted = stored_adjustments.get(p['id'])
         gone = {pid: m & ~masks.get(pid, 0) for pid, m in plain.get(p['id'], ({}, {}, 0))[1].items()}
         entry = entries[p['id']] = {
-            'id': p['id'], 'name': p['name'], 'kind': definition['rule']['kind'], 'severity': definition.get('severity'),
+            'id': p['id'], 'name': p['name'], 'kind': rule['kind'], 'severity': effective_severity(rule['kind'], definition.get('severity')),
             'strength': definition.get('strength'), 'safety': safety_rule(definition),
             'exception_allowed': bool(definition.get('exception_allowed')) and not safety_rule(definition), 'adjustable': adjustable(definition['rule']),
             'overridable': overridable(definition), 'starts_on': p.get('starts_on'), 'ends_on': p.get('ends_on'),

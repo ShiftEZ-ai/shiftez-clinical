@@ -325,7 +325,8 @@ export async function personRequests(ctx:Context,person:Row,hooks:RequestHooks):
     const open=el('button',{type:'button',class:'pr-request-open'},el('span',{class:'request-icon','aria-hidden':'true'},icon(TYPE_ICON[r.type as RequestType]||'inbox')),
       el('span',{class:'ph-what'},el('strong',{},title(r)),el('small',{class:'muted'},when(r,zone)),impactWords(r,ownRequest(ctx,r))?el('small',{class:'muted'},impactWords(r,ownRequest(ctx,r))):''));
     open.addEventListener('click',()=>showPanel(ctx,r,hooks,()=>{},r.id));
-    return el('li',{class:'pr-request','data-row':r.id},open,statusBadge(r.stage,requestStageWord(r,ctx)));};
+    const status=statusBadge(r.stage,requestStageWord(r,ctx));
+    return el('li',{class:'pr-request','data-row':r.id},open,r.self_approved?el('span',{class:'request-stage'},status,selfApprovedBadge()):status);};
   return el('section',{class:'ph-section'},el('div',{class:'ph-head'},el('h3',{},'Requests'),all),
     items.length?el('ul',{class:'ph-rows pr-requests'},...items.map(row)):emptyLine('No requests.'),
     page.has_more?el("p",{class:"muted"},`Showing 50 of ${page.total}.`):'');
@@ -613,7 +614,7 @@ function stageDetail(r:Row,ctx?:Context){
   if(r.source==='scheduling_fact')return r.proposed_by===ctx?.me.identity_id&&!r.can_decide?'You proposed it; another approver decides'
     :r.can_decide||!ctx?.permits(CAPABILITY.APPROVER)?'An approver decides':'Another approver decides: you cannot approve a change about yourself';
   // Your own request is decided by someone else (an independent decision), so it offers you no Approve.
-  if(r.stage==='waiting'&&ctx&&!mayDecide(ctx.me,'request.decide',mine(ctx,r))&&hasAccess(ctx.me.roles,capabilityForRole(decider(r)))) return `Another ${decider(r)} decides: you can't approve your own request`;
+  if(r.stage==='waiting'&&ctx&&!mayDecide(ctx.me,'request.decide',ownDecision(ctx,r))&&hasAccess(ctx.me.roles,capabilityForRole(decider(r)))) return `Another ${decider(r)} decides: you can't approve your own request`;
   if(r.stage==='waiting')return decider(r)===roleForCapability(CAPABILITY.COORDINATOR)?'A coordinator decides':r.kind==='rotation_change'?'A programme lead decides':'An approver decides';
   if(isOvertime(r)&&r.stage==='approved')return 'Overtime may be offered on these days, within the department’s limits. It does not promise a duty.';
   return r.decision_reason||'';
@@ -630,6 +631,8 @@ export function withdrawReport(r:Row,after:()=>void){
     await withdrawRequest({id:r.id,revision});notify('Report withdrawn.');after();},'ghost small',{'aria-label':`Withdraw: ${absenceReason(r)}`});
 }
 const mine=(ctx:Context,r:Row)=>r.created_by===ctx.me.identity_id||(!!ctx.me.person_id&&r.person_id===ctx.me.person_id);
+// Approval follows the request's subjects. Authorship also matters when withdrawing.
+const ownDecision=(ctx:Context,r:Row)=>ownRequest(ctx,r)||(!!ctx.me.person_id&&r.source==='request'&&r.details?.swap?.person_id===ctx.me.person_id);
 /** Requests, weekly availability and facts this person may decide now: the server says so per row (can_decide), with the
  *  same check the decision enforces (approver or programme-lead scope, coordinator for patterns, self-approval permission). */
 function decidable(r:Row){
@@ -690,10 +693,11 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
         async reason=>{await command(`${family}.decline`,{reason},r.id,r.revision);notify('Declined.');void ctx.refresh();},'Decline'),'ghost small'));
   }else if(decidable(r)){
     // A decision's dialog closes once it is saved; the list reloads behind it (LIVE-57), never under a "Saving…" dialog.
+    const self=ownDecision(ctx,r);
     const words=r.source==='pattern'?'counts as unavailable at these times in every rota check':isOvertime(r)?'may be offered overtime on these days, within the department’s limits':impactWords(r)||'is told';
     buttons.push(button('Approve',()=>confirmAction(`Approve ${kindTitle(r).toLowerCase()}`,`${who} · ${when(r,ctx.me.organisation.timezone)}. ${words[0].toUpperCase()+words.slice(1)}.${r.source==='request'&&r.impact_count?' Approving records the absence; the coordinator arranges cover for its published duties.':''}${r.source==='request'&&draftDuties(r)?' On rotas being planned, each overlapping duty shows as a conflict to replace.':''}`,
-      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',mine(ctx,r)?selfApprovedBadge():undefined,!mine(ctx,r),false,'Reason',true),'secondary small'),
-      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline',mine(ctx,r)?selfApprovedBadge():undefined),'ghost small'));
+      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',self?selfApprovedBadge():undefined,!self,false,'Reason',true),'secondary small'),
+      button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline',self?selfApprovedBadge():undefined),'ghost small'));
   }
   // An approved (or later retired) calendar protection is managed (Retire, Undo, Restore) in its own panel, reached from its
   // request in the Decided history: an approver needs no Programmes access for it (JC-01). The panel offers only what this role may do.
@@ -823,7 +827,7 @@ function fillPanel(ctx:Context,id:string,hooks:RequestHooks,setQuery:(change:(q:
     // schedule_impact (published and draft duties) when the server sends it; otherwise the publication-only impact.
     const s:Row|undefined=r.schedule_impact,duties:Row[]=s?s.duties:r.impact||[],impact:number|undefined=s?s.count:r.impact_count;
     d.body.replaceChildren(
-      el('div',{class:'request-status'},statusBadge(r.stage,requestStageWord(r,ctx)),why?el('span',{class:'muted'},why):null),
+      el('div',{class:'request-status'},statusBadge(r.stage,requestStageWord(r,ctx)),r.self_approved?selfApprovedBadge():null,why?el('span',{class:'muted'},why):null),
       el('dl',{class:'request-facts'},...facts.flatMap(([k,v])=>[el('dt',{},k),el('dd',/^(Details|Reason|Decision)/.test(k)?{'data-private':''}:{},v)])),
       ...(impact!==undefined?[el('section',{class:'request-section'},el('h3',{},'Schedule'),el('p',{},own&&ownDuty(r)?ownDuty(r):s?scheduleWords(s):impactWords(r,own)),
         duties.length?el('ul',{class:'request-impact-list'},...duties.map(i=>el('li',{},el('span',{},[shortDay(i.day),i.start?`${formatTime(i.start,zone)}–${formatTime(i.end,zone)}`:'',i.type,i.rota_name].filter(Boolean).join(' · '),

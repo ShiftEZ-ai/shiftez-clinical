@@ -27,7 +27,8 @@ def test_every_catalogue_range_uses_the_same_contract(version, entry_id):
 def test_targets_and_zero_bounds_are_ordered(numbers):
     with pytest.raises(ValidationError) as caught:
         CatalogueRule.model_validate({'kind': 'catalogue', 'id': 'people_per_session',
-            'lines': [line(numbers={key: {'value': value, 'level': 'medium'} for key, value in numbers.items()})]})
+            'lines': [line(numbers={key: {'value': value, 'level': 'medium' if key == 'target' else 'mandatory'}
+                                    for key, value in numbers.items()})]})
     assert any(e['type'] == 'invalid_number_range' for e in caught.value.errors())
     assert number_range_errors(numbers)
 

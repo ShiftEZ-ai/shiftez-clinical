@@ -68,6 +68,11 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_engine_restriction_boundaries.py::test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_cost",
+      "owner": "maintainer",
+      "reason": "Renamed to test_unrelated_midnight_membership_does_not_multiply_advisory_workload_cost. Restrictions are always mandatory. The advisory workload limit keeps the assignment, score parity and stable cost assertions."
+    },
+    {
       "node": "tests/test_finding_causes.py::test_leave_keeps_commitment_while_a_full_away_rotation_prorates_to_zero[case-mkicgenckemaiffgbhhkdkigkfdfjbccepiinhmngenmhgmnfbjdicnjpcpcfobg]",
       "owner": "maintainer",
       "reason": "Renamed to test_partial_leave_keeps_unreachable_minimum_cause_and_privacy, which keeps all five cause, eligibility, fix hint and privacy assertions. Full leave now also runs in test_leave_and_full_away_rotation_prorate_commitment_to_zero[leave] and asserts zero proration."

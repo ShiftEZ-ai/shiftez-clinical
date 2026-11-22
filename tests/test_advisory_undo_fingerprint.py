@@ -13,7 +13,7 @@ from tests.test_resolve_issues import resolve
 
 def advisory_rota(h, *, staffed=False):
     person = h.seed['people'][0]
-    h.policy({'kind': 'restriction'}, {'person_id': person}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': person}, severity='advisory')
     workspace = h.shift(h.workspace(), people=[person])['workspace']
     workspace = h.shift(workspace, start='2026-10-05T08:00:00+03:00',
                         end='2026-10-05T12:00:00+03:00', people=[person] if staffed else [])['workspace']

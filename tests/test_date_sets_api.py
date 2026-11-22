@@ -240,7 +240,7 @@ def test_department_isolation_and_reference_validation(h):
                 {'date_set_id': set_id, 'entry_names': names, 'windows': []}]}}, status=status)
         policy = h.command('coordinator', 'policy.create', {'name': 'Scoped date rule', 'owner': 'Synthetic owner',
             'source': 'Synthetic reference validation', 'starts_on': '2020-01-01',
-            'definition': {'severity': 'advisory', 'rule': {'kind': 'restriction'},
+            'definition': {'severity': 'mandatory', 'rule': {'kind': 'restriction'},
                 'scope': {'conditions': {'conditions': [{'field': 'date_set_ids', 'values': [set_id], 'entry_names': names}]}}}}, status=status)
         if status == 404:
             for reply in (calendar, policy):
@@ -253,7 +253,7 @@ def test_date_set_changes_preserve_rule_and_calendar_references(h, action):
     row = date_set(h)
     condition = {'field': 'date_set_ids', 'values': [row['id']], 'entry_names': ['Public holiday']}
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [
-        {'match': 'any', 'conditions': [condition]}]}}, severity='advisory')
+        {'match': 'any', 'conditions': [condition]}]}})
     proposed = h.command('coordinator', 'rule.propose', {'catalogue_id': 'duties_per_week',
         'lines': [{'id': str(uuid.uuid4()), 'where': {'conditions': [condition]}, 'numbers': {'max': {'value': 2}}}],
         'reason': 'Synthetic date-scoped quota'})['record']
@@ -283,7 +283,7 @@ def test_date_set_reference_names_can_remain_in_another_selected_set_or_entry(h)
     row = date_set(h, entries=[entry(), entry()])
     other = date_set(h, name='Other holidays')
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [{'field': 'date_set_ids',
-        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}}, severity='advisory')
+        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}})
     calendar = h.configure('operating_calendars', {'name': 'Any entry closes', 'starts_on': '2020-01-01',
         'definition': {'timezone': 'Asia/Riyadh', 'date_set_rules': [
             {'date_set_id': row['id'], 'windows': []}]}})['record']
@@ -297,7 +297,7 @@ def test_date_set_reference_names_can_remain_in_another_selected_set_or_entry(h)
 def test_retired_rules_and_inactive_calendars_do_not_block_date_set_changes(h):
     row = date_set(h)
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [{'field': 'date_set_ids',
-        'values': [row['id']], 'entry_names': ['Public holiday']}]}}, severity='advisory')
+        'values': [row['id']], 'entry_names': ['Public holiday']}]}})
     h.command('approver', 'policy.retire', {'reason': 'Synthetic rule no longer used'}, rule['id'], rule['revision'])
     h.configure('operating_calendars', {'name': 'Inactive calendar', 'starts_on': '2020-01-01', 'active': False,
         'definition': {'timezone': 'Asia/Riyadh', 'date_set_rules': [
@@ -483,7 +483,7 @@ def test_an_inactive_date_set_cannot_preserve_a_rules_entry_name(h):
     row = date_set(h)
     other = date_set(h, name='Inactive holidays', active=False)
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [{'field': 'date_set_ids',
-        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}}, severity='advisory')
+        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}})
     reply = change(h, row, 'entry.update', entry={**row['entries'][0], 'name': 'Renamed holiday'}, status=409)
     assert reply['error']['code'] == 'DATE_SET_IN_USE' and rule['name'] in reply['error']['message']
 
@@ -492,7 +492,7 @@ def test_all_date_set_references_need_named_entries_in_every_selected_set(h):
     row = date_set(h)
     other = date_set(h, name='Other holidays')
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [{'field': 'date_set_ids', 'op': 'all',
-        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}}, severity='advisory')
+        'values': [row['id'], other['id']], 'entry_names': ['Public holiday']}]}})
     reply = change(h, row, 'entry.update', entry={**row['entries'][0], 'name': 'Renamed holiday'}, status=409)
     assert reply['error']['code'] == 'DATE_SET_IN_USE' and rule['name'] in reply['error']['message']
 

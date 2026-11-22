@@ -223,7 +223,7 @@ def case(h, kind):
         return "approver", command(kind, row=row)
     if kind.startswith("shift.") or kind == "issues.resolve":
         if kind == "issues.resolve":
-            h.policy({"kind": "restriction"}, {"person_id": person}, severity="advisory")
+            h.policy({"kind": "max_duties", "maximum": 0, "window": "day"}, {"person_id": person}, severity="advisory")
         w = h.workspace()
         payload = {"workspace_id": w["id"], "assignment_type_id": h.seed["type"], "location_id": h.seed["locations"][0],
                    "service_ids": [h.seed["services"][0]], "start": "2026-10-04T08:00:00+03:00", "end": "2026-10-04T12:00:00+03:00",
