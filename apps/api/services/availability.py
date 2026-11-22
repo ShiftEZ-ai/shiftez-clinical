@@ -533,6 +533,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     inputs_changed = False
     conflicts = []
     affected = 1
+    self_approval = None
     if value.decision == "withdraw":
         if overtime:
             overtime_availability.require_unlocked(db, actor, row)
@@ -547,8 +548,8 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     else:
         require(decision_allowed(db, actor, row, approval_context=approval_context),
                 "SELF_APPROVAL", "A different authorised person must decide this request", 403)
-        independence.ensure_subject(db, actor, "request.decide", decision_subjects(row), row.created_by,
-                            "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
+        self_approval = independence.ensure_subject(db, actor, "request.decide", decision_subjects(row), row.created_by,
+            "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
         row.status = "approved" if value.decision == "approve" else "rejected"
         row.decided_by = actor.identity_id
         if value.decision == "approve" and overtime:
@@ -588,6 +589,8 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                if row.kind == 'absence_report' and row.status == 'approved' else {})},
            undo_of="request:" + row.id if value.decision == "withdraw" else ())
     item = absence_report_record(row, actor, db)
+    if self_approval is not None:
+        item["self_approved"] = True
     replace_action = (row.details or {}).get("replace_action") if row.kind == "absence_report" and row.status == "approved" else None
     if batch:
         return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected,
