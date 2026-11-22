@@ -101,8 +101,11 @@ def test_every_trial_decides_as_a_whole_check_would(h, monkeypatch, seed):
     rng = Random(seed)
     services = h.seed['services'][:2]
     if rng.random() < 0.6:  # cover pooled across clinics: a session's people count for the sessions beside it
-        h.policy({'kind': 'minimum_cover', 'minimum': rng.choice((4, 5)), 'aggregation': 'service_group'}, {'service_ids': services},
-                 severity=rng.choice(('mandatory', 'advisory')))
+        minimum = rng.choice((4, 5))
+        if rng.choice((True, False)):
+            h.policy({'kind': 'minimum_cover', 'minimum': minimum, 'aggregation': 'service_group'}, {'service_ids': services})
+        else:
+            h.cover_target(minimum, {'service_ids': services}, settings={'aggregation': 'service_group'})
     if rng.random() < 0.6:  # a clinic-wide limit counts people across its sessions at the same time
         h.policy({'kind': 'maximum_participants', 'maximum': rng.choice((2, 3)), 'aggregation': 'service'}, {'service_ids': services[:1]})
     if rng.random() < 0.5:

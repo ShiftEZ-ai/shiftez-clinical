@@ -4,12 +4,11 @@ import copy
 import pytest
 from ortools.sat.python import cp_model
 
-from packages.domain.rule_catalogue_migration import id_map, plan
+from packages.domain.rule_catalogue_migration import SAFETY_REVIEW_REASON, id_map, plan
 from packages.domain.rule_groups import canonical_model, expanded, same_checks, same_model
 from packages.domain.validation import evaluate
 from tests.scheduler_departments import department
 from tests.test_rule_simplification import rule
-from tests.test_rule_templates import activate, propose
 from tests.test_rule_model_proof import deficit_model, proof_of_model  # noqa: F401
 
 
@@ -30,6 +29,12 @@ def test_advisory_department_rules_move_without_false_model_refusals(h, kind):
     rules = [{**rule(name, body, scope, severity='advisory', strength='high'),
               'department_id': data['workspace']['department_id']}
              for name, body, scope in zip(('Z first in force', 'A second in force'), bodies, scopes)]
+    # Safety kinds are always mandatory. Conversion waits for approval of a mandatory version.
+    proposals, report = plan(rules, {}, data['organisation']['week_start'], data['workspace']['department_id'])
+    assert not proposals and {row['rule_id'] for row in report} == {row['id'] for row in rules}
+    assert all(SAFETY_REVIEW_REASON in row['reason'] for row in report)
+    for policy in rules:
+        policy['definition'].update(severity='mandatory', strength='medium')
     data['policies'] = rules
     proposals, report = plan(rules, {}, data['organisation']['week_start'], data['workspace']['department_id'])
     assert report == [] and sum(len(p['rule_ids']) for p in proposals) == len(rules)
@@ -43,8 +48,7 @@ def test_advisory_department_rules_move_without_false_model_refusals(h, kind):
     assert same_model(before_model, after_model, moved), kind
     # A genuine change in the same safety-kind slot must still fail the structural proof.
     changed = copy.deepcopy(after)
-    changed['policies'][0]['definition']['rule']['lines'][0]['numbers'][
-        'target' if kind == 'minimum_cover' else 'min' if kind == 'min_rest' else 'apply']['level'] = 'mandatory'
+    changed['policies'][0]['definition']['rule']['lines'][0]['starts_on'] = '2027-01-01'
     assert not same_model(before_model, canonical_model(changed), moved)
 
 
@@ -62,8 +66,7 @@ def test_catalogue_migration_api_confirms_advisory_move_without_changing_the_rot
     else:
         bodies = [{'kind': kind, 'minimum': minimum} for minimum in (1, 2)]
         scopes = [{'assignment_type_id': typ} for typ in (early, late)]
-    for name, body, scope in zip(('Z existing advisory', 'A later advisory'), bodies, scopes):
-        activate(h, propose(h, body, scope, 'advisory', name=name, strength='high'))
+    policies = [h.stored_advisory_safety(body, scope) for body, scope in zip(bodies, scopes)]
     w = h.workspace('Advisory catalogue proof')
     for start, end, typ in (('2026-10-04T20:00:00+03:00', '2026-10-05T08:00:00+03:00', late),
                             ('2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', early),
@@ -71,9 +74,10 @@ def test_catalogue_migration_api_confirms_advisory_move_without_changing_the_rot
         w = h.shift(w, start, end, people=[], typ=typ)['workspace']
     before = h.detail(w)
     preview = h.get('coordinator', '/api/rules/catalogue/migration?proof=true')
-    assert preview['moving'] == 2 and preview['report'] == []
-    assert preview['proof']['identical'] and len(preview['proof']['rotas']) == 1
-    assert preview['proof']['rotas'][0]['model_equal']
+    # Safety kinds are always mandatory. Keep the sources until a mandatory version is approved.
+    assert preview['moving'] == 0
+    assert {row['rule_id'] for row in preview['report']} == {row['id'] for row in policies}
+    assert all(SAFETY_REVIEW_REASON in row['reason'] for row in preview['report'])
     assert h.detail(w) == before
 
 

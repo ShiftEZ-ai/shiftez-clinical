@@ -88,7 +88,8 @@ def test_legacy_catalogue_bulk_undo_restores_an_attested_warning_and_rejects_tam
     person_id = h.seed['people'][0]
     h.command('coordinator', 'catalogue.bulk_update', {'catalogue': 'people',
         'items': [{'id': person_id, 'revision': 1}], 'add_tags': ['LegacyAffected'], 'reason': 'Original catalogue fixture'})
-    h.policy({'kind': 'restriction'}, {'tags': ['LegacyAffected']}, severity='advisory')
+    # Safety kinds are always mandatory. A workload cap still yields an attested warning.
+    h.policy({'kind': 'max_duties', 'maximum': 0}, {'tags': ['LegacyAffected']}, severity='advisory')
     workspace = h.shift(h.workspace())['workspace']
     from packages.domain.validation import evaluate
     original = evaluate(h.snapshot(workspace))
@@ -103,7 +104,7 @@ def test_legacy_catalogue_bulk_undo_restores_an_attested_warning_and_rejects_tam
     ordinary = deepcopy(inverse)
     ordinary.pop('undo_of')
     refused = h.command('coordinator', 'bulk.apply', ordinary, status=409)['error']
-    assert refused['code'] == 'RESTRICTION'
+    assert refused['code'] == 'MAX_DUTIES'
     tampered = deepcopy(inverse)
     tampered['items'][0]['payload']['value']['title'] = 'Injected by a modified inverse'
     refused = h.command('coordinator', 'bulk.apply', tampered, status=409)['error']
@@ -113,11 +114,11 @@ def test_legacy_catalogue_bulk_undo_restores_an_attested_warning_and_rejects_tam
     assert refused['code'] == 'FORBIDDEN'
     checked = preview(h, 'coordinator', inverse)
     assert checked['counts']['ready'] == 1
-    assert any(issue['code'] == 'RESTRICTION' for issue in checked['items'][0]['issues'])
+    assert any(issue['code'] == 'MAX_DUTIES' for issue in checked['items'][0]['issues'])
     result = h.command('coordinator', 'bulk.apply', inverse)
     with transaction(h.app.state.engine) as db:
         receipt = db.get(m.CommandReceipt, result['receipt_id'])
-        assert any(issue['code'] == 'RESTRICTION' for issue in receipt.result['items'][0]['issues'])
+        assert any(issue['code'] == 'MAX_DUTIES' for issue in receipt.result['items'][0]['issues'])
     restored = next(row for row in h.get('coordinator', '/api/catalogues')['people'] if row['id'] == person_id)
     assert restored['tags'] == person['tags'] and restored['title'] == person['title']
     assert evaluate(h.snapshot(workspace))['warning_count'] == original['warning_count']

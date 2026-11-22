@@ -231,7 +231,14 @@ def test_zero_quota_buckets_survive_empty_assignment_reports(h):
 def test_score_treats_each_advisory_staffing_bucket_as_one_obligation(h):
     data = _world(h)
     _, _, scope = _ranks(data, h)
-    data['policies'] = [_policy(data, {'kind': 'minimum_cover', 'minimum': 1}, scope, severity='advisory')]
+    from packages.domain.rule_catalogue_migration import who_where
+    from tests.test_rule_catalogue_api import line
+
+    # Safety kinds are always mandatory. Count advisory targets as distinct staffing obligations.
+    who, where = who_where(scope)
+    data['policies'] = [_policy(data, {'kind': 'catalogue', 'id': 'people_per_session', 'lines': [
+        line(who=who, where=where, numbers={'target': {'value': 1, 'level': 'medium'}}),
+    ]}, {})]
     result = schedule_score(data, evaluate(data), {'scoring': {'weights': {
         'coverage': 0, 'rules': 1, 'fairness': 0, 'preferences': 0, 'stability': 0}}})
     assert result['components']['rules']['value'] == .5

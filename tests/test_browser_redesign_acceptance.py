@@ -342,12 +342,13 @@ def test_companion_rule_link_opens_canonical_entry_and_all_false_warning_is_trut
     from .test_browser_rule_catalogue import catalogue_rule, line
     flag(h)
     trigger, companion, _ = h.seed['people']
-    rule = catalogue_rule(h, 'companion_cover', [line({'min': {'value': 2, 'level': 'medium'}},
+    # Safety kinds are always mandatory. A lone candidate still cannot fill both companion places.
+    rule = catalogue_rule(h, 'companion_cover', [line({'min': {'value': 2, 'level': 'mandatory'}},
         who={'conditions': [{'field': 'person_ids', 'values': [companion]}]},
         settings={'minimum_cover': {'when_person_ids': [trigger]}})])
     w = h.shift(h.workspace('Fictional unresolved companion'), people=[trigger])['workspace']
     finding = next(f for f in w['validation']['findings'] if f['rule_id'] == rule['id'])
-    assert finding['severity'] == 'warning'
+    assert finding['severity'] == 'error'
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, f"schedule/issues?draft={w['id']}&view=checks")
@@ -357,7 +358,7 @@ def test_companion_rule_link_opens_canonical_entry_and_all_false_warning_is_trut
         assert eligible and all(c['resolves'] is False for c in eligible)
         panel = page.locator('.wk-panel')
         expect(panel).to_contain_text('Nobody here resolves Companion cover on their own')
-        expect(panel.locator('.wk-issue.warning')).to_be_visible()
+        expect(panel.locator('.wk-issue.error')).to_be_visible()
         panel.get_by_role('link', name='Open the rule', exact=True).click()
         expect(page).to_have_url(re.compile(r'#rules/companion_cover$'))
         expect(page.locator('#main')).not_to_contain_text('This rule is not available')

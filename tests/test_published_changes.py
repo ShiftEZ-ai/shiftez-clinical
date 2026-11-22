@@ -554,12 +554,12 @@ def test_narrowing_legacy_rule_checks_every_context_without_changing_publication
     from tests.test_rule_templates import propose
 
     rule = {'kind': 'minimum_cover', 'minimum': 1}
-    source = h.policy(rule, scope={'weekdays': [0, 1, 2, 3, 6]}, severity='advisory')
+    source = h.policy(rule, scope={'weekdays': [0, 1, 2, 3, 6]})
     pub, shifts = issued(h)
     pending = change(h, pub, shifts[0])['workspace']
     draft = h.shift(h.workspace(start='2026-10-11', end='2026-10-18'),
                     start='2026-10-15T08:00:00+03:00', end='2026-10-15T12:00:00+03:00')['workspace']
-    proposal = propose(h, rule, scope={'weekdays': [0, 1, 2, 6]}, severity='advisory', replaces_id=source['id'])
+    proposal = propose(h, rule, scope={'weekdays': [0, 1, 2, 6]}, replaces_id=source['id'])
     before_shifts = {w['id']: h.detail(w)['shifts'] for w in (draft, pending)}
     with transaction(h.app.state.engine) as db:
         frozen = record(db.get(m.Publication, pub))

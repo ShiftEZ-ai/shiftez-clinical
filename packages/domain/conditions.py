@@ -14,7 +14,7 @@ from functools import lru_cache
 from itertools import combinations, product
 from packages.contracts.condition_limits import check_count_bucket_budget
 from packages.contracts.rule_catalogue import PRIMITIVE_CONDITION_FIELDS
-from packages.contracts.schemas import SESSION_SCOPE_FIELDS, GENERATION_SCOPE_FIELDS
+from packages.contracts.schemas import ALWAYS_MANDATORY_KINDS, SESSION_SCOPE_FIELDS, GENERATION_SCOPE_FIELDS
 from .time import aware, local_midnight
 
 
@@ -1475,6 +1475,11 @@ def resolved_rule_context(data):
     return context
 
 
+def effective_severity(kind, severity, *, advisory_slot=False):
+    """Hard safety obligations bind regardless of the stored severity or strength."""
+    return 'mandatory' if kind in ALWAYS_MANDATORY_KINDS and not advisory_slot else severity
+
+
 def active_rules(policies, overrides=True, context=None, *, read_quality=None):
     """Active rules as every check reads them (the validator, the solver, quotas, the "Why?" panel).
 
@@ -1506,7 +1511,17 @@ def active_rules(policies, overrides=True, context=None, *, read_quality=None):
         if context and (check := context.get('_check_budget')):
             check()
         # A catalogue rule's lines are its copies (packages/domain/rule_lines.py); nothing overrides it.
-        out += expand(p) if p['definition']['rule']['kind'] == 'catalogue' else source_edits(_copies(p, replaced_by, line_field, line_rule))
+        if p['definition']['rule']['kind'] == 'catalogue':
+            out.extend(expand(p))
+            continue
+        for copy in source_edits(_copies(p, replaced_by, line_field, line_rule)):
+            definition = copy['definition']
+            stored = definition.get('severity', 'mandatory')
+            severity = effective_severity(definition['rule']['kind'], stored,
+                                          advisory_slot=copy.get('_advisory_catalogue_slot', False))
+            if severity != stored:
+                copy = {**copy, 'definition': {**definition, 'severity': severity, 'strength': 'medium'}}
+            out.append(copy)
     return out
 
 
