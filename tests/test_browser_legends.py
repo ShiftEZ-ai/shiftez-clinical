@@ -136,7 +136,13 @@ def test_empty_planner_has_no_legend(browser, live_server, h):
     try:
         navigate(page, 'planner')
         expect(page.locator('.wk-grid')).to_be_visible()
-        expect(key(page)).to_have_count(0)
+        # An empty grid still shades its weekend columns, and every shading on screen has its key entry (as the filtered
+        # grid above, with no duty drawn): only that entry, no duty colour, mark or day numbers.
+        legend = key(page)
+        expect(legend).to_have_count(1)
+        with legend_entries(page, legend) as entries:
+            expect(entries).to_have_count(1)
+            expect(entries.filter(has_text='Weekend')).to_have_count(1)
         expect(view_settings(page.locator('.planner-toolbar'))).to_be_visible()
     finally:
         context.close()
