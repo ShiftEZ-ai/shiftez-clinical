@@ -199,3 +199,64 @@ def test_recurring_blocking_events_follow_the_clock_like_the_full_rebuild(
     assert status['status'] == outcome
     if outcome == 'failed':
         assert status['error_code'] == 'STALE_INPUTS'
+
+
+@pytest.mark.parametrize('later, rebuilds, outcome', [
+    # The weekly 09:00-10:00 occurrence ends during the check.
+    ('2026-10-11T07:30:00+00:00', 1, 'failed'),
+    # Nothing ends: the widened projection is unchanged and the check is current as computed.
+    ('2026-10-11T06:45:00+00:00', 0, 'succeeded'),
+])
+def test_a_block_quota_widened_event_window_follows_the_clock_like_the_full_rebuild(
+        h, clock, during_finish, both_paths, later, rebuilds, outcome):
+    # Sunday 09:30 in the event's zone, long before the planned-ahead rota's own window (starts_on - 32 days).
+    clock['value'] = datetime.fromisoformat('2026-10-11T06:30:00+00:00')
+    event(h, event_type(h, blocks_duties=True, default_audience={'everyone': True}), repeat=repeat())
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(delete(m.EventOccurrence))
+    # A term quota covering today widens the snapshot's event window to its whole period.
+    h.policy({'kind': 'block_quota', 'starts_on': '2026-10-01', 'ends_on': '2027-02-01',
+              'comparison': 'maximum', 'amount': 10, 'metric': 'duties'}, {'person_id': h.seed['people'][0]})
+    workspace = h.workspace('Planned ahead', start='2026-12-20', end='2027-01-10')
+    with transaction(h.app.state.engine) as db:
+        # The compact hint alone does not see the clock here; only the widened projection does.
+        assert 'event_local_date' not in snapshots.currency_hint(db, db.get(m.Workspace, workspace['id']))
+    job = check(h, workspace)
+    during_finish(lambda: clock.update(value=datetime.fromisoformat(later)))
+    status = settle(h, job, both_paths)
+    assert both_paths['rebuilds'] == rebuilds
+    assert status['status'] == outcome
+    if outcome == 'failed':
+        assert status['error_code'] == 'STALE_INPUTS'
+
+
+@pytest.mark.parametrize('column', ['revision', 'catalogue_revision'])
+def test_another_departments_counter_moving_during_the_check_keeps_the_same_dirty_hint(
+        h, clock, during_finish, both_paths, column):
+    with transaction(h.app.state.engine, write=True) as db:
+        other = m.Department(organisation_id=h.seed['organisation_id'], name='Other synthetic department')
+        db.add(other)
+        db.flush()
+        other_id = other.id
+    workspace = h.shift(h.workspace())['workspace']
+    job = check(h, workspace)
+    counters = []
+
+    def change():
+        # Only the other department's own counter moves; no organisation counter does.
+        with transaction(h.app.state.engine, write=True) as db:
+            org = db.get(m.Organisation, h.seed['organisation_id'])
+            counters.append((org.revision, org.input_revision, org.availability_revision))
+            row = db.get(m.Department, other_id)
+            setattr(row, column, getattr(row, column) + 1)
+        with transaction(h.app.state.engine) as db:
+            org = db.get(m.Organisation, h.seed['organisation_id'])
+            counters.append((org.revision, org.input_revision, org.availability_revision))
+    during_finish(change)
+    assert settle(h, job, both_paths)['status'] == 'succeeded'
+    assert counters[0] == counters[1]
+    assert both_paths['rebuilds'] == 1
+    stored = json.loads(both_paths['fast'])[4]['input_manifest']['dirty_hint']['department_revisions']
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Department, other_id)
+        assert [other_id, row.revision, row.catalogue_revision] in stored
