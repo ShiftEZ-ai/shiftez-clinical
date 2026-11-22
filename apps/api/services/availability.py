@@ -1,5 +1,5 @@
 from packages.domain.time import now as clock_now
-from sqlalchemy import and_, case, false, func, literal, or_, select, true
+from sqlalchemy import and_, case, false, func, literal, or_, select, true, union_all
 from sqlalchemy.orm import aliased, defer
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -191,7 +191,7 @@ def record_availability(db, actor, command):
     value = s.AvailabilityInput.model_validate(command.payload)
     person_access(db, actor, value.person_id)
     lead_protects(db, actor, value.kind, value.person_id, value.start, value.end)
-    independence.ensure(db, actor, "request.decide", value.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
                         "A different coordinator must record your own absence", value.private_reason)
     values = {**value.model_dump(), **_availability_values(db, actor, value)}
     findings = rotation_leave_conflicts(db, actor, absence=value)
@@ -220,7 +220,7 @@ def update_availability(db, actor, command):
     expected(row, command.expected_revision)
     require(not row.retracted, "WORKFLOW_STATE", "Entry is already retracted", 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, "request.decide", row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, "request.decide", (row.person_id,), row.recorded_by,
                         "A different coordinator must record your own absence", patch.reason, row.id)
     changes = patch.model_dump(include=set(UPDATE_FIELDS), exclude_unset=True)
     require(bool(changes), 'NOTHING_TO_CHANGE', 'Choose a change to apply')
@@ -274,7 +274,7 @@ def undo_update_availability(db, actor, command):
             'STALE_REVISION', f'{row.id}: Another session changed this record; reload and reconcile', 409)
     require(not row.retracted, 'WORKFLOW_STATE', 'Entry is already retracted', 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, 'request.decide', row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, 'request.decide', (row.person_id,), row.recorded_by,
                         'A different coordinator must record your own absence', value.reason, row.id)
     before = _update_snapshot(row)
     findings = rotation_leave_conflicts(db, actor, absence={**previous, 'id': row.id, 'person_id': row.person_id})
@@ -358,7 +358,7 @@ def restore_availability(db, actor, command):
             'CREATION_UNDONE', 'This creation was undone; record a new entry', 409)
     require(row.retracted, 'WORKFLOW_STATE', 'Entry is not retracted', 409)
     person_access(db, actor, row.person_id)
-    independence.ensure(db, actor, 'request.decide', row.person_id != actor.person_id,
+    independence.ensure_subject(db, actor, 'request.decide', (row.person_id,), row.recorded_by,
                         'A different coordinator must record your own absence', value.reason, row.id)
     findings = rotation_leave_conflicts(db, actor, absence={**record(row), 'retracted': False})
     require_rotation_leave(findings, record_kind=row.kind)
@@ -446,14 +446,12 @@ def decision_scope(db, actor, cls, *, include_independence=True, approval_contex
             scope = false()
         if actor.permits("coordinator"):
             scope = or_(scope, cls.kind == "overtime_availability")
-        own = not_own(cls, actor)
     else:
         if not actor.permits("coordinator"):
             return false()
-        own = (cls.created_by != actor.identity_id, *([cls.person_id != actor.person_id] if actor.person_id else []))
         scope = true()
     if include_independence and independence.permission_for(db, actor, "request.decide", context=approval_context) is None:
-        scope = and_(scope, *own)
+        scope = and_(scope, *not_own(db, cls, actor))
     return scope
 
 
@@ -549,10 +547,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     else:
         require(decision_allowed(db, actor, row, approval_context=approval_context),
                 "SELF_APPROVAL", "A different authorised person must decide this request", 403)
-        from .training import change_people
-        independence.ensure(db, actor, "request.decide",
-                            independence.person_key(db, row.created_by) != independence.person_key(db, actor.identity_id)
-                            and actor.person_id not in change_people(db, row),
+        independence.ensure_subject(db, actor, "request.decide", decision_subjects(row), row.created_by,
                             "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
         row.status = "approved" if value.decision == "approve" else "rejected"
         row.decided_by = actor.identity_id
@@ -769,26 +764,19 @@ def requests_etag(db, actor, representation):
     decisions, linked rota changes, audit history and an offer crossing its expiry.
     """
     from . import swaps
-    department, organisation = db.execute(select(m.Department, m.Organisation).join(
+    stamp = list(db.execute(select(m.Department.revision, m.Department.catalogue_revision,
+        m.Organisation.revision, m.Organisation.input_revision, m.Organisation.availability_revision).join(
         m.Organisation, m.Organisation.id == m.Department.organisation_id).where(
-            m.Department.id == actor.department_id)).one()
-    stamp = [department.revision, department.catalogue_revision, organisation.revision, organisation.input_revision,
-             organisation.availability_revision]
-    for cls in (m.RequestRecord, m.Availability, m.AvailabilityPattern, m.StaffWish,
-                m.SchedulingFact, m.SwapRequest, m.Publication, m.Workspace):
-        field = cls.department_id if hasattr(cls, "department_id") else None
-        query = select(func.max(cls.revision), func.max(cls.created_at))
-        if field is not None:
-            query = query.where(field == actor.department_id)
-        elif cls is m.Workspace:
-            query = query.where(cls.department_id == actor.department_id)
-        stamp.append(tuple(db.execute(query).one()))
-    # Request history and displayed names are mutable evidence even when the source row
-    # itself is unchanged.  These are deliberately broad and therefore only over-invalidate.
-    stamp.append(tuple(db.execute(select(func.max(m.AuditEvent.revision), func.max(m.AuditEvent.created_at)).where(
-        m.AuditEvent.department_id == actor.department_id)).one()))
-    stamp.append(tuple(db.execute(select(func.max(m.Person.revision), func.max(m.Person.created_at)).where(
-        m.Person.organisation_id == actor.organisation_id)).one()))
+            m.Department.id == actor.department_id)).one())
+    sources = (m.RequestRecord, m.Availability, m.AvailabilityPattern, m.StaffWish,
+               m.SchedulingFact, m.SwapRequest, m.Publication, m.Workspace, m.AuditEvent)
+    scopes = [(cls, cls.department_id == actor.department_id) for cls in sources]
+    # History and displayed names can change independently of their request source.
+    scopes.append((m.Person, m.Person.organisation_id == actor.organisation_id))
+    aggregates = [select(literal(position).label("stamp_order"), func.max(cls.revision), func.max(cls.created_at)).where(scope)
+                  for position, (cls, scope) in enumerate(scopes)]
+    stamp.extend((revision, created_at) for _, revision, created_at in db.execute(
+        union_all(*aggregates).order_by("stamp_order")))
     now = clock_now()
     expiry_count, next_expiry = db.execute(select(
         func.count(m.SwapRequest.id).filter(m.SwapRequest.expires_at <= now),
@@ -1019,14 +1007,17 @@ def _rotation_names(db, rows):
                 ("services", m.Service, {p.get("service_id") for p in proposals} - {None}))}
 
 
-def _decidable(db, actor, rows):
+def _decidable(db, actor, rows, pending=()):
     """Read decision eligibility once per source, including same-person sign-ins and current self-approval grants."""
     result = set()
+    scopes = {source: query.whereclause for source, query, _ in pending if source in ("request", "pattern")}
     for source, cls, waiting in (("request", m.RequestRecord, "submitted"), ("pattern", m.AvailabilityPattern, "proposed")):
         ids = [row.id for kind, row in rows if kind == source]
         if ids:
-            result.update(db.scalars(select(cls.id).where(cls.id.in_(ids), cls.department_id == actor.department_id,
-                                                         cls.status == waiting, decision_scope(db, actor, cls))))
+            scope = scopes.get(source)
+            if scope is None:
+                scope = and_(cls.department_id == actor.department_id, cls.status == waiting, decision_scope(db, actor, cls))
+            result.update(db.scalars(select(cls.id).where(cls.id.in_(ids), scope)))
     return result
 
 
@@ -1200,23 +1191,26 @@ def _impact(db, actor, items):
                        for a, b, name, pub, aid, wid, rota, status in hits[:10]]}
 
 
-def not_own(cls, actor):
-    """Independent decisions (SSOT for the Requests dot and Home): a request or weekly availability this person neither
-    made nor is about. Deciding one's own takes a self-approval permission, which these counts do not offer."""
-    peer_scope = ()
-    if cls is m.RequestRecord and actor.person_id:
-        peer = cls.details["swap"]["person_id"].as_string()
-        peer_scope = (or_(peer.is_(None), peer != actor.person_id),)
-    return (cls.created_by != actor.identity_id, *peer_scope,
-            *([cls.person_id != actor.person_id, cls.created_by.not_in(select(m.Identity.id).where(
-                m.Identity.person_id == actor.person_id))] if actor.person_id else []))
+def decision_subjects(cls):
+    """Both people in an exchange own the matter, including a peer stored in optional JSON."""
+    subjects = (cls.person_id,)
+    if cls is m.RequestRecord or isinstance(cls, m.RequestRecord):
+        peer = (cls.details["swap"]["person_id"].as_string() if cls is m.RequestRecord else
+                ((cls.details or {}).get("swap") or {}).get("person_id"))
+        subjects += (peer,)
+    return subjects
+
+
+def not_own(db, cls, actor):
+    return (independence.subject_independent(db, actor, decision_subjects(cls), cls.created_by,
+                                           sql=isinstance(cls, type)),)
 
 
 def pending_request_decisions(db, actor):
-    """Independent request decisions for both Home and Requests; self-approval stays an explicit command."""
+    """Requests this actor may decide, shared by Home and the Requests queue."""
     R = m.RequestRecord
     return select(R).where(R.department_id == actor.department_id, R.status == "submitted",
-        decision_scope(db, actor, R, include_independence=False), *not_own(R, actor))
+        decision_scope(db, actor, R))
 
 
 def _pending_queries(db, actor, open_swap_ids=None):
@@ -1229,7 +1223,7 @@ def _pending_queries(db, actor, open_swap_ids=None):
     ]
     if actor.permits("coordinator"):
         pending.extend((
-            ("pattern", select(P).where(P.department_id == actor.department_id, P.status == "proposed", *not_own(P, actor)), P.id),
+            ("pattern", select(P).where(P.department_id == actor.department_id, P.status == "proposed", decision_scope(db, actor, P)), P.id),
             ("swap", select(S).where(S.department_id == actor.department_id, S.status == "accepted", S.expires_at > m.now()), S.id),
         ))
     if actor.person_id and "staff" in actor.roles:
@@ -1242,38 +1236,38 @@ def _pending_queries(db, actor, open_swap_ids=None):
     return pending
 
 
-def _for_me_sources(db, actor, sources, open_swap_ids=None):
-    """Restrict existing list sources to the exact rows used by ``_counts``."""
+def _for_me_sources(sources, pending_queries):
+    """Apply the single-table predicates used by ``_counts`` to the existing list rows."""
     by_source = {}
-    for source, query, key in _pending_queries(db, actor, open_swap_ids):
-        by_source.setdefault(source, []).append(query.with_only_columns(key, maintain_column_froms=True))
+    for source, query, _ in pending_queries:
+        by_source.setdefault(source, []).append(query.whereclause)
     result = {}
     for source, (query, at, waiting, key) in sources.items():
         pending = by_source.get(source)
         if pending:
-            result[source] = (query.where(or_(*(key.in_(part) for part in pending))), at, waiting, key)
+            result[source] = (query.where(or_(*pending)), at, waiting, key)
     return result
 
 
-def _counts(db, actor, open_swap_ids=None):
+def _counts(db, actor, *, pending=None):
     """What waits on this person to act (the Requests dot and Home read it)."""
-    pending = [query.with_only_columns(key, maintain_column_froms=True)
-               for _, query, key in _pending_queries(db, actor, open_swap_ids)]
-    pending_union = pending[0].union_all(*pending[1:]).subquery("pending_requests")
+    queries = _pending_queries(db, actor) if pending is None else pending
+    ids = [query.with_only_columns(key, maintain_column_froms=True) for _, query, key in queries]
+    pending_union = ids[0].union_all(*ids[1:]).subquery("pending_requests")
     n = db.scalar(select(func.count()).select_from(pending_union)) or 0
     return {"to_decide": n}
 
 
 def _stage_counts(db, actor, team, person_id, types, q=None, person_ids=(), open_swap_ids=(), collection_filter=None,
-                  decided=False, personal=False, for_me=False):
+                  decided=False, personal=False, pending=()):
     """How many requests are in each stage (the Requests views picker): one grouped count per kind, under the same
     scope, search and type filter as the list, whatever stage is shown."""
     from . import swaps
     out, now = dict.fromkeys(STAGES, 0), m.now()
     sources = _sources(db, actor, team, person_id, set(types), set(), q, person_ids, open_swap_ids, collection_filter,
                        decided, personal)
-    if for_me:
-        sources = _for_me_sources(db, actor, sources, open_swap_ids)
+    if pending:
+        sources = _for_me_sources(sources, pending)
     projected = []
     for source, (query, *_) in (_decided_sources(sources) if decided else sources).items():
         if source == "request":
@@ -1437,8 +1431,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
         F = m.SchedulingFact
         sources["scheduling_fact"] = (scheduling_facts.scoped_query(db, actor).add_columns(F.created_at.label("at")),
                                       F.created_at, F.status == "proposed", F.id)
+    pending = _pending_queries(db, actor, open_swap_ids) if for_me or (include_details and not item_id) else ()
     if for_me:
-        sources = _for_me_sources(db, actor, sources, open_swap_ids)
+        sources = _for_me_sources(sources, pending)
     aliases = {"start": "when", "decided_at": "decided"}
     sorting = [(aliases.get(key, key), direction) for key, direction in collection_filters.sort_keys(
         collection_filter, {"type", "person", "when", "proposed_at", "start", "decided", "decided_at"})]
@@ -1452,7 +1447,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
             row = db.execute(query.where(key == lookup_id)).first()
             if row:
                 rotation_names = _rotation_names(db, [row[0]]) if source == "request" else None
-                decidable = _decidable(db, actor, [(source, row[0])])
+                decidable = _decidable(db, actor, [(source, row[0])], pending)
                 assignment_types = {}
                 if source == "wish" and row[0].assignment_type_id:
                     assignment_types[row[0].assignment_type_id] = getattr(
@@ -1519,7 +1514,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     assignment_types = dict(db.execute(select(m.AssignmentType.id, m.AssignmentType.name).where(
         m.AssignmentType.id.in_(type_ids))).all()) if type_ids else {}
     rotation_names = _rotation_names(db, [row for source, row, _ in shown if source == "request"])
-    decidable = _decidable(db, actor, [(source, row) for source, row, _ in shown])
+    decidable = _decidable(db, actor, [(source, row) for source, row, _ in shown], pending)
     items = [_project(db, actor, team, source, row, names, recorded_details, swap_cache,
                       rotation_names, decidable, duty_cache, assignment_types) for source, row, _ in shown]
     decisions = _decision_times(db, [(source, row) for source, row, _ in shown])
@@ -1539,9 +1534,9 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     _links(db, team, items)
     del held
     return {"items": items, "total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total,
-            "counts": {**_counts(db, actor, open_swap_ids),
+            "counts": {**_counts(db, actor, pending=pending),
                        "stages": _stage_counts(db, actor, team, person_id, types, q, person_ids, open_swap_ids,
-                                               collection_filter, decided, personal, for_me)},
+                                               collection_filter, decided, personal, pending if for_me else ())},
             "wishes": _wish_points(db, actor)}
 
 

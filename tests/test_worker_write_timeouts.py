@@ -191,7 +191,8 @@ def test_heartbeat_write_timeouts_keep_solving_and_recover(h, monkeypatch, failu
         assert len(attempts) >= 3
 
 
-def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch):
+@pytest.mark.parametrize('engine', ['injected', 'greedy'])
+def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch, engine):
     job_id = generation_job(h)
     attempts = []
     monkeypatch.setattr(worker, 'GENERATION_HEARTBEAT_SECONDS', .01)
@@ -212,7 +213,9 @@ def test_heartbeat_timeouts_cancel_only_near_lease_expiry(h, monkeypatch):
         assert len(attempts) > 1
         return {'status': 'cancelled'}
 
-    assert worker.process_one(h.app.state.engine, scheduler=solve)
+    monkeypatch.setattr(worker, 'generate', lambda snapshot, *, cancelled: solve(
+        snapshot, progress=lambda row: None, cancelled=cancelled))
+    assert worker.process_one(h.app.state.engine, scheduler=solve if engine == 'injected' else None)
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job_id)
         assert row.status == 'running' and row.result is None and row.error_code is None
@@ -233,38 +236,78 @@ def test_worker_status_heartbeat_forwards_lease_deadline(monkeypatch):
     assert deadlines == [123.0]
 
 
-def test_waiting_to_claim_does_not_consume_new_job_lease(h, monkeypatch):
-    job_id = generation_job(h)
+def simulated_clock(monkeypatch):
     clock = [time.monotonic()]
+
+    def advance(seconds):
+        clock[0] += seconds
+
+    clock_source = SimpleNamespace(monotonic=lambda: clock[0], sleep=advance)
+    monkeypatch.setattr(worker, 'time', clock_source)
+    monkeypatch.setattr(database, 'time', clock_source)
+    return clock
+
+
+def test_waiting_to_claim_does_not_consume_new_job_lease(h, monkeypatch):
+    assert_waiting_to_claim_preserves_lease(h, monkeypatch)
+
+
+def test_waiting_to_claim_does_not_consume_new_job_lease_on_postgres(pg, monkeypatch):
+    assert_waiting_to_claim_preserves_lease(pg, monkeypatch)
+
+
+def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
+    job_id = generation_job(h)
+    clock = simulated_clock(monkeypatch)
+    before_claim = clock[0]
+    finish_attempts = []
+    claim_pending = worker.claim_pending
     retry_write = worker.retry_write
     lease_seconds = h.settings.db_pool_timeout_seconds + worker.GENERATION_HEARTBEAT_SECONDS + 1
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', lease_seconds)
-    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda seconds: None))
 
-    def wait_for_claim(engine, operation, **kwargs):
-        if operation is worker.claim_job:
-            clock[0] += lease_seconds * 2
+    def wait_for_claim(engine, **kwargs):
+        clock[0] += lease_seconds * 2
+        return claim_pending(engine, **kwargs)
+
+    def write(engine, operation, **kwargs):
+        if (kwargs.get('context') or {}).get('job_phase') == 'finish':
+            finish_attempts.append(clock[0])
+            if len(finish_attempts) == 1:
+                raise DatabaseWriteTimeout()
         return retry_write(engine, operation, **kwargs)
 
-    monkeypatch.setattr(worker, 'retry_write', wait_for_claim)
+    monkeypatch.setattr(worker, 'claim_pending', wait_for_claim)
+    monkeypatch.setattr(worker, 'retry_write', write)
     assert worker.process_one(h.app.state.engine, scheduler=lambda *args, **kwargs: {'status': 'candidate_feasible'})
+    assert len(finish_attempts) >= 2
+    assert finish_attempts[0] >= before_claim + lease_seconds * 2
+    assert finish_attempts[1] > finish_attempts[0]
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job_id)
         assert row.status == 'succeeded' and row.result['status'] == 'candidate_feasible'
 
 
 def test_completion_deadline_reserves_configured_pool_wait(h, monkeypatch):
+    assert_completion_deadline_reserves_pool_wait(h, monkeypatch)
+
+
+def test_completion_deadline_reserves_configured_pool_wait_on_postgres(pg, monkeypatch):
+    assert_completion_deadline_reserves_pool_wait(pg, monkeypatch)
+
+
+def assert_completion_deadline_reserves_pool_wait(h, monkeypatch):
     generation_job(h)
     engine = h.app.state.engine
     engine.update_execution_options(rota_write_settings=replace(h.settings, db_pool_timeout_seconds=60))
-    clock = time.monotonic()
+    clock = simulated_clock(monkeypatch)[0]
     deadlines = []
     retry_write = worker.retry_write
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', 65)
-    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock, sleep=lambda seconds: None))
 
     def record_deadline(engine, operation, **kwargs):
         if kwargs.get('deadline') is not None:
+            assert not deadlines, 'Unexpected retry of a lease-bound write while measuring the completion deadline'
             deadlines.append(kwargs['deadline'])
         return retry_write(engine, operation, **kwargs)
 

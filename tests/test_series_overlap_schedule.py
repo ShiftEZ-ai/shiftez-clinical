@@ -284,8 +284,14 @@ def department_schedule_overlaps(h, monkeypatch):
                           'contracts': contracts}
     publish_synthetic_rows(h, workspace, sequence=2)
     client = h.client('coordinator')
-    queries, windows, overlap_cpu = [], [], []
+    queries, windows, overlap_cpu, hydrated = [], [], [], []
+    records = schedule_view.shift_records
     original, original_flags = schedule_view.published_shifts, schedule_view.session_overlap_flags
+
+    def counted_records(db, rows):
+        rows = list(rows)
+        hydrated.extend(row.id for row in rows)
+        return records(db, rows)
 
     def bounded_peers(db, publications, zone, start, end, **kwargs):
         assert (end - start).days <= 34, 'A month read must not scan historical publication duties'
@@ -305,6 +311,7 @@ def department_schedule_overlaps(h, monkeypatch):
 
     monkeypatch.setattr(schedule_view, 'published_shifts', bounded_peers)
     monkeypatch.setattr(schedule_view, 'session_overlap_flags', measured_flags)
+    monkeypatch.setattr(schedule_view, 'shift_records', counted_records)
 
     def queried(_connection, _cursor, statement, _parameters, _context, _many):
         if statement.lstrip().upper().startswith('SELECT'):
@@ -316,12 +323,13 @@ def department_schedule_overlaps(h, monkeypatch):
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', queried)
     assert response.status_code == 200, response.text
-    return response.json()['shifts'], queries, windows, boundary['shift_id'], preceding['shift_id'], sum(overlap_cpu)
+    return response.json()['shifts'], queries, windows, boundary['shift_id'], preceding['shift_id'], hydrated, sum(overlap_cpu)
 
 
 def test_department_scale_schedule_flags_use_batched_queries(department_schedule_overlaps):
-    shifts, queries, windows, boundary, preceding, _ = department_schedule_overlaps
+    shifts, queries, windows, boundary, preceding, hydrated, _ = department_schedule_overlaps
     assert len(shifts) == 497 and len(queries) < 50
+    assert len(hydrated) <= len(shifts) + 5, len(hydrated)
     assert windows
     visible = next(row for row in shifts if row['id'] == boundary)
     assert {flag['other_shift_id'] for flag in visible['double_booking_conflicts']} == {preceding}

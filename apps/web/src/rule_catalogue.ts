@@ -21,8 +21,9 @@ import {lineReach,savedReach,thisWeek,readsReach,lineDates,type LineReach} from 
 import {highlightRule} from './planner_rules.js';
 import {tagRef,membersOf} from './tags.js';
 import {ruleConditionFields,safetyRule,catalogueEntryOf,type Context} from './forms.js';
-import {rulesDatabase} from './rules_tree.js';
+import {rulesDatabase,ruleTreeViews} from './rules_tree.js';
 import {departmentRules,forgetDepartmentRules} from './rules_explained.js';
+import {conversions,readsSimplify} from './rule_simplify.js';
 import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,ruleSentence,type NumberPart} from './rule_view.js';
 import {ruleReview} from './rule_review.js';
 import {RULE_FAMILIES,RULE_CATALOGUE,RULE_CATALOGUE_V2,MAX_SCORE_INPUT,NEVER_OVERRIDDEN,type Conditions,type Condition,type RuleCatalogueEntry,type RuleLine,type WorkloadPeriod,type RuleLineValidity,type RuleLineReplacement,type RuleAttentionCounts} from './generated.js';
@@ -57,7 +58,8 @@ export type Options={parts:string[];openTag:(tag:Row)=>void;navigate:(view:strin
   /** Existing dated exception requests and their independent approval. */exceptions?:()=>void;
   /** Shared full rule detail, including source and history. */openRule?:(rule:Row)=>void;
   /** One row of a rule: a catalogue rule's line, or an older rule's person row. */openLine?:(ruleId:string,at:{lineId?:string;personId?:string})=>void;
-  /** "In <draft>": how the rule in force fares in a draft being planned (app.ts draftHealth). */inDraft?:(rule:Row)=>HTMLElement};
+  /** "In <draft>": how the rule in force fares in a draft being planned (app.ts draftHealth). */inDraft?:(rule:Row)=>HTMLElement;
+  /** The Rules list's catalogue read, started at boot (readRulesAhead): taken by the first draw instead of asking again. */ahead?:Promise<Catalogue>|null};
 
 export const WAITING='Waiting for approval',ENDS_SOON=`Ends within ${LINE_ENDING_DAYS} days`,CURRENT='Current or later';
 export const linesOf=(e:Entry):RuleLine[]=>(e.rule?.definition?.rule?.lines||[]) as RuleLine[];
@@ -402,6 +404,25 @@ export const catalogueVersion=(ctx:Context)=>ctx.me.catalogue_version;
 /** The v2 rule a v1 rule id was folded into (the contracts' replacement_id), when it is not a v2 rule itself. */
 export const folded=(id:string|undefined)=>{if(!id||RULE_CATALOGUE_V2.some(e=>e.id===id))return undefined;
   const to=RULE_CATALOGUE.find(e=>e.id===id)?.replacement_id;return to&&RULE_CATALOGUE_V2.some(e=>e.id===to)?to:undefined;};
+/** Who edits rules here (drafts, the pickers' active choices). */
+const editsRules=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
+/** Catalogue v2 reads every line, ended ones too (a proposal is the whole rule); the list hides what is not current. */
+const catalogueUrl=(version:number|undefined)=>version===2?'/api/rules/catalogue?version=2&include_hidden=true':'/api/rules/catalogue';
+/** FE-PERF (scale): the Rules list's own reads, started together as soon as the account is known (app.ts boot), beside
+ *  the lists. None of them needs the lists or another read's answer; before, they waited for the lists, then for each
+ *  other (4–5 serial waves on a reload). App reads (`background`): the first page draw must not abort them. Each is
+ *  read where the page reads it (its memo, kept read or saved-view cache; the catalogue through Options.ahead), so every
+ *  request is still sent once. The questions are asked for the department's today, the day the catalogue answers with;
+ *  if it answers another day (midnight), the page asks for that day as before. Same conditions as the page's own reads. */
+export function readRulesAhead(ctx:Context):Promise<Catalogue>{
+  const quiet=<T,>(p:Promise<T>)=>{p.catch(()=>undefined);return p;};  // each is awaited (and its failure handled) where the page uses it
+  void quiet(capabilities(background));
+  if(editsRules(ctx))void quiet(activeChoices(background));
+  void quiet(departmentRules(departmentToday(),background));
+  void quiet(ruleTreeViews());
+  if(readsSimplify(ctx))void quiet(conversions(true,background));
+  return quiet(background<Catalogue>(catalogueUrl(catalogueVersion(ctx))));
+}
 /** Who may read a rule's combined detail (GET /api/rules/catalogue/{id}/detail); others read the whole catalogue. */
 export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options){
   const account=`${ctx.me.identity_id}.${ctx.me.department.id}`;
@@ -412,7 +433,7 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
   if(moved){o={...o,parts:[moved,...o.parts.slice(1)]};history.replaceState(history.state,'',routeHash('rules',o.parts,new URLSearchParams(location.hash.split('?')[1]||'')));}
   // What an advisory strength weighs (the department's, over the defaults), for the strength badges' tooltips.
   void capabilities().then(r=>setAdvisoryWeights({...r.generation_defaults?.scoring?.strengths,...ctx.me.department.generation_defaults?.scoring?.strengths})).catch(()=>undefined);
-  const canEdit=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
+  const canEdit=editsRules(ctx);
   if(!canEdit)drafts.clear();else loadActive();
   const redraw=async()=>{await ctx.refresh();};
   // A rule or line opened by link: one read with the rule, its check and the line's reach (today), not the whole catalogue.
@@ -429,8 +450,7 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
     if(d){settle(d.entry);learn(linesOf(d.entry),d.entry.line_specificity);learnValidity(d.entry,d.day);if(d.entry.proposed)learn(d.entry.proposed.definition.rule.lines||[],d.entry.proposed.line_specificity);
       rulePage(ctx,target,{families:RULE_FAMILIES.map(([id,name])=>({id,name})),entries:[d.entry],day:d.day,attention:[],catalogue_version:2},d.entry,o,canEdit,redraw,{check:d.check,reach:d.reach,period:forWeek&&week?week.name:'today'});return;}
   }
-  // Catalogue v2 reads every line, ended ones too (a proposal is the whole rule); the list hides what is not current.
-  const data=await ask<Catalogue>(version===2?'/api/rules/catalogue?version=2&include_hidden=true':'/api/rules/catalogue');
+  const data=await (o.ahead||ask<Catalogue>(catalogueUrl(version)));
   for(const e of data.entries){settle(e);learn(linesOf(e),e.line_specificity);learnValidity(e,data.day);if(e.proposed)learn(e.proposed.definition.rule.lines||[],e.proposed.line_specificity);}
   const entry=o.parts[0]&&data.entries.find(e=>e.id===o.parts[0]);
   if(entry){rulePage(ctx,target,data,entry,o,canEdit,redraw);return;}
@@ -1294,7 +1314,7 @@ export const balanceWords=(on:boolean)=>on?'On — everyone under this rule is c
 
 // ---- A rule's settings (by old kind): fields from the rule schemas the server publishes, one popover ----
 let schema:Promise<Row>|null=null;
-const capabilities=()=>schema??=get<Row>('/api/policies/capabilities').catch(err=>{schema=null;throw err;});
+const capabilities=(read:typeof get=get)=>schema??=read<Row>('/api/policies/capabilities').catch(err=>{schema=null;throw err;});
 const definitionSchema=()=>capabilities().then(r=>r.definition_schema);
 /** Never in Settings: numbers and line dates (lines carry them), per-person amounts and supervisor lists (their own editors). */
 const NOT_SETTINGS=new Set(['starts_on','ends_on','maximum_amount','target_amount','target_strength','weekdays','start_time','end_time','person_amounts','supervisor_ids']);
@@ -1713,8 +1733,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         return box;}));
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
+      const waitsWhy='Waits until the effect of this change is known';
       const approve=button('Approve and activate',()=>{
-        if(!review)return;const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
+        // A press before the effect is known (still loading, or its read failed) says why, never nothing.
+        if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
           d.close();notify(`${e.name}: the change is active.`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
@@ -1775,18 +1797,20 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       const effect=el('div',{class:'rc-effect-box',id:'rc-effect-'+String(p.id)});let asked=0;
       // Approve waits for the review it decides on: the shared busy state at once, described by the effect area (its long
       // wait), and disabled with that reason until the review answers.
-      approve.setAttribute('aria-describedby',effect.id);approve.dataset.tip='Waits until the effect of this change is known';
+      approve.setAttribute('aria-describedby',effect.id);approve.dataset.tip=waitsWhy;
       // A Retry retires only the ask: hold the first busy state until the current answer or error releases it.
       let waiting:(()=>Promise<void>)|null=null,settling=false;
-      const hold=()=>{if(!waiting)waiting=busy(approve,'Checking the effect…');};
+      // Held, not disabled: a press while it waits reaches the button and says why (aria-disabled keeps it out of use).
+      const hold=()=>{if(waiting)return;waiting=busy(approve,'Checking the effect…');approve.disabled=false;approve.setAttribute('aria-disabled','true');};
+      const release=async()=>{retireRetry();const done=waiting;waiting=null;await done?.();approve.removeAttribute('aria-disabled');};
       const again=()=>{if(!settling)ask();};
       // The current answer retires the live Retry before the release; focus inside it stays in the effect area (WCAG 2.4.3).
       const retireRetry=()=>{settling=true;const held=effect.contains(document.activeElement);effect.replaceChildren(skeleton('lines','Checking the effect…'));
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
-        proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;retireRetry();const done=waiting;waiting=null;await done?.();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
+        proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
             effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?uncertain:'');delete approve.dataset.tip;paint();void load();},
-          async err=>{if(mine!==asked)return;retireRetry();const done=waiting;waiting=null;await done?.();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.disabled=true;
+          async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
       d.body.classList.add('rc-lp-body');

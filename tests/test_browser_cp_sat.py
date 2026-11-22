@@ -99,7 +99,8 @@ def test_planner_configures_generates_and_applies_cp_sat(browser, cp_server, h):
     expect(page.locator('#auto-panel').get_by_role('progressbar')).to_be_visible()
     wait_run_created(page)
     expect(page.locator('#auto-panel .auto-stage strong')).to_have_text(re.compile(r'^(Waiting for the scheduler to start|\d/5 .+)$'))
-    assert not any(url.endswith('/api/catalogues') or url.endswith('/api/workspaces/' + workspace['id']) for url in queued_requests)
+    detail = '/api/workspaces/' + workspace['id']
+    assert not any(url.endswith(('/api/catalogues', detail, detail + '?view=schedule')) for url in queued_requests)
     job = h.get('coordinator', '/api/jobs')['jobs'][0]
     assert job['generation_engine'] == 'cp_sat'
     assert job['effective_options']['mode'] == 'fill_gaps'
@@ -659,7 +660,7 @@ def test_auto_schedule_steps_review_issues_show_apply_and_undo(browser, cp_serve
         assert 'objective_order' not in factory
         assert job['effective_options'].get('weight_preset') == 'fairness_first'
         assert 'objective_order' not in job['effective_options']
-        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'weighted']
+        assert [step['name'] for step in job['result']['objectives']] == ['coverage', 'desired_coverage', 'weighted']
         # What is still to fix: each must-fix cause the run leaves is ONE Fix list row, in the server's words, with its
         # one action (the shortage of ten in both clinics is one cause, not a card per clinic).
         must = [c for c in result['fix_list_after']['causes'] if c['level'] == 'must']

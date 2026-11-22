@@ -5,7 +5,8 @@ import pytest
 from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, sign_in, navigate, keyboard_focus, wait_held  # noqa: F401
-from .test_browser import whole_list
+from .legend_guard import legend_entries
+from .test_browser import whole_list, view_settings, close_popover
 from .test_browser import fix_pill
 from .test_browser_fe_c4 import my_duties, PHONE, DESKTOP
 from .test_browser_schedule import show
@@ -50,7 +51,7 @@ def grid(page, view, day):
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_a_phone_month_of_my_duties_fits_with_codes_and_the_day_grid_says_each_fact_once(browser, live_server, h, scheme):
     """SW3-C-17: on a phone the Month grid was 904 px wide in a 358 px box (about 1.5 days in view), a Day/Week row's
-    chip repeated its row's time and place, and the key's "Change what is shown" sat half off-screen when the key was long."""
+    chip repeated its row's time and place, and long keys pushed controls off-screen."""
     me, days, ids = my_duties(h)
     context, page = sign_in(browser, live_server, 'staff', PHONE, color_scheme=scheme)
     try:
@@ -67,18 +68,24 @@ def test_a_phone_month_of_my_duties_fits_with_codes_and_the_day_grid_says_each_f
         expect(row).to_contain_text('North consulting room')
         # The chip's time-and-place label stays whatever the row shows (S-12, C4-F03 in test_browser_schedule_views).
         expect(day.locator('.pchip-name')).to_have_text(['13:00–16:00 · North consulting room'])
-        # A long key wraps onto the lines it needs, never scrolling or hiding an entry (eb8635b6d, UIUX-AUDIT L1); its
-        # settings button stays in view.
+        # Exercise the shared builder: extra entries must remain usable through +N on one line below the content.
         key = page.locator('.view-legend:visible').last
-        key.evaluate("k => {for (let i = 0; i < 4; i++) k.prepend(Object.assign(document.createElement('li'), {textContent: 'A long key entry ' + i}));}")
-        laid = key.evaluate('''k => {const b = k.getBoundingClientRect(), items = [...k.children].filter(n => n.getClientRects().length);
-            return {scrolls: k.scrollWidth > k.clientWidth + 0.5 || k.scrollHeight > k.clientHeight + 0.5,
-                    lines: new Set(items.map(n => Math.round(n.getBoundingClientRect().top))).size,
-                    outside: items.filter(n => {const r = n.getBoundingClientRect();
-                        return r.left < b.left - 0.5 || r.right > b.right + 0.5 || r.bottom > b.bottom + 0.5 || r.right > innerWidth;}).map(n => n.textContent)};}''')
-        assert not laid['scrolls'] and laid['lines'] > 1 and not laid['outside'], laid
-        settings = key.get_by_role('button', name='Change what is shown', exact=True)
-        assert settings.evaluate('b => {const r=b.getBoundingClientRect(),k=b.closest(".view-legend").getBoundingClientRect();return r.left>=k.left && r.right<=k.right+0.5 && r.right<=innerWidth}')
+        with legend_entries(page, key):
+            pass
+        key.evaluate("""async k => {
+            const {legend} = await window.importBundle('dom.js'), long = legend('Long key');
+            for (let i = 0; i < 4; i++) long.mark(document.createElement('span'), 'long-' + i, 'lg-weekend', 'A long key entry ' + i);
+            k.after(long.root);
+        }""")
+        long_key = page.get_by_role('list', name='Long key', exact=True)
+        expect(long_key.locator('.lg-more > button')).to_be_visible()
+        with legend_entries(page, long_key) as entries:
+            expect(entries.locator('.lg-words')).to_have_text([f'A long key entry {i}' for i in range(4)])
+            expect(entries.locator('.lg-swatch.lg-weekend')).to_have_count(4)
+        assert long_key.evaluate("k => document.querySelector('#schedule-view .wk-grid').compareDocumentPosition(k) & Node.DOCUMENT_POSITION_FOLLOWING")
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        expect(view_settings(page.locator('.planner-toolbar'))).to_be_visible()
+        close_popover(page)
     finally:
         context.close()
 

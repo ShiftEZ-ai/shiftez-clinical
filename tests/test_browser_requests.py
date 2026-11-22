@@ -129,6 +129,11 @@ def test_empty_requests_keep_wish_controls_and_load_calendar_only_when_opened(br
         controls = page.locator('#main').get_by_role('group', name='Requests', exact=True)
         calendar = controls.get_by_role('button', name='Wish calendar', exact=True)
         expect(calendar).to_be_visible()
+        if viewport and role != 'staff':
+            # No points beside it: on a phone the calendar sits among the toolbar's icon tools, never on a row of its own.
+            tool = controls.locator(':scope > .dt-tool').first
+            expect(tool).to_be_visible()
+            assert abs(calendar.bounding_box()['y'] - tool.bounding_box()['y']) < 4
         expect(calendar).to_have_attribute('aria-expanded', 'false')
         expect(calendar).to_have_attribute('aria-controls', 'request-wish-calendar')
         assert not reads, reads  # The calendar is read only when opened.

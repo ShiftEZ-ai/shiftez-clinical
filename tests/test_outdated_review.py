@@ -4,6 +4,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import record
+from apps.api.services.people import CONTACT_FIELDS
 from packages.contracts.schemas import PersonInput
 
 
@@ -30,10 +31,13 @@ def test_stale_approval_explains_recovery_and_keeps_recorded_evidence(h):
 
     before = approvals()
     person = next(p for p in h.get('admin', '/api/catalogues')['people'] if p['id'] == h.seed['people'][-1])
-    person = h.configure('people', {**{k: person[k] for k in PersonInput.model_fields}, 'pager': '4999'},
-                person['id'], person['revision'])['record']
+    pager = next(row for row in h.get('admin', '/api/contact-types')['contact_types'] if row['legacy_field'] == 'pager')
+    saved = h.command('admin', 'person.contact.set', {'person_id': person['id'], 'contact_type_id': pager['id'],
+        'value': '4999', 'reason': 'Synthetic contact change'})['record']
+    assert saved['value'] == '4999'
     assert h.detail(w)['current_fingerprint'] == w['submitted_fingerprint']
-    h.configure('people', {**{k: person[k] for k in PersonInput.model_fields}, 'active': False},
+    person = next(p for p in h.get('admin', '/api/catalogues')['people'] if p['id'] == person['id'])
+    h.configure('people', {**{k: person[k] for k in PersonInput.model_fields if k not in CONTACT_FIELDS}, 'active': False},
                 person['id'], person['revision'])
     refused = h.lifecycle(w, 'publish', status=409)['error']
     assert refused['code'] == 'STALE_APPROVAL'

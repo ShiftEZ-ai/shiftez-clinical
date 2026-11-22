@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 
 from sqlalchemy import delete, event
+from sqlalchemy.orm import Session
 
 from apps.api import models as m
 from apps.api.db import retry_write, transaction
@@ -63,7 +64,8 @@ def test_workspace_reads_revalidate_after_a_worker_check_finishes_without_a_work
     with transaction(h.app.state.engine) as db:
         result = planning.revalidate(db, db.get(m.Workspace, w['id']), store=False, include_internal=True)
     client = h.client('coordinator')
-    paths = [f"/api/workspaces/{w['id']}", f"/api/workspaces/{w['id']}?view=compact"]
+    path = f"/api/workspaces/{w['id']}"
+    paths = [path, path + "?view=compact", path + "?view=schedule"]
     before = [client.get(path) for path in paths]
     assert all(response.status_code == 200 for response in before)
     assert retry_write(h.app.state.engine, lambda db: finish_job(db, claim, result, 'CHECK_FAILED'))
@@ -251,3 +253,27 @@ def test_department_scale_compact_byte_budget(backend):
     # Measured 178,450 bytes with 192 coverage rows; retain headroom for review/diagnostic metadata.
     assert len(window.content) < 256 * 1024
     assert client.get(path + '/parts', params=query, headers={'if-none-match': window.headers['etag']}).status_code == 304
+
+
+def test_department_scale_full_read_projects_sessions_without_orm_loads(backend):
+    h = backend
+    workspace, _, *_ = scale_department(h)
+    client = h.client('coordinator')
+    path = f"/api/workspaces/{workspace['id']}"
+    first = client.get(path)
+    assert first.status_code == 200
+    loaded = []
+
+    def count_shifts(_session, row):
+        if isinstance(row, m.Shift):
+            loaded.append(row.id)
+
+    event.listen(Session, 'loaded_as_persistent', count_shifts)
+    try:
+        repeated = client.get(path)
+    finally:
+        event.remove(Session, 'loaded_as_persistent', count_shifts)
+    assert repeated.status_code == 200
+    assert len(repeated.json()['shifts']) == 768
+    assert repeated.content == first.content
+    assert len(loaded) <= 4, f'Loaded {len(loaded)} ORM sessions to serve the full rota'

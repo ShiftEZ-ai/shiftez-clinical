@@ -1,20 +1,24 @@
 """Trusted dev policy: branch roles, tree promotion, shrinking allowances and migration floors."""
 import argparse
 import ast
+from datetime import date
 import difflib
 from fnmatch import fnmatchcase
 import hashlib
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tomllib
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from datetime import date, datetime, timezone
+from urllib.request import Request, urlopen
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import node_census
 import hardening
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_retired
 
 from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_agent_path, private_ignore_content
 
@@ -24,9 +28,38 @@ HOOKS = {
     "pytest_runtest_protocol", "pytest_runtest_call", "pytest_configure", "pytest_addhooks",
     "pytest_terminal_summary", "pytest_sessionfinish", "pytest_unconfigure", "pytest_addoption",
 }
+PYTHON_MODULES = {"pytest", "playwright", "ruff", "venv", "pip"}
+PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
+PIP = re.compile(r"pip(?:3(?:\.\d+)?)?")
+MODULE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+PYTHON_MODE = re.compile(r"-[bBdEhiIOPqRsSuvx]*([mc])(.*)")
+EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
+SCRIPT_SUFFIXES = (".py", ".sh", ".mjs", ".cjs", ".js", ".ts")
+SHELL_SEPARATORS = ";|&<>()"
+SHELL_PREFIXES = {"if", "elif", "then", "else", "while", "until", "do", "!", "env", "exec", "command", "time"}
+SHELL_ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
+
+UNRESOLVED_KEYS = ("workflow", "job", "step", "run_sha256", "reference")
+
+
+class Unresolved(str):
+    """A run-step form the inventory cannot resolve; reported in findings.json for the workflow's reviewer."""
+
 
 REPOSITORY = 1459752401
+CODEOWNER_TEAM = "@ShiftEZ-ai/maintainers"
+# Last-push approval is deliberately not required: stale-review dismissal already voids an approval on a new push.
+REVIEW_FLAGS = ("require_code_owner_review", "dismiss_stale_reviews_on_push")
 KNOWN = "ci/known-failures.json"
+NODE_LEDGER = "ci/removed-tests.json"
+SHRINK_ONLY = {
+    "ci/known-skips.json": ("skips",),
+    "ci/frozen-baseline-failures.json": (),
+    "ci/failure-classifications.json": ("entries",),
+    "ci/hosted-env-exceptions.json": ("exceptions",),
+    "ci/unstable-seeds.json": ("nodes",),
+}
+QUARANTINE_DAYS = 30
 MARKER = "ci/working-rules.json"
 CONTRACT = {"schema": 4, "ci_result_contract": "failclosed-main-reviewed-errors-v32"}
 LISTS = {
@@ -35,10 +68,10 @@ LISTS = {
     "ci/failure-classifications.json": False,
     "ci/hardening.json": True,
     "ci/frozen-baseline-failures.json": False,
-    "ci/root-run-evidence.json": False, "ci/removed-tests.json": False,
+    "ci/root-run-evidence.json": False, NODE_LEDGER: False,
     "ci/hosted-env-exceptions.json": False,
     "ci/unstable-seeds.json": True, "ci/hosted-durations.json": True,
-    "tests/quarantine.json": True,
+    QUARANTINE: True, QUARANTINE_RETIRED: True,
 }
 
 
@@ -80,21 +113,146 @@ def read_file(revision, path):
     return git("show", revision + ":" + path)
 
 
-def removal_only(before_raw, after_raw):
+def retired_at_revision(revision, *, allow_legacy=True):
+    try:
+        raw = read_file(revision, QUARANTINE_RETIRED)
+        if raw is None and allow_legacy:
+            source = read_file(revision, ".github/scripts/working_policy.py")
+            # QUARANTINE_RETIRED was introduced with the list and must remain the activation marker.
+            if source and b"QUARANTINE_RETIRED" not in source:
+                return None, {}
+        return raw, decode_retired(raw)
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("Cannot read trusted quarantine retired list: " + QUARANTINE_RETIRED) from None
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid quarantine retired list {QUARANTINE_RETIRED}: {error}") from None
+
+
+def known_failure_classes(raw):
+    data = decode(raw) if raw else {}
+    return {entry["node"]: entry.get("class", "unstable" if key == "unstable" else None)
+            for key in ("fails", "unstable") for entry in (data.get(key) or [])
+            if isinstance(entry, dict) and isinstance(entry.get("node"), str)}
+
+
+def known_failure_expiries(raw):
+    data = decode(raw) if raw else {}
+    return {entry["node"]: entry["expires_on"] for key in ("fails", "unstable") for entry in (data.get(key) or [])
+            if isinstance(entry, dict) and isinstance(entry.get("node"), str) and isinstance(entry.get("expires_on"), str)}
+
+
+def moved_failure_classes(before, after):
+    return {node: cls for node, cls in known_failure_classes(before).items() if node not in after}
+
+
+def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw, *, retired=frozenset()):
+    """Keep or remove existing quarantine entries; add only entries MOVED from known failures or recovered FLAKES."""
+    def encoded(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    before = decode(before_raw) if before_raw is not None else []
+    after = decode(after_raw) if after_raw is not None else None
+    if not isinstance(before, list) or not isinstance(after, list):
+        raise ValueError(QUARANTINE + " must stay a list of entries")
+    existing = {entry.get("nodeid"): encoded(entry) for entry in before if isinstance(entry, dict)}
+    known_after = known_failure_classes(known_after_raw)
+    moved = moved_failure_classes(known_before_raw, known_after)
+    source_expiry = known_failure_expiries(known_before_raw)
+    seen = set()
+    for entry in after:
+        node = entry.get("nodeid") if isinstance(entry, dict) else None
+        if not isinstance(node, str) or node in seen:
+            raise ValueError(QUARANTINE + " entries need one unique nodeid each")
+        seen.add(node)
+        if node in known_after:
+            raise ValueError(QUARANTINE + " entries must be disjoint from " + KNOWN + ": " + node)
+        if node in existing:
+            if encoded(entry) != existing[node]:
+                raise ValueError(QUARANTINE + " may not edit an existing entry: " + node)
+            continue
+        if node in retired:
+            raise ValueError(QUARANTINE + " may not re-add a retired entry: " + node)
+        issue, owner, reason = entry.get("issue"), entry.get("owner"), entry.get("reason")
+        if type(issue) is not int or issue < 1:
+            raise ValueError(QUARANTINE + " additions need an issue number of at least 1: " + node)
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError(QUARANTINE + " additions need an owner: " + node)
+        if type(entry.get("blocker")) is not bool:
+            raise ValueError(QUARANTINE + " additions need a true or false blocker flag: " + node)
+        if not isinstance(reason, str) or ":" not in reason:
+            raise ValueError(QUARANTINE + " additions need a reason that starts with its class: " + node)
+        try:
+            days = (date.fromisoformat(entry["expires"]) - date.fromisoformat(entry["added"])).days
+        except (KeyError, TypeError, ValueError):
+            days = None
+        # The bound counts from 'added'; the quarantine validity test refuses a future 'added', so it cannot be stretched.
+        if days is None or not 0 <= days <= QUARANTINE_DAYS:
+            raise ValueError(QUARANTINE + " additions need an expiry at most 30 days after added: " + node)
+        cls = reason.split(":", 1)[0].strip()
+        flake = cls == "unstable" and node not in moved
+        if flake or "recovered_runs" in entry:
+            runs = entry.get("recovered_runs")
+            if (not isinstance(runs, list) or not runs
+                    or not all(isinstance(run, str) and re.fullmatch(r"[0-9]+", run) for run in runs)):
+                raise ValueError(QUARANTINE + " flake additions need the run ids where they recovered: " + node)
+        if moved.get(node) == cls and node in source_expiry:
+            try:
+                later = date.fromisoformat(entry["expires"]) > date.fromisoformat(source_expiry[node])
+            except ValueError:
+                later = True
+            if later:
+                raise ValueError(QUARANTINE + " moved entries may not expire later than their " + KNOWN
+                                 + " entry: " + node)
+        if moved.get(node) == cls or flake:
+            continue
+        raise ValueError(QUARANTINE + " may only add entries moved from " + KNOWN
+                         + " with their class, or recovered flakes with run evidence: " + node)
+
+
+def quarantine_retired_change(before_raw, after_raw, registry_before, registry_after):
+    try:
+        before = decode_retired(before_raw) if before_raw is not None else {}
+        after = decode_retired(after_raw)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid {QUARANTINE_RETIRED}: {error}") from None
+    append_only = QUARANTINE_RETIRED + " is append-only"
+    base_entries = {entry["nodeid"]: entry for entry in decode(registry_before)}
+    removed = before.keys() - after.keys()
+    if removed:
+        remaining_nodes = {entry["nodeid"] for entry in decode(registry_after)}
+        if removed & remaining_nodes:
+            raise ValueError(append_only + "; remove the same nodes from " + QUARANTINE + " before or with compaction")
+    retained = [(node, token) for node, token in before.items() if node in after]
+    if (list(after.items())[:len(retained)] != retained
+            or before_raw is not None and before == after and before_raw != after_raw):
+        raise ValueError(append_only + "; existing entries must stay byte-unchanged and in order")
+    for node in after.keys() - before.keys():
+        if node not in base_entries:
+            raise ValueError(append_only + "; new entry is absent from the base " + QUARANTINE + ": " + node)
+        row = base_entries[node]
+        if row["blocker"]:
+            raise ValueError(append_only + "; release blockers may not be retired: " + node)
+        if row["reason"].split(":", 1)[0].strip() not in {"baseline", "baseline-error"}:
+            raise ValueError(append_only + "; only baseline or baseline-error entries may be retired: " + node)
+
+
+def removal_only(before_raw, after_raw, entry_keys=("fails", "unstable")):
     if before_raw is None or after_raw is None:
         return False
     before, after = decode(before_raw), decode(after_raw)
-    if not isinstance(before, dict) or not isinstance(after, dict) or set(before) != set(after):
-        return False
-    if type(before.get("schema")) is not int or before.get("schema") not in (1, 2, 3) or type(after.get("schema")) is not int or before.get("schema") != after.get("schema"):
-        return False
     def encoded(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
-    if any(encoded(before[k]) != encoded(after[k]) for k in before if k not in {"fails", "unstable"}):
-        return False
+    if entry_keys:
+        if not isinstance(before, dict) or not isinstance(after, dict) or set(before) != set(after):
+            return False
+        if type(before.get("schema")) is not int or before["schema"] not in (1, 2, 3):
+            return False
+        if any(encoded(before[k]) != encoded(after[k]) for k in before if k not in entry_keys):
+            return False
+        lists = [(before.get(key), after.get(key)) for key in entry_keys]
+    else:
+        lists = [(before, after)]
     removed = 0
-    for key in ("fails", "unstable"):
-        old, new = before.get(key), after.get(key)
+    for old, new in lists:
         if not isinstance(old, list) or not isinstance(new, list):
             return False
         remaining = iter(old)
@@ -103,28 +261,6 @@ def removal_only(before_raw, after_raw):
                 return False
         removed += len(old) - len(new)
     return removed > 0
-
-
-def renewal_only(before_raw, after_raw, *, today=None):
-    """Only expiry extensions qualify for the audited Tier-1 renewal route."""
-    if before_raw is None or after_raw is None:return False
-    before,after=decode(before_raw),decode(after_raw)
-    if not isinstance(before,dict) or not isinstance(after,dict) or set(before)!=set(after):return False
-    if any(before[k]!=after[k] for k in before if k!='unstable'):return False
-    old,new=before.get('unstable'),after.get('unstable')
-    if not isinstance(old,list) or not isinstance(new,list) or len(old)!=len(new):return False
-    today=today or datetime.now(timezone.utc).date()
-    changed=False
-    for a,b in zip(old,new):
-        if not isinstance(a,dict) or not isinstance(b,dict) or set(a)!=set(b):return False
-        if any(a[k]!=b[k] for k in a if k!='expires_on'):return False
-        if a==b:continue
-        try:
-            previous,current=date.fromisoformat(a['expires_on']),date.fromisoformat(b['expires_on'])
-        except (KeyError,TypeError,ValueError):return False
-        if previous>=current:return False
-        changed=True
-    return changed
 
 
 def review_required(changed_paths):
@@ -139,6 +275,33 @@ def review_required(changed_paths):
 def protected(path):
     return (path in {b".github", b"ci", b"tests/quarantine.json"}
             or path.startswith((b".github/", b"ci/")))
+
+
+def codeowner_rules(text):
+    return [line.split() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def owned(path, rules):
+    """Match anchored CODEOWNERS paths, directory prefixes and * within a name.
+
+    The last matching rule wins, as on GitHub; an ownerless rule un-owns its paths.
+    """
+    parent, _, name = path.rpartition("/")
+    match = False
+    for pattern, *owners in rules:
+        anchored = pattern[1:]
+        directory, _, glob = anchored.rpartition("/")
+        if (not pattern.startswith("/") or not anchored
+                or any("#" in owner for owner in owners)
+                or any(mark in pattern for mark in ("#", "[", "]", "!", "\\", "**", "?"))
+                or "*" in directory or any(part in {"", ".", ".."} for part in anchored.removesuffix("/").split("/"))):
+            raise ValueError("Unsupported CODEOWNERS rule")
+        if pattern.endswith("/"):
+            if path.startswith(anchored):
+                match = owners == [CODEOWNER_TEAM]
+        elif parent == directory and fnmatchcase(name, glob):
+            match = owners == [CODEOWNER_TEAM]
+    return match
 
 
 def paths(raw):
@@ -267,7 +430,107 @@ def import_paths(path, raw, tracked):
     return found
 
 
+def run_commands(line, path):
+    tokens = shlex.shlex(EXPRESSION.sub("${WORKFLOW_EXPRESSION}", line), posix=True, punctuation_chars=True)
+    tokens.whitespace_split = True
+    try:
+        words = list(tokens)
+    except ValueError as error:
+        raise ValueError(f"Cannot parse run step in {path}: {error}; simplify the quoting") from None
+    command = []
+    for token in words:
+        if token and all(char in SHELL_SEPARATORS for char in token):
+            if command:
+                yield command
+                command = []
+        else:
+            command.append(token)
+    if command:
+        yield command
+
+
+def python_arguments(arguments):
+    options = iter(arguments)
+    for argument in options:
+        if argument == "--":
+            return "script", next(options, "")
+        if argument in {"-W", "-X", "--check-hash-based-pycs"}:
+            next(options, None)
+        elif mode := PYTHON_MODE.fullmatch(argument):
+            return mode[1], mode[2] or next(options, "")
+        elif argument == "-" or not argument.startswith("-"):
+            return "script", argument
+    return "script", ""
+
+
+def script_arguments(run, path, tracked):
+    lines = iter(run.splitlines())
+    for line in lines:
+        for command in run_commands(line, path):
+            names = [word.rsplit("/", 1)[-1] for word in command]
+            for index, word in enumerate(command):
+                name = names[index]
+                arguments = command[index + 1:]
+                following = arguments[0] if arguments else ""
+                if word.startswith("./"):
+                    yield word
+                module = name
+                if word == "-m" and MODULE.fullmatch(following):
+                    if following not in PYTHON_MODULES:
+                        raise ValueError("Workflow python -m module is outside the allowed list")
+                    module = following
+                if word == "-p" and MODULE.fullmatch(following) and names[0] != "mkdir":
+                    yield Unresolved("plugin option -p " + following)
+                is_python = PYTHON.fullmatch(name)
+                if word.startswith("$") and all(
+                        prefix in SHELL_PREFIXES or SHELL_ASSIGNMENT.match(prefix) for prefix in command[:index]):
+                    mode, operand = python_arguments(arguments)
+                    if mode in {"m", "c"} or operand == "-" or operand.endswith(SCRIPT_SUFFIXES) or (
+                            operand and (operand.startswith("./") or operand in tracked or "/" in operand)):
+                        yield Unresolved("nonliteral interpreter " + word)
+                        is_python = True
+                if is_python:
+                    mode, operand = python_arguments(arguments)
+                    if mode == "m":
+                        if operand not in PYTHON_MODULES:
+                            raise ValueError("Workflow python -m module is outside the allowed list")
+                        module = operand
+                    elif mode == "c" or operand == "-":
+                        yield Unresolved("inline Python (-c or stdin)")
+                        if operand == "-" and "<<'PY'" in line:
+                            for body in lines:
+                                if body == "PY":
+                                    break
+                    else:
+                        yield operand
+                if module == "pytest" and any(arg.startswith("-p") for arg in arguments):
+                    yield Unresolved("pytest plugin option")
+                if PIP.fullmatch(module) and "install" in arguments and any(
+                        arg.startswith("-e") or arg.split("=", 1)[0] == "--editable" for arg in arguments):
+                    yield Unresolved("editable pip install")
+                if name in {"bash", "sh", "node"}:
+                    options = iter(arguments)
+                    for option in options:
+                        if not option.startswith("-"):
+                            yield option
+                            break
+                        if name != "node" and re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", option):
+                            nested = next(options, None)
+                            if nested is None:
+                                raise ValueError(f"Cannot parse run step in {path}: shell -c needs a command; simplify the quoting")
+                            yield from script_arguments(nested, path, tracked)
+                            break
+                if index == 0 and "/" in word and word in tracked:
+                    yield word
+
+
+def workflow_path(path):
+    return path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+
+
 def control_inventory(source):
+    from workflow_privacy import check, load
+
     tracked = {p.decode() for p in paths(git("ls-tree", "-r", "--name-only", "-z", source))}
     read = {}
     def content(path):
@@ -275,20 +538,52 @@ def control_inventory(source):
             read[path] = read_file(source, path)
         return read[path]
     literal = re.compile(r"(?:\.github/scripts|scripts|ci)/[A-Za-z0-9_./-]+\.(?:py|sh|mjs|cjs|js|ts)\b")
-    helpers = set()
-    for path in sorted(p for p in tracked if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))):
-        text = content(path).decode().replace("$GITHUB_WORKSPACE/.trusted-controls/", "").replace("$GITHUB_WORKSPACE/.trusted-verdict/", "")
+    helpers, unresolved = set(), set()
+    pending_workflows = sorted(p for p in tracked if workflow_path(p))
+    visited = set()
+    while pending_workflows:
+        path = pending_workflows.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        text = content(path).decode()
         helpers.update(literal.findall(text))
-        for match in re.finditer(r'''\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+(?:-(?:I|B|u)\s+)*("[^"]*"|'[^']*'|\S+)''', text):
-            argument = match.group(1).strip("\"'")
-            if argument.startswith("-"):
-                continue
-            if "$" in argument:
-                raise ValueError("Trusted workflow has a nonliteral helper; audit the inventory parser")
-            if argument.endswith((".py", ".sh", ".mjs", ".cjs", ".js", ".ts")):
-                matches = {p for p in tracked if argument.removeprefix("./") == p or argument.endswith("/" + p)}
-                if len(matches) != 1:
-                    raise ValueError("Trusted workflow helper is missing or ambiguous")
+        is_action = not workflow_path(path)
+        document = check(text) if is_action else load(text)
+        steps = ([("action", step) for step in document.get("runs", {}).get("steps", [])] if is_action else
+                 [(name, step) for name, job in document.get("jobs", {}).items() for step in job.get("steps", [])])
+        for index, (job_name, step) in enumerate(steps):
+            action = step.get("uses", "")
+            if action.startswith("./"):
+                directory = action.removeprefix("./").rstrip("/")
+                manifests = {directory + "/action.yml", directory + "/action.yaml"} & tracked
+                if len(manifests) != 1:
+                    raise ValueError("Local action manifest is missing or ambiguous")
+                helpers.update(manifests)
+                pending_workflows.extend(manifests)
+            body = step.get("run", "")
+            run = body.replace("\\\n", "")
+            for prefix in (".trusted-controls", ".trusted-verdict"):
+                run = run.replace(f"$GITHUB_WORKSPACE/{prefix}/", "")
+            if is_action:
+                directory = path.rsplit("/", 1)[0]
+                for variable in ("${GITHUB_ACTION_PATH}", "$GITHUB_ACTION_PATH", "${{ github.action_path }}"):
+                    run = run.replace(variable + "/", directory + "/")
+            for argument in script_arguments(run, path, tracked):
+                if not argument:
+                    continue
+                if isinstance(argument, Unresolved):
+                    unresolved.add((path, str(job_name), str(step.get("id") or step.get("name") or f"step {index + 1}"),
+                                    hashlib.sha256(body.encode()).hexdigest(), str(argument)))
+                    continue
+                if "$" in argument:
+                    raise ValueError("Trusted workflow has a nonliteral helper; audit the inventory parser")
+                relative = argument.removeprefix("./")
+                matches = {relative} if relative in tracked else set()
+                if argument.endswith(SCRIPT_SUFFIXES) and not matches:
+                    matches = {p for p in tracked if argument.endswith("/" + p)}
+                    if len(matches) != 1:
+                        raise ValueError("Trusted workflow helper is missing or ambiguous")
                 helpers.update(matches)
     direct = set(helpers)
     pending = [(p, True) for p in helpers] + [(p, False) for p in {"conftest.py", "tests/conftest.py", "tests/quarantine.py"} & tracked]
@@ -311,7 +606,15 @@ def control_inventory(source):
             else:
                 products.add(imported)
             pending.append((imported, control_import))
-    return {"direct_helpers": direct, "helpers": helpers, "product_imports": products - helpers}
+    return {"direct_helpers": direct, "helpers": helpers, "product_imports": products - helpers,
+            "unresolved": [dict(zip(UNRESOLVED_KEYS, entry)) for entry in sorted(unresolved)]}
+
+
+def mark_new(candidate, base):
+    """Mark each unresolved entry the base inventory lacks as new; new entries come first."""
+    known = {tuple(entry[key] for key in UNRESOLVED_KEYS) for entry in base}
+    marked = [{**entry, "new": tuple(entry[key] for key in UNRESOLVED_KEYS) not in known} for entry in candidate]
+    return sorted(marked, key=lambda entry: not entry["new"])
 
 
 def tier(path, before, after, inventory):
@@ -370,11 +673,14 @@ def tier(path, before, after, inventory):
     return 0, "Ordinary candidate code/data"
 
 
-def findings_report(branch, base, head, candidate_tree, rows, source, candidate_sha=None):
+def findings_report(branch, base, head, candidate_tree, rows, source, candidate_sha=None, unresolved=()):
     report = {"schema": 2, "repository_id": REPOSITORY, "branch": branch, "target_sha": base,
               "head_sha": head, "candidate_tree": candidate_tree, "candidate_sha": candidate_sha, "trusted_source_sha": source,
               "tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]}
     report["label_request"] = "changes what the checks run on" if report["tier2"] else None
+    report["control_label_request"] = "changes CI controls" if report["tier1"] else None
+    # The owned workflow's reviewer must look at every form the inventory could not resolve.
+    report["unresolved_executable_references"] = list(unresolved)
     destination = Path(".run/policy/findings.json")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -386,6 +692,10 @@ def findings_report(branch, base, head, candidate_tree, rows, source, candidate_
                     summary.write("- Tier " + str(row["tier"]) + ": `" + json.dumps(row["path"]).replace("`", "\\u0060") + "` — " + row["reason"] + "\n")
             if not any(r["tier"] for r in rows):
                 summary.write("No Tier 1 or Tier 2 changes.\n")
+            for item in report["unresolved_executable_references"]:
+                where = json.dumps(item["workflow"] + " / " + item["job"] + " / " + item["step"]).replace("`", "\\u0060")
+                summary.write("- " + ("NEW " if item.get("new") else "") + "Unresolved executable reference in `"
+                              + where + "`: " + json.dumps(item["reference"]).replace("`", "\\u0060") + "\n")
     return report
 
 
@@ -422,13 +732,55 @@ def accepted_dev_commit(candidate_tree, dev_tip):
     raise ValueError("Release head tree is not an accepted tree on dev")
 
 
+def default_branch(data):
+    # The integration branch is the repository default from the trusted event payload, never PR content.
+    branch = (data.get("repository") or {}).get("default_branch")
+    if branch not in {"dev", "main"}:
+        raise ValueError("Unexpected repository or default branch")
+    return branch
+
+
+def working_branches(default):
+    # shortcut: main is the release branch and preview a promotion branch only while the default is dev;
+    # once the default is main both paths are unreachable, and the next CI change deletes them.
+    return {default} if default == "main" else {default, "main", "preview"}
+
+
 def event():
     data = decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     repo = data["repository"]
-    if (repo["id"] != REPOSITORY or repo["full_name"] != "ShiftEZ-ai/shiftez-clinical"
-            or repo["default_branch"] != "dev"):
+    if repo["id"] != REPOSITORY or repo["full_name"] != "ShiftEZ-ai/shiftez-clinical":
         raise ValueError("Unexpected repository or default branch")
+    default_branch(data)
     return data
+
+
+def require_branch_reviews(branch):
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    if not token:
+        raise ValueError("Branch review rules require a read-only GitHub token")
+    repository = os.getenv("GITHUB_REPOSITORY", "")
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository, re.ASCII):
+        raise ValueError("Branch review rules require a valid repository identity")
+    try:
+        request = Request(f"https://api.github.com/repos/{repository}/rules/branches/{branch}", headers={
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        with urlopen(request, timeout=10) as response:
+            rules = decode(response.read())
+    except (OSError, ValueError, HTTPException):
+        raise ValueError("Could not read active branch review rules") from None
+    if not isinstance(rules, list) or any(
+        not isinstance(rule, dict) or not isinstance(rule.get("type"), str) for rule in rules
+    ):
+        raise ValueError("Unexpected active branch rules response")
+    reviews = [rule.get("parameters") for rule in rules if rule["type"] == "pull_request"]
+    if any(not isinstance(review, dict) or any(type(review.get(flag)) is not bool for flag in REVIEW_FLAGS)
+           for review in reviews):
+        raise ValueError("Unexpected active branch review rule parameters")
+    if not any(all(review[flag] for flag in REVIEW_FLAGS) for review in reviews):
+        raise ValueError("Active branch rules must require code-owner review and stale-review dismissal")
 
 
 def fetch(ref, expected=None, *, allow_missing=False):
@@ -461,7 +813,7 @@ def bootstrap(data, kind, base):
     if os.getenv("TRUSTED_BOOTSTRAP") != "true":
         return False
     pr = data.get("pull_request", {})
-    if (kind != "pull_request" or pr.get("base", {}).get("ref") != "dev"
+    if (kind != "pull_request" or pr.get("base", {}).get("ref") != default_branch(data)
             or pr["base"]["repo"]["id"] != REPOSITORY or pr["head"]["repo"]["id"] != REPOSITORY
             or os.environ["GITHUB_RUN_ATTEMPT"] != "1"
             or git("rev-list", "--parents", "-n", "1", base).decode().split() != [base]
@@ -475,11 +827,13 @@ def bootstrap(data, kind, base):
 
 def guard():
     data = event()
+    default = default_branch(data)
+    targets = working_branches(default) - {"preview"}
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
         pr = data["pull_request"]
         branch = pr["base"]["ref"]
-        if branch not in {"dev", "main"}:
+        if branch not in targets:
             print("Policy is not required for this PR target")
             return
         if pr["base"]["repo"]["id"] != REPOSITORY or type(data["number"]) is not int or data["number"] < 1:
@@ -490,11 +844,11 @@ def guard():
         candidate = merge_tree(base, head)
         candidate_sha = None
         comparison = base + "..." + head
-        if branch == "dev" and pr["head"]["repo"]["id"] == REPOSITORY and pr["head"]["ref"] == "preview":
+        if branch == default and pr["head"]["repo"]["id"] == REPOSITORY and pr["head"]["ref"] == "preview":
             raise ValueError("Preview is never promoted into dev")
     elif kind == "merge_group":
         group = data["merge_group"]
-        if group["base_ref"] not in {"refs/heads/dev", "refs/heads/main"}:
+        if group["base_ref"] not in {"refs/heads/" + name for name in targets}:
             raise ValueError("Unexpected queue target")
         branch = group["base_ref"].removeprefix("refs/heads/")
         base, head = commit(group["base_sha"]), commit(group["head_sha"])
@@ -504,11 +858,17 @@ def guard():
         comparison = base + ".." + head
     else:
         raise ValueError("Unsupported policy event")
+    import workflow_privacy
+
     assert_public_tree(candidate)
+    for raw_path in paths(git("ls-tree", "-r", "--name-only", "-z", candidate, "--", ".github/workflows/")):
+        path = raw_path.decode("utf-8")
+        if workflow_path(path):
+            workflow_privacy.check(read_file(candidate, path).decode("utf-8"))
     migration_floor(migrations(base), migrations(candidate))
     initial = bootstrap(data, kind, base)
-    if branch == "main":
-        dev_tip = fetch("refs/heads/dev")
+    if branch != default:  # the release branch main, only while the default is dev
+        dev_tip = fetch("refs/heads/" + default)
         source = accepted_dev_commit(candidate, dev_tip)
         if candidate != tree(head):
             raise ValueError("Main would add content beyond the accepted dev tree")
@@ -517,32 +877,70 @@ def guard():
         source_policy = commit(git("rev-parse", "HEAD").decode().strip())
         inventory = control_inventory(source_policy)
         rows = []
-        for raw_path in paths(git("diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", base, candidate, "--")):
-            path = raw_path.decode("utf-8")
+        rules = codeowner_rules((read_file(base, ".github/CODEOWNERS") or b"").decode("utf-8"))
+        owned_controls = False
+        changed = [p.decode("utf-8") for p in paths(git(
+            "diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", base, candidate, "--"))]
+        if any(path.startswith((".github/workflows/", ".github/actions/")) for path in changed):
+            inventory["helpers"] = inventory["helpers"] | control_inventory(candidate)["helpers"]
+        for path in changed:
             level, reason = tier(path, read_file(base, path), read_file(candidate, path), inventory)
             if level == 1:
+                owned_controls |= owned(path, rules)
                 level, reason = 0, "Accepted dev-tree promotion; dev path rejection does not apply"
             rows.append({"path": path, "tier": level, "reason": reason})
         findings_report(branch, base, head, candidate, rows, source_policy, candidate_sha)
+        if owned_controls:
+            require_branch_reviews(branch)
     else:
         policy_base = base
-        changed = paths(git("diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", comparison, "--"))
+        changed = [p.decode("utf-8") for p in paths(git(
+            "diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", comparison, "--"))]
         source = commit(git("rev-parse", "HEAD").decode().strip())
         inventory = control_inventory(source)
+        unowned, unresolved = set(), []
+        if not initial:
+            rules = codeowner_rules((read_file(base, ".github/CODEOWNERS") or b"").decode("utf-8"))
+            unowned = {path for path in changed if not owned(path, rules)}
+        if (any(path.startswith((".github/workflows/", ".github/actions/")) for path in changed)
+                or unowned and inventory["helpers"].intersection(changed)):
+            # A changed workflow, action or helper can make another changed path a control.
+            candidate_inventory = control_inventory(candidate)
+            inventory["helpers"] = inventory["helpers"] | candidate_inventory["helpers"]
+            unresolved = mark_new(candidate_inventory.get("unresolved", []),
+                                  control_inventory(base).get("unresolved", []))
         rows = []
-        for raw_path in changed:
-            path = raw_path.decode("utf-8")
+        for path in changed:
             old, new = read_file(base, path), read_file(candidate, path)
             if path == KNOWN and removal_only(old, new):
                 level, reason = 0, "Known-failures entry removal only"
-            elif hardening.load()['node_census'] and path == 'ci/removed-tests.json' and node_census.ledger_additions(old,new) is not None:
-                level,reason=2,'Node-ledger additions only; CI must prove each node disappears in this candidate'
+            elif not initial and path == QUARANTINE_RETIRED:
+                quarantine_retired_change(old, new, read_file(base, QUARANTINE), read_file(candidate, QUARANTINE))
+                level, reason = 0, "Quarantine retirement or compaction after registry removal"
+            elif not initial and path == NODE_LEDGER:
+                if not hardening.load()["node_census"] or node_census.ledger_additions(old, new) is None:
+                    raise ValueError(NODE_LEDGER + " may only add removed nodes for census verification")
+                level, reason = 2, "Node-ledger additions only; CI must prove each node disappears in this candidate"
             else:
+                if not initial and path == QUARANTINE:
+                    _, retired = retired_at_revision(base)
+                    quarantine_change(old, new, read_file(base, KNOWN), read_file(candidate, KNOWN), retired=retired)
+                if not initial and path in SHRINK_ONLY and not removal_only(old, new, SHRINK_ONLY[path]):
+                    raise ValueError(path + " may only remove existing entries")
                 level, reason = tier(path, old, new, inventory)
             rows.append({"path": path, "tier": level, "reason": reason})
-        report = findings_report(branch, base, head, candidate, rows, source, candidate_sha)
-        if report["tier1"] and not initial:
-            raise ValueError("Tier 1 control changes require the audited maintenance route")
+        report = findings_report(branch, base, head, candidate, rows, source, candidate_sha, unresolved)
+        if not initial:
+            for row in report["tier1"]:
+                path = row["path"]
+                if path == KNOWN:
+                    raise ValueError("Known-failures changes must only remove existing entries")
+                if path in unowned:
+                    if tier(path, b"", None, inventory)[0] == 1:
+                        raise ValueError("Add a CODEOWNERS rule for " + path)
+                    raise ValueError("Move the Tier 1 mechanism in " + path + " into a CODEOWNERS-owned file")
+            if report["tier1"]:
+                require_branch_reviews(branch)
         preview = fetch("refs/heads/preview", allow_missing=True)
         if preview is not None:
             preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
@@ -553,14 +951,15 @@ def guard():
         policy_base = head
     receipts = {}
     for path, required in LISTS.items():
-        raw = read_file(policy_base, path)
-        if raw is None:
-            if required:
-                raise ValueError("Required policy list is absent")
-            receipts[path] = "ABSENT"
+        if path == QUARANTINE_RETIRED:
+            raw, _ = retired_at_revision(policy_base)
         else:
-            decode(raw)
-            receipts[path] = hashlib.sha256(raw).hexdigest()
+            raw = read_file(policy_base, path)
+            if raw is None and required:
+                raise ValueError("Required policy list is absent")
+            if raw is not None:
+                decode(raw)
+        receipts[path] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
     print(json.dumps({"branch": branch, "target_sha": base, "policy_input_sha": policy_base,
                       "head_sha": head, "candidate_sha": candidate_sha, "candidate_tree": candidate, "lists": receipts,
                       "workflow_source_sha": os.getenv("POLICY_WORKFLOW_SHA", "UNKNOWN")}, sort_keys=True))
@@ -569,6 +968,7 @@ def guard():
 
 def ci_context():
     data = event()
+    default = default_branch(data)
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
         branch, base = data["pull_request"]["base"]["ref"], commit(data["pull_request"]["base"]["sha"])
@@ -576,20 +976,21 @@ def ci_context():
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
     elif kind == "schedule":
-        branch, base = "dev", commit(git("rev-parse", "HEAD").decode().strip())
+        branch, base = default, commit(git("rev-parse", "HEAD").decode().strip())
     else:
         branch, base = os.environ["GITHUB_REF"].removeprefix("refs/heads/"), commit(git("rev-parse", "HEAD").decode().strip())
-    if branch not in {"dev", "preview", "main"}:
-        raise ValueError("CI supports only the three working branches")
+    if branch not in working_branches(default):
+        raise ValueError("CI supports only the working branches")
     census_base = commit(data["before"]) if kind=="push" else base
-    if branch == "main":
-        base = accepted_dev_commit(tree("HEAD"), fetch("refs/heads/dev"))
+    release = branch == "main" and default != "main"
+    if release:
+        base = accepted_dev_commit(tree("HEAD"), fetch("refs/heads/" + default))
     elif branch == "preview":
-        base = fetch("refs/heads/dev")
+        base = fetch("refs/heads/" + default)
     elif kind == "push":
         base = commit(data["before"])
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-        output.write("census_base_sha=" + census_base + "\nbase_sha=" + base + "\nrelease=" + str(branch == "main").lower() + "\n")
+        output.write("census_base_sha=" + census_base + "\nbase_sha=" + base + "\nrelease=" + str(release).lower() + "\n")
 
 
 def main():

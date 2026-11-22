@@ -96,18 +96,28 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
         return cp_model.FEASIBLE if update and stop_at == 'callback' else status
 
     def solve_tier(control, solver, model, tier):
+        control._live_interval = 0  # Observe the assignments at the exact stopping callback.
         status = original_solve(control, solver, model, tier)
         if tier is not None:
             solved.append((tier, status))
         return status
 
     def progress(row):
-        if row['stage'] == 'improving' and row.get('tier') == 0 and 'solution' in row:
+        if row['stage'] != 'improving':
+            return
+        name = row['objective_names'][row['tier']]
+        if name == 'coverage' and 'solution' in row:
             kept[:] = [(p['shift_id'], p['person_id']) for p in row['solution']['pairs']]
-        if row['stage'] == 'improving' and row.get('tier') == 1:
-            if ('objective_value' in row) == (stop_at == 'callback'):
-                assert solved == [(0, cp_model.OPTIMAL)]
-                update['stop'] = True
+        if name == 'desired_coverage':
+            if stop_at == 'callback':
+                if row.get('objective_value') != 0:
+                    return
+                # Desired cover has its own incumbent once its callback reports the filled seat.
+                kept[:] = [(p['shift_id'], p['person_id']) for p in row['solution']['pairs']]
+            elif 'objective_value' in row:
+                return
+            assert solved == [(0, cp_model.OPTIMAL)]
+            update['stop'] = True
 
     monkeypatch.setattr(cp_model.CpSolver, 'solve', solve)
     monkeypatch.setattr(solver_control.SolverControl, 'solve', solve_tier)
@@ -115,12 +125,42 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
     assert update['stop']
     assert bool(stops) == (stop_at == 'callback')
     assert result['status'] == 'candidate_feasible' and result['validation']['valid']
-    assert len(result['additions']) == 1
+    # Desired cover starts after required cover, so a stop before its first solve keeps the empty rota.
+    assert len(result['additions']) == (1 if stop_at == 'callback' else 0)
     assert [(a['shift_id'], a['participant']['person_id']) for a in result['additions']] == kept
     assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
     assert result['objectives'][0]['proven_optimal']
-    assert not result['objectives'][1]['proven_optimal']
+    desired = result['objectives'][1]
+    assert not desired['proven_optimal']
+    assert desired['search_status'] == ('FEASIBLE' if stop_at == 'callback' else 'NOT_RUN')
     assert result['search_stop']['reason'] == result['stop_reason'] == 'operator_stop'
+
+
+def test_stop_during_coverage_at_its_floor_keeps_coverage_proven(h, monkeypatch):
+    data, update = snapshot(h), {}
+    data['generation_options'] = {'generation_stop_grace_seconds': 10}
+    native_solve = cp_model.CpSolver.solve
+
+    def solve(solver, model, callback=None):
+        status = native_solve(solver, model, callback)
+        # Model an interrupted search retaining a zero-deficit incumbent without a solver proof.
+        return cp_model.FEASIBLE if update and status == cp_model.OPTIMAL else status
+
+    def progress(row):
+        if (row['stage'] == 'improving' and row['objective_names'][row['tier']] == 'coverage'
+                and row.get('objective_value') == 0):
+            update['stop'] = True
+
+    monkeypatch.setattr(cp_model.CpSolver, 'solve', solve)
+    result = cp_sat.generate(data, 5, progress=progress, search_control=lambda: update)
+    assert update['stop']
+    assert result['status'] == 'candidate_feasible' and result['validation']['valid']
+    coverage, = [row for row in result['objectives'] if row['name'] == 'coverage']
+    assert coverage['value'] == 0 and coverage['proven_optimal']
+    assert coverage['search_status'] == 'FEASIBLE'
+    assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
+    assert result['search_stop']['reason'] == 'operator_stop'
+    assert not any('coverage was not proven' in warning for warning in result.get('warnings', ()))
 
 
 def test_stop_after_all_tiers_proven_keeps_optimal_reason(h):
@@ -173,6 +213,9 @@ def test_stop_grace_expiry_keeps_checked_incumbent_without_score(h, monkeypatch,
     assert result['additions'] and result['score'] is None
     assert result['score_completed'] is False and not result['optimality_proven']
     assert result['search_stop']['reason'] == 'operator_stop'
+    assert 'allocation_diagnostics' in result
+    assert ('objective_components' in result) is (phase == 'summary')
+    assert ('declined_wishes' in result) is (phase == 'summary')
     after = deepcopy(data)
     for addition in result['additions']:
         next(s for s in after['shifts'] if s['id'] == addition['shift_id'])['participants'].append(addition['participant'])
@@ -204,21 +247,47 @@ def test_stop_grace_expiry_in_canonical_validation_is_resumable_not_applyable(h,
     assert saved[0]['hint'] and saved[0]['checkpoint_assignments']
 
 
-def test_stop_interrupts_completion_without_solution_callbacks():
+def test_stop_interrupts_completion_without_solution_callbacks(stop_clock):
     update, interrupted = {}, threading.Event()
     control = solver_control.SolverControl(search_control=lambda: update)
     control.configure_stop_conditions(GenerationOptions())
     control.search_budget = 60
-    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=1), stop_search=interrupted.set)
 
     def solve(model, callback):
         update['stop'] = True
-        assert interrupted.wait(1), 'Completion ignored operator stop without a new solution'
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cap'
+        stop_clock[0] += 1
+        assert interrupted.wait(1), 'Completion ignored its cap without a new solution'
         return cp_model.UNKNOWN
 
     solver.solve = solve
     assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.stopped and control.stop_reason == 'operator_stop'
+    assert control.completion_spent == control.completion_budget == 1
+
+
+def test_stop_grace_interrupts_completion_without_solution_callbacks(stop_clock):
+    update, interrupted = {}, threading.Event()
+    control = solver_control.SolverControl(search_control=lambda: update)
+    control.configure_stop_conditions(GenerationOptions(generation_stop_grace_seconds=2))
+    control.search_budget = 60
+    control.reserve_seconds = 1
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+
+    def solve(model, callback):
+        update['stop'] = True
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cutoff'
+        stop_clock[0] += 1
+        assert interrupted.wait(2), 'Completion spent the time reserved for validation'
+        return cp_model.FEASIBLE
+
+    solver.solve = solve
+    assert control.solve(solver, None, None) == cp_model.UNKNOWN
+    assert control.completion_spent == 1 < control.completion_budget
+    assert control.stop_deadline - stop_clock[0] == control.reserve_seconds
 
 
 @pytest.mark.parametrize('value', [0, 16, True, 1.5, '5'])

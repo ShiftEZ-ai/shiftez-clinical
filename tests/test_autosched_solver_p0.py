@@ -77,11 +77,14 @@ def test_completed_solver_is_released_before_next_search_without_changing_result
         completed, calls = [], []
 
         def observe(control, solver, model, tier):
-            calls.append(tier)
-            if tier == 1:
-                assert len(completed) == 1
+            name = control.context['objective_names'][tier] if tier is not None else None
+            calls.append(name)
+            if name in {'desired_coverage', 'weighted'}:
+                assert len(completed) == tier
                 if require_release:
-                    assert completed[0]() is None, 'Unused score-completion solver survived into the next search'
+                    assert all(previous() is None for previous in completed), (
+                        'Unused score-completion solver survived into the next search')
+            if name == 'weighted':
                 if later_result == 'unknown':
                     return cp_model.UNKNOWN
                 if later_result == 'error':
@@ -99,7 +102,8 @@ def test_completed_solver_is_released_before_next_search_without_changing_result
                 result = None
             else:
                 result = cp_sat.generate(snapshot, 2)
-        assert calls == [0, None, 1]
+        # Desired cover is now a separate search with its own score completion before weighted search.
+        assert calls == ['coverage', None, 'desired_coverage', None, 'weighted']
         return result
 
     expected = run(False)
