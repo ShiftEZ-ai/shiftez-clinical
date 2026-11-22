@@ -47,5 +47,29 @@ def test_unpinned_lines_refuse(tmp_path, monkeypatch, line):
 def test_main_refuses_anything_but_a_push_to_dev(monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_REF", "refs/heads/dev")
-    with pytest.raises(SystemExit, match="pushes to dev only"):
+    with pytest.raises(SystemExit, match="pushes to the default branch only"):
+        snapshot.main()
+
+
+@pytest.mark.parametrize("default", ["dev", "main"])
+def test_main_submits_only_pushes_to_the_default_branch(monkeypatch, tmp_path, default):
+    event = tmp_path / "event.json"
+    event.write_text('{"repository": {"default_branch": "%s"}}' % default, encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    other = "main" if default == "dev" else "dev"
+    for ref in ("refs/heads/" + other, "refs/heads/feature"):
+        monkeypatch.setenv("GITHUB_REF", ref)
+        with pytest.raises(SystemExit, match="pushes to the default branch only"):
+            snapshot.main()
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/" + default)
+    def gate_passed(*args):
+        raise LookupError("gate passed")
+    monkeypatch.setattr(snapshot, "snapshot", gate_passed)
+    for name in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_WORKFLOW"):
+        monkeypatch.setenv(name, "1")
+    with pytest.raises(LookupError, match="gate passed"):
+        snapshot.main()
+    monkeypatch.delenv("GITHUB_EVENT_PATH")
+    with pytest.raises(SystemExit, match="pushes to the default branch only"):
         snapshot.main()

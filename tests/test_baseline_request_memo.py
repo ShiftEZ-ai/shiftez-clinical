@@ -76,6 +76,26 @@ def _track_baseline_memo(monkeypatch):
     return sizes, hashes
 
 
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+def test_draft_list_reads_each_baseline_once(h):
+    drafts = _drafts(h, 4)
+    engine = h.app.state.engine
+
+    def read_list():
+        with transaction(engine) as db:
+            rows = [db.get(m.Workspace, draft["id"]) for draft in drafts]
+            return snapshots.fingerprints(db, rows, checks={row.id: {} for row in rows})
+
+    expected = read_list()
+    statements, listener = _profile_listener(engine)
+    try:
+        actual = read_list()
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert actual == expected
+    assert len(statements) == len(drafts)
+
+
 def test_verified_baseline_cache_setting_is_env_configurable_and_bounded(monkeypatch):
     monkeypatch.setenv("ROTA_VERIFIED_BASELINE_CACHE_ENTRIES", "4")
     assert Settings.from_env().verified_baseline_cache_entries == 4

@@ -4,12 +4,12 @@ from copy import deepcopy
 import json
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
-from .serialization import json_value, record
+from .serialization import generation_defaults_record, json_value, record
 from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs
 from packages.contracts import schemas as s
@@ -45,6 +45,7 @@ DEPARTMENT_SETTING_FIELDS = {
     "auto": ["generation_defaults"],
     "display": ["display_settings"],
 }
+CAPTURED_GENERATION_STATES = frozenset({"draft", "submitted", "approved"})
 ALWAYS_KEYS = {"organisation", "departments", "department_ids"}
 LIVE_SAFETY_KINDS = frozenset(s.NEVER_OVERRIDDEN)
 ZERO_LIMIT_KINDS = frozenset({"max_duties", "max_hours", "max_consecutive_days", "max_consecutive_weekends", "block_quota"})
@@ -858,11 +859,11 @@ def capture(db, workspace, actor_id, scope=None, *, payload=None, workspace_revi
     )
     db.add(row)
     db.flush()
-    rows = db.info.get('_baseline_rows')
-    if rows:
+    for name in ('_baseline_rows', '_baseline_hints'):
+        rows = db.info.get(name, {})
         for key in list(rows):
             if key[0] == workspace.id:
-                rows.pop(key, None)
+                del rows[key]
     return row
 
 
@@ -899,6 +900,65 @@ def latest_many(db, workspace_ids):
     ).where(B.workspace_id.in_(workspace_ids)).subquery()
     rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
     return {row.workspace_id: row for row in rows}
+
+
+def _generation_settings_query(department_id):
+    baseline = m.WorkspaceBaseline
+    return select(baseline.included_sources,
+                  baseline.canonical_payload["departments"][department_id].as_json().label("settings"))
+
+
+def _captured_generation_settings(department_id, sources, settings):
+    frozen = frozen_department_settings({"departments": {department_id: settings}}, department_id, sources or ())
+    return {"generation_defaults": frozen["generation_defaults"]} if "generation_defaults" in frozen else {}
+
+
+def workspace_generation_defaults(db, workspace, department, *, frozen_settings=None):
+    """Read captured options for an unissued rota, with a fallback for uncaptured settings."""
+    current = generation_defaults_record(department.generation_defaults) or {}
+    if workspace.status not in CAPTURED_GENERATION_STATES:
+        return current
+    if frozen_settings is None:
+        from .snapshots import _baseline_hint
+        baseline_id, payload_hash = _baseline_hint(db, workspace)
+        if baseline_id is None:
+            return current
+
+        def read(_workspace_id):
+            row = db.execute(_generation_settings_query(department.id)
+                             .where(m.WorkspaceBaseline.id == baseline_id)).one_or_none()
+            return _captured_generation_settings(department.id, *row) if row is not None else {}
+
+        # Warm reads use baseline metadata. Only a projection miss reads the JSON settings.
+        from .services.read_projections import CANONICAL_AUDIENCE, cached
+        memo = db.info.setdefault('read_projection_inputs', {})
+        key = ('generation_defaults', baseline_id, payload_hash)
+        if key not in memo:
+            stamp = snapshot_hash({"baseline": baseline_id, "hash": payload_hash})
+            memo[key] = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
+                               read, audience=CANONICAL_AUDIENCE)[workspace.id]
+        frozen_settings = memo[key]
+    return (generation_defaults_record(frozen_settings["generation_defaults"]) or {}
+            if "generation_defaults" in frozen_settings else current)
+
+
+def workspace_generation_context(db, workspace, *, current_goals=False):
+    """Load the parent rows together, and inline the settings when building a goals projection."""
+    D, O = m.Department, m.Organisation
+    query = select(D, O).join(O, O.id == D.organisation_id).where(D.id == workspace.department_id)
+    frozen_settings = None
+    if current_goals and workspace.status in CAPTURED_GENERATION_STATES:
+        # The goals result is already cached. A second projection would add writes on its cold path.
+        baseline = (_generation_settings_query(workspace.department_id)
+                    .where(m.WorkspaceBaseline.workspace_id == workspace.id)
+                    .order_by(*_latest_ordering()).limit(1).subquery())
+        department, organisation, sources, settings = db.execute(
+            query.add_columns(*baseline.c).outerjoin(baseline, true())).one()
+        frozen_settings = _captured_generation_settings(department.id, sources, settings)
+    else:
+        department, organisation = db.execute(query).one()
+    return department, organisation, workspace_generation_defaults(
+        db, workspace, department, frozen_settings=frozen_settings)
 
 
 def verify(row):
