@@ -147,8 +147,9 @@ def test_diff_mode_scans_only_added_lines_and_new_names(repo):
     git(repo, "commit", "-qm", "head")
     result = run("HEAD~1", "HEAD", cwd=repo)
     assert result.returncode == 1
+    head = git(repo, "rev-parse", "HEAD").decode()[:12]
     assert sorted(result.stdout.splitlines()) == [
-        "binary.bin:1: ipv4", "moved/***.txt:0: ipv4", "old.txt:3: env-host-port"]
+        f"{head}:binary.bin:1: ipv4", f"{head}:moved/***.txt:0: ipv4", f"{head}:old.txt:3: env-host-port"]
     assert "20.30.40" not in result.stdout
     assert run("HEAD", "HEAD", cwd=repo).returncode == 0
 
@@ -190,8 +191,29 @@ def test_diff_mode_sees_what_a_patch_parser_misses(tmp_path, case):
     commit(tmp_path, head, message)
     result = run("HEAD~1", "HEAD", cwd=tmp_path)
     assert result.returncode == 1
-    assert [line for line in result.stdout.splitlines() if re.fullmatch(expected, line)], result.stdout
+    assert [line for line in result.stdout.splitlines() if re.fullmatch(r"(?:[0-9a-f]{12}:)?" + expected, line)], result.stdout
     assert "20.30.40" not in result.stdout + result.stderr
+
+
+def test_every_commit_is_scanned_not_only_the_net_diff(tmp_path):
+    git(tmp_path, "init", "-q")
+    commit(tmp_path, {"a.txt": b"clean\n"}, "base")
+    commit(tmp_path, {"a.txt": b"clean\n" + IP.encode() + b"\n"}, "add")
+    added = git(tmp_path, "rev-parse", "HEAD").decode()[:12]
+    commit(tmp_path, {"a.txt": b"clean\n"}, "remove")
+    assert git(tmp_path, "diff", "HEAD~2", "HEAD") == b""  # the net diff is empty
+    result = run("HEAD~2", "HEAD", cwd=tmp_path)
+    assert (result.returncode, result.stdout) == (1, f"{added}:a.txt:2: ipv4\n")
+    assert "20.30.40" not in result.stdout + result.stderr
+
+
+def test_author_and_committer_are_scanned(tmp_path):
+    git(tmp_path, "init", "-q")
+    commit(tmp_path, {"a.txt": b"clean"}, "base")
+    host = "build" + ".co" + "rp"
+    git(tmp_path, "-c", "user.email=ops@" + host, "commit", "-q", "--allow-empty", "-m", "change")
+    lines = run("HEAD~1", "HEAD", cwd=tmp_path).stdout.splitlines()
+    assert [line.split(" ", 2)[2] for line in lines] == ["author:1: private-tld", "committer:1: private-tld"]
 
 
 def test_a_long_line_scans_in_linear_time():

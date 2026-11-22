@@ -8,7 +8,8 @@ Usage:
 Each hit prints as `path:line: <pattern-id>`; the matched value is never printed. Exit 1 on any hit, 0 when clean.
 Only public, generic patterns live here; any private name list is checked elsewhere.
 
-Diff mode compares the base and head trees and reads raw blobs, so no patch text, .gitattributes mark, diff driver,
+Diff mode scans EVERY commit of base..head against its parents, never only the net diff, so a value added in one
+commit and removed in the next still hits; each hit names its commit. It reads raw blobs, so no patch text, .gitattributes mark, diff driver,
 quoted name or line separator other than "\n" can hide a line. Deliberate trade-off: `secret-assignment` only flags
 quoted mixed-class literals, so lowercase-hex keys, unquoted `.env` or YAML values and passwords with punctuation
 pass; GitHub secret scanning covers provider tokens.
@@ -158,23 +159,50 @@ def scan_blob(path, content, hits, old=b""):
     scan_text(path, b"\n".join(kept).decode("utf-8", "replace"), hits)
 
 
-def scan_diff(base, head, hits):
-    fields = git("diff-tree", "-r", "-z", "--no-renames", "--raw", base, head).split(b"\0")
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def tree_blobs(rev):
+    """path -> blob sha for every file in `rev`."""
+    entries = [e for e in git("ls-tree", "-r", "-z", rev).split(b"\0") if e]
+    return {path.decode("utf-8", "replace"): meta.split()[2].decode()
+            for meta, path in (e.split(b"\t", 1) for e in entries) if meta.split()[1] == b"blob"}
+
+
+def scan_commit(sha, parents, hits):
+    """Scan what one commit adds against its first parent. In a merge, a line any parent already holds is not new."""
+    first = parents[0] if parents else EMPTY_TREE
+    fields = git("diff-tree", "-r", "-z", "--no-renames", "--raw", first, sha).split(b"\0")
+    others = [tree_blobs(parent) for parent in parents[1:]]
     changes = []
     for meta, raw_path in zip(fields[0::2], fields[1::2]):
         old_mode, new_mode, old_sha, new_sha, status = meta.decode()[1:].split()
         path = raw_path.decode("utf-8", "replace")
-        if status == "A":  # without rename detection a rename is a delete plus an add, so every new name is scanned
-            scan_text(path, path, hits, first=0)
+        where = f"{sha[:12]}:{path}"
+        if status == "A" and not any(path in other for other in others):  # a rename is a delete plus an add
+            scan_text(where, path, hits, first=0)
         if status in ("A", "M", "T") and new_mode != "160000":  # a submodule entry names a commit, not a blob
-            changes.append((path, old_sha if status != "A" and old_mode != "160000" else None, new_sha))
-    contents = blobs([sha for _, old, new in changes for sha in (old, new) if sha])
-    for path, old, _ in changes:
-        old_content = next(contents) if old else b""
-        scan_blob(path, next(contents), hits, old_content)
+            old = [old_sha] if status != "A" and old_mode != "160000" else []
+            changes.append((where, old + [other[path] for other in others if path in other], new_sha))
+    contents = blobs([s for _, olds, new in changes for s in (*olds, new)])
+    for where, olds, _ in changes:
+        old_content = b"\n".join(next(contents) for _ in olds)
+        scan_blob(where, next(contents), hits, old_content)
     next(contents, None)  # run the reader to its end so its exit status is checked
-    for entry in filter(None, git("log", "-z", "--format=%H%n%B", f"{base}..{head}").split(b"\0")):
-        sha, message = entry.decode("utf-8", "replace").split("\n", 1)
+
+
+def scan_diff(base, head, hits):
+    """Every commit in base..head on its own: a value added in one commit and removed in the next still hits.
+    Each commit's author, committer and message are scanned too."""
+    for line in git("rev-list", "--reverse", "--topo-order", "--parents", f"{base}..{head}").decode().split("\n"):
+        if line:
+            sha, *parents = line.split()
+            scan_commit(sha, parents, hits)
+    log = git("log", "-z", "--format=%H%n%an <%ae>%n%cn <%ce>%n%B", f"{base}..{head}").split(b"\0")
+    for entry in filter(None, log):
+        sha, author, committer, message = (entry.decode("utf-8", "replace") + "\n").split("\n", 3)
+        scan_text(f"commit {sha[:12]} author", author, hits)
+        scan_text(f"commit {sha[:12]} committer", committer, hits)
         scan_text("commit " + sha[:12], message, hits)
 
 
