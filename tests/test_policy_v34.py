@@ -97,8 +97,10 @@ class ImporterV34Tests(unittest.TestCase):
             ('failed checks', 'pull_request', 'refs/pull/1/merge', True,
              {'checks': 'failure'}, {'checks', 'result'}),
         )
-        for label, event, ref, admitted, overrides, expected in cases:
-            with self.subTest(case=label):
+        for default, (label, event, ref, admitted, overrides, expected) in (
+                (default, case) for default in ('dev', 'main') for case in cases):
+            ref = ref.replace('refs/heads/dev', 'refs/heads/' + default)
+            with self.subTest(case=label, default=default):
                 results, ancestors = {}, {}
 
                 def run(job):
@@ -121,7 +123,7 @@ class ImporterV34Tests(unittest.TestCase):
                         "github.event_name == 'schedule'": event == 'schedule',
                         "github.event_name != 'schedule'": event != 'schedule',
                         "github.event_name != 'push'": event != 'push',
-                        "github.ref != 'refs/heads/dev'": ref != 'refs/heads/dev',
+                        "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)": ref != 'refs/heads/' + default,
                         "vars.HOSTED_CI_ENABLED == 'true'": True,
                         "github.event.repository.private": False,
                         "always()": True,

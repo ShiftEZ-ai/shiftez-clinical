@@ -35,6 +35,9 @@ def wrapper(tmp_path, monkeypatch, classified_script):
     monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_REF", "refs/heads/dev")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"repository": {"default_branch": "dev"}}), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
     return module
 
 
@@ -43,12 +46,15 @@ def junit(path, outcome="", properties=""):
                     + properties + outcome + '</testcase></testsuite>', encoding="utf-8")
 
 
-@pytest.mark.parametrize("event,ref,allowed", [
+RETRY_EVENTS = [
     ("pull_request", "refs/pull/1/merge", True), ("push", "refs/heads/dev", True),
     ("push", "refs/heads/main", False), ("push", "refs/heads/feature", False),
     ("merge_group", "refs/heads/gh-readonly-queue/dev/group", False),
     ("schedule", "refs/heads/dev", False), ("workflow_dispatch", "refs/heads/dev", False),
-    ("workflow_call", "refs/heads/dev", False)])
+    ("workflow_call", "refs/heads/dev", False)]
+
+
+@pytest.mark.parametrize("event,ref,allowed", RETRY_EVENTS)
 @pytest.mark.parametrize("partitioned", [False, True])
 def test_retry_only_eligible_events_preserves_first_evidence(wrapper, monkeypatch, tmp_path, event, ref, allowed, partitioned):
     report = tmp_path / "junit-unit.xml"
@@ -378,3 +384,16 @@ def test_flaky():
     assert not (root / "junit-unit.selection.retry.json").exists()
     observed = json.loads((root / "junit-unit-flaky.json").read_text())
     assert observed == {"tests": [], "quarantined": [{**reviewed[0], "outcome": "skipped"}]}
+
+
+@pytest.mark.parametrize("default", ["main", None])
+@pytest.mark.parametrize("event,ref,allowed", RETRY_EVENTS)
+def test_retry_push_eligibility_follows_the_default_branch(wrapper, monkeypatch, tmp_path, default, event, ref, allowed):
+    if default is None:  # no trusted default branch: only a pull request stays retry-eligible
+        monkeypatch.delenv("GITHUB_EVENT_PATH")
+        allowed = allowed and event == "pull_request"
+    else:  # the same table with the branch names swapped
+        ref = {"refs/heads/dev": "refs/heads/main", "refs/heads/main": "refs/heads/dev"}.get(
+            ref, ref.replace("queue/dev/", "queue/main/"))
+        (tmp_path / "event.json").write_text(json.dumps({"repository": {"default_branch": default}}), encoding="utf-8")
+    test_retry_only_eligible_events_preserves_first_evidence(wrapper, monkeypatch, tmp_path, event, ref, allowed, False)

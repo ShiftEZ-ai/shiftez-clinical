@@ -137,7 +137,6 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
 
 
 def test_stop_during_coverage_at_its_floor_keeps_coverage_proven(h, monkeypatch):
-    h.policy({'kind': 'restriction'}, severity='advisory')
     data, update = snapshot(h), {}
     data['generation_options'] = {'generation_stop_grace_seconds': 10}
     native_solve = cp_model.CpSolver.solve
