@@ -1256,8 +1256,13 @@ export const ackKey=(x:Row)=>`${x.line_id}>${(x.winner_ids as string[]).join(','
 /** The check in words (the server numbers lines in the order they were added, which a sorted table does not show). */
 export function checkWords(e:RuleCatalogueEntry,lines:()=>RuleLine[],names:Namer){
   const said=(id:string)=>{const l=lines().find(x=>x.id===id);return l?`“${lineWords(e,l,names)}”`:'A line';};
+  // A line in brief, as the relation row says the broader one (who and number, no strength); in full where two read alike.
+  const brief=(l:RuleLine)=>`${treeText(l.who,names,'Everyone',4)} ${numberParts(l,undefined,appliesWord(e)).map(x=>x.text).join('')}`.trim();
+  const short=(id:string)=>{const all=lines(),l=all.find(x=>x.id===id);if(!l)return 'A line';const b=brief(l);return all.some(x=>x!==l&&brief(x)===b)?said(id):b;};
   return {same:(d:Row)=>`${said(d.line_ids[0])} is there twice: what it counts, who, where, days and dates overlap`,
     over:(x:Row)=>`${said(x.line_id)} gives way to ${(x.winner_ids as string[]).map(said).join(' and ')}${(x.numbers as string[]|undefined)?.length?` on its ${(x.numbers as string[]).join(' and ')}`:''} for ${plural(x.people,'person','people')} today`,
+    /** "Everyone ≤ 5 gives way to Senior grade ≤ 6 for 11 people": an overlap in one short line, as information. */
+    gives:(x:Row)=>`${short(x.line_id)} gives way to ${(x.winner_ids as string[]).map(short).join(' and ')} for ${plural(x.people,'person','people')}`,
     warn:(w:Row)=>w.kind==='pool_shortfall'?String(w.message):w.kind==='both'?`${said(w.other_id)} and ${said(w.line_id)} both apply to ${plural(w.people,'person','people')} today: neither is more specific, so each of their numbers holds`
       :w.kind==='inherits'?`${said(w.line_id)} inherits ${Object.entries(w.inherited as Record<string,number>).map(([k,v])=>`${k} ${v}`).join(' and ')} from ${said(w.other_id)}, which contradicts its own numbers: give it None`
       :`${said(w.line_id)} is narrower but weaker than ${said(w.other_id)}: safety lines all apply, so the broader one still binds`};
@@ -1679,11 +1684,12 @@ function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,
   const c=p.check as Check|undefined,words=checkWords(e,()=>now,names);
   const said=c?[...c.duplicates.map(words.same),...c.issues.map(x=>String(x.message)),...c.warnings.map(words.warn)]:[];  // a winning exception is no warning; equal tiers come as warnings
   // Which line each proposed line gives way to: the approver still sees it, as information (no alert, nothing to tick).
-  const gives=c?c.overlaps.map(words.over):[];
+  const gives=c?c.overlaps.map(words.gives):[];
+  // The plain lines first, apart from the warnings' label and count, so they never read as warnings.
   const checked=said.length||gives.length?el('div',{class:'rc-prop-check'},
+    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},t)),['line','lines']))]:[]),
     ...(said.length?[el('p',{class:'dt-pop-label'},`The check · ${plural(said.length,'warning')}`),
-      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[]),
-    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},el('span',{},t+'.'))),['line','lines']))]:[])):'';
+      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[])):'';
   const table=changes.length?changeTable(ctx,e,changes,unchanged,names,openTag,(rule.settings||{}) as Settings,key):'';
   const who=el('p',{class:'rc-prop-who muted'},mine?'You proposed it':`Proposed by ${p.created_by_name||'another person'}`,p.created_at?` · ${formatDate(String(p.created_at),departmentTimeZone())}`:'',  // the department's day, not UTC's
     p.source?el('span',{class:'rc-prop-reason',title:String(p.source)},` · “${String(p.source)}”`):'',
@@ -1733,8 +1739,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         return box;}));
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
+      const waitsWhy='Waits until the effect of this change is known';
       const approve=button('Approve and activate',()=>{
-        if(!review)return;const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
+        // A press before the effect is known (still loading, or its read failed) says why, never nothing.
+        if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
           d.close();notify(`${e.name}: the change is active.`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
@@ -1795,18 +1803,20 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       const effect=el('div',{class:'rc-effect-box',id:'rc-effect-'+String(p.id)});let asked=0;
       // Approve waits for the review it decides on: the shared busy state at once, described by the effect area (its long
       // wait), and disabled with that reason until the review answers.
-      approve.setAttribute('aria-describedby',effect.id);approve.dataset.tip='Waits until the effect of this change is known';
+      approve.setAttribute('aria-describedby',effect.id);approve.dataset.tip=waitsWhy;
       // A Retry retires only the ask: hold the first busy state until the current answer or error releases it.
       let waiting:(()=>Promise<void>)|null=null,settling=false;
-      const hold=()=>{if(!waiting)waiting=busy(approve,'Checking the effect…');};
+      // Held, not disabled: a press while it waits reaches the button and says why (aria-disabled keeps it out of use).
+      const hold=()=>{if(waiting)return;waiting=busy(approve,'Checking the effect…');approve.disabled=false;approve.setAttribute('aria-disabled','true');};
+      const release=async()=>{retireRetry();const done=waiting;waiting=null;await done?.();approve.removeAttribute('aria-disabled');};
       const again=()=>{if(!settling)ask();};
       // The current answer retires the live Retry before the release; focus inside it stays in the effect area (WCAG 2.4.3).
       const retireRetry=()=>{settling=true;const held=effect.contains(document.activeElement);effect.replaceChildren(skeleton('lines','Checking the effect…'));
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
-        proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;retireRetry();const done=waiting;waiting=null;await done?.();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
+        proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
             effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?uncertain:'');delete approve.dataset.tip;paint();void load();},
-          async err=>{if(mine!==asked)return;retireRetry();const done=waiting;waiting=null;await done?.();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.disabled=true;
+          async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
       d.body.classList.add('rc-lp-body');

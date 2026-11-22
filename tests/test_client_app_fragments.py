@@ -135,3 +135,74 @@ async function read(workspaceId='',draftNone=false,sourcePublication=''){
 console.log(JSON.stringify([await read(),await read('selected'),await read('',true),await read('',false,'version')]));
 """)
     assert got == ['submitted', 'draft', 'draft', 'draft']
+
+
+def test_the_auto_schedule_panel_starts_from_the_settings_captured_with_the_rota(client_modules):
+    """The set-up panel's defaults are the ones the rota's job list returns (captured with the draft), over the
+    engine's; only a reply without them falls back to the department's current values. A baseline capture or refresh,
+    or a department settings save, drops the jobs read, so the panel never keeps old run settings."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    defaults = cut(source, r'\n\s*(const defaults = \{ \.\.\.capability\.default_options, .*?\};)\n')
+    drop = cut(source, r"\n\s*(if \(kind === 'generation\.apply'.*?\n\s*lastJobs = null;)\n")
+    got = node(r"""
+const me={department:{generation_defaults:{search_minutes:6,max_search_minutes:30}}};
+const capability={default_options:{search_minutes:5,max_search_minutes:60,mode:'fill_gaps'}};
+const panel=initialJobs=>{""" + defaults + r"""return defaults;};
+const dropped=kind=>{let lastJobs={};""" + drop + r"""return lastJobs===null;};
+console.log(JSON.stringify({
+  captured:panel({generation_defaults:{search_minutes:4}}),
+  none:panel({generation_defaults:{}}),
+  older:panel({jobs:[]}),
+  drops:['workspace.baseline.capture','workspace.baseline.refresh.apply','department.settings','generation.apply','shift.update'].map(dropped)}));""")
+    assert got['captured'] == {'search_minutes': 4, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
+    assert got['none'] == {'search_minutes': 5, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
+    assert got['older'] == {'search_minutes': 6, 'max_search_minutes': 30, 'mode': 'fill_gaps'}
+    assert got['drops'] == [True, True, True, True, False]
+
+
+def test_a_failed_refresh_toasts_only_when_the_page_shows_nothing_of_its_own(client_modules):
+    """A refresh failing over rows keeps their stale banner, over a page that did not load its own Retry: no toast,
+    so a pulse after pulse does not repeat one. Only a page with neither says the refresh failed."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    refresh = cut(source, r'\n(async function refreshOnce\(stale.*?\n\})\n')
+    got = node(r"""
+let me={}, refreshForeground=null, refreshScopes, refreshChanges=[], accessRead, inPlace=true, refreshSkipped,
+  refreshFailed=false, redrawOwed=false, foregroundRender=false, pageFailed=false, banner=null;
+const savedKinds=new Set(), routeParts=[], toasts=[];
+const pageStep=()=>'people/', sessionKey=()=>1, view='people';
+const forgetReads=()=>{}, readAfresh=()=>{}, applyDisplay=()=>{}, showConnection=()=>{}, loadNavBadges=()=>{};
+const ME_SCOPES=[], LIST_SCOPES=[], loadCatalogues=async()=>{}, readerBusy=()=>false, renderPage=async()=>{};
+const background=async()=>{throw new Error('Connection lost.');};
+const sessionChanged=()=>false, document={querySelector:()=>banner};
+const notify=message=>toasts.push(message);
+""" + refresh + r"""
+const runs=[];
+for(const [failed,shown] of [[false,null],[false,{}],[true,null],[true,null]]){
+  pageFailed=failed;banner=shown;toasts.length=0;await refreshOnce();runs.push([toasts.length,refreshFailed]);}
+console.log(JSON.stringify(runs));""")
+    assert got == [[1, True], [0, True], [0, True], [0, True]]
+
+
+def test_a_start_whose_lists_fail_says_the_page_did_not_load(client_modules):
+    """Signed in with the frame drawn, People, Requests or Rules whose lists fail at start-up say only that the page did
+    not load, in the page with Retry; before the frame (the account unread) and on the Schedule, the start-up screen."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    start = cut(source, r'\n(function startFailed\(.*?\n\})\n')
+    got = node(r"""
+let view='people', pageFailed=false, shown=null;
+const calls=[], boot=async()=>calls.push('boot');
+const bootFailure=(e,retry,signedIn)=>calls.push(['start-up screen',signedIn]);
+const el=(tag,attrs,...children)=>children[0];
+const readFailed=(name,e,retry)=>({name,message:e.message,retry:typeof retry});
+const failedPageName=()=>view==='people'?'People':'the schedule';
+const document={querySelector:()=>({replaceChildren:node=>{shown=node;}})};
+""" + start + r"""
+const e=new Error('Connection lost.'),runs=[];
+for(const [page,framed] of [['people',false],['people',true],['schedule',true]]){
+  view=page;pageFailed=false;shown=null;calls.length=0;startFailed(e,framed);runs.push([calls.slice(),shown,pageFailed]);}
+console.log(JSON.stringify(runs));""")
+    assert got == [
+        [[['start-up screen', True]], None, False],
+        [[], {'name': 'People', 'message': 'Connection lost.', 'retry': 'function'}, True],
+        [[['start-up screen', True]], None, False],
+    ]

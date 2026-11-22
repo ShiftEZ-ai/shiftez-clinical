@@ -3409,8 +3409,8 @@ def create_app(settings: Settings | None = None, engine=None):
             require_role(actor, "coordinator", "operator", "approver")
             from packages.domain.worker_contract import JOB_STATES
             require(status is None or status in JOB_STATES, "SCHEMA_INVALID", "Unknown job status", 422)
-            if workspace_id:
-                scoped(db, m.Workspace, workspace_id, actor)
+            workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
+                defer(m.Workspace.validation), defer(m.Workspace.review_snapshot))) if workspace_id else None
             from .services.conditional_reads import conditional_response, revision_etag
             department = db.get(m.Department, actor.department_id)
             organisation = db.get(m.Organisation, department.organisation_id)
@@ -3430,6 +3430,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 *([m.Job.status == status] if status else [])]
             tag = revision_etag("jobs-list", actor.department_id, actor.identity_id, actor.person_id,
                                 sorted(actor.roles), workspace_id, status, limit, offset,
+                                (workspace.revision, workspace.status) if workspace else None,
                                 (department.revision, organisation.revision, organisation.input_revision,
                                  organisation.availability_revision, settings.generation_engine, build()["release"],
                                  job_stamp(db, department_id=actor.department_id)))
@@ -3456,7 +3457,10 @@ def create_app(settings: Settings | None = None, engine=None):
                                'generation_scope', 'generation_scope_source', 'run_context', 'generation_manifest',
                                'planning_group_version_id', 'planning_group_id', 'lookahead', 'planning_context',
                                'proof_scope', 'completion'}
-            return {"jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
+            from .workspace_baselines import workspace_generation_defaults
+            return {**({"generation_defaults": workspace_generation_defaults(db, workspace, department)}
+                       if workspace else {}),
+                    "jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
                                              input_snapshot={key: value for key, value in projection['input_snapshot'].items()
                                                              if key in list_input_keys},
                                        result_metadata=projection['result'], input_fingerprint=effective),

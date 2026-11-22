@@ -252,14 +252,13 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
-    # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
-    department = db.get(m.Department, workspace.department_id)
     data = acquired_data if acquired_data is not None else domain_snapshot(
         db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules,
         current_mandatory=current_mandatory)
+    defaults = data['department'].get('generation_defaults')
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
-                  complete_check(workspace.validation, data, department.generation_defaults)):
+                  complete_check(workspace.validation, data, defaults)):
         result = copy.deepcopy(workspace.validation)
         if own is not None:
             focus = set(data['focus_ids'])
@@ -300,7 +299,6 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
             checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
-    defaults = department.generation_defaults
     preparing = preparation is not None and not preparation['replay']
     previous_check = copy.deepcopy(preparation['validation_baselines'].get(
         workspace.id, workspace.validation)) if preparing else None
@@ -370,7 +368,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.finding_causes import DIAGNOSTIC_VERSION
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
-        result['score_dependencies'] = score_dependencies(department.generation_defaults)
+        result['score_dependencies'] = score_dependencies(defaults)
     result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
@@ -2610,6 +2608,18 @@ def review_gate_check(db, workspace, *, reuse=False):
     return checked, frozen[0], (result, current[0])
 
 
+def _lock_review_check_inputs(db, actor, *snapshots):
+    # Refresh under a row lock before any review writes can advance these counters.
+    organisation = db.get(m.Organisation, actor.organisation_id, populate_existing=True,
+                          with_for_update={'key_share': True})
+    revisions = organisation.input_revision, organisation.availability_revision
+    for data in snapshots:
+        hint = data['input_manifest']['dirty_hint']
+        require(revisions == (hint['input_revision'], hint['availability_revision']), 'STALE_INPUTS',
+                'Scheduling inputs changed during the check. Check the rota and try again.', 409, {'recoverable': True})
+    return organisation
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2627,6 +2637,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
              s.WorkspaceSubmitInput if command.kind == 'workspace.submit' else s.Decision).model_validate(command.payload)
     from . import acknowledged_gaps
     action = command.kind.removeprefix("workspace.")
+    review_organisation = None
     if action == 'approve' and 'rejected_review_item_ids' in value.model_fields_set:
         current_items = acknowledged_gaps.review_items(workspace)
         rejected = set(value.rejected_review_item_ids)
@@ -2677,6 +2688,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
                                  current=current[0] if current is not None else None)
         swaps.validate_publication(db, workspace)
+        review_data = (data,) if current is None else (data, current[1])
+        review_organisation = _lock_review_check_inputs(db, actor, *review_data)
         check = {**result, 'wishes': data['wishes']}
         from packages.domain.rota_summary import remember_fix_list
         remember_fix_list(result, check, submitted=True)
@@ -2699,16 +2712,26 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                 'input_manifest': _check_manifest(data['input_manifest'])}
     elif action == "approve":
         require(workspace.status == "submitted", "WORKFLOW_STATE", "Only a submitted candidate can be approved", 409)
-        fp = validation[1]['fingerprint'] if validation is not None else fingerprint(db, workspace)
+        if validation is None:
+            acquired = []
+            result = revalidate(db, workspace, include_internal=True, reuse=True, store=False, data_out=acquired)
+            data = acquired[0]
+        else:
+            result, data = validation
+        fp = data['fingerprint']
         require(workspace.submitted_fingerprint == fp, "STALE_INPUTS",
                 "The inputs used for submission have changed. Reopen this rota, check it and submit it again before review.", 409)
-        result = revalidate(db, workspace, include_internal=True, reuse=True) if validation is None else validation[0]
-        workspace.validation = result
-        acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
-        if any(not item.accept for item in value.decisions):
-            return acknowledged_gaps.reject_items(db, actor, workspace, value)
-        acknowledged_gaps.require_gap_decisions(workspace, result, value)
-        swaps.validate_publication(db, workspace)
+        # This check save stamps a settled rota's wish reservation at flush; keep that own
+        # advance after the input lock so the lock compares only other writers' changes.
+        with db.no_autoflush:
+            workspace.validation = {**result, 'input_manifest': _check_manifest(data['input_manifest'])}
+            acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
+            if any(not item.accept for item in value.decisions):
+                # A rejection stamps no check currency, so it needs no input lock.
+                return acknowledged_gaps.reject_items(db, actor, workspace, value)
+            acknowledged_gaps.require_gap_decisions(workspace, result, value)
+            swaps.validate_publication(db, workspace)
+            review_organisation = _lock_review_check_inputs(db, actor, data)
         decision = reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
@@ -2821,12 +2844,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .generation_resume import clear_generation_resume
         clear_generation_resume(db, workspace_id=workspace.id)
     db.flush()
-    if (action in {'submit', 'approve'} and (manifest := workspace.validation.get('input_manifest'))
+    if (review_organisation is not None and (manifest := workspace.validation.get('input_manifest'))
             and (hint := manifest.get('dirty_hint'))):
-        # The status write stamps currency. Amendment history also advances its department's catalogue revision.
-        organisation = db.get(m.Organisation, actor.organisation_id)
-        dirty = {**hint, 'input_revision': organisation.input_revision,
-                 'availability_revision': organisation.availability_revision}
+        # The locked counters can only have advanced through this review's own writes.
+        dirty = {**hint, 'input_revision': review_organisation.input_revision,
+                 'availability_revision': review_organisation.availability_revision}
         if workspace.base_publication_id and 'department_revisions' in dirty:
             department = db.get(m.Department, workspace.department_id)
             dirty['department_revisions'] = [

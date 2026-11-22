@@ -539,7 +539,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
         data = {"before": base,
                 "pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
                 "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
-                "repository": {"full_name": "fixture/project"}}
+                "repository": {"full_name": "fixture/project", "default_branch": "dev"}}
         step_summary = folder / "step-summary.md"
         with monkeypatch.context() as patch:
             patch.setattr(sys, "path", sys.path.copy())
