@@ -1,15 +1,16 @@
 """The worker's interactive lane answers short read-only jobs beside a running rota check, and only those."""
 import json
 import threading
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
 from sqlalchemy import update
 
 from apps.api import models as m
-from apps.api.db import transaction
+from apps.api.db import DatabaseWriteDeferred, transaction
 from apps.api.settings import Settings
-from apps.api.services import planning, staffing
+from apps.api.services import planner_tools, planning, staffing
 from apps.worker import main as worker
 from packages.domain.worker_contract import JOB_LEASE_SECONDS
 from tests.clock_support import freeze_clock
@@ -247,3 +248,127 @@ def test_lane_loop_claims_only_its_kinds_and_waits_for_its_own_wake(monkeypatch)
     worker.interactive_loop(None, Settings(), stopped, Wake())
     assert passes == [LANE, LANE, LANE]
     assert waits == [Settings().worker_poll_seconds] * 2  # no wait after a pass that worked
+
+
+@both
+def test_lane_never_claims_fill_options_while_a_generation_runs(h, rota):
+    workspace, shift_id = rota
+    queued = queue_fill(h, workspace, shift_id)
+    with transaction(h.app.state.engine, write=True) as db:  # a main-loop generation is running
+        fill = db.get(m.Job, queued['id'])
+        generation = m.Job(kind='generation', workspace_id=fill.workspace_id, department_id=fill.department_id,
+                           requested_by=fill.requested_by, input_fingerprint=fill.input_fingerprint, input_snapshot={},
+                           status='running', started_at=m.now(), heartbeat_at=m.now(), attempts=1,
+                           worker_id=worker.WORKER_ID)
+        db.add(generation)
+        db.flush()
+        generation_id = generation.id
+    assert worker.process_one(h.app.state.engine, kinds=LANE) is False  # one solve at a time
+    assert job(h, queued['id'])['status'] == 'queued'
+    with transaction(h.app.state.engine, write=True) as db:
+        db.execute(update(m.Job).where(m.Job.id == generation_id).values(status='succeeded', completed_at=m.now()))
+    assert worker.process_one(h.app.state.engine, kinds=LANE)
+    done = job(h, queued['id'])
+    assert done['status'] == 'succeeded' and done['attempts'] == 1
+
+
+@both
+def test_lane_refuses_a_nested_write_outside_the_preview_savepoint(h, monkeypatch):
+    workspace = h.shift(h.workspace('Interactive lane nested write'))['workspace']
+    drain(h)
+    before = h.detail(workspace)
+    queued = queue_preview(h, workspace, before['shifts'][0]['id'])
+    original = planner_tools.preview
+
+    def nested_write(db, actor, command):
+        with db.begin_nested():  # a savepoint that is not the preview's own, so it would be committed
+            db.get(m.Workspace, workspace['id']).name = 'Renamed in a nested write'
+            db.flush()
+        return original(db, actor, command)
+
+    monkeypatch.setattr(planner_tools, 'preview', nested_write)
+    assert worker.process_one(h.app.state.engine, kinds=LANE)
+    refused = job(h, queued['id'])
+    assert refused['status'] == 'failed' and refused['error_code'] == 'INTERACTIVE_WRITE_REFUSED'
+    assert h.detail(workspace) == before
+
+
+def lane_running():
+    return any(thread.name == 'interactive-lane' for thread in threading.enumerate())
+
+
+def run_main(h, monkeypatch, *, settle, lane):
+    """Run the full worker main(), lane thread included, on the test database for one completed main pass."""
+    settings = replace(h.settings, worker_poll_seconds=1)
+    monkeypatch.setattr('sys.argv', ['worker'])
+    monkeypatch.setattr(worker, 'configure_logging', lambda: None)
+    monkeypatch.setattr(worker.Settings, 'from_env', classmethod(lambda cls: settings))
+    monkeypatch.setattr(worker, 'make_engine', lambda *args, **kwargs: h.app.state.engine)
+    monkeypatch.setattr('apps.worker.score_check.run_loop', lambda *args: None)
+    monkeypatch.setattr(worker, 'notification_loop', lambda *args, **kwargs: None)
+    original = worker.process_one
+
+    def one_pass(engine, **kwargs):
+        worked = original(engine, **kwargs)
+        if kwargs.get('kinds') is not None:
+            lane(worked)
+            return worked
+        settle()
+        raise SystemExit('stop')
+
+    monkeypatch.setattr(worker, 'process_one', one_pass)
+    with pytest.raises(SystemExit, match='stop'):
+        worker.main()
+    for thread in threading.enumerate():
+        if thread.name == 'interactive-lane':
+            thread.join(WAIT)
+            assert not thread.is_alive()
+
+
+@both
+def test_startup_recovery_never_requeues_a_job_the_lane_claimed(h, rota, monkeypatch):
+    """main()'s recovering pass treats every running job of this WORKER_ID as lost; the lane may claim only after it."""
+    workspace, shift_id = rota
+    queued = queue_fill(h, workspace, shift_id)
+    lane_claimed, lane_passed, recovering = threading.Event(), threading.Event(), []
+    original_claim = worker.claim_pending
+
+    def claim(engine, **kwargs):
+        if kwargs.get('recovering_worker') is None:
+            claimed = original_claim(engine, **kwargs)
+            if kwargs.get('kinds') is not None:
+                lane_claimed.set()
+            return claimed
+        recovering.append(lane_running())
+        if len(recovering) == 1:
+            raise DatabaseWriteDeferred()  # a busy writer defers the first recovering pass; recovery stays on
+        if lane_running():
+            assert lane_claimed.wait(WAIT)  # the order that re-queued a live lane job: the lane claims first
+        return original_claim(engine, **kwargs)
+
+    monkeypatch.setattr(worker, 'claim_pending', claim)
+    run_main(h, monkeypatch, settle=lambda: lane_passed.wait(WAIT), lane=lambda worked: lane_passed.set())
+    assert recovering == [False, False]
+    done = job(h, queued['id'])
+    assert done['status'] == 'succeeded' and done['attempts'] == 1 and done['error_code'] is None
+
+
+@both
+def test_main_runs_the_lane_beside_a_running_check(h, rota, held_check, monkeypatch):
+    workspace, shift_id = rota
+    _started, release = held_check
+    check = queue_check(h, workspace)
+    fill = queue_fill(h, workspace, shift_id)
+    answered = []
+
+    def lane(worked):
+        if worked:
+            answered.append((job(h, fill['id']), job(h, check['id'])['status']))
+            release.set()
+
+    run_main(h, monkeypatch, settle=lambda: release.wait(WAIT), lane=lane)
+    [(done, check_status)] = answered
+    assert done['status'] == 'succeeded' and done['attempts'] == 1 and done['result']['candidates']
+    assert check_status == 'running'  # the lane answered while the main loop's check was still running
+    checked = job(h, check['id'])
+    assert checked['status'] == 'succeeded' and checked['attempts'] == 1

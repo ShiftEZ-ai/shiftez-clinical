@@ -84,7 +84,8 @@ def _refuse_rota_writes(db, *, preview_savepoint=False):
     """An interactive-lane session may write only job rows; planner_preview's savepoint is always rolled back."""
     @event.listens_for(db, 'before_flush')
     def refuse(session, _context, _instances):
-        if preview_savepoint and session.in_nested_transaction():
+        # Only planner_tools.preview's own savepoint, which it always rolls back, may flush rota rows.
+        if preview_savepoint and session.info.get('_planner_preview') and session.in_nested_transaction():
             return
         rows = (*session.new, *session.deleted, *(row for row in session.dirty if session.is_modified(row)))
         if any(not isinstance(row, m.Job) for row in rows):
@@ -1324,8 +1325,11 @@ def housekeeping(engine, settings):
     return departments
 
 
-def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False, kinds=None):
-    """One pass of the main loop, or with `kinds` one claim of the interactive lane (no maintenance)."""
+def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False, kinds=None,
+                recovered=None):
+    """One pass of the main loop, or with `kinds` one claim of the interactive lane (no maintenance).
+
+    `recovered` is called once this pass's claim has committed, before the claimed job runs."""
     settings = settings or engine.get_execution_options().get("rota_write_settings") or Settings.from_env()
     pass_engine = engine
     interactive = kinds is not None
@@ -1336,6 +1340,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
     departments = set() if claim_first else housekeeping(engine, settings)
     claim_engine = engine.execution_options(rota_defer_busy_writer=False) if claim_first else engine
     claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None, kinds=kinds)
+    if recovered is not None:
+        recovered()
     # Recover a crash after final validation before TTL pruning can release its private checkpoint.
     try:
         if not interactive:
@@ -1929,9 +1935,17 @@ def main():
         notification_thread.start()
     if not args.once and not args.push_only:
         extraction.start()
-        interactive.start()
+    recover_owned = True
+
+    def recovered():
+        # Start-up recovery treats every running job of this WORKER_ID as lost, so it must have committed before
+        # the lane claims anything, and must not run again (a later deferred pass) once the lane may be running.
+        nonlocal recover_owned
+        recover_owned = False
+        if interactive is not None and interactive.ident is None:
+            interactive.start()
+
     try:
-        recover_owned = True
         delay = settings.worker_poll_seconds
         while True:
             _touch_alive_file()
@@ -1940,7 +1954,8 @@ def main():
                 if args.push_only:
                     worked = process_push_one(engine, settings, record_worker_heartbeat=False)
                 else:
-                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned)
+                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned,
+                                         recovered=recovered)
                 recover_owned = False
             except DatabaseWriteDeferred:
                 queued = {'job_id': None, 'queued_seconds': 0}
