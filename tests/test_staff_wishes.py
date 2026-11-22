@@ -443,15 +443,19 @@ def test_run_catch_up_is_snapshotted_without_changing_staff_budgets_or_history(h
         'generation_defaults': {'scoring': {'wish_budget_points': 0}}}, h.seed['department_id'],
         h.get('admin', '/api/me')['organisation']['revision'])
     nxt = h.refresh_draft_baseline(nxt)
-    off = h.command('coordinator', 'job.create', {'workspace_id': nxt['id'], 'kind': 'generation',
-        'generation_options': {'scoring': {'wish_debt_cap': 3}}}, revision=nxt['revision'])['job']
-    with transaction(h.app.state.engine, write=True) as db:
-        claim = claim_job(db)
-    assert claim and claim['id'] == off['id']
-    prepare_deferred_generation(h.app.state.engine, claim, h.settings)
-    with transaction(h.app.state.engine) as db:
-        assert db.get(m.Job, off['id']).input_snapshot['wishes'] == []
-    assert h.get('staff', endpoint)['wishes'] == staff['wishes']
+    disabled = h.shift(h.workspace(start='2026-10-11', end='2026-10-18'),
+        start='2026-10-12T08:00:00+03:00', end='2026-10-12T12:00:00+03:00', people=[])['workspace']
+    for draft in (nxt, disabled):
+        off = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'generation',
+            'generation_options': {'scoring': {'wish_debt_cap': 3}}}, revision=draft['revision'])['job']
+        with transaction(h.app.state.engine, write=True) as db:
+            claim = claim_job(db)
+        assert claim and claim['id'] == off['id']
+        prepare_deferred_generation(h.app.state.engine, claim, h.settings)
+        with transaction(h.app.state.engine) as db:
+            assert db.get(m.Job, off['id']).input_snapshot['wishes'] == []
+        assert process_one(h.app.state.engine, settings=h.settings, recover_owned=True)
+        assert h.get('staff', endpoint)['wishes'] == staff['wishes']
 
 
 def test_published_reasons_are_private_on_every_staff_wish_projection(h, monkeypatch):
