@@ -1,0 +1,21 @@
+{
+  "schema": 3,
+  "tree": "1067e0fe84d4d34bfca9215a64ac4a6d25030aff",
+  "root_evidence_sha256": "578fefa66a0bb389e92fe6657fc78b0ee3135aff8ffe2788b2fdb29cfc97a8a2",
+  "root_runs": [
+    {
+      "run_id": "44114266718",
+      "run_attempt": "1",
+      "replica": 1
+    },
+    {
+      "run_id": "44114266718",
+      "run_attempt": "1",
+      "replica": 2
+    }
+  ],
+  "cleanup_cap": 0,
+  "fails": [],
+  "unstable": [],
+  "classifications_sha256": "1d4ec30562e5e6c89958f9229957b29c9ab787bcddb62c92a6137a6f3c07d6d5"
+}
