@@ -370,8 +370,10 @@ def inactive_series_shift_ids(db, selected_ids):
 
 
 def workspace_content(db, workspace) -> dict:
+    # Batch commands disable autoflush. The ORM read must see pending session changes.
+    read_shifts = full_shifts if db.autoflush else workspace_shifts
     return {"workspace": record(workspace, exclude=("validation", "submitted_fingerprint")),
-            "shifts": full_shifts(db, workspace.id)}
+            "shifts": read_shifts(db, workspace.id)}
 
 
 def precondition_snapshot(db, workspace):
