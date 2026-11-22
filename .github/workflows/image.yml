@@ -34,13 +34,15 @@ jobs:
         REF_TYPE: ${{ github.ref_type }}
         REF_NAME: ${{ github.ref_name }}
         COMMIT: ${{ github.sha }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
         set -euo pipefail
         image="ghcr.io/${GITHUB_REPOSITORY,,}"
         case "$REF_TYPE/$REF_NAME" in
-          branch/dev) tags=(--tag "$image:dev" --tag "$image:dev-${COMMIT:0:12}") ;;
           tag/v*) tags=(--tag "$image:$REF_NAME") ;;
-          *) echo "Only dev and v* tags publish an image"; exit 1 ;;
+          # The default branch keeps the dev and dev-<sha12> tag names whatever it is called; unset refuses.
+          "branch/${DEFAULT_BRANCH:?}") tags=(--tag "$image:dev" --tag "$image:dev-${COMMIT:0:12}") ;;
+          *) echo "Only the default branch and v* tags publish an image"; exit 1 ;;
         esac
         printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
         docker buildx create --use --name publish >/dev/null
@@ -59,6 +61,8 @@ jobs:
 'on':
   push:
     branches:
+    # shortcut: dev is removed after the default branch is renamed to main.
     - dev
+    - main
     tags:
     - v*

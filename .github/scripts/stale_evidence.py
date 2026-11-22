@@ -18,8 +18,8 @@ def github_get(repository, resource):
     )
 
 
-def workflow_runs(repository, event, page=1):
-    branch = "&branch=dev" if event == "schedule" else ""
+def workflow_runs(repository, event, default, page=1):
+    branch = f"&branch={default}" if event == "schedule" else ""
     response = policy.decode(github_get(repository, f"workflows/ci.yml/runs?event={event}&status=completed"
                                                      f"{branch}&per_page=100&page={page}"))
     rows = response["workflow_runs"]
@@ -36,7 +36,7 @@ def ancestor(git, older, newer):
     return True
 
 
-def dev_run(run, event, git, tip, base=None):
+def dev_run(run, event, git, tip, base, default):
     branch = run["head_branch"]
     if (run["event"] != event or run["path"] != WORKFLOW or run["status"] != "completed"
             or run["repository"]["id"] != policy.REPOSITORY or run["head_repository"]["id"] != policy.REPOSITORY
@@ -44,9 +44,9 @@ def dev_run(run, event, git, tip, base=None):
             or type(run["run_attempt"]) is not int or run["run_attempt"] < 1
             or not isinstance(branch, str)):
         raise ValueError("Invalid dev CI run identity")
-    if event == "merge_group" and not branch.startswith("gh-readonly-queue/dev/"):
+    if event == "merge_group" and not branch.startswith("gh-readonly-queue/" + default + "/"):
         return False
-    if event == "schedule" and branch != "dev":
+    if event == "schedule" and branch != default:
         return False
     sha = policy.commit(run["head_sha"])
     return ancestor(git, sha, tip) and (base is None or ancestor(git, base, sha))
@@ -97,7 +97,7 @@ def qualification_archive(repository, run, artifacts):
     return ZipFile(BytesIO(artifact_bytes(repository, run, matches[0])))
 
 
-def confirmed_nodes(repository, git, tip, base, nodes):
+def confirmed_nodes(repository, git, tip, base, nodes, default):
     try:
         policy.commit(tip)
         policy.commit(base)
@@ -105,8 +105,8 @@ def confirmed_nodes(repository, git, tip, base, nodes):
             return {}
         # ponytail: one page per event bounds the PR lookup; older retained evidence can use pagination if needed.
         for event in ("merge_group", "schedule"):
-            runs = [run for run in workflow_runs(repository, event)
-                    if dev_run(run, event, git, tip, base)
+            runs = [run for run in workflow_runs(repository, event, default)
+                    if dev_run(run, event, git, tip, base, default)
                     and (run["conclusion"] == "success" or event == "schedule" and run["conclusion"] == "failure")]
             if runs:
                 break
