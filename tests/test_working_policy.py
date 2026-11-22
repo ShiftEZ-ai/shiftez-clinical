@@ -339,10 +339,11 @@ def pytest_runtest_makereport(item, call):
                                      b"/tests/quarantine.py @ShiftEZ-ai/maintainers\n"
                                      b"/tests/quarantine.json @ShiftEZ-ai/maintainers\n"),
                   after_codeowners=None, candidate_helpers=None, http=None, token="synthetic-token", files=None,
-                  real_inventory=False):
+                  real_inventory=False, default="dev", accepted=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
                  "head": {"ref": "feature", "sha": head, "repo": {"id": policy.REPOSITORY}}, "merge_commit_sha": candidate}}
+        data["repository"] = {"default_branch": default}
         data["pull_request"]["merge_commit_sha"] = None
         data["merge_group"] = {"base_ref": "refs/heads/" + branch, "base_sha": base, "head_sha": head}
         report = {}
@@ -397,7 +398,7 @@ def pytest_runtest_makereport(item, call):
         mocks = {"event": lambda: data, "git": fake_git, "fetch": fake_fetch,
                  "merge_tree": lambda *a: candidate,
                  "tree": lambda rev: ((merge_tree or candidate) if rev == head else candidate),
-                 "accepted_dev_commit": lambda candidate_tree, dev_tip: source,
+                 "accepted_dev_commit": accepted or (lambda candidate_tree, dev_tip: source),
                  "control_inventory": inventory,
                  "migrations": lambda revision: {}, "read_file": read, "findings_report": record}
         if real_inventory:
@@ -617,6 +618,102 @@ def pytest_runtest_makereport(item, call):
         self.run_guard(".github/workflows/ci.yml", branch="main")
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40)
         with self.assertRaises(ValueError): self.run_guard("apps/example.py", preview_history=True)
+
+    def test_guard_integration_target_is_the_default_branch_under_either_name(self):
+        for default in ("dev", "main"):
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(default=default, kind=kind):
+                    self.assertEqual(self.run_guard("apps/example.py", branch=default, kind=kind, default=default)["branch"],
+                                     default)
+                    http = self.review_response()
+                    self.run_guard(".github/workflows/ci.yml", branch=default, kind=kind, default=default, http=http)
+                    self.assertEqual(http.call_args.args[0].full_url,
+                                     f"https://api.github.com/repos/owner/repo/rules/branches/{default}")
+                    with self.assertRaisesRegex(ValueError, "Preview merge history"):
+                        self.run_guard("apps/example.py", branch=default, kind=kind, default=default, preview_history=True)
+
+    def test_main_target_is_release_checked_only_while_the_default_is_dev(self):
+        with self.assertRaisesRegex(ValueError, "Main would add content beyond the accepted dev tree"):
+            self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40)
+        # Once main is the default it is the integration branch: no release tree equivalence applies.
+        report = self.run_guard("apps/example.py", branch="main", merge_tree="u" * 40, default="main")
+        self.assertEqual((report["branch"], report["tier1"]), ("main", []))
+        for kind in ("pull_request", "merge_group"):
+            with self.subTest(kind=kind):
+                accepted = Mock(side_effect=ValueError("Release head tree is not an accepted tree on dev"))
+                with self.assertRaisesRegex(ValueError, "not an accepted tree on dev"):
+                    self.run_guard("apps/example.py", branch="main", kind=kind, accepted=accepted)
+                accepted.assert_called_once()
+                accepted.reset_mock()
+                report = self.run_guard("apps/example.py", branch="main", kind=kind, default="main", accepted=accepted)
+                self.assertEqual(report["branch"], "main")
+                accepted.assert_not_called()
+
+    def test_default_main_retires_the_dev_and_preview_targets(self):
+        self.assertEqual(policy.working_branches("dev"), {"dev", "main", "preview"})
+        self.assertEqual(policy.working_branches("main"), {"main"})
+        self.assertEqual(self.run_guard("apps/example.py", branch="dev", default="main"), {})
+        for default, branch in (("main", "dev"), ("main", "preview"), ("dev", "preview")):
+            with self.subTest(default=default, branch=branch), self.assertRaisesRegex(ValueError, "Unexpected queue target"):
+                self.run_guard("apps/example.py", branch=branch, kind="merge_group", default=default)
+
+    def test_missing_or_unexpected_default_branch_refuses(self):
+        for default in (None, "", "preview", "release"):
+            for kind in ("pull_request", "merge_group"):
+                with self.subTest(default=default, kind=kind), \
+                        self.assertRaisesRegex(ValueError, "Unexpected repository or default branch"):
+                    self.run_guard("apps/example.py", kind=kind, default=default)
+        with self.assertRaisesRegex(ValueError, "Unexpected repository or default branch"):
+            policy.default_branch({})
+        repository = {"id": policy.REPOSITORY, "full_name": "ShiftEZ-ai/shiftez-clinical"}
+        with tempfile.TemporaryDirectory() as folder:
+            event = Path(folder) / "event.json"
+            for extra in ({}, {"default_branch": None}, {"default_branch": "preview"}):
+                event.write_text(json.dumps({"repository": {**repository, **extra}}))
+                with self.subTest(extra=extra), patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}), \
+                        self.assertRaisesRegex(ValueError, "Unexpected repository or default branch"):
+                    policy.event()
+            for default in ("dev", "main"):
+                event.write_text(json.dumps({"repository": {**repository, "default_branch": default}}))
+                with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}):
+                    self.assertEqual(policy.default_branch(policy.event()), default)
+
+    def run_ci_context(self, kind, ref, default):
+        before, head, accepted = "a" * 40, "b" * 40, "e" * 40
+        data = {"before": before, "repository": {"default_branch": default},
+                "pull_request": {"base": {"ref": ref, "sha": before}},
+                "merge_group": {"base_ref": "refs/heads/" + ref, "base_sha": before}}
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "output"
+            fetched = []
+            with patch.object(policy, "event", return_value=data), patch.object(policy, "git", return_value=head.encode()), \
+                 patch.object(policy, "tree", return_value="c" * 40), \
+                 patch.object(policy, "fetch", side_effect=lambda name: fetched.append(name) or "d" * 40), \
+                 patch.object(policy, "accepted_dev_commit", return_value=accepted), \
+                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": kind, "GITHUB_REF": "refs/heads/" + ref,
+                                         "GITHUB_OUTPUT": str(output)}):
+                policy.ci_context()
+            values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        return values["base_sha"], values["release"], fetched
+
+    def test_ci_context_follows_the_default_branch(self):
+        before, head, accepted, tip = "a" * 40, "b" * 40, "e" * 40, "d" * 40
+        cases = (("push", "dev", "dev", (before, "false", [])),
+                 ("push", "main", "dev", (accepted, "true", ["refs/heads/dev"])),
+                 ("push", "preview", "dev", (tip, "false", ["refs/heads/dev"])),
+                 ("push", "main", "main", (before, "false", [])),
+                 ("schedule", "main", "dev", (head, "false", [])),
+                 ("schedule", "main", "main", (head, "false", [])),
+                 ("pull_request", "main", "main", (before, "false", [])),
+                 ("merge_group", "main", "main", (before, "false", [])),
+                 ("pull_request", "dev", "dev", (before, "false", [])))
+        for kind, ref, default, expected in cases:
+            with self.subTest(kind=kind, ref=ref, default=default):
+                self.assertEqual(self.run_ci_context(kind, ref, default), expected)
+        for kind, ref, default in (("push", "dev", "main"), ("push", "preview", "main"), ("merge_group", "dev", "main"),
+                                   ("push", "feature", "dev"), ("push", "main", None)):
+            with self.subTest(kind=kind, ref=ref, default=default), self.assertRaises(ValueError):
+                self.run_ci_context(kind, ref, default)
 
     def test_guard_allows_an_absent_preview_ref_but_propagates_fetch_failures(self):
         for kind in ("pull_request", "merge_group"):
@@ -947,7 +1044,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
         self.run_guard("apps/ordinary.py", branch="dev", kind="merge_group")
         with patch.object(policy, "accepted_dev_commit", side_effect=ValueError("Not reachable dev tree")):
             # Directly prove main groups call the dev-tree predicate; the group target is the authority.
-            data = {"merge_group":{"base_ref":"refs/heads/main", "base_sha":"a"*40,"head_sha":"b"*40}}
+            data = {"merge_group":{"base_ref":"refs/heads/main", "base_sha":"a"*40,"head_sha":"b"*40},
+                    "repository": {"default_branch": "dev"}}
             with patch.object(policy, "event", return_value=data), patch.object(policy, "fetch", side_effect=lambda ref, expected=None: expected or "d"*40), \
                  patch.object(policy, "tree", return_value="c"*40), patch.object(policy, "migrations", return_value={}), patch.object(policy,'assert_public_tree'), \
                  patch.object(policy, "git", return_value=b""), \
@@ -1046,6 +1144,12 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
 
     def test_first_main_release_reads_accepted_dev_lists_when_main_has_none(self):
         self.exercise_verdict_materialization("main")
+        # After the rename main is the integration branch: candidate lists apply and the PR gets the stale lookup.
+        for event in ("pull_request", "push"):
+            with self.subTest(event=event):
+                self.exercise_verdict_materialization("main", event=event, default="main")
+        with self.assertRaisesRegex(ValueError, "Unsupported branch"):
+            self.exercise_verdict_materialization("dev", event="push", default="main")
 
     def test_main_refuses_a_recovery_from_an_earlier_attempt(self):
         with self.assertRaisesRegex(ValueError, "Release/known-skip execution contains a failure or error"):
@@ -1071,12 +1175,13 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
     def exercise_verdict_materialization(self, branch, *, real_reader=False, still_fails=False, event="pull_request",
                                          old_base_pr=False, replicas=(1,), renew_expiry=False,
                                          quarantine_rows=(), quarantine_input=b"[]", expired_summary=None,
-                                         quarantine_node_disappears=False, recovered=None):
+                                         quarantine_node_disappears=False, recovered=None, default="dev"):
         base, candidate, trusted, tree = (c * 40 for c in "abcd")
         if event == "workflow_dispatch": base = candidate
         head = "7" * 40
-        target = base if branch == "dev" else "9" * 40
-        payload = {"before": base, "repository": {"full_name": "ShiftEZ-ai/shiftez-clinical"},
+        release = branch == "main" and default != "main"
+        target = "9" * 40 if release else base
+        payload = {"before": base, "repository": {"full_name": "ShiftEZ-ai/shiftez-clinical", "default_branch": default},
                    "pull_request": {"base": {"ref": branch, "sha": target}, "head": {"sha": head}}}
         plan = {"sha": candidate, "tree": tree, "base_sha": base, "smoke": False, "replicas": list(replicas),
                 "suites": {"unit": {"shards": [{"files": ["tests/test_a.py"]}]},
@@ -1113,7 +1218,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 "measurements":[{"run_id":"1","run_attempt":"1","replica":i,"sha":"e"*40,"tree":"f"*40,"trusted_sha":"d"*40,"receipts_sha256":"a"*64,"measurement_receipt_sha256":"b"*64} for i in (1,2)]}).encode()
             if name == "ci/known-skips.json": return json.dumps({"schema":1,"root_sha":"e"*40,"root_tree":"f"*40,"root_runs":[{"run_id":"1","run_attempt":"1","replica":i} for i in (1,2)],"skips":[]}).encode()
             if name == policy.QUARANTINE:
-                self.assertIn(revision, {base} if branch == "main" else {base, candidate})
+                self.assertIn(revision, {base} if release else {base, candidate})
                 if isinstance(quarantine_input, Exception):
                     raise quarantine_input
                 return json.dumps(quarantine_rows).encode() if quarantine_rows else quarantine_input
@@ -1177,13 +1282,14 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                 maker.context = lambda actual_base: {"replicas": [1]} if actual_base == base else self.fail("wrong target")
             summaries = []
             maker.write_summary = lambda: summaries.append(True)
+            expected_release = release
             def compare(*, runs, evidence, product_errors, quarantine, release, quarantine_registry, **stale_options):
                 self.assertEqual(quarantine, {row["nodeid"]: row for row in quarantine_rows})
                 self.assertEqual(quarantine_registry, quarantine)
-                self.assertEqual(release, branch == "main")
+                self.assertEqual(release, expected_release)
                 if release and quarantine:
                     actual_reader.evaluate(None, None, runs, quarantine=quarantine, release=release)
-                self.assertEqual(set(stale_options), {"stale_lookup"} if event == "pull_request" and branch == "dev" else set())
+                self.assertEqual(set(stale_options), {"stale_lookup"} if event == "pull_request" and branch == default else set())
                 self.assertEqual(json.loads(Path(policy.KNOWN).read_text()), after)
                 self.assertEqual(json.loads(Path("ci/frozen-baseline-failures.json").read_text()), [] if real_reader else {"origin": base})
                 self.assertNotIn(str(reports), sys.path)
@@ -1232,7 +1338,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             quarantine_paths = {policy.QUARANTINE, policy.QUARANTINE_RETIRED}
             for path in quarantine_paths:
                 self.assertEqual({revision for revision, name in reads if name == path},
-                                 {base} if branch == "main" else {base, candidate})
+                                 {base} if release else {base, candidate})
             self.assertTrue(all(revision == base for revision, name in reads
                                 if name not in quarantine_paths | {policy.KNOWN, 'ci/removed-tests.json'}))
             self.assertTrue(all(name in policy.LISTS for _, name in reads))
@@ -1262,7 +1368,7 @@ class BootstrapControlTests(unittest.TestCase):
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
                 plan, upload = checks[context_index + 1:context_index + 3]
                 self.assertEqual(plan['id'], 'plan')
-                cache_only_push = "(github.event_name != 'push' || github.ref != 'refs/heads/dev')"
+                cache_only_push = "(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))"
                 self.assertEqual(plan['if'], cache_only_push)
                 self.assertEqual(upload['if'], cache_only_push)
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
@@ -1307,7 +1413,8 @@ class BootstrapControlTests(unittest.TestCase):
     def test_bootstrap_binding_refuses_noninitial_events_and_sources(self):
         base, head = 'a' * 40, 'b' * 40
         data = {'pull_request': {'base': {'ref':'dev','repo':{'id':policy.REPOSITORY}},
-                                'head': {'sha':head,'repo':{'id':policy.REPOSITORY}}}}
+                                'head': {'sha':head,'repo':{'id':policy.REPOSITORY}}},
+                'repository': {'default_branch': 'dev'}}
         for change in ('valid', 'unflagged', 'merge_group', 'attempt', 'parents', 'controls', 'known', 'head', 'fork', 'target'):
             event = copy.deepcopy(data)
             if change == 'fork': event['pull_request']['head']['repo']['id'] = 1

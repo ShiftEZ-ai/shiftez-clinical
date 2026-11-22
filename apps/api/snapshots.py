@@ -66,7 +66,7 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('tags', m.Tag, 'general', 'department', 'tag', frozenset()),
     ('tag_members', m.TagMember, 'general', 'department', 'tag_member', frozenset()),
     ('people', m.Person, 'general', 'organisation', 'people', frozenset()),
-    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on',
+    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on', 'score_check_enabled',
         *(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)})),
     ('programme_calendar_entries', m.ProgrammeCalendarEntry, 'general', 'department', None, frozenset()),
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),

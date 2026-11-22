@@ -33,9 +33,9 @@ def policy_context(data, kind, candidate):
     if kind == "schedule":
         if candidate != git("rev-parse", "HEAD").decode().strip():
             raise ValueError("Nightly evidence must use the pinned dev source")
-        return "dev", candidate
+        return policy.default_branch(data), candidate
     branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
-    return branch, policy.commit(data["before"]) if kind == "push" and branch == "dev" else candidate
+    return branch, policy.commit(data["before"]) if kind == "push" and branch == policy.default_branch(data) else candidate
 
 
 def assert_inventory(plan, raw_inventory, counts, scope=None):
@@ -85,7 +85,7 @@ def verify_canaries(reports, *, allow_product_errors, **options):
         canary_evidence.verify_directory(archive, allow_product_errors=True, **options)
 
 
-def pr_stale_evidence(nodes, *, repository, base, candidate, scope):
+def pr_stale_evidence(nodes, *, repository, branch, base, candidate, scope):
     if not os.getenv("GH_TOKEN"):
         return {}
     try:
@@ -95,17 +95,18 @@ def pr_stale_evidence(nodes, *, repository, base, candidate, scope):
         untouched = {node for node in nodes if node.split("::", 1)[0] not in changed}
         if not untouched:
             return {}
-        tip = policy.fetch("refs/heads/dev")
-        return stale_evidence.confirmed_nodes(repository, git, tip, base, untouched)
+        tip = policy.fetch("refs/heads/" + branch)
+        return stale_evidence.confirmed_nodes(repository, git, tip, base, untouched, branch)
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
 
 
 def stale_options(kind, branch, data, base, candidate, scope):
-    if kind == "pull_request" and branch == "dev":
+    default = policy.default_branch(data)
+    if kind == "pull_request" and branch == default:
         return {"stale_lookup": partial(pr_stale_evidence, repository=data["repository"]["full_name"],
-                                        base=base, candidate=candidate, scope=scope)}
-    if kind == "schedule" and branch == "dev" and candidate == os.getenv("GITHUB_SHA"):
+                                        branch=default, base=base, candidate=candidate, scope=scope)}
+    if kind == "schedule" and branch == default and candidate == os.getenv("GITHUB_SHA"):
         return {"nightly": True}
     return {}
 
@@ -164,11 +165,13 @@ def main():
                  policy.commit(data["merge_group"]["base_sha"]) if kind=="merge_group" else
                  policy.commit(data["before"]) if kind=="push" else candidate)
     policy.fetch(census_base,census_base)
-    if branch not in {"dev", "preview", "main"}:
+    default = policy.default_branch(data)
+    if branch not in policy.working_branches(default):
         raise ValueError("Unsupported branch")
-    if branch in {"preview", "main"}:
-        dev_tip = policy.fetch("refs/heads/dev")
-        base = policy.accepted_dev_commit(policy.tree(candidate), dev_tip) if branch == "main" else dev_tip
+    release = branch == "main" and default != "main"
+    if branch != default:
+        dev_tip = policy.fetch("refs/heads/" + default)
+        base = policy.accepted_dev_commit(policy.tree(candidate), dev_tip) if release else dev_tip
     source_tree = policy.tree(candidate)
     if plan["sha"] != candidate or plan["tree"] != source_tree or plan["base_sha"] != base:
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
@@ -192,7 +195,6 @@ def main():
     # All code imports resolve under this trusted source, never the candidate or artifact directory.
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
-    release = branch == "main"
     quarantine_registry, quarantine = quarantine_policy(base, base if release else candidate, old, current)
     if quarantine:
         maker.write_summary_lines([expired_issue_summary(quarantine, utc_today())])
@@ -227,7 +229,7 @@ def main():
         for path in policy.LISTS:
             if path in {QUARANTINE, QUARANTINE_RETIRED}:
                 continue  # The verifier receives the effective quarantine directly.
-            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch=='dev' else policy.read_file(base, path)
+            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch==default else policy.read_file(base, path)
             if raw is not None:
                 policy.decode(raw)
                 destination = data_root / path
@@ -253,11 +255,11 @@ def main():
                     os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files))
                 ledger=policy.read_file(base,"ci/removed-tests.json")
                 if ledger is None:raise ValueError("Target node-removal ledger is missing")
-                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch=='dev' else ledger
+                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch==default else ledger
                 allowed=node_census.allowed_removals(ledger,candidate_ledger,before_nodes,set(runs[0]),maker.SAFE_NODE.fullmatch)
                 census=node_census.compare(before_nodes,set(runs[0]),allowed)
                 node_census.emit(census,output)
-            if branch == "main" and policy.tree(base) != source_tree:
+            if release and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
             recovered = evidence.recovered
