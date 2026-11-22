@@ -15,9 +15,10 @@ import subprocess
 import tomllib
 import sys
 from urllib.request import Request, urlopen
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import node_census
 import hardening
+from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_retired
 
 from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_agent_path, private_ignore_content
 
@@ -58,7 +59,6 @@ SHRINK_ONLY = {
     "ci/hosted-env-exceptions.json": ("exceptions",),
     "ci/unstable-seeds.json": ("nodes",),
 }
-QUARANTINE = "tests/quarantine.json"
 QUARANTINE_DAYS = 30
 MARKER = "ci/working-rules.json"
 CONTRACT = {"schema": 4, "ci_result_contract": "failclosed-main-reviewed-errors-v32"}
@@ -71,7 +71,7 @@ LISTS = {
     "ci/root-run-evidence.json": False, NODE_LEDGER: False,
     "ci/hosted-env-exceptions.json": False,
     "ci/unstable-seeds.json": True, "ci/hosted-durations.json": True,
-    "tests/quarantine.json": True,
+    QUARANTINE: True, QUARANTINE_RETIRED: True,
 }
 
 
@@ -113,6 +113,21 @@ def read_file(revision, path):
     return git("show", revision + ":" + path)
 
 
+def retired_at_revision(revision, *, allow_legacy=True):
+    try:
+        raw = read_file(revision, QUARANTINE_RETIRED)
+        if raw is None and allow_legacy:
+            source = read_file(revision, ".github/scripts/working_policy.py")
+            # QUARANTINE_RETIRED was introduced with the list and must remain the activation marker.
+            if source and b"QUARANTINE_RETIRED" not in source:
+                return None, {}
+        return raw, decode_retired(raw)
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("Cannot read trusted quarantine retired list: " + QUARANTINE_RETIRED) from None
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid quarantine retired list {QUARANTINE_RETIRED}: {error}") from None
+
+
 def known_failure_classes(raw):
     data = decode(raw) if raw else {}
     return {entry["node"]: entry.get("class", "unstable" if key == "unstable" else None)
@@ -130,7 +145,7 @@ def moved_failure_classes(before, after):
     return {node: cls for node, cls in known_failure_classes(before).items() if node not in after}
 
 
-def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
+def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw, *, retired=frozenset()):
     """Keep or remove existing quarantine entries; add only entries MOVED from known failures or recovered FLAKES."""
     def encoded(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -154,6 +169,8 @@ def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
             if encoded(entry) != existing[node]:
                 raise ValueError(QUARANTINE + " may not edit an existing entry: " + node)
             continue
+        if node in retired:
+            raise ValueError(QUARANTINE + " may not re-add a retired entry: " + node)
         issue, owner, reason = entry.get("issue"), entry.get("owner"), entry.get("reason")
         if type(issue) is not int or issue < 1:
             raise ValueError(QUARANTINE + " additions need an issue number of at least 1: " + node)
@@ -189,6 +206,33 @@ def quarantine_change(before_raw, after_raw, known_before_raw, known_after_raw):
             continue
         raise ValueError(QUARANTINE + " may only add entries moved from " + KNOWN
                          + " with their class, or recovered flakes with run evidence: " + node)
+
+
+def quarantine_retired_change(before_raw, after_raw, registry_before, registry_after):
+    try:
+        before = decode_retired(before_raw) if before_raw is not None else {}
+        after = decode_retired(after_raw)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"Invalid {QUARANTINE_RETIRED}: {error}") from None
+    append_only = QUARANTINE_RETIRED + " is append-only"
+    base_entries = {entry["nodeid"]: entry for entry in decode(registry_before)}
+    removed = before.keys() - after.keys()
+    if removed:
+        remaining_nodes = {entry["nodeid"] for entry in decode(registry_after)}
+        if removed & remaining_nodes:
+            raise ValueError(append_only + "; remove the same nodes from " + QUARANTINE + " before or with compaction")
+    retained = [(node, token) for node, token in before.items() if node in after]
+    if (list(after.items())[:len(retained)] != retained
+            or before_raw is not None and before == after and before_raw != after_raw):
+        raise ValueError(append_only + "; existing entries must stay byte-unchanged and in order")
+    for node in after.keys() - before.keys():
+        if node not in base_entries:
+            raise ValueError(append_only + "; new entry is absent from the base " + QUARANTINE + ": " + node)
+        row = base_entries[node]
+        if row["blocker"]:
+            raise ValueError(append_only + "; release blockers may not be retired: " + node)
+        if row["reason"].split(":", 1)[0].strip() not in {"baseline", "baseline-error"}:
+            raise ValueError(append_only + "; only baseline or baseline-error entries may be retired: " + node)
 
 
 def removal_only(before_raw, after_raw, entry_keys=("fails", "unstable")):
@@ -854,13 +898,17 @@ def guard():
             old, new = read_file(base, path), read_file(candidate, path)
             if path == KNOWN and removal_only(old, new):
                 level, reason = 0, "Known-failures entry removal only"
+            elif not initial and path == QUARANTINE_RETIRED:
+                quarantine_retired_change(old, new, read_file(base, QUARANTINE), read_file(candidate, QUARANTINE))
+                level, reason = 0, "Quarantine retirement or compaction after registry removal"
             elif not initial and path == NODE_LEDGER:
                 if not hardening.load()["node_census"] or node_census.ledger_additions(old, new) is None:
                     raise ValueError(NODE_LEDGER + " may only add removed nodes for census verification")
                 level, reason = 2, "Node-ledger additions only; CI must prove each node disappears in this candidate"
             else:
                 if not initial and path == QUARANTINE:
-                    quarantine_change(old, new, read_file(base, KNOWN), read_file(candidate, KNOWN))
+                    _, retired = retired_at_revision(base)
+                    quarantine_change(old, new, read_file(base, KNOWN), read_file(candidate, KNOWN), retired=retired)
                 if not initial and path in SHRINK_ONLY and not removal_only(old, new, SHRINK_ONLY[path]):
                     raise ValueError(path + " may only remove existing entries")
                 level, reason = tier(path, old, new, inventory)
@@ -887,14 +935,15 @@ def guard():
         policy_base = head
     receipts = {}
     for path, required in LISTS.items():
-        raw = read_file(policy_base, path)
-        if raw is None:
-            if required:
-                raise ValueError("Required policy list is absent")
-            receipts[path] = "ABSENT"
+        if path == QUARANTINE_RETIRED:
+            raw, _ = retired_at_revision(policy_base)
         else:
-            decode(raw)
-            receipts[path] = hashlib.sha256(raw).hexdigest()
+            raw = read_file(policy_base, path)
+            if raw is None and required:
+                raise ValueError("Required policy list is absent")
+            if raw is not None:
+                decode(raw)
+        receipts[path] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
     print(json.dumps({"branch": branch, "target_sha": base, "policy_input_sha": policy_base,
                       "head_sha": head, "candidate_sha": candidate_sha, "candidate_tree": candidate, "lists": receipts,
                       "workflow_source_sha": os.getenv("POLICY_WORKFLOW_SHA", "UNKNOWN")}, sort_keys=True))
