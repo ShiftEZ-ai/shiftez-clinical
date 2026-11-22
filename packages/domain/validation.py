@@ -446,20 +446,32 @@ def department_memberships(data, person_id, department_id, a, b):
             and m["category_id"] in categories_for(data, person_id, a, b)]
 
 
+def person_active_on(active, inactive_from, day):
+    """The same exclusive cutover for date values and database date expressions."""
+    return active if inactive_from is None else active | (inactive_from > day)
+
+
+def person_active_end(person, end, zone):
+    """Clip a window's exclusive end to the person's local cutover, or return None if never active."""
+    if not person:
+        return None
+    end = aware(end)
+    active = person.get('active', True)
+    inactive_from = None if active else person.get('inactive_from')
+    if isinstance(inactive_from, datetime):
+        inactive_from = inactive_from.date()
+    elif isinstance(inactive_from, str):
+        inactive_from = date.fromisoformat(inactive_from)
+    cutoff = local_midnight(inactive_from, zone) if inactive_from is not None else None
+    return end if person_active_on(active, cutoff, end) else cutoff
+
+
 def person_active_for_interval(data, person_id, a, b):
     """Admit duties ending before the person's local inactive date begins."""
     person = data.get('people', {}).get(person_id)
     if not person or person.get('active', True):
         return bool(person)
-    zone = data['organisation']['timezone']
-    inactive_from = person.get('inactive_from')
-    if inactive_from is None:
-        return False
-    elif isinstance(inactive_from, datetime):
-        inactive_from = inactive_from.date()
-    elif isinstance(inactive_from, str):
-        inactive_from = date.fromisoformat(inactive_from)
-    return aware(b) <= local_midnight(inactive_from, zone)
+    return person_active_end(person, b, data['organisation']['timezone']) == aware(b)
 
 
 def qualification_failures(data, person_id, shift, definition, a, b):

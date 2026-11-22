@@ -39,20 +39,19 @@ SUPPORTED_RULES = frozenset({
 
 def definition_issues(definition, *, historical=False):
     """Return only field/code/message keys; compatibility adds rule identity before 422 and capped storage."""
-    raw = stored_definition(definition)
-    if isinstance(raw, dict) and isinstance(raw.get('rule'), dict):
-        kind = raw['rule'].get('kind')
-        if isinstance(kind, str) and kind not in SUPPORTED_RULES:
-            return [{'field': 'definition.rule.kind', 'code': 'UNSUPPORTED_SOLVER_RULE',
-                     'message': 'Automatic scheduling does not support this rule.'}]
+    raw = definition if isinstance(definition, PolicyDefinition) and not historical else stored_definition(definition)
+    rule = raw.rule if isinstance(raw, PolicyDefinition) else raw.get('rule') if isinstance(raw, dict) else None
+    kind = rule.get('kind') if isinstance(rule, dict) else getattr(rule, 'kind', None)
+    if isinstance(kind, str) and kind not in SUPPORTED_RULES:
+        return [{'field': 'definition.rule.kind', 'code': 'UNSUPPORTED_SOLVER_RULE',
+                 'message': 'Automatic scheduling does not support this rule.'}]
     try:
         if historical:
             from .rule_lines import _valid
             raw = _valid(json.dumps(raw, sort_keys=True, default=str), stored_goal=False,
                          resolved_catalogue_line=False)
         else:
-            raw = PolicyDefinition.model_validate(definition if isinstance(definition, PolicyDefinition) else raw,
-                                                  context={'historical': historical}).model_dump(mode='json')
+            raw = PolicyDefinition.model_validate(raw, context={'historical': False}).model_dump(mode='json')
     except ValidationError as error:
         return [{'field': '.'.join(['definition', *map(str, e['loc'])]),
                  'code': 'INVALID_RULE_DEFINITION', 'message': e['msg']}
