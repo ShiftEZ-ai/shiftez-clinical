@@ -3879,7 +3879,7 @@ ALWAYS_MANDATORY_KINDS = frozenset({
 })
 SAFETY_MANDATORY_REASON = 'Safety rules are always mandatory'
 
-# Override protection also applies to spread-evenly preferences.
+# Override protection extends the mandatory set to spread-evenly, which may stay advisory.
 NEVER_OVERRIDDEN = ALWAYS_MANDATORY_KINDS | {'spread_evenly'}
 
 # Numeric safety limits are combined when a frozen and live revision describe

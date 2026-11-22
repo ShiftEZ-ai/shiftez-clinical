@@ -2,6 +2,7 @@
 version per rule, approval by another person, undo, and one rule in force per entry in the database."""
 import time
 import uuid
+from collections import OrderedDict
 from datetime import date
 
 import pytest
@@ -53,6 +54,8 @@ def test_catalogue_read_reuses_revision_projection_and_invalidates_after_policy_
     """A department-scale page is computed once per input revision, with bounded stamp SQL on cache hits."""
     from apps.api.services import rule_catalogue
 
+    # SQLite fixtures copy department IDs and revisions from the same template database.
+    monkeypatch.setattr(rule_catalogue, '_catalogue_cache', OrderedDict())
     first = h.get('auditor', '/api/rules/catalogue')
     calls = []
     original = rule_catalogue._catalogue_uncached
