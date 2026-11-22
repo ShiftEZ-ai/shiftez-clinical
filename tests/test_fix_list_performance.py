@@ -176,3 +176,37 @@ def test_slow_lifecycle_check_does_not_hold_writer_lock_and_rechecks_inputs(back
             assert result['error']['code'] == 'STALE_INPUTS'
         else:
             assert result['workspace']['status'] == ('submitted' if action == 'submit' else 'approved')
+
+
+@pytest.mark.parametrize('action', ['submit', 'approve'])
+def test_lifecycle_check_does_not_stamp_inputs_committed_after_its_reads(pg, monkeypatch, action):
+    h = pg
+    workspace = h.shift(h.workspace())['workspace']
+    if action == 'approve':
+        workspace = h.lifecycle(workspace, 'submit')['workspace']
+    role = 'coordinator' if action == 'submit' else 'approver'
+    engine = h.app.state.engine
+    original = planning.swaps.validate_publication
+    person_id = h.seed['people'][-1]
+
+    def save_input(db, candidate):
+        result = original(db, candidate)
+        # Commit from a separate PostgreSQL writer after the check and before the currency mark.
+        with transaction(engine, write=True, serialize=False) as writer:
+            writer.get(m.Person, person_id).active = False
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(planning.swaps, 'validate_publication', save_input)
+        reply = h.lifecycle(workspace, action, role, status=(200, 409))
+
+    with transaction(engine) as db:
+        assert not db.get(m.Person, person_id).active
+        row = db.get(m.Workspace, workspace['id'])
+        assert row.id not in snapshots.cheap_fingerprints(db, [row], checks={row.id: row.validation})
+        if 'error' in reply:
+            assert reply['error']['code'] == 'STALE_INPUTS'
+            assert row.status == workspace['status']
+    if action == 'approve' or 'workspace' in reply:
+        submitted = workspace if action == 'approve' else reply['workspace']
+        assert h.lifecycle(submitted, 'approve', 'approver', status=409)['error']['code'] == 'STALE_INPUTS'
