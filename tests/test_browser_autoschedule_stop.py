@@ -100,7 +100,9 @@ def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server
         expect(strip).to_have_count(0)
         assert h.get('coordinator', '/api/jobs/' + check['id'])['job']['status'] == 'running'
 
-        review = panel.get_by_role('region', name='Review')
+        panel.get_by_role('button', name='Review latest result', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Auto-schedule results', exact=True)
+        review = dialog.get_by_role('region', name='Review', exact=True)
         sentence = review.get_by_text(FIX_LIST_WORDS['generation_fallback'], exact=True)
         expect(sentence).to_be_visible()
         expect(sentence).to_have_count(1)
