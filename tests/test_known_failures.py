@@ -112,7 +112,7 @@ ROOT_RUN_FACTS = {("merge-base", ROOT_RUN_BASE, ROOT_RUN_SHA): ROOT_RUN_BASE.enc
 def historical_git(*args):
     if args in ROOT_RUN_FACTS:
         return ROOT_RUN_FACTS[args]
-    pinned =[PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
+    pinned = [PRE_QUARANTINE_DEV + arg[4:] if arg == "HEAD" or arg.startswith(("HEAD:", "HEAD^")) else arg for arg in args]
     return subprocess.check_output(["git", *pinned], cwd=ROOT)
 
 
@@ -442,7 +442,7 @@ def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser"), unit_n
 def historical_verdict_sources():
     paths = (".github/scripts/trusted_verdict.py", ".github/scripts/known_skips.py", "ci/make_known_failures.py",
              "ci/known-skips.json", "ci/root-run-evidence.json", "ci/frozen-baseline-failures.json",
-             "ci/hosted-env-exceptions.json", "ci/removed-tests.json")
+             "ci/hosted-env-exceptions.json", "ci/removed-tests.json", ".github/scripts/working_policy.py")
     return {path: historical_git("show", "HEAD:" + path) for path in paths}
 
 
@@ -452,11 +452,13 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
     import trusted_verdict as trusted
 
     def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
-            base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False):
+            base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
+            base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False):
         sources = historical_verdict_sources
         folder = tmp_path / label
         base, head = "a" * 40, "c" * 40
-        plan = reports(folder / "reports", replicas=(1,), red_suites=(), unit_node=node, unit_outcome=outcome,
+        replicas = (1, 2) if event == "push" else (1,)
+        plan = reports(folder / "reports", replicas=replicas, red_suites=(), unit_node=node, unit_outcome=outcome,
                        unit_retry=retry, base_sha=base, run_id="1")
         candidate = plan["sha"]
         output = folder / "verdict"
@@ -495,6 +497,14 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             if name == "tests/quarantine.json":
                 rows = registry_at[revision]
                 return rows if isinstance(rows, bytes) else json.dumps(list(rows)).encode()
+            if name == "tests/quarantine-retired.json":
+                retired = {base: base_retired, candidate: candidate_retired}[revision]
+                if isinstance(retired, OSError):
+                    raise retired
+                return json.dumps(retired).encode() if isinstance(retired, (list, tuple)) else retired
+            if name == ".github/scripts/working_policy.py":
+                legacy = {base: base_legacy, candidate: candidate_legacy}[revision]
+                return sources[name] if legacy else (ROOT / name).read_bytes()
             if name == "ci/root-run-evidence.json":
                 return root_raw
             if name == "ci/failure-classifications.json":
@@ -526,7 +536,8 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
                 return b""
             return git_answers[args]
 
-        data = {"pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
+        data = {"before": base,
+                "pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
                 "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
                 "repository": {"full_name": "fixture/project"}}
         step_summary = folder / "step-summary.md"
@@ -562,7 +573,8 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
                                        "--output", str(output)])
             patch.delenv("GH_TOKEN", raising=False)
             for key, value in {
-                "GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "CANDIDATE_SHA": candidate,
+                "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch,
+                "GITHUB_SHA": candidate, "CANDIDATE_SHA": candidate,
                 "TRUSTED_BOOTSTRAP": "false", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
                 "GITHUB_STEP_SUMMARY": str(step_summary), "RUNNER_TEMP": str(folder),
                 "NEEDS_JSON": json.dumps({key: {"result": "success"} for key in ("checks", "static", "unit", "browser")}),
@@ -626,6 +638,73 @@ def test_main_quarantine_xfail_matches_historical_release_failure(trusted_result
                                    candidate_kind="baseline", **execution)
     current, _ = trusted_result("new", outcome="quarantine-xfail", base_registry=[quarantine_row()], **execution)
     assert current == historical == ("Release/known-skip execution contains a failure or error", None)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "quarantine-xfail"])
+def test_trusted_verdict_refuses_a_failing_retired_node(trusted_result, outcome):
+    retry = "failed" if outcome == "failed" else None
+    result, _ = trusted_result("retired", outcome=outcome, retry=retry,
+                               base_registry=[quarantine_row()], base_retired=[RED])
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + RED
+
+
+@pytest.mark.parametrize("branch", ["dev", "preview"])
+def test_trusted_verdict_uses_base_and_candidate_retirements(trusted_result, branch):
+    # A retirement in the candidate alone already removes the node's excuse in the same run.
+    events = ("pull_request", "merge_group") if branch == "dev" else ("pull_request",)
+    for event in events:
+        result, _ = trusted_result(event, branch=branch, event=event, outcome="failed", retry="failed",
+                                   base_registry=[quarantine_row()], candidate_retired=[RED])
+        assert result[0] == "Trusted known-failure comparison refused the evidence"
+        assert result[1]["reason"] == "New failures outside the known-failure list: " + RED
+
+
+@pytest.mark.parametrize("raw", [b"[", b"{}", b"[1]", b'["not a node"]', b"\xff", None])
+def test_trusted_verdict_refuses_a_malformed_retired_list(trusted_result, raw):
+    for side in ("base_retired", "candidate_retired"):
+        result, _ = trusted_result(side, outcome="passed", **{side: raw})
+        assert result[0].startswith("Invalid quarantine retired list tests/quarantine-retired.json:")
+        assert result[1] is None
+
+
+def test_trusted_verdict_refuses_an_unreadable_retired_list(trusted_result):
+    for side in ("base_retired", "candidate_retired"):
+        result, _ = trusted_result(side, outcome="passed", **{side: OSError("fixture")})
+        assert result == ("Cannot read trusted quarantine retired list: tests/quarantine-retired.json", None)
+
+
+@pytest.mark.parametrize("branch,event,candidate_retired", [
+    ("dev", "push", []),  # Landing push introduces the file.
+    ("dev", "pull_request", None),
+    ("dev", "merge_group", None),
+    ("main", "pull_request", None),
+    ("main", "merge_group", None),
+])
+def test_trusted_verdict_accepts_a_pre_mechanism_base(trusted_result, branch, event, candidate_retired):
+    result, _ = trusted_result("legacy-base", branch=branch, event=event, outcome="passed",
+                               base_legacy=True, base_retired=None, candidate_retired=candidate_retired,
+                               candidate_legacy=candidate_retired is None)
+    assert result[0] is None and result[1]["passed"]
+
+
+@pytest.mark.parametrize("options", [
+    {"event": "push", "base_legacy": True, "base_retired": None, "candidate_retired": None},
+    {"candidate_legacy": True, "candidate_retired": None},
+    {"branch": "main", "base_retired": None},
+])
+def test_trusted_verdict_refuses_a_missing_retired_list_after_activation(trusted_result, options):
+    result, _ = trusted_result("missing-retired", outcome="passed", **options)
+    assert result == ("Invalid quarantine retired list tests/quarantine-retired.json: retired list is missing", None)
+
+
+def test_main_uses_the_accepted_dev_retired_list(trusted_result):
+    execution = {"branch": "main", "outcome": "passed", "base_registry": [{**quarantine_row(), "blocker": True}]}
+    for case, retired in (("accepted-retirement", {"base_retired": [RED]}),
+                          ("candidate-retirement", {"candidate_retired": [RED]})):
+        result, _ = trusted_result(case, **execution, **retired)
+        assert result[0] == "Trusted known-failure comparison refused the evidence"
+        assert result[1]["reason"] == "Release blockers remain in quarantine: " + RED
 
 
 def test_canary_normalization_preserves_quarantine_xfail(tmp_path):
