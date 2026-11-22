@@ -17,6 +17,13 @@ def _saved(h, person_id):
     return next(p for p in h.get('coordinator', '/api/catalogues')['people'] if p['id'] == person_id)
 
 
+def _shown(day):
+    """How the shared date field shows a day ("Mon 2 Nov 2026"); the API keeps it ISO."""
+    weekday = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')[day.weekday()]
+    month = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')[day.month - 1]
+    return f'{weekday} {day.day} {month} {day.year}'
+
+
 def _edit(page, p):
     open_person(page, p).get_by_role('button', name=f"Edit {p['display_name']}", exact=True).click()
     return page.get_by_role('dialog', name='Edit person', exact=True)
@@ -26,7 +33,8 @@ def test_dated_deactivation_saves_survives_reload_and_undo_restores_it(browser, 
     p = person(h)
     with transaction(h.app.state.engine) as db:
         today = _local_today(db, h.seed['department_id'])
-    first, moved = (today + timedelta(days=30)).isoformat(), (today + timedelta(days=45)).isoformat()
+    first_day = today + timedelta(days=30)
+    first, moved = first_day.isoformat(), (today + timedelta(days=45)).isoformat()
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         form = _edit(page, p)
@@ -45,7 +53,7 @@ def test_dated_deactivation_saves_survives_reload_and_undo_restores_it(browser, 
         form = _edit(page, p)
         expect(form.get_by_label('Active for future use', exact=True)).not_to_be_checked()
         date = form.get_by_label('Inactive from', exact=True)
-        expect(date).to_have_value(first)
+        expect(date).to_have_value(_shown(first_day))
         date.fill(moved)
         form.get_by_role('button', name='Save version', exact=True).click()
         expect(form).to_have_count(0)
@@ -57,7 +65,7 @@ def test_dated_deactivation_saves_survives_reload_and_undo_restores_it(browser, 
 
         page.reload()
         expect_loaded(page, 'people')
-        expect(_edit(page, p).get_by_label('Inactive from', exact=True)).to_have_value(first)
+        expect(_edit(page, p).get_by_label('Inactive from', exact=True)).to_have_value(_shown(first_day))
     finally:
         context.close()
 
