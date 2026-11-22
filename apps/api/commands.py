@@ -812,10 +812,11 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     class CheckInputsChanged(Exception):
         """Release the writer before resolving changed scheduling inputs."""
 
-    def check_context(db, actor, workspace, current_data):
+    def check_context(db, actor, workspace, current_data, *, revisions_changed=False):
         current = (actor.identity_id, actor.department_id, workspace.content_revision,
                    workspace.status, workspace.archived_at, current_data['fingerprint'])
-        if current != workspace_check[0]:
+        if current != workspace_check[0] or (revisions_changed and command.kind in {
+                'workspace.submit', 'workspace.approve'}):
             raise Problem(409, 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during the check; the completed check is retained here.',
                 {'current_revision': workspace.revision, 'validation': workspace_check[1],
@@ -1257,7 +1258,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
                     current_data = planning.domain_snapshot(db, workspace, mandatory_rules=submission_check is None,
                                                             current_mandatory=submission_check is not None)
-                    check_context(db, actor, workspace, current_data)
+                    check_context(db, actor, workspace, current_data, revisions_changed=True)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})
                     if command.kind == 'workspace.validate':

@@ -2,7 +2,7 @@
 
 The AST check cannot see in-place JSON mutation of ``validation`` without
 reassignment, Core/bulk UPDATE or raw SQL writing the column, or a
-``validation=`` keyword in a model constructor. Today all 15 writers are ORM
+``validation=`` keyword in a model constructor. Today all 16 writers are ORM
 attribute assignments kept by the after_insert/after_update mapper listener
 (``apps/api/models.py`` ~1055-1059 -> ``workspace_reads.store_check``).
 """
@@ -26,9 +26,9 @@ EXPECTED_WRITERS = {
     ('apps/api/services/planning.py', 'archive', 1),
     ('apps/api/services/planning.py', 'changed', 1),
     ('apps/api/services/planning.py', 'defer_complete_check', 1),
-    ('apps/api/services/planning.py', 'lifecycle', 5),
-    ('apps/api/services/planning.py', 'refresh_review_check_currency', 1),
+    ('apps/api/services/planning.py', 'lifecycle', 6),
     ('apps/api/services/planning.py', 'revalidate', 2),
+    ('apps/api/services/published_changes.py', 'submit', 1),
     ('apps/api/services/reviews.py', 'withdraw', 1),
     ('apps/api/workspace_baselines.py', 'refresh', 1),
     ('apps/worker/main.py', 'finish_job', 1),
