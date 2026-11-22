@@ -19,6 +19,7 @@ NON_INPUT_CORE_TABLES = {
     m.AuthLoginEvent.__tablename__: 'Authentication history retention is independent of scheduling inputs.',
     m.WorkspaceReadProjection.__tablename__: 'Derived read-cache upserts never write canonical inputs.',
     m.ReadProjectionWarmCursor.__tablename__: 'Derived warm-cursor and supersession done-marker progress never changes scheduling inputs.',
+    m.JobCandidateEvidence.__tablename__: 'Completed job evidence is a derived output independent of scheduling inputs.',
 }
 
 

@@ -232,7 +232,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
     const start=field(notice?'First day shown':'Effective from','date',preset?.starts_on||row?.starts_on||today(ctx),{required:true});
     const end=field(notice?'Last day shown (optional)':kind==='mentorships'?'Last day (included, optional)':'Effective until (included)','date',preset?.ends_on||row?.ends_on||'');lastDayIncluded(end.input);
     const dates=dateRange('Dates',start,end);
-    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??row?.active!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
+    const active=check(notice?'Show this announcement':'Active for future use',preset?.active??(row?.configured_active??row?.active)!==false,notice?'Turn off to hide it from everyone without deleting it.':'Inactive records stay in history but cannot be chosen for new work.');
     const reason=field('Change reason','text','',{maxlength:500,placeholder:'Optional note, e.g. new clinic from October'});
     // Records that belong to one person (mentorship, programme membership, rotation) are created for many people at
     // once: pick them all, and one record is saved for each. Editing a saved record keeps its one person.
