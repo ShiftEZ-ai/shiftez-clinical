@@ -191,6 +191,13 @@ def test_checks_name_duplicates_overlaps_warnings_and_issues(h):
     assert h.client('staff').post('/api/rules/catalogue/duties_per_week/check', json={'lines': []}).status_code == 403
 
 
+def test_a_line_with_an_empty_list_is_refused_in_plain_words(h):
+    for bad, words in (({'weekdays': []}, 'Choose at least one day'), ({'numbers': {}}, 'Give the line a number')):
+        issues = h.client('coordinator').post('/api/rules/catalogue/duties_per_week/check', json={'lines': [{**line(numbers={'max': {'value': 5}}), **bad}]}).json()['issues']
+        assert [x['message'] for x in issues] == [words], issues
+        assert 'lines.0.' in issues[0]['field']  # still the line's own issue, as the editor places it
+
+
 def test_proposals_wait_for_another_person_and_retiring_brings_back_the_version_before(h):
     w, _, _ = world(h)
     a = h.seed['people'][0]

@@ -1931,7 +1931,7 @@ export function area(label: string, value = '', rows = 3): Field<HTMLTextAreaEle
 /** Every single-choice dropdown. A native <select> holds the value (forms, tests and screen readers rely on it);
  *  clicking or typing on it opens the shared searchable picker (see picker.ts). */
 export function select(label: string, choices: Choice[], value = '', required = true, emptyLabel = 'Not specified'): Field<HTMLSelectElement> {
-  watchErrors();
+  watchErrors();choices=distinct(choices);
   const id=`field-${++fieldSequence}`,input=el('select',{id,name:label,required});
   if(!required&&!choices.some(c=>c.value===''))input.append(el('option',{value:''},emptyLabel));
   // Required with nothing chosen: a "Choose…" placeholder, so an untouched form cannot quietly save the first option.
@@ -1993,8 +1993,27 @@ export type Choice={value:string;label:string;group?:string;hint?:string;keyword
   /** An icon before the label (a relative value's clock). */glyph?:IconName;
   /** A line above this one in the list (Is empty after the type's own operators). */divider?:boolean;
   /** Multiple choice: this value stands alone (a relative "Me"): choosing it clears the others and another clears it. */exclusive?:boolean};
+/** Choices that read alike told apart (two people with the same name), for every field and picker: each repeated
+ *  label gains what differs between them (their hint, such as a short code, else their group, such as a rank, else
+ *  their place in the order by value), and the repeats take that one stable order by value. Unique labels are unchanged
+ *  (the same list comes back), so applying it again changes nothing. */
+export function distinct(choices:Choice[]):Choice[]{
+  const same=new Map<string,Choice[]>();
+  for(const c of choices)if(c.value!==''){const k=c.label.trim().toLocaleLowerCase();same.set(k,[...(same.get(k)||[]),c]);}
+  const repeats=[...same.values()].filter(xs=>xs.length>1);if(!repeats.length)return choices;
+  const next=new Map<Choice,Choice>();
+  for(const xs of repeats){
+    const ordered=[...xs].sort((a,b)=>a.value<b.value?-1:a.value>b.value?1:0);
+    const tells=(f:(c:Choice)=>string|undefined)=>xs.every(c=>f(c))&&new Set(xs.map(f)).size===xs.length;
+    const by=tells(c=>c.hint)?'hint':tells(c=>c.group)?'group':'';
+    // A hint moved into the label is not said twice beside it.
+    xs.forEach((c,i)=>{const o=ordered[i];next.set(c,{...o,label:`${o.label} · ${by==='hint'?o.hint:by==='group'?o.group:i+1}`,...(by==='hint'?{hint:undefined}:{})});});
+  }
+  return choices.map(c=>next.get(c)||c);
+}
 /** Every multi-choice field. Up to 7 options show inline; longer lists become one compact picker. */
 export function multi(label: string, choices: Choice[], values: string[]=[], emptyText='None selected'): {wrap:HTMLElement; values:()=>string[]; labels:()=>string[]} {
+  choices=distinct(choices);
   if(choices.length>LONG_LIST){const p=multiPick(label,choices,values,undefined,emptyText);return {wrap:el('div',{class:'pick-field'},el('span',{class:'pick-label'},label),p.wrap),values:p.values,labels:p.labels};}
   // A choice that can't be taken is shown disabled with why (its hint), never left out (maintenance).
   const checks=choices.map(c=>{const field=check(c.label,values.includes(c.value)&&!c.disabled,c.disabled?c.hint||'':'');field.input.disabled=!!c.disabled;return {value:c.value,label:c.label,field};});
@@ -2008,7 +2027,7 @@ export function multi(label: string, choices: Choice[], values: string[]=[], emp
  *  unsaved-changes guard and tests read it like any other field; the button carries the whole list as its name. */
 export function multiPick(label:string,choices:Choice[],values:string[]=[],onChange?:(values:string[])=>void,emptyText='None selected',creatable=false,
   /** Below the list each time it opens ("5 inactive clinics not shown · Show"). */extra?:()=>HTMLElement|null){
-  const chosen=new Set(values);
+  choices=distinct(choices);const chosen=new Set(values);
   const trigger=el('button',{type:'button',class:'pick-button','aria-haspopup':'dialog','aria-expanded':'false'}) as HTMLButtonElement;
   // The trigger's name lists every value, so its "+N" only shows (the one "+N", aria-hidden).
   const box=el('span',{class:'pick-values'}),more=overflowMore(0,label,{as:'hidden',cls:'rp all pick-more'});

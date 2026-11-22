@@ -20,7 +20,7 @@ import {openPalette,compactSearch,type PaletteItem} from './palette.js';
 import {exportDialog,type ExportSource} from './schedule_export.js';
 import {scheduleGrid} from './schedule_grid.js';
 import {DIMENSIONS,TIME_AXES,isDim,personDim,dimOf,type Dim,type Column as GridColumn} from './schedule_dimensions.js';
-import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
+import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
 import {calendarPeriod,addDays,filterShifts,isClosed,closureText,absentFrom,grantOverlap,membershipCovers,LAYER_DEFAULTS,savedLayers,type PlanRange} from './planner_logic.js';
 import {normalSearch,recordMatcher,fieldMatcher,searchParam,serverCapability,type SearchOptions} from './search.js';
 /** The Schedule's session search options (search.ts), saved with the planner view (search_options). */
@@ -1070,7 +1070,9 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
   // An outage is declared only when the pulse fails too (LABEL-FE: one endpoint refusing is not the server down), and
   // after it only what failed is read again (a page that did not load or could not refresh), never in a loop.
   if(now==='ok'&&wasDown&&me){wasDown=false;showConnection(true);if(refreshFailed||pageFailed)void refresh(true);return;}
-  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},()=>{wasDown=true;}).finally(()=>{probing=false;});}
+  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},e=>{wasDown=true;
+    // Confirmed down: rows on screen say at once that they could not be refreshed (not only the footer), and are read again when it is back.
+    if(!sessionChanged(e)){refreshFailed=true;showConnection(false,e);}}).finally(()=>{probing=false;});}
   paintConnection();});
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
@@ -1530,8 +1532,9 @@ async function refreshOnce(stale=()=>false){
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
     foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
-    // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
-    if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
+    // A page showing data carries the stale banner, a page that did not load its own Retry; with nothing on screen, a
+    // message says the refresh failed.
+    if(!pageFailed&&!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
 }
 /** Signing in and reloading take the same path: no splash. Once the account is known the app frame (sidebar, top bar
  *  with the person's name, footer) appears at once with the page as a skeleton; the sign-in card fades out over it. */
@@ -1556,13 +1559,13 @@ async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
   // stuck, and a late answer to an older start is dropped. The older start's account read is aborted, so even its late
   // 401 cannot report the session as ended (api.ts drops an aborted read's answer before the session-expired event).
-  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();
+  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();let framed=false;
   try{if(!card)await rotateIfDue();
     // SW3-C-P01: after /api/me confirms the viewer may read leave types, start that read beside the catalogues. An
     // inactive staff account gets no forbidden background request; the account response is the permission boundary.
     const account=await request<Me>('/api/me',{signal:own.signal});if(stale())return;me=account;const leave=leaveTypesRead(account);rememberAccount(me.identity_id,me.display_name,me.account?.username);applyDisplay();readRoute('home');catalogues={people:[]};
     if(stepOf()===null)history.replaceState({step:0},'');shownStep=stepOf()!;
-    shell();document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
+    shell();framed=true;document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
     // A page cached from an earlier release talks to a newer server: say so (About Rota shows the same).
     if(me.release&&me.release!==WEB_RELEASE)newVersion();
     // The live baseline is read before the page: a change after it moves the next pulse (one refresh), one before it is
@@ -1580,7 +1583,13 @@ async function boot(card?:HTMLElement|null){
     await renderPage();if(alert!==undefined){if(alert)openNoteTarget(alert as Row);else navigate('inbox');}
     if(justUpdated())notify('Updated to the latest version.','success');  // the silent reload of maintenance landed
     void reconcile();}
-  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else bootFailure(e,()=>void boot(),true);}
+  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else startFailed(e,framed);}
+}
+/** Signed in with the frame drawn, a page whose lists did not load says only that, in the page with Retry (as a page
+ *  that fails later does), never that the app can't be reached; the Schedule keeps the start-up screen's words. */
+function startFailed(e:unknown,framed:boolean){
+  if(!framed||view==='schedule'){bootFailure(e,()=>void boot(),true);return;}
+  pageFailed=true;document.querySelector('#main')?.replaceChildren(el('div',{},readFailed(failedPageName(),e,()=>void boot())));
 }
 /** The one start-up failure screen (signed in or out, N-12): what happened, what staff do meanwhile, Retry, and Sign out
  *  for a signed-in account that may be the problem. */
@@ -2387,7 +2396,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(!routeShift&&shiftLink&&draftData&&!partial(draftData)&&String(draftData.workspace.id)===shiftLink.rota){const s=draftData.shifts.find(x=>String(x.id)===shiftLink!.id);
     if(!s||toLocal(s.start,zoneNow).slice(0,10)!==shiftLink.day)routeShift=shiftLink.id;}
   if(routeShift&&draftData){const s=draftData.shifts.find(x=>String(x.id)===routeShift);
-    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(planDay&&day!==planDay)notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
+    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(linkMoved(planDay,day,ws,routeQuery.get('panel')!=='session'))notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
     else{notify(SESSION_REMOVED,'warning');routeShift='';shiftLink=null;routeQuery.delete('shift');routeQuery.delete('panel');}}
   // F4 (maintenance): an amendment opens on the week of its first change (review_week_start), not on its first day.
   const changedWeek=String((draftData as {change_diff?:{review_week_start?:string|null}|null}|null)?.change_diff?.review_week_start||'');
@@ -7084,8 +7093,10 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   if(fixed)return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?changed.nodes:[fixed.nodes[0]]),...fixed.nodes.slice(1),breaks,basicFact,clash,
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);}):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
+  // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
   return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
-    basicFact,resultMetrics(s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7807,7 +7818,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // (The live view's finish card says it instead, when the run was shown on this schedule.)
     if(wasRunning&&!liveRunning&&(document.hidden||target.hidden&&!st().live))notify(`Auto-schedule finished for ${w.name}. Open Auto-schedule to review it.`,'info');
     if(liveRunning){st().live=liveRunning.id;const hooks=liveHooks(data);void ours(liveView()).then(m=>m.liveRun(liveRunning.id,hooks).update(liveRunning));}
-    else if(!running)finishShown();
+    // #1160: the run's own end ends its footer strip; a check beside it (or one a live read's kept list still shows
+    // running) never holds it on its last step.
+    else finishShown();
     wasRunning=liveRunning?.id||'';
     // A run shown live has its progress in the footer: no second "working" line over the schedule.
     // D76: only a run makes the panel busy; a check runs beside it (the server allows one run per draft, any checks).

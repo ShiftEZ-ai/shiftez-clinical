@@ -1099,14 +1099,17 @@ def diagnostic_ci(selection, source_sha, env=None):
 
 
 def resolve_base(base):
-    """A bundle or plain clone may lack origin/dev; the local dev branch is the same base."""
+    """A bundle or plain clone may lack origin/dev; the local dev branch, or main once the default branch is
+    renamed, is the same base."""
     exists = lambda ref: subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"], cwd=ROOT,
                                         capture_output=True).returncode == 0
     if exists(base):
         return base
-    if base == "origin/dev" and exists("dev"):
-        print("Base origin/dev not found; using local dev", file=sys.stderr)
-        return "dev"
+    # shortcut: drop dev from this list and default --base to origin/main after the rename.
+    for fallback in ("dev", "origin/main", "main") if base == "origin/dev" else ():
+        if exists(fallback):
+            print(f"Base origin/dev not found; using {fallback}", file=sys.stderr)
+            return fallback
     raise SystemExit(f"Base {base} not found in this clone: fetch it, or pass --base <ref> (or --files <paths>)")
 
 
