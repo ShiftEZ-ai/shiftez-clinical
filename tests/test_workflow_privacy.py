@@ -22,7 +22,7 @@ class WorkflowPrivacyTests(unittest.TestCase):
         self.assertEqual(set(guard['on']),{'pull_request','merge_group'})
         self.assertEqual(guard['permissions'],{'contents':'read'})
         checkout=next(step['with'] for step in guard['jobs']['policy']['steps'] if step.get('uses','').startswith('actions/checkout@'))
-        self.assertEqual(checkout['ref'],'refs/heads/dev')
+        self.assertEqual(checkout['ref'],'refs/heads/${{ github.event.repository.default_branch }}')
         self.assertEqual(checkout['persist-credentials'],'false')
 
     def test_all_workflows_match_privacy_policy(self):
@@ -134,6 +134,52 @@ class WorkflowPrivacyTests(unittest.TestCase):
         for value in ("gh api statuses -f target_url=https://example.invalid", "gh api deployments/statuses --input body.json # environment_url",
                       'body={"environment_url":"https://example.invalid"}'):
             with self.subTest(value=value), self.assertRaises(ValueError): workflow_privacy.check(value)
+
+
+class DefaultBranchTests(unittest.TestCase):
+    REPO = Path(__file__).resolve().parents[1]
+    TRIGGER = ["    branches:", "    # shortcut: dev is removed after the default branch is renamed to main.",
+               "    - dev", "    - main"]
+
+    def test_no_workflow_or_trusted_script_hard_codes_the_integration_branch(self):
+        paths = [*sorted((self.REPO / ".github/workflows").glob("*.y*ml")), *sorted((self.REPO / ".github/scripts").glob("*.py")),
+                 *sorted((self.REPO / "ci").glob("*.py")), self.REPO / "scripts/affected_tests.py"]
+        self.assertGreater(len(paths), 10)
+        offenders, triggers = [], 0
+        for path in paths:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines):
+                where = path.relative_to(self.REPO).as_posix() + ":" + str(number + 1)
+                if "refs/heads/dev" in line or "branch=dev" in line or "queue/dev/" in line:
+                    offenders.append(where)
+                if line.strip() == "- dev":
+                    triggers += 1
+                    if lines[number - 2:number + 2] != self.TRIGGER:
+                        offenders.append(where)
+        self.assertEqual(offenders, [])
+        self.assertEqual(triggers, 3)
+        for name in ("ci.yml", "dependency-graph.yml", "image.yml"):
+            doc = yaml.load((self.REPO / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
+            self.assertEqual(doc["on"]["push"]["branches"], ["dev", "main"])
+
+    def test_default_branch_image_keeps_the_dev_tag_names(self):
+        import os, shutil, subprocess
+        doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
+        script = next(step["run"] for step in doc["jobs"]["publish"]["steps"] if step.get("id") == "push")
+        block = script[script.index("case "):script.index("esac") + 4]
+        bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
+        commit = "0123456789ab" + "c" * 28
+        for default in ("dev", "main", ""):
+            other = "main" if default == "dev" else "dev"
+            for ref_type, ref_name, expected in (
+                    ("branch", default, "--tag img:dev --tag img:dev-0123456789ab" if default else None),
+                    ("tag", "v1.2.3", "--tag img:v1.2.3"), ("branch", other, None), ("branch", "feature", None)):
+                with self.subTest(default=default, ref=ref_type + "/" + ref_name):
+                    env = {**os.environ, "REF_TYPE": ref_type, "REF_NAME": ref_name, "COMMIT": commit,
+                           "DEFAULT_BRANCH": default}
+                    result = subprocess.run([bash, "-c", 'set -euo pipefail; image=img\n' + block + '\necho "${tags[@]}"'],
+                                            env=env, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.stdout.strip() if result.returncode == 0 else None, expected, result.stderr)
 
 
 if __name__ == "__main__":

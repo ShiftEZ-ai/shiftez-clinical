@@ -679,12 +679,14 @@ def cancel_job(db, actor, command):
 
 
 def apply_generation(db, actor, command):
+    from .generation_reconciliation import GenerationInputsChanged, load_apply_job, proposal_guard_matches
+
     value = s.GenerationApply.model_validate(command.payload)
     plan = db.info.get('_generation_plan')
     require(plan is not None, 'RECONCILIATION_REQUIRED', 'Prepare this proposal before entering the writer transaction', 409)
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     workspace = draft(db, actor, value.workspace_id, workspace.revision)
-    job = scoped(db, m.Job, value.job_id, actor)
+    job, version = load_apply_job(db, actor, value.job_id)
     require(job.workspace_id == workspace.id and job.kind == "generation" and job.status == "succeeded",
             "JOB_STATE", "Select a completed generation job for this workspace", 409)
     require(plan['actor_id'] == actor.identity_id and plan['department_id'] == actor.department_id
@@ -693,7 +695,6 @@ def apply_generation(db, actor, command):
     require_application_toolchain(job)
     require_latest_run(db, job)
     before = workspace_content(db, workspace)
-    from .generation_reconciliation import GenerationInputsChanged
     from apps.api.snapshots import preparation_stamp
     if plan.get('writer_current_inputs'):
         # Repeated changes retain the existing current-input reply instead of introducing a new error.
@@ -705,7 +706,7 @@ def apply_generation(db, actor, command):
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
                  and currency_match(plan['currency_hint'], currency_hint(db, workspace))
-                 and snapshot_hash({k: v for k, v in (job.result or {}).items() if k != 'reconciliation'}) == plan['result_hash'])
+                 and proposal_guard_matches(job.result or {}, version, plan['result_guard']))
     if not unchanged or not (receipt['addition_indexes'] or receipt['removal_indexes']):
         if not unchanged:
             from apps.api.input_changes import changed_facts
