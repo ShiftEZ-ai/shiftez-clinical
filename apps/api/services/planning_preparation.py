@@ -36,6 +36,7 @@ def bind(db, plan, *, replay=False):
                                        'input_tokens': plan.setdefault('input_tokens', {}),
                                        'validation_baselines': plan.setdefault('validation_baselines', {}),
                                        'prepared_snapshots': plan.setdefault('prepared_snapshots', {}),
+                                       'undo_preimages': plan.setdefault('undo_preimages', {}),
                                        'summary_cache': plan.setdefault('summary_cache', {}),
                                        'next_snapshot': 0,
                                        'pending_checks': [], 'next_id': 0, 'next_check': 0, 'replay': replay}
@@ -54,6 +55,30 @@ def restore_replay(plan):
                                for index, (_, result) in enumerate(plan['checks'])}
 
 
+def undo_preimage(db, workspace, acquire):
+    """Read original content once for a staged edit of an unchanged draft."""
+    from apps.api.serialization import record
+    from apps.api.snapshots import take_precondition
+    from .planning import validation_stamp
+    current = take_precondition(db, workspace).get('content')
+    if current is not None and current['workspace']['revision'] != workspace.revision:
+        current = None
+    state = db.info.get('_planning_preparation')
+    if not state or state.get('kind') != 'shift.update':
+        return current if current is not None else acquire(db, workspace)
+    # The preimage has persisted rows; snapshot replay checks the full scheduling currency separately.
+    stamp = validation_stamp(db, workspace)
+    held = state['undo_preimages'].get(workspace.id)
+    if (current is None and held is not None and held[0] == stamp
+            and held[1]['workspace'] == record(workspace, exclude=('validation', 'submitted_fingerprint'))):
+        current = held[1]
+    current = current if current is not None else acquire(db, workspace)
+    if not state['replay']:
+        state['undo_preimages'][workspace.id] = stamp, current
+        state['edit_reply_before'] = current, workspace.validation or {}
+    return current
+
+
 def command_compute(db, kind, data, compute, *, options=None, final=False, input_token=None, defer=False,
                     refresh_on_replay=False):
     state = db.info.get('_planning_preparation')
@@ -70,7 +95,11 @@ def command_compute(db, kind, data, compute, *, options=None, final=False, input
         if defer:
             state['pending_checks'].append((key, compute))
             return None
-        raise ComputePreparation(key, compute, final=final, pending=state['pending_checks'])
+        reply_before = state.get('edit_reply_before')
+        edit_reply_inputs = ((*reply_before, data) if reply_before and final and kind == 'rota_check'
+                             and not data['workspace'].get('base_publication_id') else None)
+        raise ComputePreparation(key, compute, final=final, pending=state['pending_checks'],
+                                 edit_reply_inputs=edit_reply_inputs)
     current = index < len(state['checks']) and key == state['checks'][index][0]
     if state['replay'] and refresh_on_replay and not current:
         return compute()
@@ -92,8 +121,9 @@ def command_evaluate(db, data, **kwargs):
 
 
 class ComputePreparation(Exception):
-    def __init__(self, key, compute, *, final=False, pending=()):
+    def __init__(self, key, compute, *, final=False, pending=(), edit_reply_inputs=None):
         self.key, self.compute, self.final, self.pending = key, compute, final, pending
+        self.edit_reply_inputs = edit_reply_inputs
 
 
 class RollbackPreparation(Exception):

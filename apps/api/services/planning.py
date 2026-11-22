@@ -725,60 +725,104 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
             record_group_changes(db, workspace, change, before, group_data)
     else:
         record_group_changes(db, workspace, change, before, data)
-    focus_ids = set(data['focus_ids'])
-    previous_ids = {row['id'] for row in before['shifts']}
-    # Compare both sides with the same derived recurrence state, without changing the stored Undo snapshot.
-    old_data = with_series_state({**data,
-        'shifts': before['shifts'] + [row for row in data['shifts'] if row['id'] not in focus_ids],
-        'focus_ids': previous_ids})
-    was = {row['id']: row for row in old_data['shifts'][:len(before['shifts'])]}
-    if db.info.get('_planner_preview'):
-        # Impact comparisons consume content only; the complete check still supplies actionable findings.
-        from .series_conflicts import finding_actions
-        return {'workspace': record(workspace, exclude=('validation',)),
-                'validation': finding_actions(db, actor, result),
-                'shifts': [row for row in now if was.get(row['id']) != row],
-                'removed_shift_ids': sorted(set(was) - {row['id'] for row in now})}
-    from packages.domain.overlap import per_session_overlaps
     from .series_conflicts import session_actions, finding_actions
-    overlap_focus = data.get('_changed_overlap_focus')
-    overlap_data = {**data, 'focus_ids': overlap_focus} if overlap_focus is not None else data
-    old_overlap_data = {**old_data, 'focus_ids': overlap_focus} if overlap_focus is not None else old_data
-    if '_command_overlap_flags' in db.info:
-        flags, old_flags = db.info.pop('_command_overlap_flags')
-    elif '_command_overlap_flags' in data:
-        flags, old_flags = data['_command_overlap_flags']
+    overlaps = None if db.info.get('_planner_preview') else db.info.pop('_command_overlap_flags', None)
+    prepared_reply = (preparation or {}).get('edit_reply')
+    # A background check can replace the delta's previous evidence without advancing the draft revision.
+    if (prepared_reply is not None and delta_scope is None and overlaps == prepared_reply['overlaps']
+            and before == prepared_reply['before'] and now == prepared_reply['now']
+            and current_fingerprint == prepared_reply['fingerprint']
+            and _edit_evidence(previous_validation) == prepared_reply['previous']
+            and _edit_evidence(result) == prepared_reply['current']):
+        raw_rows, removed = prepared_reply['changed'], prepared_reply['removed']
     else:
-        def compute_overlap_flags():
-            current = per_session_overlaps(overlap_data, conflicts=overlap_witness.get('conflicts'), focus_ids=focus_ids)
-            previous = per_session_overlaps(old_overlap_data, focus_ids=previous_ids) if previous_ids else {}
-            return current, previous
-        flags, old_flags = command_compute(db, 'overlap_flags', overlap_data, compute_overlap_flags,
-            options={'focus_ids': sorted(focus_ids), 'previous_focus_ids': sorted(previous_ids)})
-    before_rows = [{**row, 'double_booking_conflicts': old_flags[row['id']]} if old_flags.get(row['id']) else row
-                   for row in was.values()]
-    now = [{**row, 'double_booking_conflicts': flags.get(row['id'], [])}
-           if flags.get(row['id']) or old_flags.get(row['id']) else row for row in now]
-    was = {r['id']: r for r in before_rows}
-    changed_rows = session_actions(db, actor, [row for row in now if was.get(row['id']) != row], disclose=False)
+        prepared_reply = None
+        focus_ids = set(data['focus_ids'])
+        old_data, was = _edit_before_rows(data, before, focus_ids)
+        if db.info.get('_planner_preview'):
+            # Impact comparisons consume content only; the complete check still supplies actionable findings.
+            return {'workspace': record(workspace, exclude=('validation',)),
+                    'validation': finding_actions(db, actor, result),
+                    'shifts': [row for row in now if was.get(row['id']) != row],
+                    'removed_shift_ids': sorted(set(was) - {row['id'] for row in now})}
+        if overlaps is None:
+            overlaps = data.get('_command_overlap_flags')
+        if overlaps is None:
+            from packages.domain.overlap import per_session_overlaps
+            previous_ids = old_data['focus_ids']
+            overlap_focus = data.get('_changed_overlap_focus')
+            overlap_data = {**data, 'focus_ids': overlap_focus} if overlap_focus is not None else data
+            old_overlap_data = {**old_data, 'focus_ids': overlap_focus} if overlap_focus is not None else old_data
+            def compute_overlap_flags():
+                current = per_session_overlaps(overlap_data, conflicts=overlap_witness.get('conflicts'), focus_ids=focus_ids)
+                previous = per_session_overlaps(old_overlap_data, focus_ids=previous_ids) if previous_ids else {}
+                return current, previous
+            overlaps = command_compute(db, 'overlap_flags', overlap_data, compute_overlap_flags,
+                options={'focus_ids': sorted(focus_ids), 'previous_focus_ids': sorted(previous_ids)})
+        raw_rows, removed = _edit_session_rows(was, now, *overlaps)
+    changed_rows = session_actions(db, actor, raw_rows, disclose=False)
+    raw_findings = result['findings']
     result = finding_actions(db, actor, {**result, **({'checking': True} if pending_reply else {})})
-    delta = edit_delta(before, workspace, changed_rows, sorted(set(was) - {r['id'] for r in now}),
-                       previous_validation, result, scope=locals().get('delta_scope'),
-                       current_fingerprint=current_fingerprint,
-                       current_input_revision=current_organisation.get('input_revision'),
-                       current_availability_revision=current_organisation.get('availability_revision'))
+    if prepared_reply is not None and changed_rows == raw_rows and result['findings'] == raw_findings:
+        delta = prepared_reply['delta']
+    else:
+        delta = edit_delta(before, workspace, changed_rows, removed, previous_validation, result, scope=delta_scope,
+                           current_fingerprint=current_fingerprint,
+                           current_input_revision=current_organisation.get('input_revision'),
+                           current_availability_revision=current_organisation.get('availability_revision'))
     workspace_record = record(workspace, exclude=("validation",))
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
-    from packages.domain.rota_summary import rota_summary
-    summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [], compact=True,
-                           cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
+    summary = None
+    if prepared_reply is not None and result['findings'] == raw_findings:
+        from .workspace_reads import replay_check_summary
+        summary = replay_check_summary(workspace, workspace.validation, preparation.get('stored_check_summary'))
+    if summary is None:
+        from packages.domain.rota_summary import rota_summary
+        summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [], compact=True,
+                               cache=(preparation or db.info.get('_generation_plan') or {}).get('summary_cache'))
     return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result, summary=summary),
-            "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
+            "shifts": changed_rows, "removed_shift_ids": removed,
             'fix_list_delta': result['fix_list_delta'],
             'fix_list': rota_fix_list(workspace, validation=result, summary=summary),
             "issues": issue_changes(issues_before, {issue_key(f): f for f in result['findings']}),
             "delta": delta}
+
+
+def _edit_before_rows(data, before, focus_ids):
+    # Compare both sides with the same derived recurrence state, without changing the stored Undo snapshot.
+    old_data = with_series_state({**data,
+        'shifts': before['shifts'] + [row for row in data['shifts'] if row['id'] not in focus_ids],
+        'focus_ids': {row['id'] for row in before['shifts']}})
+    return old_data, {row['id']: row for row in old_data['shifts'][:len(before['shifts'])]}
+
+
+def _edit_session_rows(was, now, flags, old_flags):
+    was = {sid: {**row, 'double_booking_conflicts': old_flags[sid]} if old_flags.get(sid) else row
+           for sid, row in was.items()}
+    now = [{**row, 'double_booking_conflicts': flags.get(row['id'], [])}
+           if flags.get(row['id']) or old_flags.get(row['id']) else row for row in now]
+    return [row for row in now if was.get(row['id']) != row], sorted(was.keys() - {row['id'] for row in now})
+
+
+def _edit_evidence(check):
+    return check.get('findings'), check.get('coverage')
+
+
+def prepare_edit_reply(before, previous, data, check, overlaps):
+    """Use the verified session graph and checks to prepare the receipt's edit patch."""
+    from types import SimpleNamespace
+    focus = set(data['focus_ids'])
+    now = [row for row in data['shifts'] if row['id'] in focus]
+    _, was = _edit_before_rows(data, before, focus)
+    changed_rows, removed = _edit_session_rows(was, now, *overlaps)
+    organisation = data['organisation']
+    delta = edit_delta(before, SimpleNamespace(revision=data['workspace']['revision']), changed_rows, removed, previous,
+                       check, current_fingerprint=data['fingerprint'], current_input_revision=organisation.get('input_revision'),
+                       current_availability_revision=organisation.get('availability_revision'))
+    return dict(before=before, now=now, overlaps=overlaps, fingerprint=data['fingerprint'],
+                previous=_edit_evidence(previous), current=_edit_evidence(check), changed=changed_rows,
+                removed=removed, delta=delta)
 
 
 def rota_fix_list(workspace, *, validation=None, summary=None):
@@ -1873,8 +1917,10 @@ def save_shift(db, actor, command, update=False):
     if not update and 'session_creation' in db.info.get('bulk', {}):
         from .bulk import create_session
         return create_session(db, actor, workspace, value)
-    before = snapshots.take_precondition(db, workspace).get('content') if update else None
-    if before is None or before['workspace']['revision'] != workspace.revision:
+    if update:
+        from .planning_preparation import undo_preimage
+        before = undo_preimage(db, workspace, workspace_content)
+    else:
         before = workspace_content(db, workspace)
     existing = db.get(m.Shift, value.shift_id) if update else None
     if update:

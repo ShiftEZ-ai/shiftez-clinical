@@ -1006,6 +1006,13 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     database._remaining(preparation_deadline)
                     computed = compute()
                     if command.kind == 'shift.update':
+                        if compute is pending.compute and pending.edit_reply_inputs is not None:
+                            from .services.workspace_reads import prepare_check_summary
+                            before, previous, data = pending.edit_reply_inputs
+                            check, flags = computed
+                            planning_plan['stored_check_summary'] = prepare_check_summary(
+                                data['workspace'], check, planning_plan['summary_cache'])
+                            planning_plan['edit_reply'] = planning.prepare_edit_reply(before, previous, data, check, flags)
                         computed = pickle.dumps(computed, protocol=pickle.HIGHEST_PROTOCOL)
                     planning_plan['checks'].append((key, computed))
                     database._remaining(preparation_deadline)

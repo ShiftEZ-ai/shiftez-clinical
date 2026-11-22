@@ -4,9 +4,10 @@ from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.orm import object_session
 
 from apps.api import snapshots
-from apps.api.services import planning
+from apps.api.services import planning, workspace_reads
 from packages.contracts.schemas import ParticipantInput
 from tests.test_backend_scale import post, scale_department
 from tests.test_generation_apply_scale import completed_proposal
@@ -40,7 +41,8 @@ def test_scale_preparation_acquires_inputs_outside_writer_once(harness, monkeypa
         job = completed_proposal(h, workspace, additions)
     h.client('coordinator')
     writer_evaluations.clear()
-    acquired, evaluations, sql, writer_dml = [], [], Counter(), Counter()
+    acquired, evaluations, projected, preimages, deltas = [], [], [], [], []
+    sql, writer_dml = Counter(), Counter()
     original_snapshot, original_evaluate = snapshots._domain_snapshot, planning.evaluate
 
     def snapshot(db, *args, **kwargs):
@@ -57,8 +59,28 @@ def test_scale_preparation_acquires_inputs_outside_writer_once(harness, monkeypa
         if connection.info.get('rota_write') and verb in {'INSERT', 'UPDATE', 'DELETE'}:
             writer_dml[verb, statement.split()[2 if verb == 'INSERT' else 1]] += 1
 
+    check_projection = workspace_reads.check_projection
+    def project(row, check, **kwargs):
+        db = object_session(row)
+        if db is not None and db.connection().info.get('rota_write'):
+            projected.append(kwargs.get('summary') is not None)
+        return check_projection(row, check, **kwargs)
+
+    workspace_content, edit_delta = planning.workspace_content, planning.edit_delta
+    def read_preimage(db, row):
+        preimages.append(bool(db.connection().info.get('rota_write')))
+        return workspace_content(db, row)
+
+    def build_delta(before, row, *args, **kwargs):
+        db = object_session(row) if hasattr(row, '_sa_instance_state') else None
+        deltas.append(bool(db is not None and db.connection().info.get('rota_write')))
+        return edit_delta(before, row, *args, **kwargs)
+
     monkeypatch.setattr(snapshots, '_domain_snapshot', snapshot)
     monkeypatch.setattr(planning, 'evaluate', evaluate)
+    monkeypatch.setattr(planning, 'workspace_content', read_preimage)
+    monkeypatch.setattr(planning, 'edit_delta', build_delta)
+    monkeypatch.setattr(workspace_reads, 'check_projection', project)
     event.listen(h.app.state.engine, 'before_cursor_execute', statement)
     try:
         if action == 'edit':
@@ -71,13 +93,18 @@ def test_scale_preparation_acquires_inputs_outside_writer_once(harness, monkeypa
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', statement)
     request.node.user_properties.append(('work', str({'snapshots': acquired, 'sql': dict(sql),
-        'writer_dml': dict(writer_dml), 'writer_evaluations': writer_evaluations})))
+        'writer_dml': dict(writer_dml), 'writer_evaluations': writer_evaluations,
+        'prepared_writer_projections': projected, 'preimages': preimages, 'deltas': deltas})))
     assert result['validation']['valid']
     assert not any(acquired), 'Snapshot acquisition must finish before the global writer'
     assert len(acquired) <= (3 if action == 'edit' else 1), acquired
     assert writer_dml['INSERT', 'assignments'] <= (3 if action == 'apply' else 1), writer_dml
     assert evaluations
     assert writer_evaluations and not any(writer_evaluations), 'Evaluation must finish before the global writer'
+    if action == 'edit':
+        assert projected == [True], 'The stored check must use the summary prepared before the global writer'
+        assert preimages == [False], 'Acquire the Undo preimage once before taking the global writer'
+        assert deltas == [False], 'Build the receipt edit delta once before taking the global writer'
     if action == 'undo':
         restored = h.snapshot(result['workspace'])
         assert restored['shifts'] == data['shifts']
@@ -315,7 +342,10 @@ def test_repeated_apply_input_changes_keep_the_existing_retained_reply(harness, 
 
 @pytest.mark.parametrize('action', ['edit', 'apply'])
 def test_retained_check_time_uses_the_final_writer_clock(harness, monkeypatch, action):
+    from apps.api import models as m
+    from apps.api.db import transaction
     from apps.api.services import jobs
+    from apps.api.services.read_projections import CANONICAL_AUDIENCE
     from tests.clock_support import freeze_clock
     h = harness
     at = freeze_clock(monkeypatch)
@@ -340,3 +370,9 @@ def test_retained_check_time_uses_the_final_writer_clock(harness, monkeypatch, a
                       'reason': 'Keep the existing check time'}, revision=workspace['revision'])
     assert result['validation']['evaluated_at'] == clock[0].isoformat()
     assert clock[0] == at + timedelta(minutes=1)
+    if action == 'edit':
+        with transaction(h.app.state.engine) as db:
+            row = db.get(m.Workspace, workspace['id'])
+            stored = db.get(m.WorkspaceReadProjection, (row.id, CANONICAL_AUDIENCE, 'stored_check'))
+            assert stored.stamp == workspace_reads.check_stamp(db, row)
+            assert stored.value == workspace_reads.check_projection(row, row.validation)

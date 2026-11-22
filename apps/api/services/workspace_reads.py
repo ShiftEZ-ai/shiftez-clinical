@@ -165,19 +165,47 @@ def publication_coverage_etag(db, actor, publication, workspace, organisation, d
                          organisation.availability_revision)
 
 
-def check_projection(workspace, check):
+def check_projection(workspace, check, *, summary=None):
     from .acknowledged_gaps import review_items
     from apps.api.serialization import CHECK_SUMMARY
     manifest = (check or {}).get('input_manifest') or {}
+    current = {'causes': []}
+    if any(row.get('cause_id') for row in workspace.accepted_issues or []):
+        current = summary['fix_list'] if summary is not None else None
     return {'checked': bool(check),
         'validation': {key: check[key] for key in CHECK_SUMMARY if key in (check or {})},
         'review_items': review_items(SimpleNamespace(id=workspace.id, validation=check,
             accepted_issues=workspace.accepted_issues, rule_adjustments=workspace.rule_adjustments,
-            target_overrides=workspace.target_overrides), current=None if any(
-                row.get('cause_id') for row in workspace.accepted_issues or []) else {'causes': []}),
+            target_overrides=workspace.target_overrides), current=current),
         **{key: (check or {}).get(key) for key in ('fingerprint', 'evaluated_at')},
         'input_manifest': {key: manifest[key] for key in ('token', 'dirty_hint', 'components') if key in manifest},
-        'health': health(SimpleNamespace(validation=check, accepted_issues=workspace.accepted_issues))}
+        'health': health(SimpleNamespace(validation=check, accepted_issues=workspace.accepted_issues), summary=summary)}
+
+
+_CHECK_REVIEW_FIELDS = ('id', 'revision', 'accepted_issues', 'rule_adjustments', 'target_overrides')
+_CHECK_TIME_FIELDS = {'evaluated_at', 'fix_list_state', 'fix_list_delta'}
+
+
+def prepare_check_summary(workspace, check, cache):
+    from packages.domain.rota_summary import rota_summary
+    review = tuple(workspace[key] for key in _CHECK_REVIEW_FIELDS)
+    summary = rota_summary(check, accepted_issues=workspace['accepted_issues'] or [], compact=True, cache=cache)
+    return review, check, summary
+
+
+def replay_check_summary(workspace, check, prepared):
+    if prepared is None:
+        return None
+    review, prepared_check, summary = prepared
+    fix_list_summary = (check.get('fix_list_delta') or {}).get('summary') if check else None
+    if (fix_list_summary is None or tuple(getattr(workspace, key) for key in _CHECK_REVIEW_FIELDS) != review
+            or (check.get('fix_list_state') or {}).get('previous_ids')
+            != (prepared_check.get('fix_list_state') or {}).get('previous_ids')
+            or {key: item for key, item in check.items() if key not in _CHECK_TIME_FIELDS}
+            != {key: item for key, item in prepared_check.items() if key not in _CHECK_TIME_FIELDS}):
+        return None
+    # The writer assigns the actual check time and refreshes the Fix list's day receipt.
+    return {**summary, 'fix_list': {**summary['fix_list'], 'summary': fix_list_summary}}
 
 
 def _stored_check_stamps(db, workspace_ids):
@@ -239,8 +267,11 @@ def store_check(_mapper, connection, workspace):
     else:
         from sqlalchemy.dialects.sqlite import insert
     C = m.WorkspaceReadProjection.__table__
+    prepared = (preparation or {}).get('stored_check_summary')
+    summary = replay_check_summary(workspace, check, prepared)
     value = dict(workspace_id=workspace.id, audience=CANONICAL_AUDIENCE, kind='stored_check',
-                 stamp=check_stamp(db, workspace, validation=check), value=check_projection(workspace, check))
+                 stamp=check_stamp(db, workspace, validation=check),
+                 value=check_projection(workspace, check, summary=summary))
     connection.execute(insert(C).values(**value).on_conflict_do_update(
         index_elements=['workspace_id', 'audience', 'kind'], set_={key: value[key] for key in ('stamp', 'value')}))
     if projection_changed:
