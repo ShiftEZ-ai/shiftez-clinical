@@ -293,7 +293,7 @@ and a desktop window narrowed below it gets the same rule at once.
     its cause and its ✓ chip goes; a ✓ chip never outlives a delta or read that lists its session again.
   - **Server fields:** a field is shown only where it replaces words or makes a choice right, never
     as an extra line.
-    - `missing` is already the line (`detail_line`: "5 shifts · each has 1 of 2 <rank>"), so it is not drawn twice.
+    - `missing` is already the line (`detail_line`: "5 sessions · each has 1 of 2 <rank>"), so it is not drawn twice.
     - `where` leads the line only when the sentence does not already name it, and it names the chips for screen
       readers.
     - `eligible_people` 0: the server's best fix is **Who can work it**, never Assign.
@@ -396,7 +396,7 @@ and a desktop window narrowed below it gets the same rule at once.
 - Ctrl/⌘ K opens the command menu from anywhere (each typed word matches a word start, in any order); `?` lists
   keyboard shortcuts.
 - A failed refresh (server error or offline) never presents saved data as current: a page showing data keeps its header,
-  toolbar and data under one banner, "Showing saved data from HH:MM. Couldn't refresh." with Retry inside it (app.ts
+  toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message) with Retry inside it (app.ts
   `showStale`); a page that showed nothing says only "This page didn't load", Retry inside the message. In a tab still
   running an older bundle than the pulse's `build`, that failure reloads once onto the new one ("Updated to the latest
   version"), or, with anything unsaved open, offers "Reload to update" instead and keeps the update bar. An
@@ -512,7 +512,7 @@ and a desktop window narrowed below it gets the same rule at once.
   person shows joining or leaving the session at once). Every draft edit, forward or Undo, applies in place from its
   reply (the sessions changed or removed, the issues that came and went, the rota's health): the Schedule reads only
   the draft again — two requests per action, no page refresh, scroll and selection kept. Long jobs (auto-schedule)
-  show a real percentage, the step list, time left and Cancel, never block, and say when a run finishes while you
+  show a real percentage, the step (in the footer's run strip), time left of the allowance and Cancel, never block, and say when a run finishes while you
   work elsewhere.
 - Auto-schedule live view (approved mockup; `autoschedule_live.ts`, `autoschedule_motion.ts`): while a
   run is shown, People and Week follow the solver's real better schedules (never simulated progress). Hybrid flies the
@@ -672,8 +672,8 @@ and a desktop window narrowed below it gets the same rule at once.
   settings › Shown properties shows, hides and moves each column. All are saved with the view (`filters` +
   `conditions`, `sort` + `then_sort`, `hidden`, `order`). On phones these popovers open as a bottom sheet.
 - Timeline layout (`timeline.ts`; approved mockup):
-  rows of dated bars behind the same toolbar (period ‹ › and Today, Search, Filter, Group, Sort, View settings, Saved
-  views). Zoom sets what is shown: Week 13 weeks by week (the department's weekend days shaded), Month 6 months by week, Quarter 9 months by
+  rows of dated bars behind the same toolbar (Saved view, period ‹ › and Today, Search, Filter, Group, Sort, View
+  settings). Zoom sets what is shown: Week 13 weeks by week (the department's weekend days shaded), Month 6 months by week, Quarter 9 months by
   month, Year 12 months by month; Today has its own header row. Overlapping bars stack in lanes; a bar shows its name,
   its short name or only its mark as its width allows. Hues are duty-type hues only, never coral; red is only a conflict
   (dashed zone with an alert and words on the row's badge strip), "needs approval" amber with a clock, a waiting change a
@@ -793,7 +793,7 @@ and a desktop window narrowed below it gets the same rule at once.
   - **Cell bar** (`.cellbar`): "<record> · <field>", the value in mono (cut with an ellipsis, its words in the tip) and
     the field's shared input while editing.
   - **Staged and changed cells**: staged = `--warn-soft` with a top-right corner mark and the "was" value struck
-    through, the row's first cell a 3px warn edge; changed (after apply) = a top-left ok corner mark. Marks are shapes
+    through, the whole row taking the `--warn-soft` tint; changed (after apply) = a top-left ok corner mark. Marks are shapes
     and words (sr-only), never colour alone.
   - **Stage bar** (`.stage-bar`, sticky at the bottom, warn tones): "N changes in M rows · not saved yet", Discard…
     (armed) and "Preview N changes", which opens the shared Preview (Back to sheet).
