@@ -614,15 +614,16 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
              group=False, merge_group=False, recovered=frozenset(),
              limit=80, exceptions=frozenset(), today=None, product_errors=frozenset(),
              selected_files=None, stale_output=None, expected_replicas=2, stale_sha=None,
-             observe_stale=None, quarantine=None, release=False):
+             observe_stale=None, quarantine=None, release=False, quarantine_registry=None):
     today = today or utc_today()
     quarantined = set() if release else set(quarantine or ())
     if quarantine:
         report_quarantine(runs, quarantine, today)
-        if release:
-            blockers = sorted(node for node, row in quarantine.items() if row["blocker"])
-            if blockers:
-                raise ValueError("Release blockers remain in quarantine: " + ", ".join(blockers))
+    if release:
+        registry = (quarantine or {}) if quarantine_registry is None else quarantine_registry
+        blockers = sorted(node for node, row in registry.items() if row["blocker"])
+        if blockers:
+            raise ValueError("Release blockers remain in quarantine: " + ", ".join(blockers))
     if current is None:
         raise ValueError("Bootstrap candidate uploaded; add only ci/known-failures.json in the first PR")
     if release and quarantine:
@@ -724,7 +725,7 @@ def verify_privacy(data, matcher_path, table_path, staff_path):
 
 
 def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, nightly=False,
-         quarantine=None, release=False):
+         quarantine=None, release=False, quarantine_registry=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--reports", type=Path)
@@ -837,7 +838,8 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                      recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
                      stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]),
-                     stale_sha=plan["sha"], observe_stale=observe_stale, quarantine=quarantine, release=release)
+                     stale_sha=plan["sha"], observe_stale=observe_stale, quarantine=quarantine, release=release,
+                     quarantine_registry=quarantine_registry)
             if ctx["bootstrap"] and Path(KNOWN).read_text(encoding="utf-8") != encoded(candidate):
                 raise ValueError("Bootstrap file must exactly equal the canonical candidate bytes")
     except ValueError as error:

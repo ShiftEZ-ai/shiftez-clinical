@@ -6,6 +6,7 @@ import json
 import re
 
 QUARANTINE = "tests/quarantine.json"
+QUARANTINE_RETIRED = "tests/quarantine-retired.json"
 QUARANTINE_XFAIL_PREFIX = "QUARANTINED ("
 TEXT_FIELDS = ("nodeid", "reason", "owner", "added", "expires")
 REQUIRED_FIELDS = {*TEXT_FIELDS, "issue", "blocker"}
@@ -75,6 +76,22 @@ def decode_registry(raw, today):
             raise ValueError("future quarantine: " + node)
         found[node] = row
     return found
+
+
+def decode_retired(raw):
+    if raw is None:
+        raise ValueError("retired list is missing")
+    text = raw.decode("utf-8")
+    nodes = json.loads(text)
+    if not isinstance(nodes, list):
+        raise ValueError("retired list must be a JSON list")
+    if any(not isinstance(node, str) or not SAFE_NODE.fullmatch(node) for node in nodes):
+        raise ValueError("retired entries must be anonymous test nodeid strings")
+    if len(set(nodes)) != len(nodes):
+        raise ValueError("duplicate retired nodeid")
+    # Keep each original string token so the guard can detect changes to its spelling.
+    tokens = re.finditer(r'"(?:[^"\\]|\\.)*"', text)
+    return {node: token.group() for node, token in zip(nodes, tokens, strict=True)}
 
 
 def expired_entries(registry, today):
