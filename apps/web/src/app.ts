@@ -7076,8 +7076,10 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   if(fixed)return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?changed.nodes:[fixed.nodes[0]]),...fixed.nodes.slice(1),breaks,basicFact,clash,
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);}):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
+  // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
   return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
-    basicFact,resultMetrics(s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
+    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7799,7 +7801,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // (The live view's finish card says it instead, when the run was shown on this schedule.)
     if(wasRunning&&!liveRunning&&(document.hidden||target.hidden&&!st().live))notify(`Auto-schedule finished for ${w.name}. Open Auto-schedule to review it.`,'info');
     if(liveRunning){st().live=liveRunning.id;const hooks=liveHooks(data);void ours(liveView()).then(m=>m.liveRun(liveRunning.id,hooks).update(liveRunning));}
-    else if(!running)finishShown();
+    // #1160: the run's own end ends its footer strip; a check beside it (or one a live read's kept list still shows
+    // running) never holds it on its last step.
+    else finishShown();
     wasRunning=liveRunning?.id||'';
     // A run shown live has its progress in the footer: no second "working" line over the schedule.
     // D76: only a run makes the panel busy; a check runs beside it (the server allows one run per draft, any checks).
