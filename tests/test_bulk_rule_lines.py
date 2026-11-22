@@ -89,7 +89,8 @@ def test_first_rule_unexpected_handler_error_is_a_row_issue_and_rolls_back(h, mo
         "items": [{"payload": {"catalogue_id": "workload_limit", "catalogue_version": 2, "lines": []}}]})
     row = check["items"][0]
     assert row["result"] == "problem"
-    assert row["issues"][0]["message"] == "The rule could not be checked"
+    # Unexpected handler text stays out of row issues; the row gets the fixed message instead.
+    assert row["issues"][0]["message"] == "A value is not valid for this request"
     assert _pending(h) == []
 
 

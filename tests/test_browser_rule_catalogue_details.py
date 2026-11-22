@@ -25,6 +25,44 @@ def propose_off(h):
         'reason': 'Pause the weekly cap'})['record']
 
 
+def test_historical_advisory_safety_line_displays_as_mandatory(browser, live_server, h):
+    from .test_conversion_safety_kinds import store_level
+    from .test_rule_catalogue_api import approve, propose
+
+    flag(h)
+    applied = approve(h, propose(h, 'rest_between_duties', [
+        line(numbers={'min': {'value': 20, 'level': 'mandatory'}}),
+    ])['record'])
+    store_level(h, applied, 0, 'min')
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules/rest_between_duties')
+        badge = page.locator('#main .rc-level[data-tip="Safety rules are always mandatory"]')
+        expect(badge).to_contain_text('Mandatory')
+    finally:
+        context.close()
+
+
+def test_inherited_safety_number_displays_as_mandatory(browser, live_server, h):
+    from .test_conversion_safety_kinds import store_level
+    from .test_rule_catalogue_api import approve, propose
+
+    flag(h)
+    applied = approve(h, propose(h, 'people_per_session', [
+        line(numbers={'min': {'value': 2, 'level': 'mandatory'}}),
+        line(numbers={'target': {'value': 3, 'level': 'high'}},
+             who={'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][0]]}]}),
+    ])['record'])
+    store_level(h, applied, 0, 'min')
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules/people_per_session')
+        inherited = page.locator('#main .rule-num').filter(has=page.locator('.rc-inh', has_text='2↰'))
+        expect(inherited.locator('.rc-level[data-level="mandatory"]')).to_contain_text('Mandatory')
+    finally:
+        context.close()
+
+
 def test_the_rule_page_head_says_its_facts_once_and_a_proposal_only_what_it_changes(browser, live_server, h):
     """U-21: under the name, the family and reach (the description is the name's ⓘ; the line count is the footer's).
     U-20: a proposal that only turns the rule off says just that, with no empty table of line changes."""

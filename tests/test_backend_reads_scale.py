@@ -28,19 +28,23 @@ def test_fingerprint_reuses_issued_manifest_and_rebuilds_after_invalidation(h, m
     with transaction(h.app.state.engine, write=True) as db:
         workspace = db.get(m.Workspace, w['id'])
         current = workspace.validation['fingerprint']
-        captured = []
-        assert snapshots.read_fingerprint(db, workspace, data_out=captured) == current
+        assert snapshots.cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}) == {
+            workspace.id: current}
         assert snapshots.fingerprints(db, [workspace]) == {workspace.id: current}
-        assert calls == captured == []
+        assert calls == []
+        assert workspace.id not in db.info.get('read_snapshots', {})
         if changed == 'toolchain':
             limit = snapshots.quota_policy_limit()
             monkeypatch.setattr(snapshots, 'quota_policy_limit', lambda: limit + 1)
         else:
             row = workspace if changed == 'content_revision' else db.get(m.Organisation, h.seed['organisation_id'])
             setattr(row, changed, getattr(row, changed) + 1)
-        rebuilt = snapshots.read_fingerprint(db, workspace, data_out=captured)
-        assert calls == [1] and len(captured) == 1
-        assert rebuilt == captured[0]['input_manifest']['token']
+        assert snapshots.cheap_fingerprints(db, [workspace], checks={workspace.id: workspace.validation}) == {}
+        assert calls == []
+        assert workspace.id not in db.info.get('read_snapshots', {})
+        rebuilt = snapshots.fingerprints(db, [workspace])[workspace.id]
+        assert calls == [1]
+        assert rebuilt == db.info['read_snapshots'][workspace.id]['input_manifest']['token']
         assert (rebuilt != current) == (changed in ('content_revision', 'toolchain'))
         calls.clear()
         assert snapshots.fingerprint(db, workspace) == rebuilt

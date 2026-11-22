@@ -6,9 +6,11 @@ import pytest
 from packages.contracts.schemas import TypeDefinition
 from packages.domain import cp_sat
 from packages.domain.cp_sat import generate
+from packages.domain.rule_catalogue_migration import who_where
 from packages.domain.time import aware
 from packages.domain.validation import evaluate, finding_observations
 from . import test_service_group_rules as cases
+from .test_rule_catalogue_guard import catalogue, line
 from .test_schedule_score_scale import department
 
 
@@ -47,8 +49,8 @@ def test_advisory_pooled_cover_uses_canonical_session_score_subject(h, intervals
 
     typ = h.configure('assignment_types', {'name': 'Optional pooled places', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 0, 'maximum': 1}]}})['record']['id']
-    h.policy({'kind': 'minimum_cover', 'minimum': 2, 'aggregation': 'service_group'},
-             {'service_ids': h.seed['services'][:2]}, severity='advisory')
+    # Safety kinds are always mandatory. Compare the objective for a pooled advisory target.
+    h.cover_target(2, {'service_ids': h.seed['services'][:2]}, settings={'aggregation': 'service_group'})
     workspace = h.workspace()
     for index in range(len(intervals)):
         workspace = h.shift(workspace, typ=typ, people=[], service=index % 2, location=index % 2)['workspace']
@@ -137,7 +139,18 @@ def test_pooled_cover_fixed_seed_keeps_solver_receipt():
         {key: repeated.get(key) for key in ('generation_outcome', 'generation_scope', 'planning_population')}
 
 
-def _pooled_objective_fixture(severity):
+def _as_cover_target(policy):
+    # Safety kinds are always mandatory. A catalogue target preserves advisory coverage pressure.
+    definition = policy['definition']
+    who, where = who_where(definition['scope'])
+    rule = definition['rule']
+    settings = {key: value for key, value in rule.items() if key not in ('kind', 'minimum')}
+    target = catalogue('people_per_session', line(who=who, where=where,
+        numbers={'target': {'value': rule['minimum'], 'level': 'medium'}}, settings={'minimum_cover': settings}))
+    return {**policy, 'kind': 'catalogue', 'definition': target['definition']}
+
+
+def _pooled_objective_fixture(severity, *, ordered_fill=False, triggered=False):
     data = _pooled_receipt_fixture()
     services = list(data['services'])[:3]
     template = copy.deepcopy(data['shifts'][0])
@@ -156,12 +169,13 @@ def _pooled_objective_fixture(severity):
     data['generation_session_ids'] = list(data['focus_ids'])
     policy = copy.deepcopy(data['policies'][0])
     policy['definition']['rule']['minimum'] = 4
-    policy['definition']['severity'] = severity
-    data['policies'] = [policy]
+    if triggered:
+        policy['definition']['rule']['when_person_ids'] = [next(iter(data['people']))]
+    data['policies'] = [policy if severity == 'mandatory' else _as_cover_target(policy)]
     people = list(data['people'])
     data['planning_population'] = {shift['id']: [people[index % 3]] for index, shift in enumerate(shifts)}
     data['planning_population']['target'] = [people[2]]
-    if severity == 'advisory':
+    if severity == 'advisory' or ordered_fill:
         preference = copy.deepcopy(policy)
         preference.update(id='fill-priority', name='Configured fill priority', kind='allocation_preference')
         preference['definition'] = {
@@ -207,7 +221,7 @@ def test_pooled_cover_replays_objective_terms_across_anchor_cells(severity, diag
         (sid, data['planning_population'][sid][0]) for sid in expected['additions']]
 
 
-def _selected_pooled_objective_fixture(*, competing_mandatory=False):
+def _selected_pooled_objective_fixture(*, competing_mandatory=False, pooled_a_minimum=None):
     data = _pooled_objective_fixture('mandatory')
     data['generation_session_ids'] = ['pooled-a', 'pooled-b', 'target']
     data['planning_population']['target'] = data['planning_population']['pooled-b']
@@ -218,14 +232,14 @@ def _selected_pooled_objective_fixture(*, competing_mandatory=False):
         'start': context['start'], 'end': context['end'], 'participation': 'staff',
         'overtime': False, 'revision': 1, 'team_lead': False,
     }]
-    for sid, minimum in [('pooled-a', 1), ('target', 4 if competing_mandatory else 2)]:
+    for sid, minimum, hard in [('pooled-a', pooled_a_minimum or 1, pooled_a_minimum is not None),
+                               ('target', 4 if competing_mandatory else 2, competing_mandatory)]:
         policy = copy.deepcopy(data['policies'][0])
         policy.update(id=sid + '-policy', name=sid + ' single scoped minimum')
         policy['definition']['rule'] = {'kind': 'minimum_cover', 'minimum': minimum}
-        policy['definition']['severity'] = 'mandatory' if competing_mandatory and sid == 'target' else 'advisory'
         service = next(shift['service_ids'][0] for shift in data['shifts'] if shift['id'] == sid)
         policy['definition']['scope'] = {'service_ids': [service]}
-        data['policies'].append(policy)
+        data['policies'].append(policy if hard else _as_cover_target(policy))
     return data
 
 
@@ -305,12 +319,9 @@ def test_pooled_cover_floor_rows_are_keyed_per_cell():
 
 
 def test_pooled_cover_and_later_single_cell_keep_distinct_floor_weights(record_property):
-    data = _selected_pooled_objective_fixture()
+    data = _selected_pooled_objective_fixture(pooled_a_minimum=2)
     data['generation_session_ids'] = ['pooled-a', 'pooled-b', 'pooled-c', 'target']
     data['focus_ids'] = [shift['id'] for shift in data['shifts']]
-    single = next(policy for policy in data['policies'] if policy['id'] == 'pooled-a-policy')
-    single['definition']['severity'] = 'mandatory'
-    single['definition']['rule']['minimum'] = 2
     context = next(shift for shift in data['shifts'] if shift['id'] == 'pooled-c')
     context['start'] = '2026-10-04T10:00:00+03:00'
     context['participants'][0]['start'] = context['start']
@@ -334,11 +345,8 @@ def test_pooled_cover_and_later_single_cell_keep_distinct_floor_weights(record_p
 def test_pooled_cover_replay_reuses_deficit_and_fill_variables(severity, triggered, monkeypatch, record_property):
     from packages.domain.cp_sat_score import ScoreModel
 
-    data = _pooled_objective_fixture('advisory')
+    data = _pooled_objective_fixture(severity, ordered_fill=True, triggered=triggered)
     data.pop('planning_population')
-    data['policies'][0]['definition']['severity'] = severity
-    if triggered:
-        data['policies'][0]['definition']['rule']['when_person_ids'] = [next(iter(data['people']))]
     positive, deficit_flags, models = ScoreModel.positive, [], []
 
     def count_deficit_flags(self, expression):

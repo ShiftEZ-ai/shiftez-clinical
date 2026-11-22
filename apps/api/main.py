@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -156,13 +156,6 @@ class BodyLimitMiddleware:
 
 # Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
 INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
-
-
-def safe_message(text: str) -> str:
-    """Our own messages are plain sentences; library errors quote the offending input (int('â€¦'), fromisoformat('â€¦'),
-    a union tag), so anything quoted (not an apostrophe inside a word), bracketed or escaped becomes a generic message."""
-    risky = re.search(r"[\x00-\x1f\"`\\<>{}\[\]]|(?<![A-Za-z])'|'(?![A-Za-z])", text or "")
-    return "A value is not valid for this request" if not text or risky else text[:300]
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
@@ -3409,8 +3402,8 @@ def create_app(settings: Settings | None = None, engine=None):
             require_role(actor, "coordinator", "operator", "approver")
             from packages.domain.worker_contract import JOB_STATES
             require(status is None or status in JOB_STATES, "SCHEMA_INVALID", "Unknown job status", 422)
-            if workspace_id:
-                scoped(db, m.Workspace, workspace_id, actor)
+            workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
+                defer(m.Workspace.validation), defer(m.Workspace.review_snapshot))) if workspace_id else None
             from .services.conditional_reads import conditional_response, revision_etag
             department = db.get(m.Department, actor.department_id)
             organisation = db.get(m.Organisation, department.organisation_id)
@@ -3430,6 +3423,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 *([m.Job.status == status] if status else [])]
             tag = revision_etag("jobs-list", actor.department_id, actor.identity_id, actor.person_id,
                                 sorted(actor.roles), workspace_id, status, limit, offset,
+                                (workspace.revision, workspace.status) if workspace else None,
                                 (department.revision, organisation.revision, organisation.input_revision,
                                  organisation.availability_revision, settings.generation_engine, build()["release"],
                                  job_stamp(db, department_id=actor.department_id)))
@@ -3456,7 +3450,10 @@ def create_app(settings: Settings | None = None, engine=None):
                                'generation_scope', 'generation_scope_source', 'run_context', 'generation_manifest',
                                'planning_group_version_id', 'planning_group_id', 'lookahead', 'planning_context',
                                'proof_scope', 'completion'}
-            return {"jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
+            from .workspace_baselines import workspace_generation_defaults
+            return {**({"generation_defaults": workspace_generation_defaults(db, workspace, department)}
+                       if workspace else {}),
+                    "jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
                                              input_snapshot={key: value for key, value in projection['input_snapshot'].items()
                                                              if key in list_input_keys},
                                        result_metadata=projection['result'], input_fingerprint=effective),

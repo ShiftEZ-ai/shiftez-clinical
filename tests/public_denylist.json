@@ -13,6 +13,10 @@
  "forbid_paths": [
   {
    "except": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "DELIVERY.md",
+    "DESIGN.md",
     "README.md",
     "SECURITY.md"
    ],

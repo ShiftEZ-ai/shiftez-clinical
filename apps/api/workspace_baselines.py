@@ -4,12 +4,12 @@ from copy import deepcopy
 import json
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import defer, object_session
 
 from . import models as m
 from .errors import require
-from .serialization import json_value, record
+from .serialization import generation_defaults_record, json_value, record
 from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs
 from packages.contracts import schemas as s
@@ -45,6 +45,7 @@ DEPARTMENT_SETTING_FIELDS = {
     "auto": ["generation_defaults"],
     "display": ["display_settings"],
 }
+CAPTURED_GENERATION_STATES = frozenset({"draft", "submitted", "approved"})
 ALWAYS_KEYS = {"organisation", "departments", "department_ids"}
 LIVE_SAFETY_KINDS = frozenset(s.NEVER_OVERRIDDEN)
 ZERO_LIMIT_KINDS = frozenset({"max_duties", "max_hours", "max_consecutive_days", "max_consecutive_weekends", "block_quota"})
@@ -644,7 +645,7 @@ def _canonical(payload, included):
 
 
 def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
-                       validity_baseline=None):
+                       current_mandatory=False, validity_baseline=None):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
     def rows(value):
         return value.values() if isinstance(value, dict) else value or []
@@ -675,17 +676,52 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
 
     frozen_policies = frozen.get("policies", [])
     current_policies = current.get("policies", [])
-    frozen_ids = {(policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True))
-                  for policy in frozen_policies}
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
     current_safety_ids = {policy["id"] for policy in active_current_policies
                           if s.safety_rule(policy.get("definition") or {})}
+    if current_mandatory:
+        # AGENTS.md section 3: captured and current safety rules both bind, using the strictest limit.
+        def mandatory(policy):
+            return (policy["definition"].get("severity") == "mandatory"
+                    and not s.safety_rule(policy["definition"]))
+
+        captured_ids = {policy["id"] for policy in frozen_policies if mandatory(policy)}
+        live = {policy["id"]: policy for policy in current_policies
+                if (policy["id"] in captured_ids or mandatory(policy))
+                and not s.safety_rule(policy["definition"])}
+        live_rule_ids = set(live)
+        result["source_bindings"] = [
+            *(binding for binding in frozen.get("source_bindings", []) if not mandatory(binding["source"])),
+            *(binding for binding in current.get("source_bindings", []) if mandatory(binding["source"])),
+        ]
+        if workspace.status == "draft":
+            captured = {p["id"]: p["definition"]["rule"] for p in frozen_policies
+                        if p.get("status") == "active" and p.get("active", True)
+                        and p["department_id"] == workspace.department_id}
+            changed = {p["id"] for p in current_policies if p["id"] in captured
+                       and (p["definition"]["rule"] != captured[p["id"]] or p["status"] == "retired")}
+            result["_changed_department_rules"] = sorted(changed | {
+                p["id"] for p in active_current_policies
+                if changed.intersection(p["definition"].get("merged_ids") or ())
+                or p["definition"].get("replaces_id") in changed})
+        retained = []
+        for policy in frozen_policies:
+            ident = policy["id"]
+            if s.safety_rule(policy["definition"]):
+                retained.append(policy)
+            elif ident in live:
+                retained.append(live.pop(ident))
+            elif ident not in captured_ids:
+                retained.append(policy)
+        frozen_policies = retained + list(live.values())
+    frozen_ids = {(policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True))
+                  for policy in frozen_policies}
     live_policies = [policy for policy in active_current_policies
-                     if (policy["id"] in current_safety_ids or include_mandatory
+                     if (policy["id"] in current_safety_ids or include_mandatory and not current_mandatory
                          and (policy.get("definition") or {}).get("severity") == "mandatory") and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
-    if include_mandatory:
+    if include_mandatory and not current_mandatory:
         filtered = [(policy, policy if policy["id"] in current_safety_ids else _mandatory_recheck_policy(policy))
                     for policy in live_policies]
         # A partly filtered policy still needs the captured numbers for the excluded slots.
@@ -693,12 +729,9 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         live_policies = [projected if projected is policy else
                          _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
                          for policy, projected in filtered if projected is not None]
-        retained = [policy for policy in frozen_policies
-                    if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
-                        or _zero_limit_policy(policy) is not None)]
-        result["_mandatory_overlay_changed"] = len(retained) != len(frozen_policies) or any(
-            projected is not None and policy["id"] not in current_safety_ids for policy, projected in filtered)
-        frozen_policies = retained
+        frozen_policies = [policy for policy in frozen_policies
+                           if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
+                               or _zero_limit_policy(policy) is not None)]
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}
@@ -759,7 +792,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     live_leadership = list(latest_leadership.values())
     result["policies"] = list(frozen_policies)
     # Apply can carry a positive replacement alongside a stricter captured zero.
-    if include_mandatory:
+    if include_mandatory and not current_mandatory:
         retained_ids = {policy["id"] for policy in frozen_policies}
         live_policies = [_distinct_live_policy({**policy, "_live_mandatory_recheck": True}) if policy["id"] in retained_ids
                          and policy["id"] not in current_safety_ids else policy for policy in live_policies]
@@ -787,12 +820,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)
-    if include_mandatory and any(policy.get("_live_mandatory_recheck") for policy in merged):
-        result["_mandatory_overlay_changed"] = True
     from packages.domain.rule_lines import seeded_policies
     # Make migration defaults available to the zero projection without changing safety merging.
     saved_seeds = result.get("policy_seed_lines") or []
     live_seeds = current.get("policy_seed_lines") or []
+    if current_mandatory:
+        seeds = {seed["id"]: seed for seed in saved_seeds}
+        seeds.update((seed["id"], seed) for seed in live_seeds if seed["policy_id"] in live_rule_ids)
+        saved_seeds = list(seeds.values())
     result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
         seeded_policies(current_policies, live_seeds), current_safety_ids)
     if saved_seeds:
@@ -858,11 +893,11 @@ def capture(db, workspace, actor_id, scope=None, *, payload=None, workspace_revi
     )
     db.add(row)
     db.flush()
-    rows = db.info.get('_baseline_rows')
-    if rows:
+    for name in ('_baseline_rows', '_baseline_hints'):
+        rows = db.info.get(name, {})
         for key in list(rows):
             if key[0] == workspace.id:
-                rows.pop(key, None)
+                del rows[key]
     return row
 
 
@@ -899,6 +934,65 @@ def latest_many(db, workspace_ids):
     ).where(B.workspace_id.in_(workspace_ids)).subquery()
     rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
     return {row.workspace_id: row for row in rows}
+
+
+def _generation_settings_query(department_id):
+    baseline = m.WorkspaceBaseline
+    return select(baseline.included_sources,
+                  baseline.canonical_payload["departments"][department_id].as_json().label("settings"))
+
+
+def _captured_generation_settings(department_id, sources, settings):
+    frozen = frozen_department_settings({"departments": {department_id: settings}}, department_id, sources or ())
+    return {"generation_defaults": frozen["generation_defaults"]} if "generation_defaults" in frozen else {}
+
+
+def workspace_generation_defaults(db, workspace, department, *, frozen_settings=None):
+    """Read captured options for an unissued rota, with a fallback for uncaptured settings."""
+    current = generation_defaults_record(department.generation_defaults) or {}
+    if workspace.status not in CAPTURED_GENERATION_STATES:
+        return current
+    if frozen_settings is None:
+        from .snapshots import _baseline_hint
+        baseline_id, payload_hash = _baseline_hint(db, workspace)
+        if baseline_id is None:
+            return current
+
+        def read(_workspace_id):
+            row = db.execute(_generation_settings_query(department.id)
+                             .where(m.WorkspaceBaseline.id == baseline_id)).one_or_none()
+            return _captured_generation_settings(department.id, *row) if row is not None else {}
+
+        # Warm reads use baseline metadata. Only a projection miss reads the JSON settings.
+        from .services.read_projections import CANONICAL_AUDIENCE, cached
+        memo = db.info.setdefault('read_projection_inputs', {})
+        key = ('generation_defaults', baseline_id, payload_hash)
+        if key not in memo:
+            stamp = snapshot_hash({"baseline": baseline_id, "hash": payload_hash})
+            memo[key] = cached(db, [workspace.id], "generation_defaults", {workspace.id: stamp},
+                               read, audience=CANONICAL_AUDIENCE)[workspace.id]
+        frozen_settings = memo[key]
+    return (generation_defaults_record(frozen_settings["generation_defaults"]) or {}
+            if "generation_defaults" in frozen_settings else current)
+
+
+def workspace_generation_context(db, workspace, *, current_goals=False):
+    """Load the parent rows together, and inline the settings when building a goals projection."""
+    D, O = m.Department, m.Organisation
+    query = select(D, O).join(O, O.id == D.organisation_id).where(D.id == workspace.department_id)
+    frozen_settings = None
+    if current_goals and workspace.status in CAPTURED_GENERATION_STATES:
+        # The goals result is already cached. A second projection would add writes on its cold path.
+        baseline = (_generation_settings_query(workspace.department_id)
+                    .where(m.WorkspaceBaseline.workspace_id == workspace.id)
+                    .order_by(*_latest_ordering()).limit(1).subquery())
+        department, organisation, sources, settings = db.execute(
+            query.add_columns(*baseline.c).outerjoin(baseline, true())).one()
+        frozen_settings = _captured_generation_settings(department.id, sources, settings)
+    else:
+        department, organisation = db.execute(query).one()
+    return department, organisation, workspace_generation_defaults(
+        db, workspace, department, frozen_settings=frozen_settings)
 
 
 def verify(row):

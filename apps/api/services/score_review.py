@@ -12,7 +12,7 @@ from .rota_summary import reusable_check
 def read(db, actor, workspace_id):
     require_role(actor, *s.PERMISSIONS['schedule.read_team'])
     workspace = scoped(db, m.Workspace, workspace_id, actor)
-    data = domain_snapshot(db, workspace)
+    data = domain_snapshot(db, workspace, current_generation_defaults=workspace.status == 'published')
     options = data.get('generation_options')
     if reusable_check(workspace.validation, data['fingerprint'], options):
         validation = workspace.validation

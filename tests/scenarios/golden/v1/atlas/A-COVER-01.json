@@ -1,9 +1,9 @@
 {
   "id": "A-COVER-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Cover (two distinct eligible people)",
   "intent": "Hard scoped cover overcomes advisory pressure for one participant",
-  "pressure": "Three eligible people; type minimum 1 and advisory maximum 1 make under-cover attractive without the hard minimum 2.",
+  "pressure": "Safety kinds are always mandatory. An advisory daily duty cap penalizes each placement while the hard cover minimum requires two.",
   "covers": {
     "kind.minimum_cover": [
       "counterfactual"
@@ -247,8 +247,9 @@
         "starts_on": "2027-01-01",
         "definition": {
           "rule": {
-            "kind": "maximum_participants",
-            "maximum": 1
+            "kind": "max_duties",
+            "maximum": 0,
+            "window": "day"
           },
           "scope": {
             "assignment_type_id": "$cover_type"

@@ -16,7 +16,7 @@ def shift(sid, day, people, typ='t'):
 
 def policy(pid, severity='advisory', strength='medium', name='Rest'):
     return {'id': pid, 'name': name, 'status': 'active', 'department_id': 'd', 'starts_on': '2020-01-01', 'ends_on': None,
-            'definition': {'severity': severity, 'strength': strength, 'scope': {}, 'rule': {'kind': 'min_rest', 'hours': 11}}}
+            'definition': {'severity': severity, 'strength': strength, 'scope': {}, 'rule': {'kind': 'max_duties', 'maximum': 1, 'window': 'day'}}}
 
 
 def data(shifts, policies=()):

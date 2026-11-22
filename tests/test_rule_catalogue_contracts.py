@@ -72,7 +72,9 @@ def test_a_catalogue_rule_validates_its_lines():
     (rule('keep_off', {'numbers': {'apply': {'value': 3}}}), 'this rule has no number'),
     (rule('duties_per_week', {'numbers': {'target': {'value': 3}}}), 'the target cannot be mandatory'),
     (rule('days_off_together', {'numbers': {'min': {'value': 2}}}), 'the min cannot be mandatory'),
-    (rule('supervision', {'numbers': {'max': {'value': 2, 'level': 'high'}}}), 'the max cannot be high'),
+    # Safety kinds are always mandatory. Keep the same invalid supervision case under the more specific error.
+    pytest.param(rule('supervision', {'numbers': {'max': {'value': 2, 'level': 'high'}}}),
+                 'Safety rules are always mandatory', id='definition5-the max cannot be high'),
     (rule('duties_per_week', {'numbers': {'max': {'value': 5}}, 'settings': {'min_rest': {'hours': 3}}}), 'has no settings for min_rest'),
     (rule('duties_per_week', {'numbers': {'max': {'value': 5}}}, settings={'restriction': {}}), 'has no settings for restriction'),
     (rule('duties_per_week', {'numbers': {'max': {'value': 5}}, 'where': {'conditions': [{'field': 'tags', 'values': ['x']}]}}),
