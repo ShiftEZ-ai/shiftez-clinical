@@ -18,7 +18,7 @@ from packages.domain.rule_serialization import stored_definition
 from packages.domain.assignment_override import assignment_reason_allowed, ZERO_LIMIT_FINDING_CODES
 
 from apps.api import models as m, snapshots
-from apps.api.auth import require_role, person_access, current_roles
+from apps.api.auth import require_role, person_access, current_roles, require_catalogue_read
 from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
 from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation, retain_job_reconciliation
@@ -1633,40 +1633,36 @@ def rule_adjust(db, actor, command):
 
 
 def target_override(db, actor, command):
-    from .policies import effective_source
     value = s.TargetOverrideInput.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
-    policy = effective_source(db, actor, scoped(db, m.Policy, value.policy_id, actor))
+    policy = scoped(db, m.Policy, value.policy_id, actor)
+    require_catalogue_read(actor, 'policies')
     person_access(db, actor, value.person_id)
+    existing = workspace.target_overrides
+    remaining = [r for r in existing if (r['policy_id'], r['person_id']) != (policy.id, value.person_id)]
     if value.amount is None:
-        existing = workspace.target_overrides
-        remaining = [r for r in existing if (r['policy_id'], r['person_id']) != (policy['id'], value.person_id)]
         require(len(remaining) < len(existing), 'TARGET_OVERRIDE_MISSING', 'There is no saved adjustment to remove')
         before = workspace_content(db, workspace)
         workspace.target_overrides = remaining
         return changed(db, actor, workspace, before, value.reason)
-    rule = policy['definition']['rule']
-    require(rule['kind'] == 'block_quota' and rule['comparison'] == 'target',
-            'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
     report = command_evaluate(db, domain_snapshot(db, workspace)).get('quota_report') or {}
-    source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy['id']]
-    person_rows = [row for row in source_rows if row['person_id'] == value.person_id]
-    targets = [row for row in person_rows if row.get('target_calculation') is not None]
-    require(any(row.get('target_calculation') is not None for row in person_rows or source_rows)
-            or not source_rows and rule.get('prorate_department_days'),
+    source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy.id]
+    source_targets = [row for row in source_rows if row['comparison'] == 'target']
+    require(source_targets or not source_rows,
             'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
+    targets = [row for row in source_targets if row['person_id'] == value.person_id and row.get('target_calculation') is not None]
     require(targets,
             'TARGET_NOT_APPLICABLE', 'This target does not apply to this employee and rota')
     for row in targets:
         value.amount = s.quota_target_amount(row['metric'], value.amount)
     before = workspace_content(db, workspace)
-    values = [r for r in workspace.target_overrides if (r['policy_id'], r['person_id']) != (policy['id'], value.person_id)]
-    if value.amount is not None:
-        previous = next((r for r in workspace.target_overrides if (r['policy_id'], r['person_id']) == (policy['id'], value.person_id)), None)
-        values.append({**value.model_dump(mode='json'), 'id': (previous or {}).get('id') or command_id(db),
-                       'policy_name': policy['name'], 'policy_revision': policy['revision'], 'by': actor.identity_id, 'at': command_time(db).isoformat()})
-    require(len(values) <= 2000, 'TARGET_LIMIT', 'A rota supports at most 2000 target adjustments')
-    workspace.target_overrides = values
+    previous = next((r for r in existing if (r['policy_id'], r['person_id']) == (policy.id, value.person_id)), {})
+    remaining.append({**value.model_dump(mode='json'), 'id': previous.get('id') or command_id(db),
+                      'policy_name': targets[0]['policy_name'], 'policy_revision': targets[0]['policy_revision'],
+                      'rule_fingerprints': sorted({row['target_calculation']['rule_fingerprint'] for row in targets}),
+                      'by': actor.identity_id, 'at': command_time(db).isoformat()})
+    require(len(remaining) <= 2000, 'TARGET_LIMIT', 'A rota supports at most 2000 target adjustments')
+    workspace.target_overrides = remaining
     return changed(db, actor, workspace, before, value.reason)
 
 
@@ -2180,7 +2176,7 @@ def undo(db, actor, command):
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
-    require(change is not None and not change.undone, "NO_UNDO", "No immediately preceding edit is available to undo", 409)
+    require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)
@@ -2600,27 +2596,21 @@ def _publication_approval(db, workspace, fp):
 
 
 def review_gate_check(db, workspace, *, reuse=False):
-    """Check current mandatory rules and retain the frozen basis for review and publication evidence."""
-    current = []
-    result = revalidate(db, workspace, data_out=current, include_internal=True, reuse=reuse, store=False,
-                        mandatory_rules=False, current_mandatory=True)
-    if not current[0].get('_mandatory_overlay_changed'):
-        return result, current[0], None
-    frozen = []
-    checked = revalidate(db, workspace, data_out=frozen, include_internal=True, reuse=reuse, store=False,
-                         mandatory_rules=False)
-    return checked, frozen[0], (result, current[0])
+    """Use one evaluation and fingerprint for review and publication evidence."""
+    acquired = []
+    result = revalidate(db, workspace, data_out=acquired, include_internal=True, reuse=reuse, store=False,
+                        current_mandatory=True)
+    return result, acquired[0]
 
 
-def _lock_review_check_inputs(db, actor, *snapshots):
+def _lock_review_check_inputs(db, actor, data):
     # Refresh under a row lock before any review writes can advance these counters.
     organisation = db.get(m.Organisation, actor.organisation_id, populate_existing=True,
                           with_for_update={'key_share': True})
     revisions = organisation.input_revision, organisation.availability_revision
-    for data in snapshots:
-        hint = data['input_manifest']['dirty_hint']
-        require(revisions == (hint['input_revision'], hint['availability_revision']), 'STALE_INPUTS',
-                'Scheduling inputs changed during the check. Check the rota and try again.', 409, {'recoverable': True})
+    hint = data['input_manifest']['dirty_hint']
+    require(revisions == (hint['input_revision'], hint['availability_revision']), 'STALE_INPUTS',
+            'Scheduling inputs changed during the check. Check the rota and try again.', 409, {'recoverable': True})
     return organisation
 
 
@@ -2688,12 +2678,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         has_session = db.scalar(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id).limit(1)) is not None
         if prerequisite := submission_prerequisite(int(has_session)):
             require(False, prerequisite['code'], prerequisite['message'], 422, prerequisite)
-        result, data, current = review_gate_check(db, workspace, reuse=True) if validation is None else validation
+        result, data = review_gate_check(db, workspace, reuse=True) if validation is None else validation
         acknowledged_gaps.submit(db, actor, workspace, result, value.acknowledgements, value.reason,
-                                 current=current[0] if current is not None else None)
+                                 changed_rules=frozenset(data.get('_changed_department_rules', ())))
         swaps.validate_publication(db, workspace)
-        review_data = (data,) if current is None else (data, current[1])
-        review_organisation = _lock_review_check_inputs(db, actor, *review_data)
+        review_organisation = _lock_review_check_inputs(db, actor, data)
         check = {**result, 'wishes': data['wishes']}
         from packages.domain.rota_summary import remember_fix_list
         remember_fix_list(result, check, submitted=True)
@@ -2753,8 +2742,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         # Publication mutates duties, availability and ledgers, never these raw configuration rows.
         # Each transaction acquires them independently; post-publication snapshots still read current history.
         # The writer flushes pending writes before revalidating current mandatory rules.
-        # shortcut: a late mandatory rule can require two checks under the writer; upgrade: reuse complete frozen evidence when its inputs still match.
-        checked, acquired, current = review_gate_check(db, workspace)
+        checked, acquired = review_gate_check(db, workspace)
         fp = acquired['fingerprint']
         result = {key: value for key, value in checked.items() if key not in INTERNAL_CHECK_KEYS}
         # Revalidate before reading the review receipt.  A stale approval must
@@ -2768,9 +2756,6 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                 raise
             approval_error = error
         try:
-            if current is not None:
-                live_result = {key: value for key, value in current[0].items() if key not in INTERNAL_CHECK_KEYS}
-                acknowledged_gaps.require_accepted(workspace, live_result, reviewed=True)
             acknowledged_gaps.require_accepted(workspace, result, reviewed=True)
         except Problem as error:
             if error.code == 'VALIDATION_FAILED' and approval_error is not None:

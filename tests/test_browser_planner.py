@@ -232,7 +232,7 @@ def test_empty_session_cell_opens_fill_panel(browser, live_server, h, scheme):
 def test_assign_anyway_labels_distinguish_strength(browser, live_server, h, scheme):
     """SR-13 / RUL-E04: adding a warning and breaking a mandatory rule are two named buttons; the second asks for a reason,
     then its own button arms ("Confirm?") before anything is sent."""
-    h.policy({'kind': 'restriction'}, {'person_id': h.seed['people'][1]}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': h.seed['people'][1]}, severity='advisory')
     # A mandatory rule broken only with a reason (a zero limit), never a safety kind such as restriction (BE-24, AGENTS §3).
     h.policy({'kind': 'max_hours', 'hours': 0, 'window': 'day'}, {'person_id': h.seed['people'][2]})
     w = h.shift(h.workspace('Two strengths rota'), people=[])['workspace']

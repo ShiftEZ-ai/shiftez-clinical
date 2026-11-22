@@ -175,14 +175,16 @@ SAFETY = [
     ({'kind': 'min_rest', 'hours': 11}, 'mandatory'),
     ({'kind': 'supervision_limit', 'mode': 'capacity', 'maximum': 2}, 'mandatory'),
     ({'kind': 'minimum_cover', 'minimum': 1}, 'mandatory'),
-    ({'kind': 'maximum_participants', 'maximum': 3}, 'advisory'),  # never replaced, even when advisory
+    ({'kind': 'maximum_participants', 'maximum': 3}, 'advisory'),  # historical level
 ]
 
 
 @pytest.mark.parametrize('rule,severity', SAFETY)
 def test_safety_rules_can_never_be_overridden(h, rule, severity):
-    target = h.policy(rule, severity=severity)
-    refused = propose(h, rule, {'conditions': tree(line('category_ids', h.seed['trainee_category']))}, severity, status=422, overrides=[target['id']])
+    # Safety kinds are always mandatory. Stored advisory levels still cannot be overridden.
+    target = h.stored_advisory_safety(rule) if severity == 'advisory' else h.policy(rule)
+    refused = propose(h, rule, {'conditions': tree(line('category_ids', h.seed['trainee_category']))},
+                      status=422, overrides=[target['id']])
     assert refused['error']['code'] == 'OVERRIDE_SAFETY'
 
 

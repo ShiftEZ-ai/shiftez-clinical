@@ -1,5 +1,6 @@
 """Completion expiry keeps only resumable decisions until a checked candidate is available."""
 from copy import deepcopy
+from math import isfinite
 from weakref import ref
 
 import pytest
@@ -67,7 +68,7 @@ def test_score_completion_expiry_is_bounded_reported_and_resumes_to_public_valid
 
 @pytest.mark.parametrize('later_result', ['solve', 'unknown', 'error'])
 def test_completed_solver_is_released_before_next_search_without_changing_results(h, monkeypatch, later_result):
-    h.policy({'kind': 'restriction'}, severity='advisory')
+    h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, severity='advisory')
     snapshot = h.snapshot(h.shift(h.workspace(), people=[])['workspace'])
     snapshot['shifts'][0]['type_snapshot']['definition']['requirements'][0].update(minimum=0, target=1, maximum=1)
     snapshot['generation_options'] = {'shortlist_width': 0, 'diagnostic_seconds': 2}
@@ -114,7 +115,18 @@ def test_completed_solver_is_released_before_next_search_without_changing_result
         assert actual['status'] == expected['status'] == 'candidate_feasible'
         assert actual['validation']['valid']
         assert len(actual['additions']) == 1 and not actual['removals']
-        for key in ('additions', 'removals', 'validation', 'objectives', 'weighted_status',
+        objectives = [deepcopy(result['objectives']) for result in (actual, expected)]
+        for rows in objectives:
+            for row in rows:
+                if 'search' in row:
+                    for key in ('objective_improvement_age_seconds', 'fairness_improvement_age_seconds'):
+                        if key in row['search']:
+                            age = row['search'][key]
+                            if age is not None:
+                                assert isfinite(age) and age >= 0
+                                row['search'][key] = 0
+        assert objectives[0] == objectives[1]
+        for key in ('additions', 'removals', 'validation', 'weighted_status',
                     'optimality_proven', 'compiled_component_values', 'objective_components'):
             assert actual[key] == expected[key], key
         assert actual['summary']['score_saved'] == expected['summary']['score_saved']

@@ -645,7 +645,7 @@ def _canonical(payload, included):
 
 
 def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
-                       validity_baseline=None):
+                       current_mandatory=False, validity_baseline=None):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
     def rows(value):
         return value.values() if isinstance(value, dict) else value or []
@@ -676,17 +676,52 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
 
     frozen_policies = frozen.get("policies", [])
     current_policies = current.get("policies", [])
-    frozen_ids = {(policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True))
-                  for policy in frozen_policies}
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
     current_safety_ids = {policy["id"] for policy in active_current_policies
                           if s.safety_rule(policy.get("definition") or {})}
+    if current_mandatory:
+        # AGENTS.md section 3: captured and current safety rules both bind, using the strictest limit.
+        def mandatory(policy):
+            return (policy["definition"].get("severity") == "mandatory"
+                    and not s.safety_rule(policy["definition"]))
+
+        captured_ids = {policy["id"] for policy in frozen_policies if mandatory(policy)}
+        live = {policy["id"]: policy for policy in current_policies
+                if (policy["id"] in captured_ids or mandatory(policy))
+                and not s.safety_rule(policy["definition"])}
+        live_rule_ids = set(live)
+        result["source_bindings"] = [
+            *(binding for binding in frozen.get("source_bindings", []) if not mandatory(binding["source"])),
+            *(binding for binding in current.get("source_bindings", []) if mandatory(binding["source"])),
+        ]
+        if workspace.status == "draft":
+            captured = {p["id"]: p["definition"]["rule"] for p in frozen_policies
+                        if p.get("status") == "active" and p.get("active", True)
+                        and p["department_id"] == workspace.department_id}
+            changed = {p["id"] for p in current_policies if p["id"] in captured
+                       and (p["definition"]["rule"] != captured[p["id"]] or p["status"] == "retired")}
+            result["_changed_department_rules"] = sorted(changed | {
+                p["id"] for p in active_current_policies
+                if changed.intersection(p["definition"].get("merged_ids") or ())
+                or p["definition"].get("replaces_id") in changed})
+        retained = []
+        for policy in frozen_policies:
+            ident = policy["id"]
+            if s.safety_rule(policy["definition"]):
+                retained.append(policy)
+            elif ident in live:
+                retained.append(live.pop(ident))
+            elif ident not in captured_ids:
+                retained.append(policy)
+        frozen_policies = retained + list(live.values())
+    frozen_ids = {(policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True))
+                  for policy in frozen_policies}
     live_policies = [policy for policy in active_current_policies
-                     if (policy["id"] in current_safety_ids or include_mandatory
+                     if (policy["id"] in current_safety_ids or include_mandatory and not current_mandatory
                          and (policy.get("definition") or {}).get("severity") == "mandatory") and
                      (policy.get("id"), policy.get("revision"), policy.get("status"), policy.get("active", True)) not in frozen_ids]
-    if include_mandatory:
+    if include_mandatory and not current_mandatory:
         filtered = [(policy, policy if policy["id"] in current_safety_ids else _mandatory_recheck_policy(policy))
                     for policy in live_policies]
         # A partly filtered policy still needs the captured numbers for the excluded slots.
@@ -694,12 +729,9 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         live_policies = [projected if projected is policy else
                          _distinct_live_policy({**projected, "_live_mandatory_recheck": True})
                          for policy, projected in filtered if projected is not None]
-        retained = [policy for policy in frozen_policies
-                    if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
-                        or _zero_limit_policy(policy) is not None)]
-        result["_mandatory_overlay_changed"] = len(retained) != len(frozen_policies) or any(
-            projected is not None and policy["id"] not in current_safety_ids for policy, projected in filtered)
-        frozen_policies = retained
+        frozen_policies = [policy for policy in frozen_policies
+                           if (policy.get("id") not in replaced or s.safety_rule(policy.get("definition") or {})
+                               or _zero_limit_policy(policy) is not None)]
     # A reviewed catalogue conversion replaces its source only when the destination
     # is itself present and at least as strict in the same overlay.
     frozen_by_id = {policy.get("id"): policy for policy in frozen_policies}
@@ -760,7 +792,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     live_leadership = list(latest_leadership.values())
     result["policies"] = list(frozen_policies)
     # Apply can carry a positive replacement alongside a stricter captured zero.
-    if include_mandatory:
+    if include_mandatory and not current_mandatory:
         retained_ids = {policy["id"] for policy in frozen_policies}
         live_policies = [_distinct_live_policy({**policy, "_live_mandatory_recheck": True}) if policy["id"] in retained_ids
                          and policy["id"] not in current_safety_ids else policy for policy in live_policies]
@@ -788,12 +820,14 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             else:
                 grouped_rows.append(policy)
         merged.extend(grouped_rows)
-    if include_mandatory and any(policy.get("_live_mandatory_recheck") for policy in merged):
-        result["_mandatory_overlay_changed"] = True
     from packages.domain.rule_lines import seeded_policies
     # Make migration defaults available to the zero projection without changing safety merging.
     saved_seeds = result.get("policy_seed_lines") or []
     live_seeds = current.get("policy_seed_lines") or []
+    if current_mandatory:
+        seeds = {seed["id"]: seed for seed in saved_seeds}
+        seeds.update((seed["id"], seed) for seed in live_seeds if seed["policy_id"] in live_rule_ids)
+        saved_seeds = list(seeds.values())
     result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
         seeded_policies(current_policies, live_seeds), current_safety_ids)
     if saved_seeds:

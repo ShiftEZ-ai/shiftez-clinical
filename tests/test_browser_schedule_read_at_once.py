@@ -21,7 +21,7 @@ READY = 'Ready to edit'
 def draft(h, *, warning=False):
     person = h.seed['people'][1]
     if warning:
-        h.policy({'kind': 'restriction'}, {'person_id': person}, severity='advisory')
+        h.policy({'kind': 'max_duties', 'maximum': 0, 'window': 'day'}, {'person_id': person}, severity='advisory')
     w = h.workspace('Schedule read fixture', end='2026-10-18')
     w = h.shift(w)['workspace']
     if warning:

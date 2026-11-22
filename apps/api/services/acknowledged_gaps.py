@@ -16,29 +16,27 @@ def projection(workspace, validation=None, *, summary=None):
             'review_items': review_items(workspace, current=value)}
 
 
-def require_accepted(workspace, result, *, reviewed=False, frozen=None):
+def require_accepted(workspace, result, *, reviewed=False, changed_rules=()):
     require(not result.get('scope') or bool(workspace.base_publication_id), 'PARTIAL_CHECK',
             'A partial check cannot qualify a whole rota; check the complete rota before review or publication', 422)
     value = projection(workspace, result)
     must = [c for c in value['causes'] if c['level'] == 'must']
     blocked = value['summary']['submit_blocked']
-    if frozen is not None:
-        captured = {(c['id'], c['evidence_hash']) for c in frozen['causes'] if c['level'] == 'must'}
-        blocked = any((c['id'], c['evidence_hash']) not in captured for c in must)
+    refresh = blocked and changed_rules and any(
+        row.get('rule_id') in changed_rules for cause in must if not cause['acknowledgement']
+        for row in cause['evidence'])
     require(not blocked, 'VALIDATION_FAILED',
-            'Fix safety findings and acknowledge each remaining mandatory cause with a reason', 422,
-            {**result, 'fix_list': value})
+            'A department rule changed since this draft was created. Refresh the draft baseline to review the change.'
+            if refresh else 'Fix safety findings and acknowledge each remaining mandatory cause with a reason', 422,
+            {**result, 'fix_list': value, **({'refresh_baseline': True} if refresh else {})})
     if reviewed:
         require(all(c['acknowledgement'].get('decisions') for c in must), 'GAPS_NOT_REVIEWED',
                 'An independent approver must decide every acknowledged gap before publication', 409)
     return value
 
 
-def submit(db, actor, workspace, result, acknowledgements, reason, *, current=None):
+def submit(db, actor, workspace, result, acknowledgements, reason, *, changed_rules=()):
     value = projection(workspace, result)
-    if current is not None:
-        # An acknowledgement needs evidence in the frozen review the approver will see.
-        require_accepted(workspace, current, frozen=value)
     by_id = {c['id']: c for c in value['causes'] if c['level'] == 'must'}
     selected = [a.cause_id for a in acknowledgements]
     require(len(set(selected)) == len(selected), 'DUPLICATE_ACKNOWLEDGEMENT', 'Give one reason per cause')
@@ -58,7 +56,7 @@ def submit(db, actor, workspace, result, acknowledgements, reason, *, current=No
             for item in acknowledgements for key in by_id[item.cause_id]['finding_keys']]
         db.add(m.ChangeSet(workspace_id=workspace.id, before_snapshot=before,
             resulting_content_revision=workspace.content_revision, actor_id=actor.identity_id, reason=reason))
-    return require_accepted(workspace, result)
+    return require_accepted(workspace, result, changed_rules=changed_rules)
 
 
 def require_gap_decisions(workspace, result, value):

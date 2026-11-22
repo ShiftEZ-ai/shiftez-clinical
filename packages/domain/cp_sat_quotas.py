@@ -20,6 +20,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
     empty = {**data, '_quota_evaluation_ids': True, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
     findings = []
     def record(code, message, **detail):
+        if code == 'TARGET_OVERRIDE_STALE':
+            detail = {'rule_id': detail['rule'], 'person_id': detail['person'], 'detail': detail['extra']}
         findings.append({'code': code, 'message': message, **detail})
     report = evaluate_quotas(empty, record, ancestor_ids, exception_for)
     if report is None:
