@@ -18,7 +18,7 @@ from packages.domain.rule_serialization import stored_definition
 from packages.domain.assignment_override import assignment_reason_allowed, ZERO_LIMIT_FINDING_CODES
 
 from apps.api import models as m, snapshots
-from apps.api.auth import require_role, person_access, current_roles
+from apps.api.auth import require_role, person_access, current_roles, require_catalogue_read
 from apps.api.errors import Problem, require
 from apps.api.serialization import record, job_progress_record
 from apps.api.serialization import job_reconciliation_columns, job_result_with_reconciliation, retain_job_reconciliation
@@ -252,14 +252,13 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
                current_mandatory=False):
     """Check the rota, or its published changes (read-only when store=False). `own` receives all owned sessions."""
     db.flush()
-    # Keep the same department context alive through snapshot and scoring; the ORM identity map is weak.
-    department = db.get(m.Department, workspace.department_id)
     data = acquired_data if acquired_data is not None else domain_snapshot(
         db, workspace, external_snapshot=external_snapshot, shared_inputs=shared_inputs, mandatory_rules=mandatory_rules,
         current_mandatory=current_mandatory)
+    defaults = data['department'].get('generation_defaults')
     from .rota_summary import current_check
     if reuse and (current_check(db, workspace, data['fingerprint']) if workspace.base_publication_id else
-                  complete_check(workspace.validation, data, department.generation_defaults)):
+                  complete_check(workspace.validation, data, defaults)):
         result = copy.deepcopy(workspace.validation)
         if own is not None:
             focus = set(data['focus_ids'])
@@ -300,7 +299,6 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
             checked['_partial'] = partial
     # Retained issued evidence is not a current whole-rota check, so amendments cannot issue a schedule score.
     from packages.domain.score import schedule_score
-    defaults = department.generation_defaults
     preparing = preparation is not None and not preparation['replay']
     previous_check = copy.deepcopy(preparation['validation_baselines'].get(
         workspace.id, workspace.validation)) if preparing else None
@@ -370,7 +368,7 @@ def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None
         from packages.domain.finding_causes import DIAGNOSTIC_VERSION
         from packages.domain.score import score_dependencies
         result['diagnostic_version'] = DIAGNOSTIC_VERSION
-        result['score_dependencies'] = score_dependencies(department.generation_defaults)
+        result['score_dependencies'] = score_dependencies(defaults)
     result['input_manifest'] = _check_manifest(data['input_manifest'])
     result["evaluated_at"] = m.now().isoformat()
     from packages.domain.rota_summary import fix_list_context, remember_fix_list
@@ -1635,40 +1633,36 @@ def rule_adjust(db, actor, command):
 
 
 def target_override(db, actor, command):
-    from .policies import effective_source
     value = s.TargetOverrideInput.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
-    policy = effective_source(db, actor, scoped(db, m.Policy, value.policy_id, actor))
+    policy = scoped(db, m.Policy, value.policy_id, actor)
+    require_catalogue_read(actor, 'policies')
     person_access(db, actor, value.person_id)
+    existing = workspace.target_overrides
+    remaining = [r for r in existing if (r['policy_id'], r['person_id']) != (policy.id, value.person_id)]
     if value.amount is None:
-        existing = workspace.target_overrides
-        remaining = [r for r in existing if (r['policy_id'], r['person_id']) != (policy['id'], value.person_id)]
         require(len(remaining) < len(existing), 'TARGET_OVERRIDE_MISSING', 'There is no saved adjustment to remove')
         before = workspace_content(db, workspace)
         workspace.target_overrides = remaining
         return changed(db, actor, workspace, before, value.reason)
-    rule = policy['definition']['rule']
-    require(rule['kind'] == 'block_quota' and rule['comparison'] == 'target',
-            'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
     report = command_evaluate(db, domain_snapshot(db, workspace)).get('quota_report') or {}
-    source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy['id']]
-    person_rows = [row for row in source_rows if row['person_id'] == value.person_id]
-    targets = [row for row in person_rows if row.get('target_calculation') is not None]
-    require(any(row.get('target_calculation') is not None for row in person_rows or source_rows)
-            or not source_rows and rule.get('prorate_department_days'),
+    source_rows = [row for row in report.get('rows', []) if row['policy_id'] == policy.id]
+    source_targets = [row for row in source_rows if row['comparison'] == 'target']
+    require(source_targets or not source_rows,
             'TARGET_ONLY', 'Only configurable rota targets may be adjusted; mandatory limits remain unchanged')
+    targets = [row for row in source_targets if row['person_id'] == value.person_id and row.get('target_calculation') is not None]
     require(targets,
             'TARGET_NOT_APPLICABLE', 'This target does not apply to this employee and rota')
     for row in targets:
         value.amount = s.quota_target_amount(row['metric'], value.amount)
     before = workspace_content(db, workspace)
-    values = [r for r in workspace.target_overrides if (r['policy_id'], r['person_id']) != (policy['id'], value.person_id)]
-    if value.amount is not None:
-        previous = next((r for r in workspace.target_overrides if (r['policy_id'], r['person_id']) == (policy['id'], value.person_id)), None)
-        values.append({**value.model_dump(mode='json'), 'id': (previous or {}).get('id') or command_id(db),
-                       'policy_name': policy['name'], 'policy_revision': policy['revision'], 'by': actor.identity_id, 'at': command_time(db).isoformat()})
-    require(len(values) <= 2000, 'TARGET_LIMIT', 'A rota supports at most 2000 target adjustments')
-    workspace.target_overrides = values
+    previous = next((r for r in existing if (r['policy_id'], r['person_id']) == (policy.id, value.person_id)), {})
+    remaining.append({**value.model_dump(mode='json'), 'id': previous.get('id') or command_id(db),
+                      'policy_name': targets[0]['policy_name'], 'policy_revision': targets[0]['policy_revision'],
+                      'rule_fingerprints': sorted({row['target_calculation']['rule_fingerprint'] for row in targets}),
+                      'by': actor.identity_id, 'at': command_time(db).isoformat()})
+    require(len(remaining) <= 2000, 'TARGET_LIMIT', 'A rota supports at most 2000 target adjustments')
+    workspace.target_overrides = remaining
     return changed(db, actor, workspace, before, value.reason)
 
 
@@ -2182,7 +2176,7 @@ def undo(db, actor, command):
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
-    require(change is not None and not change.undone, "NO_UNDO", "No immediately preceding edit is available to undo", 409)
+    require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)

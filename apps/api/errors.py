@@ -1,4 +1,7 @@
+import re
+
 INTEGRITY_CONFLICT_MESSAGE = "The write conflicts with a related or duplicate record; no partial change was committed"
+VALUE_INVALID_MESSAGE = "A value is not valid for this request"
 
 PROBLEM_DETAIL_LIMIT = 50
 _PUBLIC_PROBLEM_DETAIL_FIELDS = ('rule_id', 'rule_revision', 'field', 'code', 'message')
@@ -32,3 +35,10 @@ def public_problem_details(details, cap):
 def require(condition: bool, code: str, message: str, status: int = 422, details=None):
     if not condition:
         raise Problem(status, code, message, details)
+
+
+def safe_message(text: str) -> str:
+    """Our own messages are plain sentences; library errors quote the offending input (int('â€¦'), fromisoformat('â€¦'),
+    a union tag), so anything quoted (not an apostrophe inside a word), bracketed or escaped becomes a generic message."""
+    risky = re.search(r"[\x00-\x1f\"`\\<>{}\[\]]|(?<![A-Za-z])'|'(?![A-Za-z])", text or "")
+    return VALUE_INVALID_MESSAGE if not text or risky else text[:300]

@@ -283,9 +283,7 @@ def fill_options(db, actor, value: s.FillOptionsInput, *, progress=None, cancell
     shift = next((row for row in source['shifts'] if row['id'] == value.shift_id and row['id'] in source['focus_ids']), None)
     require(shift is not None, 'NOT_FOUND', 'Session not found in this draft', 404)
     require(not shift['locked'] and not shift['cancelled'], 'ASSIGNMENT_LOCKED', 'Unlock or reopen this session before staffing it', 409)
-    department = db.get(m.Department, workspace.department_id) if hasattr(db, 'get') else None
-    current_validation = (_current_validation(workspace, source, department.generation_defaults)
-                          if department is not None else None)
+    current_validation = _current_validation(workspace, source, source['department'].get('generation_defaults'))
     if value.finding_key is not None and workspace.validation and current_validation is None:
         require(False, 'ISSUE_GONE',
                 'This issue is no longer current on this session; reload the rota check.', 409)
@@ -1100,7 +1098,7 @@ def prepare_why(db, actor, value: s.WhyInput):
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
     source_key = (workspace.id, workspace.revision, workspace.content_revision, organisation.revision,
-                  organisation.input_revision, organisation.availability_revision, department.catalogue_revision)
+                  organisation.input_revision, organisation.availability_revision, department.revision, department.catalogue_revision)
     source = copy.deepcopy(_WHY_SOURCE_CACHE.get(source_key)) if source_key in _WHY_SOURCE_CACHE else None
     if source is None:
         source = domain_snapshot(db, workspace)
@@ -1110,8 +1108,9 @@ def prepare_why(db, actor, value: s.WhyInput):
     require(len(source['focus_ids']) <= MAX_SCOPE_SHIFTS * 2, 'STAFFING_SCOPE_LIMIT', 'Narrow the planning period to see why.', 409)
     # Keep the evidence out of the public result, but let the pure Why phase
     # reuse it instead of evaluating the complete rota again.
-    source['_why_validation'] = _current_validation(workspace, source, department.generation_defaults)
-    return source, department.generation_defaults
+    defaults = source['department'].get('generation_defaults')
+    source['_why_validation'] = _current_validation(workspace, source, defaults)
+    return source, defaults
 
 
 def why(source, options, value: s.WhyInput) -> dict:

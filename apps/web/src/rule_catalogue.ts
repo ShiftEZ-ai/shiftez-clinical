@@ -137,6 +137,10 @@ export const changedRules=(entries:Entry[])=>entries.filter(e=>changesOf(e)>0);
 
 // ---- Words for a line (one place: the Rules database, Needs attention and the rule page) ----
 type Num={value?:number|null;level?:string|null};
+type LineNumbers=Pick<RuleLine,'numbers'>&{mandatory_reasons?:Record<string,string>};
+const displayedStrength=(line:LineNumbers|undefined,key:string,level:string|null|undefined)=>{
+  const reason=line?.mandatory_reasons?.[key];return {level:reason?'mandatory':level??null,reason};
+};
 /** Blank inherits: each number a line leaves blank, the value it takes from a broader
  *  line and that line (the server's `inherited`). */
 export type Inherited=Record<string,Num&{from:string}>;
@@ -146,18 +150,18 @@ const shown=numberText;
 /** A line's numbers in parts: "2 – 5 → 4" (min – max → target), "≥ 2", "≤ 3", "→ 4", "applies", "priority 3"
  *  (`rangeParts`, the one style), each with its strength (`level`). A blank number taken from a broader line is marked
  *  "↰" (`inherited`); an explicit None is no number. */
-export function numberParts(line:Pick<RuleLine,'numbers'>|undefined,inh?:Inherited,applies='applies'):NumberPart[]{
+export function numberParts(line:LineNumbers|undefined,inh?:Inherited,applies='applies'):NumberPart[]{
   const own=(line?.numbers||{}) as Record<string,Num>;
-  const get=(k:string):NumberPart|null=>{const o=own[k],i=inh?.[k];if(o)return o.value==null&&k!=='apply'?null:{text:shown(o),level:o.level??i?.level??null};
-    return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,level:i.level??null}:null;};
+  const get=(k:string):NumberPart|null=>{const o=own[k],i=inh?.[k];if(o)return o.value==null&&k!=='apply'?null:{text:shown(o),...displayedStrength(line,k,o.level??i?.level)};
+    return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,...displayedStrength(line,k,i.level)}:null;};
   const out=rangeParts(get('min'),get('max'),get('target'));
   for(const [k,x] of Object.entries(own)){if(['min','max','target'].includes(k)||x.value==null&&k!=='apply')continue;
-    out.push(...(out.length?[{text:' · '}]:[]),{text:k==='apply'?applies:`${k.replace('_',' ')} ${shown(x)}`,level:x.level??null});}
+    out.push(...(out.length?[{text:' · '}]:[]),{text:k==='apply'?applies:`${k.replace('_',' ')} ${shown(x)}`,...displayedStrength(line,k,x.level)});}
   return out;
 }
-export const numbersText=(line:Pick<RuleLine,'numbers'>|undefined,inh?:Inherited,applies?:string,unit='')=>{const p=numberParts(line,inh,applies);return p.length?partsText(p,unit):'';};
+export const numbersText=(line:LineNumbers|undefined,inh?:Inherited,applies?:string,unit='')=>{const p=numberParts(line,inh,applies);return p.length?partsText(p,unit):'';};
 /** The same, drawn in the one style (`numbersEl`): an inherited number muted, its tooltip naming the line it comes from. */
-export const numbersNode=(line:Pick<RuleLine,'numbers'>,inh:Inherited|undefined,from:(id:string)=>string,applies?:string,key?:RuleViewKey):HTMLElement=>{
+export const numbersNode=(line:LineNumbers,inh:Inherited|undefined,from:(id:string)=>string,applies?:string,key?:RuleViewKey):HTMLElement=>{
   const n=numbersEl(numberParts(line,inh,applies),from);return key?key.numbers(n):n;};
 /** A prohibition is distinct from a zero workload quota. */
 /** A line's reach in a table cell: a count, "—" when not known, or flagged when the line reaches no one today. Reach is
@@ -300,7 +304,7 @@ export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:b
 // shortcut: a blank (inherited) strength reads as the rule's fallback level, not the broader line it inherits from, so a badge
 // can show the fallback where the effective level differs; upgrade when the catalogue sends each line's effective level (a server field), then read that.
 export function ruleLevels(e:RuleCatalogueEntry,lines:readonly RuleLine[]):string[]{
-  const all=[...new Set(lines.flatMap(l=>Object.entries(l.numbers||{}).map(([k,n])=>(n as {level?:string|null}|undefined)?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
+  const all=[...new Set(lines.flatMap((l:LineNumbers)=>Object.entries(l.numbers||{}).map(([k,n])=>l.mandatory_reasons?.[k]?'mandatory':n?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
   return all.length<=1?all:[...new Set(all.map(v=>v==='mandatory'?'mandatory':'advisory'))];
 }
 /** The days a line holds on: none set (or an empty list) is every day, as the server reads it. */
@@ -381,7 +385,7 @@ const COUNTED=['metric','window','window_days','window_alignment','window_anchor
  *  when changed (they then replace what those settings counted), so the stored settings stay the one representation. */
 export function wire(lines:RuleLine[],saved:RuleLine[]):RuleLine[]{
   const was=new Map(saved.map(l=>[l.id,l]));
-  return lines.map(l=>{const {mode:_mode,measure,period,...rest}=l,old=was.get(l.id);
+  return lines.map((l:RuleLine&LineNumbers)=>{const {mandatory_reasons:_reasons,mode:_mode,measure,period,...rest}=l,old=was.get(l.id);
     if(!measure||!period||'apply' in (l.numbers||{})||old&&JSON.stringify([old.measure,old.period,Object.keys(old.numbers).sort()])===JSON.stringify([measure,period,Object.keys(l.numbers).sort()]))return rest as RuleLine;
     const settings=Object.fromEntries(Object.entries(rest.settings||{}).map(([k,v]):[string,Record<string,unknown>]=>[k,COUNT_KINDS.includes(k)?Object.fromEntries(Object.entries(v).filter(([f])=>!COUNTED.includes(f))):v])
       .filter(([k,v])=>Object.keys(v).length||k==='block_quota'));
@@ -390,8 +394,9 @@ export function wire(lines:RuleLine[],saved:RuleLine[]):RuleLine[]{
 /** Propose a new version of a catalogue rule. A more specific line winning over a broader one is the rule working as
  *  meant: nothing to acknowledge (the server keeps acknowledged_overlaps only as an ignored legacy field). */
 /** A line proposed from the line panel (relax or promote): the rule's other lines with it, and the rule's own on or off,
- *  settings and balance as the draft holds them. Adding a line never switches the rule on or off. */
-export const lineProposal=(draft:Draft,lines:RuleLine[]):Body=>({on:draft.on,lines,settings:draft.settings,balance:draft.balance,seen:draft.seen});
+ *  settings and balance as the draft holds them. Adding a line never switches a rule in force on or off; the first line
+ *  of a rule never in force (no version yet) turns it on. */
+export const lineProposal=(draft:Draft,lines:RuleLine[]):Body=>({on:draft.on||draft.baseId===null&&lines.length>0,lines,settings:draft.settings,balance:draft.balance,seen:draft.seen});
 export async function propose(e:Entry,body:Body,reason:string):Promise<Row>{
   const payload={catalogue_id:e.id,catalogue_version:e.catalogue_version,expected_policy_id:e.rule?.id??null,expected_revision:e.rule?.revision??null,on:body.on,settings:body.settings??settingsOf(e),balance_between_people:body.balance??balanceOf(e),
     expected_line_ids:body.seen??linesOf(e).map(l=>l.id),lines:wire(body.lines,linesOf(e)),acknowledged_overlaps:[],reason};
@@ -535,7 +540,7 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   const rows:LineRow[]=[];
   // The draft's changes are worked out once per change (changed() moves the version), not per number cell: every cell
   // asked, each comparing every line (a 331-line rule took 3 s to open and 3 s per Keep change).
-  let draftVersion=0,known=-1,count=0;
+  let draftVersion=0,known=-1,count=0,lineCount=draft.lines.length;
   const changes=()=>{if(!editable)return 0;if(known!==draftVersion){count=changesIn(e,draft);known=draftVersion;}return count;};
   // A saved line's text, once: whether a line still reads as the saved one is asked per cell.
   const savedJSON=new Map(saved.map(l=>[l.id,JSON.stringify(l)]));
@@ -592,7 +597,12 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     if(blocked||refusedWhy)disabledWhy(proposeBtn,blocked||refusedWhy,openIt());else disabledWhy(proposeBtn,n?'':TERMS.nothingToPropose);
     status.textContent=[n?`${plural(n,'change')} not yet proposed`:''].filter(Boolean).join(' · ');};
   /** After any change: the draft is kept (it counts on the Rules page too), the table, the check and the panel follow. */
-  const changed=(keep=true)=>{draftVersion++;if(keep&&editable)keepDraft(e,draft);found=null;recheck();rows.splice(0,rows.length,...draft.lines.map((line,n)=>({entry:e,line,n})),...proposedRows);table.refresh();paint();summary();panel.sync();};
+  const changed=(keep=true)=>{draftVersion++;
+    // The first line of a rule never in force turns it on (switch it off to keep it off); its last line removed turns
+    // it back off, so an empty draft proposes nothing. The Rules list's New line opens its line here too.
+    const had=lineCount>0,has=draft.lines.length>0;lineCount=draft.lines.length;
+    if(!e.rule&&had!==has&&draft.on!==has){draft.on=has;showOn();}
+    if(keep&&editable)keepDraft(e,draft);found=null;recheck();rows.splice(0,rows.length,...draft.lines.map((line,n)=>({entry:e,line,n})),...proposedRows);table.refresh();paint();summary();panel.sync();};
   // B5: lines a waiting proposal adds sit in the table as "Proposed" (clock: waiting for someone); they open its decision.
   const proposedAll=(e.proposed?.definition?.rule?.lines||[]) as RuleLine[],proposedIds=new Set(proposedAll.filter(l=>!saved.some(x=>x.id===l.id)).map(l=>l.id));
   const proposedRows:LineRow[]=proposedAll.flatMap((line,n)=>proposedIds.has(line.id)?[{entry:e,line,n}]:[]);
@@ -691,6 +701,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     bulk:editable?ids=>bulkActions(e,ids,draft,changed,refresh):undefined});
   const add:HTMLButtonElement|null=editable?button('+ New line',()=>newLinePicker(ctx,e,add!,draft,changed,id=>panel.open(id)),'',{class:'rc-new-line','aria-label':'New line: a person, rank, clinic or #tag'}):null;
   const onText=el('b',{},draft.on?'On':'Off'),headFacts=el('span',{class:'muted'});
+  let onBox:HTMLInputElement|null=null;
+  const showOn=()=>{onText.textContent=draft.on?'On':'Off';if(onBox)onBox.checked=draft.on;};
   const settingsBtn:HTMLButtonElement=button('Settings',()=>settingsPopover(ctx,e,settingsBtn,draft.settings,editable,(value,balance)=>{draft.settings=value;if(balance!==undefined)draft.balance=balance;changed();},
     draft.lines.filter(l=>ownSettings(l,e)).length,balances(e)?draft.balance:undefined,
     value=>checkLines(e,{on:draft.on,lines:draft.lines,settings:value}).then(r=>settingIssues(r,'rule.catalogue.settings.'))),'secondary');
@@ -743,8 +755,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   function draftSwitch(){
     // A reader who cannot propose reads On / Off (the word beside it), not a switch they cannot use.
     if(!canEdit)return '';
-    const box=el('input',{type:'checkbox',role:'switch',class:'switch','aria-label':`${e.name} on or off`,checked:draft.on,disabled:!editable}) as HTMLInputElement;
-    box.addEventListener('change',()=>{draft.on=box.checked;onText.textContent=draft.on?'On':'Off';
+    const box=onBox=el('input',{type:'checkbox',role:'switch',class:'switch','aria-label':`${e.name} on or off`,checked:draft.on,disabled:!editable}) as HTMLInputElement;
+    box.addEventListener('change',()=>{draft.on=box.checked;showOn();
       // Turning on a rule with no lines starts it from its usual first line (then edit it before proposing).
       if(draft.on&&!draft.lines.length&&Object.keys(e.default_line?.numbers||{}).length){const l=newLine(e);draft.lines.push(l);changed();panel.open(l.id);return;}
       changed();});return box;}
@@ -1126,8 +1138,8 @@ export function amountWords(e:RuleCatalogueEntry,l:RuleLine,inh?:Inherited,rule:
   // A number the line leaves blank is the broader line's (blank inherits); None is no number.
   const own=(k:string)=>l.numbers?.[k],n=(k:string)=>own(k)?own(k)!.value??null:inh?.[k]?.value??null;
   const min=n('min'),max=n('max'),target=n('target'),main=max??min??target,key=max!=null?'max':min!=null?'min':'target';
-  const level=strengthOf(e,key,own(key),inh);
-  if(main==null)return {main:null,level:l.numbers?.apply?strengthOf(e,'apply',l.numbers.apply,inh):undefined,text:l.numbers?.apply?(e.modes?.includes('no_duties')?'no duties':`${e.name.toLowerCase()} applies ${goalUnit(e,l,rule)}`.trim()):`${e.name.toLowerCase()} ${numbersText(l)||'— no number yet'}`.trim()};
+  const level=strengthOf(e,key,l,inh);
+  if(main==null)return {main:null,level:l.numbers?.apply?strengthOf(e,'apply',l,inh):undefined,text:l.numbers?.apply?(e.modes?.includes('no_duties')?'no duties':`${e.name.toLowerCase()} applies ${goalUnit(e,l,rule)}`.trim()):`${e.name.toLowerCase()} ${numbersText(l)||'— no number yet'}`.trim()};
   // A maximum counted over a run says the run ("60 hours in any 14 days"), not the rule's name ("per period").
   const lower=e.name.toLowerCase(),unit=e.unit||'',window=key==='max'?windowText(e,l,rule):'',rest=window||(unit&&lower.startsWith(unit)?lower.slice(unit.length).trim():lower);
   // A Workload line counts its measure over its period; elapsed rest is hours between duties.
@@ -1166,7 +1178,7 @@ function lineSays(e:RuleCatalogueEntry,l:RuleLine,names:Namer,links:{who:Node|st
   const few=(t:Conditions)=>valuesOf(t).length<=3&&!t.conditions.some(c=>'conditions' in c);
   const a=amountWords(e,l,inh,rule),who=l.who?.conditions.length?links.who||treeText(l.who,names,'everyone'):'everyone',where=l.where?.conditions.length?(few(l.where)?treeText(l.where,names,''):links.where||treeText(l.where,names,'')):'all clinics';
   const at=l.where?.conditions.length?placeWord(l.where):'at';
-  const levels=Object.entries({...inh,...l.numbers}).filter(([k,v])=>v.value!=null||k==='apply').map(([k])=>({key:k,level:strengthOf(e,k,l.numbers?.[k],inh)}));
+  const levels=Object.entries({...inh,...l.numbers}).filter(([k,v])=>v.value!=null||k==='apply').map(([k])=>({key:k,level:strengthOf(e,k,l,inh)}));
   const strengths=new Set(levels.map(v=>v.level)).size>1?` (${levels.map(v=>`${(LONG_LABELS[v.key]||numberLabel(e,v.key)).toLowerCase()} ${strength(v.level).slice(2,-1)}`).join('; ')})`:strength(a.level);
   // Rest between duties: which duty types may not (or should not) follow which.
   const avoid=modeText(e,l,rule)===words(e.modes?.[2]||''),kind=avoid?'shift_succession':'forbidden_transition';
@@ -1196,10 +1208,15 @@ const mandatoryNumber=(e:RuleCatalogueEntry,k:string)=>e.levels.includes('mandat
 /** A blank strength with no broader line to take it from: what the server applies (rule_lines._levels' fallback). */
 const fallbackLevel=(e:RuleCatalogueEntry,k:string)=>mandatoryNumber(e,k)?'mandatory':'medium';
 /** A number's strength as it applies: its own, else the broader line's, else the fallback (null: the broader line's is blank too). */
-function strengthOf(e:RuleCatalogueEntry,k:string,own:{level?:string|null}|undefined,inh?:Inherited):string|null{
-  return own?.level??(inh?.[k]?inh[k].level??null:fallbackLevel(e,k));
+function strengthOf(e:RuleCatalogueEntry,k:string,line:RuleLine,inh?:Inherited):string|null{
+  return displayedStrength(line,k,line.numbers?.[k]?.level??(inh?.[k]?inh[k].level:fallbackLevel(e,k))).level;
 }
-const defaultNumberLevel=(e:RuleCatalogueEntry,k:string)=>e.levels.includes('medium')?'medium':mandatoryNumber(e,k)?'mandatory':e.levels[0];
+const hardSafetyNumber=(e:RuleCatalogueEntry,k:string,line?:RuleLine)=>{
+  const slots=(e.numbers[k]||[]) as Array<RuleCatalogueEntry['numbers'][string][number]&{mandatory_reason?:string}>;
+  const chosen=line&&slots.find(s=>s.kind in (line.settings||{})),candidates=chosen?[chosen]:slots;
+  return candidates.every(s=>s.mandatory_reason)?candidates[0]?.mandatory_reason:undefined;
+};
+const defaultNumberLevel=(e:RuleCatalogueEntry,k:string)=>hardSafetyNumber(e,k)?'mandatory':e.levels.includes('medium')?'medium':mandatoryNumber(e,k)?'mandatory':e.levels[0];
 /** K1f Numbers: one row of fields (Minimum | Maximum | Target, or the rule's own numbers), each with its strength as a
  *  "!" chip beside it, the table's own notation: solid "!" mandatory, outline "!" advisory, "↰" taken from the broader
  *  line. The chip opens the shared menu of the strengths that number may have (Mandatory, Advisory · low … critical,
@@ -1216,8 +1233,8 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
     // The strengths this number may have: the rule's levels (mandatory only where its slots allow), and Inherit.
     const options=[...e.levels.filter(v=>v!=='mandatory'||mandatoryNumber(e,k)).map(v=>({key:v,label:v==='mandatory'?'Mandatory':v==='off'?'Off · not applied':`Advisory · ${v}`})),
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
-    const taken=broader?.(k);
-    let level:string|null=own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
+    const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
+    let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
     const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
@@ -1226,7 +1243,8 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
-    const strength=options.length>1&&(editable||!!own&&(k==='apply'||own.value!=null))?chip:null;
+    const hasNumber=editable||!!own&&(k==='apply'||own.value!=null);
+    const strength=!hasNumber?null:safety?levelBadge('mandatory',safety):options.length>1?chip:null;
     if(k==='apply'){
       const c=check(label,!!own);c.input.disabled=!editable||!!w.source_bindings?.[k];
       return {node:el('div',{class:'rc-lp-num rc-lp-num-apply'},el('div',{class:'rc-lp-num-box'},c.wrap,strength)),read:()=>c.input.checked?{value:null,level}:null,k};
@@ -1256,8 +1274,13 @@ export const ackKey=(x:Row)=>`${x.line_id}>${(x.winner_ids as string[]).join(','
 /** The check in words (the server numbers lines in the order they were added, which a sorted table does not show). */
 export function checkWords(e:RuleCatalogueEntry,lines:()=>RuleLine[],names:Namer){
   const said=(id:string)=>{const l=lines().find(x=>x.id===id);return l?`“${lineWords(e,l,names)}”`:'A line';};
+  // A line in brief, as the relation row says the broader one (who and number, no strength); in full where two read alike.
+  const brief=(l:RuleLine)=>`${treeText(l.who,names,'Everyone',4)} ${numberParts(l,undefined,appliesWord(e)).map(x=>x.text).join('')}`.trim();
+  const short=(id:string)=>{const all=lines(),l=all.find(x=>x.id===id);if(!l)return 'A line';const b=brief(l);return all.some(x=>x!==l&&brief(x)===b)?said(id):b;};
   return {same:(d:Row)=>`${said(d.line_ids[0])} is there twice: what it counts, who, where, days and dates overlap`,
     over:(x:Row)=>`${said(x.line_id)} gives way to ${(x.winner_ids as string[]).map(said).join(' and ')}${(x.numbers as string[]|undefined)?.length?` on its ${(x.numbers as string[]).join(' and ')}`:''} for ${plural(x.people,'person','people')} today`,
+    /** "Everyone ≤ 5 gives way to Senior grade ≤ 6 for 11 people": an overlap in one short line, as information. */
+    gives:(x:Row)=>`${short(x.line_id)} gives way to ${(x.winner_ids as string[]).map(short).join(' and ')} for ${plural(x.people,'person','people')}`,
     warn:(w:Row)=>w.kind==='pool_shortfall'?String(w.message):w.kind==='both'?`${said(w.other_id)} and ${said(w.line_id)} both apply to ${plural(w.people,'person','people')} today: neither is more specific, so each of their numbers holds`
       :w.kind==='inherits'?`${said(w.line_id)} inherits ${Object.entries(w.inherited as Record<string,number>).map(([k,v])=>`${k} ${v}`).join(' and ')} from ${said(w.other_id)}, which contradicts its own numbers: give it None`
       :`${said(w.line_id)} is narrower but weaker than ${said(w.other_id)}: safety lines all apply, so the broader one still binds`};
@@ -1597,7 +1620,8 @@ export const NUMBER_LABELS:Record<string,string>={min:'Min',max:'Max',target:'Ta
 /** One number of a line: its own ("3!"), "None", inherited ("2↰") or "—". */
 /** One number of a line in a table cell: its own ("3"), "None", inherited ("2↰") or "—", with its strength. */
 const numberPart=(l:RuleLine,k:string,inh?:Inherited):NumberPart|null=>{const n=l.numbers?.[k],i=inh?.[k];
-  return n?{text:k==='apply'?'Yes':shown(n),level:n.value==null&&k!=='apply'?undefined:n.level??i?.level??null}:i&&i.value!=null?{text:shown(i)+'↰',from:i.from,level:i.level??null}:null;};
+  if(n)return n.value==null&&k!=='apply'?{text:shown(n)}:{text:k==='apply'?'Yes':shown(n),...displayedStrength(l,k,n.level??i?.level)};
+  return i&&i.value!=null?{text:shown(i)+'↰',from:i.from,...displayedStrength(l,k,i.level)}:null;};
 const shownNumber=(l:RuleLine,k:string,inh?:Inherited)=>{const x=numberPart(l,k,inh);return x?partsText([x]):'—';};
 // One number per column (Min, Max…): its strength and ↰ are marks, the min – max → target notation is not drawn here.
 const numberCell=(l:RuleLine,k:string,inh:Inherited|undefined,from:(id:string)=>string,key:RuleViewKey)=>{const x=numberPart(l,k,inh);
@@ -1679,11 +1703,12 @@ function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,
   const c=p.check as Check|undefined,words=checkWords(e,()=>now,names);
   const said=c?[...c.duplicates.map(words.same),...c.issues.map(x=>String(x.message)),...c.warnings.map(words.warn)]:[];  // a winning exception is no warning; equal tiers come as warnings
   // Which line each proposed line gives way to: the approver still sees it, as information (no alert, nothing to tick).
-  const gives=c?c.overlaps.map(words.over):[];
+  const gives=c?c.overlaps.map(words.gives):[];
+  // The plain lines first, apart from the warnings' label and count, so they never read as warnings.
   const checked=said.length||gives.length?el('div',{class:'rc-prop-check'},
+    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},t)),['line','lines']))]:[]),
     ...(said.length?[el('p',{class:'dt-pop-label'},`The check · ${plural(said.length,'warning')}`),
-      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[]),
-    ...(gives.length?[el('ul',{class:'rc-prop-gives'},...capped(gives.map(t=>el('li',{},el('span',{},t+'.'))),['line','lines']))]:[])):'';
+      el('ul',{class:'rc-prop-warnings'},...capped(said.map(t=>el('li',{},icon('alert'),el('span',{},t+'.'))),['warning','warnings']))]:[])):'';
   const table=changes.length?changeTable(ctx,e,changes,unchanged,names,openTag,(rule.settings||{}) as Settings,key):'';
   const who=el('p',{class:'rc-prop-who muted'},mine?'You proposed it':`Proposed by ${p.created_by_name||'another person'}`,p.created_at?` · ${formatDate(String(p.created_at),departmentTimeZone())}`:'',  // the department's day, not UTC's
     p.source?el('span',{class:'rc-prop-reason',title:String(p.source)},` · “${String(p.source)}”`):'',
@@ -1907,13 +1932,13 @@ function changeTable(ctx:Context,e:RuleCatalogueEntry,changes:Change[],unchanged
 // ---- Cell editors (anchored to the cell; Enter saves, Esc cancels) ----
 function numberEditor(e:RuleCatalogueEntry,k:string,l:RuleLine,finish:(save:boolean,move?:1|-1)=>void){
   if(Object.keys(l.source_bindings||{}).length&&!l.source_bindings?.[k])return {node:note('This converted line keeps its source numeric slots. Add a new line for a different obligation.'),read:()=>null};
-  const n=l.numbers?.[k],mandatory=mandatoryNumber(e,k);
-  let level:string|null=n?n.level??null:defaultNumberLevel(e,k);
+  const n=l.numbers?.[k],mandatory=mandatoryNumber(e,k),safety=hardSafetyNumber(e,k,l);
+  let level:string|null=safety?'mandatory':n?n.level??null:defaultNumberLevel(e,k);
   const input=el('input',{type:'number',step:'any','aria-label':NUMBER_LABELS[k]||k,value:n?.value??''}) as HTMLInputElement;
   input.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();finish(true);}if(ev.key==='Tab'){ev.preventDefault();finish(true,ev.shiftKey?-1:1);}});
   const kinds=[['mandatory','Mandatory'],['medium','Advisory'],...(tier(l)>1||level===null?[['','Inherit']]:[])].filter(([v])=>v==='mandatory'?mandatory:v==='medium'?e.levels.some(x=>x!=='mandatory'):true);
   // Advisory keeps the line's own advisory level (high, medium, low); choosing it fresh is medium.
-  const levels=segmented('Strength',kinds.map(([v,label])=>[v,label]),level===null?'':level==='mandatory'?'mandatory':'medium',
+  const levels=safety?levelBadge('mandatory',safety):segmented('Strength',kinds.map(([v,label])=>[v,label]),level===null?'':level==='mandatory'?'mandatory':'medium',
     v=>{level=v===''?null:v==='mandatory'?'mandatory':level&&level!=='mandatory'?level:'medium';});
   const node=el('div',{class:'rc-number-edit'},...(k==='apply'?[]:[input]),levels,el('small',{class:'muted'},k==='apply'?'Esc cancels':'Enter saves · Esc cancels · Tab to the next cell · empty removes it'));
   return {node,read:()=>k==='apply'?{value:null,level}:{value:input.value===''?null:Number(input.value),level}};
@@ -2196,11 +2221,22 @@ export function moreActions(label:string,items:Child[],pending=0):HTMLElement{
 }
 /** Rules in force that are not in the catalogue yet: they keep applying as they are (read-only here). */
 export const keptRules=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='active'&&p.kind!=='catalogue'&&!p.definition?.workspace_id);
+/** Proposals for an older rule kind (not in the catalogue): one list for the ⋯ menu's count and Waiting for approval. */
+export const olderPending=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+const recordName=(ctx:Context)=>(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+/** What an older rule does, in words (its Effect in Other pending rules). */
+export const olderEffect=(ctx:Context,p:Row)=>ruleSentence(p.definition.rule,p.definition,recordName(ctx));
+/** May check an older-kind proposal against current rotas (its Review). */
+export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER);
+/** An older-kind proposal's decision panel (check, Activate, Decline): Activate for another approver, or the proposer
+ *  under a self-approval permission (mayDecide). */
+export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
+  refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{
-  const pending=(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+  const pending=olderPending(ctx);
   if(!kept.length&&!pending.length)return null;
-  const name=(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+  const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
   const context=kept.length?compact(button(`Other department rules (${kept.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
     build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
@@ -2210,11 +2246,11 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
         defaults:{wrap:['name','effect']},
         columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
           {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)},
-          {key:'level',label:'Level',text:p=>p.definition.severity,cell:p=>p.definition.severity==='mandatory'?'Mandatory':'Advisory'},
+          {key:'level',label:'Level',text:p=>p.effective_severity??p.definition.severity,cell:p=>levelBadge(p.effective_severity??p.definition.severity,p.severity_reason)},
           {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
     'secondary'),'layers'):null;
   if(!pending.length)return context;
-  const canCheck=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
+  const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};
   // Folds to its icon beside a side panel, like the other header buttons.
   const waiting=compact(button(`Other pending rules (${pending.length})`,()=>dockPanel({key:'pending-rules',title:'Other pending rules',width:640,
@@ -2225,7 +2261,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
       columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
         {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)}],
       rowActions:p=>{const mine=p.created_by===ctx.me.identity_id;return [
-        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>ruleReview(p,canCheck,ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),changed,name,ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx)}]:[]),
+        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>reviewOlder(ctx,p,changed)}]:[]),
         // Withdrawing your own proposal requires a recorded reason; Undo puts it back waiting.
         ...(canDecide&&mine?[{label:'Withdraw',icon:'close' as const,danger:true,run:()=>confirmAction(`Withdraw ${labelOf(p)}`,'The proposal stays in History; Undo puts it back waiting.',reason=>declineProposal(p,reason,'Proposal withdrawn.',changed),'Withdraw')}]:[]),
         ...(canDecide&&!mine?[{label:'Decline',icon:'close' as const,danger:true,run:()=>confirmAction(`Decline ${labelOf(p)}`,'The proposal is kept in History.',reason=>declineProposal(p,reason,'Proposal declined.',changed),'Decline')}]:[])];},

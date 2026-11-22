@@ -67,7 +67,7 @@ globalThis.window=Object.assign(new EventTarget(),{setTimeout:(fn,ms)=>{timers.s
   innerHeight:900,innerWidth:1440,scrollY:0});
 const paths=[],checks=[];globalThis.fetch=path=>{path=String(path);paths.push(path);
   if(path.includes('/api/policies/check'))return new Promise(answer=>checks.push(answer));
-  return Promise.resolve(json(path.includes('/api/policies/capabilities')?{rule_kinds:['max_shifts']}:{workspaces:[]}));};
+  return Promise.resolve(json(path.includes('/api/policies/capabilities')?{rule_kinds:['max_shifts'],always_mandatory_kinds:[]}:{workspaces:[]}));};
 const f=await import(FORMS);
 await f.policyForm(ctx);await settle();
 const dlg=document.querySelector('dialog'),form=dlg.querySelector('form');

@@ -12,13 +12,14 @@ import uuid
 
 from packages.contracts.rule_catalogue import CATALOGUE_BY_ID, CATALOGUE_MAPPING, V2_CATALOGUE_BY_ID, NEVER_OVERRIDDEN, PERSON_CALENDAR_FACT_MAPPING, _MODELS, catalogue_entry, slot_for_number
 from packages.contracts.schemas import LEAD_FIELDS, SESSION_SCOPE_FIELDS, PolicyDefinition, line_field, line_rule
-from .conditions import absolute_values, active_rules
+from .conditions import absolute_values, active_rules, effective_severity
 from .rule_groups import PROTECTED_TIME, expanded, expanded_copies, normal
 from .rule_lines import (SCORING_DEFAULT_SOURCE, _defaults, _settings, both_apply, department_catalogue_version,
                          duplicates, fair_share_goal_settings, line_validity, named_people, outranking, scope_of, tier)
 
 NAMESPACE = uuid.UUID('6f1c0b8e-6c55-4a39-9a43-6a2f7c1d9e10')  # line ids are derived from the old rule: a plan is repeatable
 REPORT = 'Not in the catalogue yet: '
+SAFETY_REVIEW_REASON = 'Review this safety rule and approve a mandatory version before conversion'
 
 
 class Kept(Exception):
@@ -252,6 +253,10 @@ def _plan(policies, held, week_start, department_id, in_force):
         try:
             if p['id'] in held:
                 raise Kept(held[p['id']])
+            definition = p['definition']
+            stored = definition.get('severity', 'mandatory')
+            if effective_severity(definition['rule']['kind'], stored) != stored:
+                raise Kept(SAFETY_REVIEW_REASON)
             entry_id, lines = lines_of(p)
             for line in lines:  # an overtime offer names the limits in force that hold the ones it needs
                 offer = line['settings'].get('allocation_overtime')
@@ -400,7 +405,7 @@ def _line_safety(entry_id, version, rule, line, *, mandatory=True):
         numbers = line.get('numbers') or {}
         for key, number in numbers.items():
             slot = slot_for_number(entry, key, rule, line, numbers)
-            if slot['kind'] not in NEVER_OVERRIDDEN or (slot['advisory'] and not mandatory):
+            if effective_severity(slot['kind'], None, advisory_slot=slot['advisory']) != 'mandatory':
                 continue
             level = number.get('level', 'mandatory')
             if level is None:
@@ -918,9 +923,11 @@ def plan_v2(policies, held=None, week_start=0, department_id=None, *, tag_ids=()
                             item['source_default'] = deepcopy(base)
                 else:
                     material[0][1]['source_default'] = base
-            if any(_line_safety(entry_id, version, old_rule, candidate, mandatory=False)
-                   for _, line in material for candidate in (line, line.get('source_default')) if candidate):
-                raise Kept('Review this safety rule and approve a mandatory version before conversion')
+            stored = d.get('severity', 'mandatory')
+            if material and (effective_severity(original['kind'], stored) != stored
+                    or any(_line_safety(entry_id, version, old_rule, candidate, mandatory=False)
+                           for _, line in material for candidate in (line, line.get('source_default')) if candidate)):
+                raise Kept(SAFETY_REVIEW_REASON)
             target_id = CATALOGUE_MAPPING.get(entry_id, entry_id)
             for n, line in material:
                 source_line_id = line['id']
