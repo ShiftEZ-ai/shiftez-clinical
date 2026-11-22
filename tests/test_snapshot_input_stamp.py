@@ -379,12 +379,14 @@ def test_workspace_lifecycle_and_redate_stamp_once(h):
         with transaction(h.app.state.engine) as db:
             return db.get(m.Organisation, h.seed['organisation_id']).input_revision
 
+    # 17 Nov oracle (#1171): a lone rota's status is read by no other rota, so its submit and reopen do not advance.
     before = input_revision()
     rota = h.lifecycle(rota, 'submit')['workspace']
-    assert input_revision() == before + 1
-    before = input_revision()
+    assert input_revision() == before
     rota = h.lifecycle(rota, 'reopen')['workspace']
-    assert input_revision() == before + 1
+    assert input_revision() == before
+    # Its own reopen is caught by the erased check, not by the input revision.
+    assert h.detail(rota)['workspace']['validation_current'] is False
 
     with transaction(h.app.state.engine, write=True) as db:
         row = db.get(m.Workspace, rota['id'])

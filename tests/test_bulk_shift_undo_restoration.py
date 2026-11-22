@@ -75,8 +75,12 @@ def test_bulk_shift_undo_keeps_receipt_authority_when_an_identical_rule_recites_
 def test_bulk_shift_undo_rechecks_new_requirements_and_only_mandatory_ones_block(request, database, severity):
     h = request.getfixturevalue(database)
     workspace, _, result, _ = filled_gap(h)
-    h.policy({'kind': 'minimum_cover', 'minimum': 3, 'aggregation': 'service_group'},
-             {'service_ids': h.seed['services'][:2]}, severity=severity)
+    scope = {'service_ids': h.seed['services'][:2]}
+    if severity == 'mandatory':
+        h.policy({'kind': 'minimum_cover', 'minimum': 3, 'aggregation': 'service_group'}, scope)
+    else:
+        # Safety kinds are always mandatory. The advisory branch uses the pooled cover target.
+        h.cover_target(3, scope, settings={'aggregation': 'service_group'})
     before = state(h, workspace)
     checked = preview(h, 'coordinator', result['undo']['payload'])
     assert checked['counts']['problem'] == int(severity == 'mandatory')

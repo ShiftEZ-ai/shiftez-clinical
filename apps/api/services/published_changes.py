@@ -563,6 +563,8 @@ def submit(db, actor, row, workspace, command):
                    if c['id'] in selected_ids else c for c in row.changes]
     result = planning.lifecycle(db, actor, s.Command(kind='workspace.submit', target_id=candidate.id,
         expected_revision=candidate.revision, payload={'reason': value.reason}))
+    check = candidate.validation
+    review_organisation = planning._lock_review_check_inputs(db, actor, check)
     row.changes = [{**c, 'status': 'submitted', 'workspace_id': candidate.id,
                     'urgency': value.urgency, 'submitted_at': candidate.submitted_at.isoformat(),
                     'return_note': None}
@@ -570,8 +572,20 @@ def submit(db, actor, row, workspace, command):
     row.revision += 1
     workspace.revision += 1
     history(db, actor, 'publication_change_lists', row, value.reason)
-    # lifecycle already returned this candidate's review payload; nothing it reads changed since.
-    return {**result, 'changes': public_changes(row, result['validation'], db=db, actor=actor)}
+    manifest = check['input_manifest']
+    hint = manifest['dirty_hint']
+    # The transaction holds the input lock through this final change-list write.
+    dirty = {**hint, 'input_revision': review_organisation.input_revision,
+             'availability_revision': review_organisation.availability_revision}
+    if 'department_revisions' in dirty:
+        department = db.get(m.Department, candidate.department_id)
+        dirty['department_revisions'] = [
+            [ident, revision, department.catalogue_revision if ident == department.id else catalogue]
+            for ident, revision, catalogue in dirty['department_revisions']]
+    if dirty != hint:
+        candidate.validation = {**check, 'input_manifest': {**manifest, 'dirty_hint': dirty}}
+    return {**result, 'validation': candidate.validation,
+            'changes': public_changes(row, candidate.validation, db=db, actor=actor)}
 
 
 def on_reviewed(db, actor, workspace, reason):

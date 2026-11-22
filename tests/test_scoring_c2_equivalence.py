@@ -252,11 +252,29 @@ def test_c1_scores_findings_and_solver_components_survive_backfill(h, monkeypatc
     migration = importlib.import_module('migrations.versions.0109_fair_share_dials')
     with h.app.state.engine.begin() as connection:
         migration.backfill(connection)
-    after = two_person_snapshot(h, workspace)
+    after = two_person_snapshot(h, h.refresh_draft_baseline(workspace))
     new_validation, new_score, new_generated = checked_result(after)
     assert new_score['score'] == old_score['score']
     assert new_score['components'] == old_score['components']
-    assert comparable_findings(new_validation) == comparable_findings(old_validation)
+    expected_findings = deepcopy(old_validation['findings'])
+    if strength != 'off':
+        type_id = h.seed['type']
+        seed_id = scoring_defaults.line_id(h.seed['department_id'], 'lead:' + type_id)
+        [default] = [goal for goal in new_validation['goals']
+                     if (goal.get('line_id') or goal['policy_id']) == seed_id]
+        assert (default['metric'], default['aim'], default['period']) == ('lead_turns', 'equal_share', 'rolling')
+        if explicit:
+            # The dated authored goal leaves a fallback for earlier periods.
+            assert default['applies_to_nobody'] and default['people'] == []
+            assert [f['rule_id'] for f in new_validation['findings']
+                    if f['code'] == 'BALANCE_GOAL' and f['detail'].get('applies_to_nobody')] == [default['policy_id']]
+            expected_findings.append({'code': 'BALANCE_GOAL', 'severity': 'warning',
+                                      'detail': {'applies_to_nobody': True}})
+        else:
+            for finding in expected_findings:
+                if finding['detail'].get('goal_id') == 'lead-balance:' + type_id:
+                    finding['detail']['goal_id'] = default['goal_id']
+    assert comparable_findings(new_validation) == comparable_findings({'findings': expected_findings})
     assert new_generated['objective_components'] == old_generated['objective_components']
     assert [tier['value'] for tier in new_generated['objectives']] == [
         tier['value'] for tier in old_generated['objectives']]
@@ -281,7 +299,7 @@ def test_admin_edited_migrated_lead_cap_participates_in_score(h, representation)
     workspace = existing_department(h, 'medium', cap='week', independent=representation == 'independent')
     with h.app.state.engine.begin() as connection:
         importlib.import_module('migrations.versions.0109_fair_share_dials').backfill(connection)
-    data = two_person_snapshot(h, workspace)
+    data = two_person_snapshot(h, h.refresh_draft_baseline(workspace))
     original = score.schedule_score(data, evaluate(data))
     if representation == 'converted':
         proposal = plan_v2(data['policies'], department_id=h.seed['department_id'])
@@ -315,7 +333,7 @@ def test_seeded_lead_cap_with_narrower_person_line_scores_derived_scope(h):
     workspace = existing_department(h, 'medium', cap='week')
     with h.app.state.engine.begin() as connection:
         importlib.import_module('migrations.versions.0109_fair_share_dials').backfill(connection)
-    data = two_person_snapshot(h, workspace)
+    data = two_person_snapshot(h, h.refresh_draft_baseline(workspace))
     original = score.schedule_score(data, evaluate(data))
     cap_id = scoring_defaults.line_id(h.seed['department_id'], 'lead-cap:' + h.seed['type'])
     for policy in data['policies']:

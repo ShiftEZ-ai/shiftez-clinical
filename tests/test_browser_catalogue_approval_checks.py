@@ -288,6 +288,59 @@ def test_pending_rules_preserve_read_only_independence_withdraw_and_decline(brow
         context.close()
 
 
+@pytest.mark.parametrize('role,width,scheme', [('approver', 1440, 'light'), ('approver', 390, 'dark'),
+                                                ('coordinator', 1440, 'dark'), ('auditor', 390, 'light')])
+def test_older_kind_proposal_is_a_row_of_waiting_for_approval_and_opens_its_review(browser, live_server, h, role, width, scheme):
+    """An older-kind proposal is a row of the built-in Waiting for approval view, labelled Older rule; its count and the
+    ⋯ badge count it once each, and its name opens the decision panel Other pending rules' Review opens, with the same
+    permissions: Activate for another approver, none for its proposer, the rule sheet for a reader."""
+    flag(h)
+    workspace = h.shift(h.workspace('Waiting view context'))['workspace']
+    title = 'Older rest proposal'
+    proposal = h.command('coordinator', 'policy.create', {'name': title, 'owner': 'Synthetic department',
+        'source': 'Waiting view regression', 'starts_on': '2026-10-01',
+        'definition': {'rule': {'kind': 'min_rest', 'hours': 12}}})['record']
+    assert proposal['status'] == 'proposed'
+    context, page = sign_in(browser, live_server, role, {'width': width, 'height': 900})
+    try:
+        page.emulate_media(color_scheme=scheme, reduced_motion='reduce')
+        navigate(page, 'rules')
+        row = page.locator(f'#main li[data-older-rule="{proposal["id"]}"]')
+        expect(pending_action(page, 1)).to_be_visible()  # the ⋯ badge still says it waits
+        page.keyboard.press('Escape')
+        expect(row).to_have_count(0)  # All rules lists catalogue rules only
+        page.locator('#main button.dt-saved').click()
+        item = page.get_by_role('menuitemradio', name=re.compile('^Waiting for approval'))
+        expect(item).to_contain_text('1')
+        item.click()
+        expect(row).to_be_visible()
+        expect(row.locator('.badge', has_text='Older rule')).to_be_visible()
+        expect(row.locator('.rt-waiting-chip')).to_have_text('Waiting for approval')
+        expect(page.locator('.app-footer .page-status .dt-count')).to_have_text(re.compile(r'^1 of \d+ rules?$|^1 rule$'))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+        shot(page, f'waiting-older-{role}-{width}-{scheme}')
+        name = row.get_by_role('button', name=title, exact=True)
+        name.focus()
+        page.keyboard.press('Enter')
+        if role == 'auditor':
+            expect(page.get_by_role('region', name=title, exact=True)).to_be_visible()  # reads only
+            return
+        review = page.get_by_role('dialog', name='Review ' + title, exact=True)
+        expect(review).to_be_visible()
+        expect(review.get_by_role('cell', name=workspace['name'], exact=True)).to_be_visible()
+        activate = review.get_by_role('button', name='Activate', exact=True)
+        if role == 'coordinator':
+            expect(activate).to_have_count(0)  # its proposer never approves it
+        else:
+            expect(activate).to_be_visible()
+            expect(review.get_by_role('button', name='Decline', exact=True)).to_be_visible()
+        review.get_by_role('button', name='Close dialog', exact=True).click()
+        expect(review).to_have_count(0)
+        assert policy(h, proposal['id'])['status'] == 'proposed'
+    finally:
+        context.close()
+
+
 def test_pending_rules_decline_together_with_one_reason_and_one_undo(browser, live_server, h):
     """U-16: many waiting proposals (a Simplify blocker) are declined together, one reason and one Undo."""
     flag(h)
