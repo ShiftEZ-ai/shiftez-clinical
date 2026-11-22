@@ -16,7 +16,7 @@ from threading import Lock, get_native_id
 import time
 from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
-from sqlalchemy.orm import Session, with_loader_criteria
+from sqlalchemy.orm import Session, load_only, with_loader_criteria
 from sqlalchemy.orm.attributes import NO_VALUE
 from sqlalchemy.sql.elements import BindParameter, ClauseElement
 from .errors import Problem
@@ -156,7 +156,9 @@ def _snapshot_input_organisation_ids(session, row, related=None):
         if key not in related:
             related[key] = next((r for r in session.new if isinstance(r, cls) and r.id == ident), None)
             if related[key] is None:
-                related[key] = session.get(cls, ident, execution_options={'include_withdrawn': True})
+                options = ([] if cls is m.Organisation else
+                           [load_only(*(getattr(cls, name) for name in _snapshot_input_scope_columns(cls)))])
+                related[key] = session.get(cls, ident, options=options, execution_options={'include_withdrawn': True})
             if cls is m.Organisation and related[key] is not None:
                 # The identity map is weak; one import flush per row must not reload this parent.
                 _snapshot_stamp_state(session)['organisations'][ident] = related[key]
@@ -210,8 +212,11 @@ def snapshot_input_listener_classes():
     return {cls: category for _name, cls, category, *_ in snapshot_input_specs()}
 
 
-def _snapshot_attribute_changes(name, old, new, exclusions):
-    if name in exclusions or (not isinstance(old, ClauseElement) and not isinstance(new, ClauseElement) and old == new):
+def _snapshot_attribute_changes(row, name, old, new, exclusions):
+    from . import models as m
+    # A selected operating calendar makes weekend days display-only.
+    if name in exclusions or (not isinstance(old, ClauseElement) and not isinstance(new, ClauseElement) and old == new) or (
+            name == 'weekend_days' and isinstance(row, m.Department) and row.operating_calendar_id is not None):
         return False
     keys = {key.split('.', 1)[1] for key in exclusions if key.startswith(name + '.')}
     if keys and isinstance(old, (dict, type(None))) and isinstance(new, (dict, type(None))):
@@ -317,7 +322,7 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
             if not any(attribute.history.has_changes() and (
-                    _snapshot_attribute_changes(attribute.key, old, getattr(row, attribute.key), exclusions)
+                    _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
                     or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))
                     for attribute in state.attrs
                     for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)):
@@ -406,8 +411,18 @@ def stamp_snapshot_input_statement(execution):
         else:
             query = (select(*(getattr(cls, name) for name in sorted(scope_columns | read_columns))).distinct()
                      if execution.is_delete else select(cls))
-            if statement.whereclause is not None:
-                query = query.where(statement.whereclause)
+            whereclause = statement.whereclause
+            if not execution.is_orm_statement and table is not cls.__table__:
+                from sqlalchemy.sql.visitors import replacement_traverse
+                if execution.is_update:
+                    # Historical tables can predate columns on the current mapper.
+                    query = query.options(load_only(*(getattr(cls, name) for name in sorted(scope_columns))))
+                if whereclause is not None:
+                    whereclause = replacement_traverse(whereclause, {}, lambda element:
+                        cls.__table__.c.get(getattr(element, 'key', None))
+                        if getattr(element, 'table', None) is table else None)
+            if whereclause is not None:
+                query = query.where(whereclause)
             query_parameters = parameters
             if isinstance(parameters, list):
                 primary_key = inspect(cls).primary_key
@@ -441,7 +456,7 @@ def stamp_snapshot_input_statement(execution):
                     changes = {name: value for name, value in parameters_for_row.items()
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
-                if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
+                if changes and not any(_snapshot_attribute_changes(row, name, getattr(row, name), value, exclusions)
                                        or _wish_reservation_changes(row, name, getattr(row, name), value)
                                        for name, value in changes.items()):
                     continue
@@ -459,7 +474,8 @@ def stamp_snapshot_input_statement(execution):
                 if any(value is NO_VALUE and name in _snapshot_input_scope_columns(cls) for name, value in changes.items()):
                     ids.update(_unresolved_snapshot_input(session, row, related))
                     unresolved_ownership.append(row)
-                replacement = cls(**{**{column.key: getattr(row, column.key) for column in inspect(cls).columns}, **constants})
+                replacement = cls(**{name: constants.get(name, getattr(row, name))
+                                     for name in _snapshot_input_scope_columns(cls)})
                 resolved = _snapshot_input_organisation_ids(session, replacement, related)
                 ids.update(resolved if resolved is not None else _unresolved_snapshot_input(session, replacement, related))
         result = execution.invoke_statement()

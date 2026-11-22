@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import MetaData, Table, delete, insert, select, update
 
 from apps.api import models as m, snapshots
 from apps.api import db as database
@@ -200,6 +200,43 @@ def test_all_session_write_paths_stamp_and_clear_both_memos(backend, writer):
         assert fresh != original
 
 
+@pytest.mark.parametrize('writer', ['update', 'update_all', 'update_from', 'delete'])
+def test_reflected_session_dml_stamps_and_refreshes_target_rows(backend, writer):
+    h = backend
+    with transaction(h.app.state.engine, write=True) as db:
+        target = m.Person(organisation_id=h.seed['organisation_id'], display_name='Synthetic stamp target')
+        source = m.Person(organisation_id=h.seed['organisation_id'], display_name='Synthetic stamp source')
+        db.add_all([target, source])
+        db.flush()
+        target_id, source_id = target.id, source.id
+    with transaction(h.app.state.engine, write=True) as db:
+        org = db.get(m.Organisation, h.seed['organisation_id'])
+        before = (org.input_revision, org.availability_revision)
+        target = db.get(m.Person, target_id)
+        table = Table('people', MetaData(), autoload_with=db.connection())
+        if writer == 'delete':
+            statement = delete(table).where(table.c.id == target_id)
+        elif writer == 'update_all':
+            statement = update(table).values(active=False)
+        elif writer == 'update_from':
+            source_table = table.alias('stamp_source')
+            statement = update(table).where(table.c.id == target_id, source_table.c.id == source_id,
+                source_table.c.organisation_id == table.c.organisation_id).values(display_name=source_table.c.display_name)
+        else:
+            statement = update(table).where(table.c.id == target_id).values(active=False)
+        db.execute(statement)
+        assert (org.input_revision, org.availability_revision) == (before[0] + 1, before[1])
+        if writer == 'delete':
+            assert db.get(m.Person, target_id) is None
+        elif writer == 'update_from':
+            assert target.display_name == 'Synthetic stamp source'
+        else:
+            assert target.active is False
+        source = db.get(m.Person, source_id)
+        assert source.active is (writer != 'update_all')
+        assert source.display_name == 'Synthetic stamp source'
+
+
 def test_only_declared_exclusions_suppress_modified_rows(backend):
     h = backend
     with transaction(h.app.state.engine, write=True) as db:
@@ -218,6 +255,44 @@ def test_only_declared_exclusions_suppress_modified_rows(backend):
         department.operating_calendar_id = None
         db.flush()
         assert org.input_revision == before + 1
+
+
+@pytest.mark.parametrize('selected_calendar', [True, False])
+@pytest.mark.parametrize('writer', ['orm', 'statement', 'core', 'bulk'])
+def test_weekend_shading_stamps_only_without_an_operating_calendar(backend, selected_calendar, writer):
+    h = backend
+    if not selected_calendar:
+        with transaction(h.app.state.engine, write=True) as db:
+            db.get(m.Department, h.seed['department_id']).operating_calendar_id = None
+    with transaction(h.app.state.engine, write=True) as db:
+        org = db.get(m.Organisation, h.seed['organisation_id'])
+        department = db.get(m.Department, h.seed['department_id'])
+        before = (org.input_revision, org.availability_revision)
+        if writer == 'orm':
+            department.weekend_days = [5, 6]
+        elif writer == 'bulk':
+            db.execute(update(m.Department), [{'id': department.id, 'weekend_days': [5, 6]}])
+        else:
+            target = m.Department.__table__ if writer == 'core' else m.Department
+            key = target.c.id if writer == 'core' else target.id
+            db.execute(update(target).where(key == department.id).values(weekend_days=[5, 6]))
+        db.flush()
+        assert department.weekend_days == [5, 6]
+        assert (org.input_revision, org.availability_revision) == (before[0] + (not selected_calendar), before[1])
+
+
+def test_one_write_changing_weekends_and_calendar_stamps_inputs(backend):
+    h = backend
+    with transaction(h.app.state.engine, write=True) as db:
+        org = db.get(m.Organisation, h.seed['organisation_id'])
+        department = db.get(m.Department, h.seed['department_id'])
+        assert department.operating_calendar_id is not None and department.weekend_days != [5, 6]
+        before = (org.input_revision, org.availability_revision)
+        db.execute(update(m.Department).where(m.Department.id == department.id).values(
+            weekend_days=[5, 6], operating_calendar_id=None))
+        db.flush()
+        assert department.weekend_days == [5, 6] and department.operating_calendar_id is None
+        assert (org.input_revision, org.availability_revision) == (before[0] + 1, before[1])
 
 
 @pytest.mark.parametrize('core', [False, True])

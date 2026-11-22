@@ -57,6 +57,12 @@ const UNIT:Record<SchedRange,string>={year:'year',month:'month','2weeks':'2 week
 const STEP:Partial<Record<SchedRange,number>>={day:1,'3days':3,week:7,'2weeks':14};
 /** The first day of the department's week holding `day` (organisation week_start: Monday 0 … Sunday 6). */
 export const weekOf=(day:string,weekStart:number)=>{const js=(weekStart+1)%7,dow=new Date(day+'T12:00:00Z').getUTCDay();return addDays(day,-((dow-js+7)%7));};
+/** Whether a ?shift= address that opens on its session's day says the session moved. A link to the session (Show on
+ *  schedule, Home, a profile) names the day it was on (`namesDay`): any other day is a move. A session panel's own address
+ *  names only the day in view, where the session was shown in that week: only another week is a move, never another day
+ *  of the same week. */
+export const linkMoved=(viewDay:string,sessionDay:string,weekStart:number,namesDay:boolean)=>
+  !!viewDay&&viewDay!==sessionDay&&(namesDay||weekOf(viewDay,weekStart)!==weekOf(sessionDay,weekStart));
 const monthStart=(day:string,move=0)=>{const d=new Date(day.slice(0,7)+'-01T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+move);return d.toISOString().slice(0,10);};
 /** The days a range shows around its anchor day. There is no rota boundary: the timeline is continuous. Day and 3 days
  *  start on the anchor; weeks, 2 weeks and a custom range on the week's first day. */
