@@ -33,7 +33,7 @@ def test_current_people_count_and_title_exclude_ended_rank_programme_and_rotatio
     data = facts()
     result = current_people(data, date(2026, 10, 3))
     assert result['active_people'] == 2 and result['people_without_current_rank'] == 1
-    assert result['people']['p'] == {'display_title': 'Current rank', 'current_category_ids': ['rank'],
+    assert result['people']['p'] == {'active': True, 'display_title': 'Current rank', 'current_category_ids': ['rank'],
         'current_programme_ids': [], 'current_rotation_type_ids': [], 'current_cohort_ids': []}
     assert result['people']['q']['display_title'] == 'Explicit title'
     assert result['people']['gone']['display_title'] == ''

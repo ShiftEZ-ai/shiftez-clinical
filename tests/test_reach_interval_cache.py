@@ -1,11 +1,12 @@
 """Detailed reach shares canonical clocks within one immutable snapshot read."""
 import copy
+from datetime import date
 
 import pytest
 
 from packages.domain import validation
 from packages.domain.rule_map import reach
-from packages.domain.time import aware
+from packages.domain.time import aware, local_midnight
 from .test_rule_catalogue_api import line as source_line
 from .test_rule_conditions import line, tree
 from .test_rule_map import U, base, rule
@@ -116,7 +117,7 @@ def test_reach_clock_sharing_keeps_unclassified_external_work_unknown(h):
          ('before', '2026-10-14T22:00:00+03:00', '2026-10-14T23:00:00+03:00', 0),
          ('crossing', '2026-10-14T23:00:00+03:00', '2026-10-15T01:00:00+03:00', 0),
          ('inside', '2026-10-15T01:00:00+03:00', '2026-10-15T02:00:00+03:00', 1),
-         ('after', '2026-10-15T02:00:00+03:00', '2026-10-15T03:00:00+03:00', 1)], [1, 1]),
+         ('after', '2026-10-15T02:00:00+03:00', '2026-10-15T03:00:00+03:00', 1)], [2, 1]),
     ('America/New_York', ('2026-10-31', '2026-11-03'),
      ('2026-11-01T00:00:00-04:00', '2026-11-01T03:00:00-05:00'), ('00:00', '03:00'), '2026-11-01', [
          ('first-fold', '2026-11-01T01:15:00-04:00', '2026-11-01T01:45:00-04:00', 0),
@@ -132,7 +133,12 @@ def test_reach_cached_clocks_keep_effective_midnight_and_distinct_dst_instants(h
     policy = catalogue(data, people, start_time=clocks[0], end_time=clocks[1])
     policy['starts_on'] = effective
     original = copy.deepcopy(data)
-    reached = counted_people(reach(data, [policy], *map(aware, query), details=True), policy)
+    start, end = map(aware, query)
+    midnight = local_midnight(date.fromisoformat(effective), zone)
+    if start < midnight:
+        assert reach(data, [policy], start, midnight, details=True)['reach'] == {policy['id']: 0}
+    # Once effective, the line displays all clock-matching duties in the week.
+    reached = counted_people(reach(data, [policy], start, end, details=True), policy)
     assert set(reached) == set(people)
     assert {pid: [count['actual'] for count in reached[pid]['counts']] for pid in people} == {
         pid: [count] for pid, count in zip(people, expected)}

@@ -5,21 +5,40 @@ duties that count; days with no counted duty are off, including days outside wha
 reported when it touches a day of the rota being checked. All shape rules are advisory: findings are warnings.
 """
 
-from .recurrence import inactive
+from bisect import bisect_right
 from collections import defaultdict
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
-from packages.contracts.schemas import PATTERN_WISH_KINDS, WEEKEND_START_DEFAULT, WEEKEND_DAYS_DEFAULT
+from packages.contracts.schemas import (PATTERN_WISH_KINDS, SHAPE_KINDS, WEEKEND_START_DEFAULT,
+                                         WEEKEND_DAYS_DEFAULT)
 
+from .recurrence import inactive
 from .time import aware, local_midnight
 
-SHAPE_KINDS = frozenset({'run_length', 'days_off_run', 'weekend_shape', 'shift_succession', 'together_apart'})
 ONE = timedelta(days=1)
 
 
 def day_of(t, zone):
     return aware(t).astimezone(ZoneInfo(zone)).date()
+
+
+def shape_focus_days(data, focus):
+    zone = data['organisation']['timezone']
+    return {day_of(s['start'], zone) for s in data['shifts']
+            if (focus is None or s['id'] in focus) and not inactive(s)}
+
+
+def effective_gap_focus(policy, focus_days):
+    first, end = (date.fromisoformat(str(policy[field])) if policy.get(field) else None
+                  for field in ('starts_on', 'ends_on'))
+    return sorted(day for day in focus_days if (first is None or first <= day) and (end is None or day < end))
+
+
+def gap_touches_focus(first, last, focus_days):
+    """An interior day off can be in focus even when both bounding duties are in history."""
+    index = bisect_right(focus_days, first)
+    return index < len(focus_days) and focus_days[index] < last
 
 
 def weekend_of(day, rule):
@@ -41,10 +60,11 @@ def runs(days, step=ONE):
 
 def shape_duties(data, policy, pid, entries):
     """The dated duties a shape rule counts, shared by findings and reach observations."""
-    from .validation import policy_applies
+    from .validation import counting_policy, policy_applies
     zone = data['organisation']['timezone']
-    return [(day_of(a, zone), shift) for shift, _, a, b in entries
-            if policy_applies(data, policy, pid, shift, a, b)]
+    counted = counting_policy(policy)
+    return [(day_of(a, zone), shift) for shift, _, a, b, *choice in entries
+            if policy_applies(data, counted, pid, shift, a, b)]
 
 
 def shape_types(rows):
@@ -125,13 +145,15 @@ def breaches(rule, types):
 def evaluate_shapes(data, commitments, focus, add):
     """Findings for every active advisory shape rule. `commitments`: person -> [(shift, participant, start, end)]."""
     zone = data['organisation']['timezone']
-    focus_days = {day_of(s['start'], zone) for s in data['shifts'] if s['id'] in focus and not inactive(s)}
+    focus_days = shape_focus_days(data, focus)
+    from .validation import policy_applies
     for policy in data['policies']:
         data.get('_check_budget', lambda: None)()
         rule = policy['definition']['rule']
         if rule['kind'] not in SHAPE_KINDS:
             continue
-        counted = {}  # person -> [(day, shift)]
+        gap_focus = effective_gap_focus(policy, focus_days) if rule['kind'] == 'days_off_run' else ()
+        counted, focal = {}, {}
         for pid, entries in commitments.items():
             data.get('_check_budget', lambda: None)()
             if rule['kind'] == 'together_apart' and pid not in rule['person_ids']:
@@ -139,11 +161,14 @@ def evaluate_shapes(data, commitments, focus, add):
             rows = shape_duties(data, policy, pid, entries)
             if rows:
                 counted[pid] = rows
+                focal[pid] = [(day_of(a, zone), s) for s, _, a, b in entries if s['id'] in focus
+                              and policy_applies(data, policy, pid, s, a, b)]
 
         def report(pid, a, b, code, words, shift=None):
-            if not any(a + i * ONE in focus_days for i in range((b - a).days + 1)):
+            applicable = [(d, s) for d, s in focal.get(pid, []) if a <= d <= b]
+            if not applicable and not gap_touches_focus(a, b, gap_focus):
                 return
-            shift = shift or next((s for d, s in counted.get(pid, []) if a <= d <= b and s['id'] in focus), None)
+            shift = shift or (applicable[0][1] if applicable else None)
             add(code, f"{policy['name']}: {words}", shift['id'] if shift else None, pid,
                 local_midnight(a, zone), local_midnight(b + ONE, zone), 'warning', policy, {'kind': rule['kind']})
 
