@@ -279,7 +279,8 @@ def test_department_scale_activation_prepares_once_and_writes_briefly(backend, m
         same = feasibility_fingerprint(db, rows[0]) == currencies[rows[0].id]
     assert len(currencies) == len(rows)
     assert same
-    proposal = propose(h, {'kind': 'restriction'}, {'service_ids': [h.seed['services'][0]]}, severity='advisory')
+    # Safety kinds are always mandatory. Restrict the later sessions without blocking the existing participant.
+    proposal = propose(h, {'kind': 'restriction', 'start_time': '12:00'}, {'service_ids': [h.seed['services'][0]]})
     client = h.client('approver')
     command = Command(kind='policy.activate', target_id=proposal['id'], expected_revision=proposal['revision'],
                       payload={'reason': 'Independent scale review'})

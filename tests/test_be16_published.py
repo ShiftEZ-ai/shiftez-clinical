@@ -307,7 +307,8 @@ def test_home_merges_approved_absences_and_operational_warning_per_session(h):
 
 
 def test_single_absence_reports_only_current_change_causes_and_the_actual_open_place(h):
-    h.policy({'kind': 'minimum_cover', 'minimum': 2}, severity='advisory')
+    # Safety kinds are always mandatory. A cover target supplies the unchanged warnings.
+    h.cover_target(2)
     pub, shifts = issued(h)
     result = change(h, pub, shifts[0], kind='absence', person_id=None)
     session = result['change']['sessions'][0]
