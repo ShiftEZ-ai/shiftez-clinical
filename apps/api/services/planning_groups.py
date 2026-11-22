@@ -255,8 +255,18 @@ def require_submission_target(db, actor, workspace):
 _AUTHORITY_COMPLETE = object()
 
 
-def _guard_scoped_change_authority(db, actor, workspace, before, *, review_rejection=False, after=None,
+def guard_change_authority(db, actor, workspace, before, *, review_rejection=False, after=None,
                            session_definitions=False):
+    """Check edit authority before an assignment admission evaluates safety."""
+    access = require_edit(db, actor, workspace)
+    if not review_rejection and unrestricted(db, actor, access):
+        return _AUTHORITY_COMPLETE
+    return _guard_scoped_change_authority(db, actor, workspace, before, review_rejection=review_rejection,
+                                          after=after, session_definitions=session_definitions)
+
+
+def _guard_scoped_change_authority(db, actor, workspace, before, *, review_rejection=False, after=None,
+                                   session_definitions=False):
     """Check scoped edit authority after checking access and unrestricted authority."""
     if review_rejection:
         # The review handler has checked independent route authority. This permits only its exact return delta.
@@ -323,16 +333,17 @@ def require_change_authority(db, actor, workspace, before, *, after=None, sessio
     """Authorize proposed content before evaluating people; reuse only the same exact edit."""
     contexts = db.info.setdefault('_planning_group_authority_contexts', {})
     cached = contexts.pop(workspace.id, None)
-    access = require_edit(db, actor, workspace)
-    if not review_rejection and unrestricted(db, actor, access):
-        return _AUTHORITY_COMPLETE
     from apps.api.snapshots import snapshot_hash
-    before_digest = snapshot_hash(before)
+    before_digest = None
     authority = None
-    if (cached and not review_rejection and cached[0] is before
-            and cached[1] == actor.identity_id
-            and cached[2] == workspace.content_revision and cached[3] == before_digest):
-        if not session_definitions:
+    if (cached and not review_rejection and not session_definitions and cached[0] is before
+            and cached[1] == actor.identity_id and cached[2] == workspace.content_revision):
+        # Only scoped authority is retained; access and unrestricted authority are still checked live.
+        access = require_edit(db, actor, workspace)
+        if unrestricted(db, actor, access):
+            return _AUTHORITY_COMPLETE
+        before_digest = snapshot_hash(before)
+        if cached[3] == before_digest:
             from apps.api.snapshots import workspace_content
             from .planner_tools import normalise_shift
             current = after if after is not None else workspace_content(db, workspace)
@@ -344,11 +355,15 @@ def require_change_authority(db, actor, workspace, before, *, after=None, sessio
                     ('starts_on', 'ends_on', 'replaces_publication_id', 'accepted_issues', 'rule_adjustments', 'target_overrides')):
                 authority = cached[4]
     if authority is None:
-        authority = _guard_scoped_change_authority(db, actor, workspace, before, after=after,
+        # A retained context already checked access live above; do not read it twice.
+        check = _guard_scoped_change_authority if before_digest is not None else guard_change_authority
+        authority = check(db, actor, workspace, before, after=after,
             session_definitions=session_definitions, review_rejection=review_rejection)
-    if not review_rejection:
-        # Retain the source content so equal revisions cannot reuse a different edit.
-        contexts[workspace.id] = (before, actor.identity_id, workspace.content_revision, before_digest, authority)
+    if not review_rejection and authority is not _AUTHORITY_COMPLETE:
+        # Retain the source content so equal revisions cannot reuse a different edit. Unrestricted
+        # authority is re-checked live on every call, so it needs no digest of the whole rota.
+        contexts[workspace.id] = (before, actor.identity_id, workspace.content_revision,
+                                  before_digest or snapshot_hash(before), authority)
     return authority
 
 
