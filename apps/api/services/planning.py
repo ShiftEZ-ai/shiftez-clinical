@@ -2725,14 +2725,17 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         fp = data['fingerprint']
         require(workspace.submitted_fingerprint == fp, "STALE_INPUTS",
                 "The inputs used for submission have changed. Reopen this rota, check it and submit it again before review.", 409)
-        workspace.validation = {**result, 'input_manifest': _check_manifest(data['input_manifest'])}
-        acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
-        if any(not item.accept for item in value.decisions):
-            # A rejection stamps no check currency, so it needs no input lock.
-            return acknowledged_gaps.reject_items(db, actor, workspace, value)
-        acknowledged_gaps.require_gap_decisions(workspace, result, value)
-        swaps.validate_publication(db, workspace)
-        review_organisation = _lock_review_check_inputs(db, actor, data)
+        # This check save stamps a settled rota's wish reservation at flush; keep that own
+        # advance after the input lock so the lock compares only other writers' changes.
+        with db.no_autoflush:
+            workspace.validation = {**result, 'input_manifest': _check_manifest(data['input_manifest'])}
+            acknowledged_gaps.validate_item_decisions(db, actor, workspace, value)
+            if any(not item.accept for item in value.decisions):
+                # A rejection stamps no check currency, so it needs no input lock.
+                return acknowledged_gaps.reject_items(db, actor, workspace, value)
+            acknowledged_gaps.require_gap_decisions(workspace, result, value)
+            swaps.validate_publication(db, workspace)
+            review_organisation = _lock_review_check_inputs(db, actor, data)
         decision = reviews.approve_step(db, actor, workspace, value, current_fingerprint=fp)
         from .published_changes import on_reviewed
         on_reviewed(db, actor, workspace, value.reason)
