@@ -126,15 +126,19 @@ def test_preconditioned_edit_replays_the_same_snapshot_sequence(harness, monkeyp
         return original_snapshot(db, *args, **kwargs)
     monkeypatch.setattr(snapshots, '_domain_snapshot', snapshot)
 
-    reads, workspace_shifts = [], snapshots.workspace_shifts
+    reads = []
 
-    def read_shifts(db, workspace_id):
-        if workspace_id == workspace['id']:
-            reads.append(bool(db.connection().info.get('rota_write')))
-        return workspace_shifts(db, workspace_id)
+    def counted(reader):
+        def read_shifts(db, workspace_id):
+            if workspace_id == workspace['id']:
+                reads.append(bool(db.connection().info.get('rota_write')))
+            return reader(db, workspace_id)
+        return read_shifts
 
-    monkeypatch.setattr(snapshots, 'workspace_shifts', read_shifts)
-    monkeypatch.setattr(planning, 'workspace_shifts', read_shifts)
+    # Session content is read through the typed projection, or the ORM view when autoflush is off.
+    monkeypatch.setattr(snapshots, 'full_shifts', counted(snapshots.full_shifts))
+    monkeypatch.setattr(snapshots, 'workspace_shifts', counted(snapshots.workspace_shifts))
+    monkeypatch.setattr(planning, 'workspace_shifts', counted(planning.workspace_shifts))
     applied = client.post('/api/commands', headers={'idempotency-key': str(uuid4())}, json={
         **command, 'expected_fingerprint': preview.json()['source_fingerprint']})
     assert applied.status_code == 200, applied.text
