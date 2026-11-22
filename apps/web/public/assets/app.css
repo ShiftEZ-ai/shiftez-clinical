@@ -4143,6 +4143,9 @@ b.tl-more{color:var(--accent-text)}
 /* Session panel tabs (Session | Why | Rules) and the Why tab. The open panel's subject is ringed on the schedule and its
    header carries the same accent edge, so it is always clear what opened the panel. */
 [data-session].is-explained,[data-person].is-explained{background-color:var(--accent-soft);border-radius:6px;scroll-margin:24px}
+/* A session brought into view on the week grid (a link, the panel's subject, arrow keys) stops below its sticky day header
+   and group heading (their real heights, planner_week.ts stickTops), never under them. */
+.wk-grid :is([data-session],[data-rk]){scroll-margin-top:calc(var(--wk-head-h,56px) + var(--wk-group-h,0px) + 8px)}
 .wk-cell.is-explained::before{content:'Open in panel';display:block;font-size:10.5px;font-weight:700;color:var(--accent-text);margin-bottom:2px}
 .wk-panel-body>.page-tabs-wrap{gap:10px}
 .wk-tab,.why{display:flex;flex-direction:column;gap:10px;min-width:0}
