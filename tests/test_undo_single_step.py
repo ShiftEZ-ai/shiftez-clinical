@@ -10,5 +10,6 @@ def test_second_undo_is_refused_not_a_redo(h):
     assert h.detail(w)['shifts'][0]['lineage_id'] is None
     again = h.command('coordinator', 'workspace.undo', {'reason': REASON}, w['id'], undone['workspace']['revision'], status=409)
     assert again['error']['code'] == 'NO_UNDO'
+    assert again['error']['message'].startswith('Only the latest edit can be undone')
     assert not h.detail(w)['shifts'][0]['locked']
     assert h.detail(w)['shifts'][0]['lineage_id'] is None
