@@ -2,7 +2,7 @@ import json
 import re
 from collections import defaultdict
 from functools import cache
-from datetime import timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 from pydantic import Field
@@ -48,7 +48,7 @@ def exception_identity_stamp(identities):
 
 def exception_actions(db, actor, exceptions, policies, *, identities=None):
     """Add this reader's lifecycle eligibility to copies after the shared catalogue cache is read."""
-    from .policies import effective_sources, exception_is_independent
+    from .policies import effective_sources
 
     if not exceptions:
         return []
@@ -71,7 +71,7 @@ def exception_actions(db, actor, exceptions, policies, *, identities=None):
         return bool(approver and row['status'] == status and policy.get('status') == 'active'
                     and policy.get('revision') == row['policy_revision'] and definition.get('exception_allowed')
                     and not s.safety_rule(definition)
-                    and (waived or exception_is_independent(db, actor, row['created_by'], row['person_id'])))
+                    and (waived or independence.subject_independent(db, actor, (row['person_id'],), row['created_by'])))
 
     def proposer(row):
         return coordinator and independence.person_key(db, row['created_by']) == independence.person_key(db, actor.identity_id)
@@ -753,6 +753,13 @@ def bulk_catalogue(db, actor, command):
     if payload.catalogue == 'recurring_series':
         from .bulk import _series_undo_acknowledgement
         undo.update(_series_undo_acknowledgement(db, actor, undo))
+    if payload.catalogue == 'people':
+        from packages.domain.validation import person_active_on
+
+        today = _local_today(db, actor.department_id)
+        for row in saved:
+            cutoff = date.fromisoformat(row['inactive_from']) if row.get('inactive_from') else None
+            row['effective_active'] = person_active_on(row['active'], cutoff, today)
     return {"records": saved, "previous_values": previous, "affected_count": affected,
             "undo": {"kind": "bulk.apply", "payload": undo},
             "message": f"{len(saved)} record{'s' if len(saved) != 1 else ''} updated."}

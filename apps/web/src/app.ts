@@ -4610,7 +4610,7 @@ async function departmentSettingsPage(target:HTMLElement){
   const calendarChoices=choices(rows('operating_calendars').filter(r=>r.active!==false||r.id===calendarNow));
   const workCalendar=select('Working days for prorated targets',calendarChoices,calendarNow,false,'Department weekend days');
   // F-C4: a plain explanation, so contextual help beside the label (as Recurring sessions' dates), not a paragraph.
-  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included.'},icon('help')));
+  workCalendar.wrap.querySelector('label')?.after(el('button',{type:'button',class:'icon-button bare field-help','aria-label':'How prorating works','data-help':'','data-tip':'When only part of a rule period is in a rota (a start date, a rotation), its minimum or target is prorated by the working days of these opening hours, holidays included. Days a person is away (leave or absence) are not working days for them.'},icon('help')));
   // Swaps: who approves them and which steps run by themselves (a dedicated route is set up under Review routes).
   // The saved choice is always an option (also when it is no longer active or the routes could not be read) and is sent
   // only when changed, so saving an unrelated setting neither resets swaps to the rota review route nor fails on a retired one.
@@ -5050,9 +5050,17 @@ function inlineField(kind:string,fieldName:string,edit:Omit<EditSpec<Row>,'save'
   // The reply's records patch the list and the lists in memory in place (C-34); switching one on or off recounts the nav.
   return {...edit,value:edit.value||(r=>r[fieldName]),...(fieldName==='active'?{afterSave:recount}:{}),save:async(list,value)=>{
     const result=await command('catalogue.bulk_update',{catalogue:kind,items:list.map(r=>({id:r.id,revision:r.revision})),set:{[fieldName]:fieldName==='short_code'?String(value).toUpperCase():value},reason:'Inline edit'});
-    // The write reply is the bare record: its fields go onto the row in memory, which keeps what the read added
-    // (a person's current rank, programme, aliases) for the list and the next visit.
-    const byId=new Map((result.records as Row[]).map(r=>[r.id,r])),merge=(r:Row)=>byId.has(r.id)?{...r,...byId.get(r.id)}:r;
+    // Patch the saved fields while retaining the derived facts from the list read.
+    const byId=new Map((result.records as Row[]).map(r=>[r.id,r]));
+    const merge=(r:Row)=>{
+      const saved=byId.get(r.id);
+      if(!saved)return r;
+      if(kind!=='people')return {...r,...saved};
+      const {effective_active,...person}=saved;
+      // Older receipts carry only the configured flag. Preserve the list status when that flag did not change.
+      const active=effective_active??(person.active===(r.configured_active??r.active)?r.active:person.active);
+      return {...r,...person,configured_active:person.active,active};
+    };
     catalogues={...catalogues,[kind]:rows(kind).map(merge)};setTypeColours(rows('assignment_types'));setRankColours(rows('categories'));return list.map(merge);}};
 }
 const revisionsOf=(kind:string,ids:string[])=>rows(kind).filter(r=>ids.includes(r.id)).map(r=>({id:r.id,revision:r.revision}));
@@ -5093,7 +5101,7 @@ function peopleBulkActions(ids:string[]):BulkAction[]{
     // day), with the selected people already chosen; several people go through one bulk change with one Undo.
     ...(permits(CAPABILITY.COORDINATOR)?[{label:'Record leave',icon:'leave' as const,more:true,run:(i:string[],d:()=>void)=>formDialog(`Record leave for ${plural(i.length,'person','people')}`,'',form=>{
       const save=availabilityFields(ctx(),form,false,{person_ids:i});return async()=>{await save();d();};},'Record leave')}]:[]),
-    ...(picked.some(p=>p.active!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
+    ...(picked.some(p=>(p.configured_active??p.active)!==false)&&manage?[{label:'Switch off',icon:'power' as const,danger:true,more:true,run:(i:string[],d:()=>void)=>switchOff('people',i,'Switch off',d)}]:[]),
     ...(picked.length&&picked.every(p=>p.active===false)&&permits(CAPABILITY.ADMIN)?[{label:'Remove personal details',icon:'trash' as const,danger:true,run:(i:string[],d:()=>void)=>confirmAction(`Remove personal details of ${plural(i.length,'former staff member')}`,'For people who have left. Their name, contact and staff details, private leave reasons and notes, calendar links and sign-in are removed for good; they appear as “Former staff member”. Rotas, publications and the audit log keep what they recorded.',async reason=>{await runBulk({collection:'people',noun:['person','people'],destructive:true,verb:'Remove details of',message:'Personal details removed for {n} people.',onDone:async()=>{d();await refresh();},
       body:{item_kind:'person.anonymise',items:i.map(id=>({target_id:id,expected_revision:picked.find(p=>p.id===id)!.revision})),reason}});},'Remove details')}]:[]),
   ];
@@ -5208,7 +5216,7 @@ async function peoplePage(target:HTMLElement){
       ...contact,
       ...(!full?[]:[{key:'status',label:'Status',field:'active',options:['Active','Inactive'],text:(p:Row)=>p.active===false?'Inactive':'Active',facet:(p:Row)=>p.active===false?'Inactive':'Active',
         cell:(p:Row)=>p.active===false?statusBadge('inactive','Inactive'):statusBadge('active','Active'),  // the one status palette (P-21)
-        edit:inlineField('people','active',{kind:'toggle',value:p=>p.active!==false})}]),
+        edit:inlineField('people','active',{kind:'toggle',value:p=>(p.configured_active??p.active)!==false})}]),
       // Details to review is for the people who can fix them (editors; credentialers for clinic eligibility).
       ...(manager||cred?[{key:'review',label:'Details to review',options:['Needs attention','Complete'],facet:(p:Row)=>of(p).gaps.length?'Needs attention':'Complete',sort:(p:Row)=>of(p).gaps.length,
         cell:(p:Row)=>of(p).gaps.length?pillList(of(p).gaps.map(([text,tip,tone])=>{const b=badge(text,tone);b.setAttribute('data-tip',tip);return b;}),{label:['detail to review','details to review']}):el('span',{class:'muted'},'Complete')}]:[]),
@@ -5641,10 +5649,10 @@ const ruleDatesNode=(p:Row)=>dateUnits(ruleDateParts(p).map((part,i)=>(i?'– ':
 let draftMaps=new Map<string,Promise<RuleMap>>();
 const draftMap=(id:string)=>{let m=draftMaps.get(id);if(!m){m=get<RuleMap>(`/api/workspaces/${id}/rule-map`);draftMaps.set(id,m);}return m;};
 /** The drafts the Rules page reports on (newest first) and the one shown: the first covering today, else the draft open
- *  in Schedule, else the most recent, that has sessions. Once per visit; a rule sheet may
+ *  in Schedule, else the most recent. Once per visit; a rule sheet may
  *  switch it for the rest of the visit. Null: no draft, or a role that does not read rotas. */
 let draftChoice:Promise<{drafts:Row[];chosen:string}|null>|null=null;
-const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(async r=>{
+const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?get<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(r=>{
   const today=toLocal(new Date().toISOString(),zone()).slice(0,10);
   const drafts=r.workspaces.filter(w=>w.status==='draft').sort((a,b)=>String(b.starts_on).localeCompare(String(a.starts_on)));
   if(!drafts.length)return null;
@@ -5652,8 +5660,7 @@ const currentDrafts=()=>draftChoice||=(permits(CAPABILITY.COORDINATOR,CAPABILITY
   // draft open on the Schedule; then the others. An old amendment covering today says nothing about the lines planned.
   const planned=(w:Row)=>!w.base_publication_id&&today<w.ends_on,open=(w:Row)=>w.id===workspaceId;
   const order=[...drafts.filter(planned).reverse(),...drafts.filter(w=>!planned(w)&&open(w)),...drafts.filter(w=>!planned(w)&&!open(w))];
-  // shortcut: reads at most 3 drafts' rule maps to find one with sessions; past that, the first in order.
-  for(const w of order.slice(0,3))if((await draftMap(w.id).catch(()=>null))?.shifts.length)return {drafts,chosen:w.id};
+  // Chosen by order alone; no draft's rule map is read to choose (a rule page reads none until asked).
   return {drafts,chosen:order[0].id};}).catch(()=>null):Promise.resolve(null));
 /** People each rule reaches today (GET /api/policies/reach), kept between draws of the Rules page. */
 let reachNow:Record<string,number>={};
@@ -5665,24 +5672,39 @@ const sheetSection=(title:string,action:Child,...content:Child[])=>el('section',
  *  drafts the section's head switches between them. One section for the rule sheet and the catalogue rule page. */
 function draftHealth(policy:Row):HTMLElement{
   let health:HTMLElement=el('div',{class:'rl-health-slot',hidden:true});
-  const inDraft=(found:{drafts:Row[];chosen:string})=>void draftMap(found.chosen).then(map=>{
-    const entry=map.rules.find(r=>r.id===policy.id),draft=found.drafts.find(w=>w.id===found.chosen)!;
+  // A swap that removes the focused control (the pressed button) keeps the keyboard in place: on the new section's heading.
+  const swap=(next:HTMLElement)=>{const had=health.contains(document.activeElement);health.replaceWith(next);health=next;
+    const h=next.querySelector<HTMLElement>('h3');if(had&&h){h.tabIndex=-1;focusQuietly(h);}};
+  const draftOf=(found:{drafts:Row[];chosen:string})=>found.drafts.find(w=>w.id===found.chosen)!;
+  // On demand. The page shows which draft and one button; the draft's rule map and drift are read only when asked
+  // (they cost ~30 s at department scale, and a rule page must not read a draft by itself).
+  const offer=(found:{drafts:Row[];chosen:string})=>swap(sheetSection('In '+labelOf(draftOf(found)),
+    button('Show effect',()=>inDraft(found),'secondary small',{'aria-label':`Show effect in ${labelOf(draftOf(found))}`})));
+  const inDraft=(found:{drafts:Row[];chosen:string})=>{
+    swap(sheetSection('In '+labelOf(draftOf(found)),'',skeleton('lines',`Loading ${labelOf(draftOf(found))} effect…`)));
+    void draftMap(found.chosen).then(map=>{
+    const entry=map.rules.find(r=>r.id===policy.id),draft=draftOf(found);
     // A failure is drawn in this section (never a page refresh: a lasting 500 would refresh for good).
     requestBaselineDrift(draft,()=>void refresh(),n=>{const actions=health.querySelector('.rl-sec-actions');
       actions?.querySelector('.baseline-drift')?.remove();actions?.prepend(n);});
     const drift=baselineDriftFor(draft),driftAction=drift?.changes.length?button(departmentChanges(drift.changes.length),
       ()=>void refreshDraftBaseline(draft,refresh).catch(reportError),'secondary small',{'aria-label':driftName(drift.changes.length)}):'';
-    if(!health.isConnected||!entry&&health.hidden&&map.shifts.length)return;
+    // Asked for: the loading section is always replaced by a result (never left loading), so only a closed page stops here.
+    if(!health.isConnected)return;
     const pick=found.drafts.length>1?select('Draft',found.drafts.map(w=>({value:w.id,label:labelOf(w)})),found.chosen):null;
     pick?.wrap.classList.add('rl-draft-pick');pick?.input.setAttribute('data-lookup','');  // a view choice: not an unsaved change
     pick?.input.addEventListener('change',()=>{found.chosen=pick.input.value;inDraft(found);});
     const next=sheetSection('In '+labelOf(draft),el('div',{class:'rl-sec-actions'},driftAction,pick?.wrap||'',showOnPlanner([policy],true)||''),
       !map.shifts.length?el('p',{class:'hint'},'No duties yet.'):entry?healthStrip(entry,map.days,map.fresh,reachNow[policy.id]??null):el('p',{class:'hint'},'This rule is not checked in this draft.'));
-    health.replaceWith(next);health=next;}).catch(()=>{});
-  // Read once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
+    swap(next);}).catch(e=>{
+      // A failure stays in this section with the shared failure note and its Retry (the failed read is not kept).
+      draftMaps.delete(found.chosen);
+      if(alive(health))swap(sheetSection('In '+labelOf(draftOf(found)),'',readFailed(`${labelOf(draftOf(found))} effect`,e,()=>inDraft(found))));});};
+  // Offered once the slot is on the page: a page is built detached and shown after its skeleton (the catalogue rule page),
   // so the slot is awaited frame by frame. shortcut: gives up after ~10 s unattached (a page replaced before it showed).
-  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?inDraft(found):frames>0&&attached(found,frames-1));
-  void currentDrafts().then(found=>{if(found)attached(found);});
+  const attached=(found:{drafts:Row[];chosen:string},frames=600)=>requestAnimationFrame(()=>health.isConnected?offer(found):frames>0&&attached(found,frames-1));
+  // Only an active rule is in a draft's map: a rule waiting for approval, retired or switched off keeps the hidden slot.
+  if(policy.status==='active'&&policy.active!==false)void currentDrafts().then(found=>{if(found)attached(found);});
   return health;
 }
 function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),review?:()=>unknown,position?:PanelPosition){
@@ -5699,7 +5721,7 @@ function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),r
         :d.fact?.person_id?button('Person quota or offer',()=>navigate(routeHash('people',[],{open:d.fact.person_id,tab:'facts',fact:d.id}).slice(1)),'link-button')
           :d.fact?.calendar_entry_id?button('Calendar protection',()=>{const entry=find('programme_calendar_entries',d.fact.calendar_entry_id);if(entry)calendarProtectionPanel(ctx(),entry);},'link-button'):'')
       ,button('Department proposal',()=>simplifyPanel(ctx(),refresh,policy._conversion_id),'link-button')));
-    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership, excluding external rotations. Whole sessions round ${rule.rounding}.`));
+    if(rule.prorate_department_days)notes.push(note(`Default ${rule.amount} ${quotaUnits[rule.metric]||rule.metric} per ${rule.reference_days} days. The rota target scales to dated departmental membership and the days a person is not away, excluding external rotations. Whole sessions round ${rule.rounding}.`));
     if(rule.supervisor_ids?.length)notes.push(note('Allocation preference applies with these named supervisors: '+rule.supervisor_ids.map((id:string)=>name('people',id)).join(', ')+'. Clinical supervision authority is checked separately.'));
     if(rule.leave_buffer_days)notes.push(note(`Applies only within ${rule.leave_buffer_days} calendar days before or after approved or recorded leave, on the selected weekdays. Private leave reasons are not disclosed.`));
     if(rule.kind==='allocation_preference'&&rule.balance_by&&rule.balance_by!=='none')notes.push(el('p',{},`${rule.balance_by==='service_mode'?`Target ${Math.round(rule.balance_target_share*10000)/100}% ${rule.balance_target_mode} duties`:`Prefer fewer ${rule.balance_by==='supervisor'?'duties with the same supervisor':rule.balance_by==='supervisor_group'?'duties with any selected supervisor':'matching duties'}`} per ${rule.balance_window==='rolling'?`${rule.balance_window_days} local days`:rule.balance_window==='rota'?'planning period':'configured calendar week'}. Balancing weight: ${rule.balance_weight}.`));
@@ -7636,7 +7658,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   const runWhy=el('span',{class:'grow muted auto-why',role:'status'});
   // Review maintenance: why Run (and Fill everything else) can't start, always in words; the scope's own words first.
   const runReason=()=>{if(runnable())return '';const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;
-    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:'Every session is locked, so there is nothing to fill.');};
+    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:live.length?'Every session is locked, so there is nothing to fill.':'This draft has no sessions, so there is nothing to fill.');};
   const syncRun=()=>{const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;disabledWhy(run,runReason(),[],runWhy);if(!run.disabled)runWhy.textContent=said;};
   autoRunSync=()=>{if(panel.isConnected)syncRun();else autoRunSync=null;};
   function drawStep(){

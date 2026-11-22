@@ -176,20 +176,36 @@ def test_real_changed_session_blocker_is_refused_server_side(h, monkeypatch, act
     pub, shifts = issued(h)
     sent = send(h, pub, change(h, pub, shifts[0]))
     workspace = sent['workspace']
-    if action == 'publish':
-        workspace = h.lifecycle(workspace, 'approve', 'approver')['workspace']
-    evaluate = planning.evaluate
-    def unsafe(data, **kwargs):
-        result = evaluate(data, **kwargs)
-        shift = next(sh for sh in data['shifts'] if sh['id'] in data['focus_ids'])
-        finding = {'code': 'NOT_ELIGIBLE', 'severity': 'error', 'message': 'Current eligibility missing',
-                   'shift_id': shift['id'], 'person_id': h.seed['people'][2], 'rule_id': None,
-                   'start': shift['start'], 'end': shift['end']}
+    session, = sent['change_diff']['sessions']
+    shift = session['after']
+    finding = {'code': 'NOT_ELIGIBLE', 'severity': 'error', 'message': 'Current eligibility missing',
+               'shift_id': shift['id'], 'person_id': h.seed['people'][2], 'rule_id': None,
+               'start': shift['start'], 'end': shift['end']}
+
+    def with_finding(result):
         return {**result, 'valid': False, 'error_count': result['error_count'] + 1,
                 'findings': [*result['findings'], finding]}
-    monkeypatch.setattr(planning, 'evaluate', unsafe)
+
+    if action == 'approve':
+        # Approval reuses the submitted check while its input fingerprint matches.
+        with transaction(h.app.state.engine, write=True) as db:
+            row = db.get(m.Workspace, workspace['id'])
+            row.validation = {**with_finding(row.validation),
+                              'change_findings': [*row.validation['change_findings'], finding]}
+    else:
+        workspace = h.lifecycle(workspace, 'approve', 'approver')['workspace']
+        evaluate = planning.evaluate
+
+        def unsafe(data, **kwargs):
+            assert shift['id'] in data['focus_ids']
+            return with_finding(evaluate(data, **kwargs))
+
+        monkeypatch.setattr(planning, 'evaluate', unsafe)
+
     refused = h.lifecycle(workspace, action, 'approver' if action == 'approve' else 'coordinator', status=422)
     assert refused['error']['code'] == 'VALIDATION_FAILED'
+    assert any(f['code'] == finding['code'] and f['shift_id'] == shift['id'] and f['person_id'] == finding['person_id']
+               for f in refused['error']['details']['findings'])
     assert h.detail(workspace)['workspace']['status'] == workspace['status']
 
 

@@ -698,3 +698,38 @@ def test_rules_key_hides_safety_lock_when_a_family_filter_shows_only_preferences
         expect(main.get_by_role('list', name='Key').get_by_text('safety rule: can only be made stricter', exact=True)).to_have_count(0)
     finally:
         context.close()
+
+
+def test_a_rest_rule_with_overlapping_lines_shows_once_with_its_numbers(browser, live_server, h):
+    """Issue 1158: overlapping lines of one rule were only notices, one per pair of lines, without a number. The rule is one
+    row in view, with each line's number and why the strictest binds said once; opened, which lines overlap."""
+    from datetime import date, timedelta
+    from .test_rule_catalogue_conflicts import approve as approve_rule, line, person, propose as propose_rule, rank
+    a = h.seed['people'][0]
+    day = h.get('coordinator', '/api/rules/catalogue')['day']
+    lines = [line(numbers={'min': {'value': 11}}), line(who=rank(h.seed['category']), numbers={'min': {'value': 8}}),
+             line(who=person(a), numbers={'min': {'value': 12}})]
+    rule = approve_rule(h, propose_rule(h, 'rest_between_duties', lines)['record'])
+    end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+    w = h.shift(h.workspace('Overlapping rest', day, end), start=f'{day}T08:00:00+03:00', end=f'{day}T10:00:00+03:00', people=[a])['workspace']
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        open_planner(page, w)
+        planner_tool(page, 'Rules in this rota')
+        panel = page.get_by_role('dialog', name='Rules in this rota')
+        row = panel.locator(f'.rk-row[data-rk-row="{rule["id"]}"]')
+        expect(row).to_have_count(1)
+        expect(row).to_be_visible()  # above the fold, never folded under "N more are met"
+        expect(panel.locator('.rk-conflict')).to_have_count(0)
+        head = row.locator('.rk-row-head')
+        for number in ('11 hours', '8 hours', '12 hours'):
+            expect(head).to_contain_text(number)
+        why = 'Where these lines overlap, all of them apply, so the strictest binds.'
+        expect(head).to_contain_text(why)
+        assert panel.inner_text().count(why) == 1
+        assert 'overlapping lines that apply together' not in panel.inner_text()
+        assert not re.search(r'#\d', head.inner_text()), head.inner_text()
+        head.click()
+        expect(row.locator('.rk-detail')).to_contain_text('Lines #1, #2 and #3 overlap.')
+    finally:
+        context.close()
