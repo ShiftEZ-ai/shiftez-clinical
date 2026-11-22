@@ -2172,7 +2172,7 @@ def undo(db, actor, command):
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
-    require(change is not None and not change.undone, "NO_UNDO", "No immediately preceding edit is available to undo", 409)
+    require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)
