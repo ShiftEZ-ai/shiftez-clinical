@@ -1312,7 +1312,7 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
-    return result, department_settings, org, department_ids, own_publication, baseline, live_inputs
+    return result, department_settings, org, department_ids, own_publication, baseline, live_inputs, department
 
 
 def _edit_snapshot_context(db, workspace, sources, options):
@@ -1374,7 +1374,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         context = _snapshot_context(db, workspace, **options)
     else:
         context = _edit_snapshot_context(db, workspace, _edit_sources, options)
-    result, department_settings, org, department_ids, own_publication, baseline, live_inputs = context
+    # The department row stays referenced for the whole snapshot; the identity map holds it only weakly.
+    result, department_settings, org, department_ids, own_publication, baseline, live_inputs, _department = context
     read_quality = result.read_quality
     lo, hi = snapshot_window(workspace, org.timezone)
     from packages.domain.quotas import applicable_policies, period_bounds, MAX_SHIFTS, MAX_ROWS
