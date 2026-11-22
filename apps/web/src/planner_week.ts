@@ -6,7 +6,7 @@ import {fillOptions,assignFingerprint,askRegistry} from './candidates.js';
 import {dateMarks,dateMarkWords} from './date_sets.js';
 import {sidePanel,claimSlot,panelHead} from './side_panel.js';
 import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
-import {get,request,command,onSessionReset,ApiError} from './api.js';
+import {get,request,command,onSessionReset,ApiError,serverChecking} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
 import type {PlannerSession,Row,WorkspaceData} from './types.js';
@@ -62,6 +62,8 @@ export interface WeekHooks {
   rota?:Row[];
   /** A rota check is running now: "Checking…" instead of "Not checked yet" (a check that failed or never ran is not). */
   checking?:boolean;
+  /** The same, read when a panel draws (one redrawn from its own save's reply draws before the page does). */
+  checkingNow?:()=>boolean;
   /** D59: only the window of a rota is in (its whole detail still loading): its marks are the last check's, so nothing
    *  says a person passes every rule. */
   kept?:boolean;
@@ -143,7 +145,10 @@ type Panel={workspace:string;kind:'session'|'fill'|'person'|'help';shift?:string
   /** The session panel's tab (Session, Why or Rules) and what the Why tab looks at. */
   tab?:'session'|'why'|'rules';why?:WhyState;
   /** The fill search took the focus when this panel first opened: a redraw (a live update, a finished check) never takes it again. */
-  searched?:boolean};
+  searched?:boolean;
+  /** The revision this panel's own Assign saved: its result stays drawn while that revision is held, and the status slot
+   *  says the whole-rota check behind it until that check settles. */
+  flashRev?:number};
 
 /** The groups a person belongs to in a range when people are grouped: their rank then (one), or each of their tags. */
 export function personGroups(ctx:{catalogues:Record<string,Row[]>},pid:string,by:string,days:string[]):string[]{
@@ -1622,7 +1627,12 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
       if(was!==k&&k==='session'&&!body.childElementCount)redrawCurrent?.(undefined,true);else if(was!==k)info.highlight();}));
   aside.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();info.close();}});sidePanel(aside,{key:'schedule',dismiss:info.close});
   if((state.tab||'session')!=='session')return aside;
-  if(state.flash){body.append(el('div',{class:'wk-flash',role:'status'},icon('check'),state.flash));state.flash=undefined;}
+  // An Assign's own result stays through the redraws its check brings (same revision); any other result shows once.
+  const saved=state.flashRev!==undefined,own=saved&&state.flashRev===Number(data.workspace.revision);
+  if(state.flash&&(own||!saved)){body.append(el('div',{class:'wk-flash',role:'status'},icon('check'),state.flash));if(!saved)state.flash=undefined;}
+  // The fill panel's one status slot (its height kept when empty): Saving…, then the whole-rota check behind its edit.
+  const slot=el('p',{class:'wk-save-slot',role:'status'},own&&(serverChecking(data.workspace.validation)||(hooks.checkingNow?.()??!!hooks.checking))?'Saved · checking the rest of the rota…':'');
+  if(state.kind==='fill')body.append(slot);
   if(state.kind==='session'){
     body.append(sessionSummary(ctx,shift,{validation:data.workspace.validation as Row|undefined,name:id=>fullNameOf(people.get(id)),code:id=>hooks.name(people.get(id)),refresh:hooks.refresh,fresh:hooks.fresh}));
     return aside;
@@ -1752,13 +1762,20 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
     return pick.wrap;
   }
   async function assignPerson(candidate:Row,result:Row,overrideReason='',form?:HTMLFormElement){
+    // Only this panel is held, and only until the save's reply.
     list.querySelectorAll('button').forEach(b=>(b as HTMLButtonElement).disabled=true);
-    const progress=working(`Adding ${nameOf(candidate)} and re-checking the whole rota…`);list.prepend(progress);
+    slot.replaceChildren(el('span',{class:'spinner','aria-hidden':'true'}),'Saving…');
     try{
       const issues=await assignCandidate(w,shift,candidate,result,overrideReason);
-      panel={workspace:w.id,kind:'fill',shift:shift.id,...(state.issue&&!state.replace?{issue:state.issue}:{}),flash:`${nameOf(candidate)} ${result.replace_assignment_id?'replaces '+fullNameOf(people.get(replacing?.person_id)):'added to the draft'}. ${issues?mustWords(issues)+' left in the rota.':'Rota check passed.'}`};
-      await hooks.refresh();
-    }catch(error){progress.remove();list.querySelectorAll('button').forEach(b=>(b as HTMLButtonElement).disabled=false);
+      // The reply's delta has patched the held draft (app.ts patchDraft): the panel is drawn from it at once, live for the
+      // next edit at the new revision, with the edit's own findings. The page's redraw and the whole-rota check follow and
+      // are never waited for here; Submit waits for that check (app.ts checkHold). A provisional reply claims no count.
+      const now=hooks.live?.()||data,partial=serverChecking(now.workspace.validation);
+      panel={workspace:w.id,kind:'fill',shift:shift.id,...(state.issue&&!state.replace?{issue:state.issue}:{}),flashRev:Number(now.workspace.revision),
+        flash:`${nameOf(candidate)} ${result.replace_assignment_id?'replaces '+fullNameOf(people.get(replacing?.person_id)):'added to the draft'}.${partial?'':' '+(issues?mustWords(issues)+' left in the rota.':'Rota check passed.')}`};
+      redrawCurrent?.(undefined,true);
+      void hooks.refresh().catch(reportError);
+    }catch(error){slot.replaceChildren();list.querySelectorAll('button').forEach(b=>(b as HTMLButtonElement).disabled=false);
       // Admission and schema refusals stay beside the pending assignment; one no reason can admit takes the reason away.
       const said=form?.querySelector<HTMLElement>('.wk-override-error'),after=error instanceof ApiError?reasonRefusal(error.code):null;
       if(said&&after){said.textContent=(error as Error).message;

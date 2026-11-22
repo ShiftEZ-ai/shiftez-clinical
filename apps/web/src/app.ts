@@ -255,6 +255,8 @@ const forgetSchedule=()=>{plannerMemo=null;scheduleCache.drafts.clear();schedule
 let scheduleEpoch=0,windowOnScreen=false;  // a window drawn, the whole rota still loading: the page is not loaded yet
 /** Why a write waits while only the window is in (its tip and description, and the footer's busy pill). */
 const WHOLE_LOADING='Loading the whole rota…';
+/** Design S2/S6: why Submit, Approve and Publish wait after an edit. */
+const CHECK_HELD='Checking the latest change…',CHECK_UNFINISHED='The latest change isn’t checked yet.';
 const wholeSeen=new Set<string>(),wholeReads=new Map<string,{epoch:number;read:Promise<WorkspaceData>}>();
 /** The rota's whole detail, read once at a time and kept only if nothing was forgotten meanwhile (a live change). */
 /** `quiet`: read behind a drawn window (D59), never on the top bar. `seen`: false for a read started ahead (readAhead),
@@ -2042,7 +2044,10 @@ const sayCheck=()=>{for(const line of document.querySelectorAll<HTMLElement>('[d
   if(line.dataset.checkLine!==said){line.dataset.checkLine=said;line.childNodes[1].textContent=said+' · ';line.querySelector('button')?.setAttribute('aria-label','Cancel: '+said.toLowerCase());}}
   for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();};
 /** Someone is mid-task (a dialog, a popover, a field, a session panel): a redraw would rebuild it under them. */
-const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]'))||!!document.activeElement?.closest('.wk-panel');
+const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]')&&!document.activeElement.matches('.wk-panel input[type=search]'))
+  // A session panel is mid-task while it saves or a reason or confirm is open; idle (after its save), the check's result
+  // draws beside it at once (its redraw keeps the panel and its focus), so the next edit never waits for it.
+  ||!!document.querySelector('.wk-panel :is(.save-mark.saving,.wk-save-slot .spinner,form,.armed)');
 /** The bound passed with the job still queued (at once when no worker answers): the page takes the check over, once; a
  *  job it may not take over again stops saying it waits (drawn once nobody is mid-task). */
 const checkDue=(id:string)=>{const job=checkJob;if(job?.id!==id||!autoChecking)return;
@@ -2159,7 +2164,10 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
-  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key)return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key)return;autoChecking=false;
+  // Superseded by a newer edit's check on this rota (autoCheckKey moved on): this one's result is dropped, never drawn,
+  // and the checking state stays the newer check's.
+  const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
+  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
@@ -2557,7 +2565,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
     // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
     if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
-    for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
+    // Submit, Approve and Publish wait for the whole-rota check behind the latest edit (D59 notYet, with the reason).
+    const unchecked=draft&&(!fresh||serverChecking(w.validation)),checkHold=!unchecked?'':autoChecking&&!checkStalled()?CHECK_HELD:checkStop?.rota===w.id?CHECK_UNFINISHED:'';
+    for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement){hold(b);if(checkHold&&!reading)notYet(b,checkHold);}}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
@@ -2869,6 +2879,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekView.matchPeople=schedView==='people'?[]:about.length?about:byText?rows('people').filter(p=>byText(fullNameOf(p))).map(p=>String(p.id)):[];
   // An empty view tells the filters hiding everything (Show all) from a period with nothing in it (S-01).
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
+  weekHooks.checkingNow=()=>autoChecking&&autoCheckKey.startsWith(w!.id+':')&&!checkStalled();
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
