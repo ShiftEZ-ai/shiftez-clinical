@@ -143,6 +143,496 @@
       "reason": "The credentialer no longer reads rules (rules.read), so it cannot be one of the two readers with different rights; the second reader is now the auditor, the case is kept as [auditor], and the credentialer is asserted to be refused."
     },
     {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-bkmghfffkelbkifngjmpgmnfkbfgaffjajlnoemfjlfalenffeajkfebnpbecaon]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-cejofkgieiefhgjehjglidpoilgmdoelacembhhdmenlnoofjlhnfoflebhfkhnk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-fcjcmockgjkfipfkameobefcjdibagainndmkbibpfadiokgkfihpkpnjhdacjfb]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-ghebfepbdcekhflmfnciadcobaalhapdaijpicneoegmhnlgeaebjbaidghbpmol]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-ifhhpdghjacgifdplledmmddppgdggmhnfmgjncklcbiaoekaifnlhmakbpigiec]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-jnblkfbegomaabpphbhpndnapadmomcjbpkcfeeibmklookncmoepandmjmokkah]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-lcjekfdcahhjiocehijgbgogenffheemlgdhffefjcohimnodgeajffppjfbgolk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_calendar_linked_advisory_keep_off_stays_a_rule_with_identical_findings[case-poajcffcbagdfhjmckapfdmkefoicjfcfgooohibclpneglgjeankppdjbmimgfk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_calendar_linked_keep_off_requires_mandatory_level_to_convert. Issue #144 refuses advisory keep-off restrictions. The mandatory cases assert findings parity."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-aahfjfgjiilhgncapcipicnhamfmgcofhddieknbelbhnpbllgajfjffneegnbip]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-abenjkdljgahckdpemeegmljedendlgphgidpmolepcmhpehoaglljmjkpljnlnk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-agnpmlghppbjpmnbifcffbolnlphgokolpipepokkhlkgjfbokmgcgloodkgnpod]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-aonpokikfpghlhbnekkogcodinjjoffpkdonelmmheibphlicbbcfncehgpbogao]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-behhlfkjpkkjofdimpeebmjdckabmhcbkgdfnklolbdghdchonpjpajdlkhemcna]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-bjfhaiccjeafmgmjpejkekhpgcngcbmckdkillhkckhccdgjgigoaedgghdkjcfk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-bnbaajmkfgfpfdpbhdmhkfnohhmleoojgcdicgmikfmlpgadndgiodhhgpkoclld]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-cioiibcmdjknkffpapmfndemfgihjgabdghbnkplicfaoefbmopnadmhfbkbjmco]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-cnlijlnnpfffainmjllglfgmhkhokcpfcjlgfhoamfjpidoldjmenlagdjaohejh]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-coijkchfmchgbfjdedkffdobfehnbpnecimlfobbjeficnjjjffhohfbcfghcafd]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ddkdkfobhkkhfpclpfgpbihkgeglaffgipomfpollaicfdpclhgnpegndphlpncj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-deielnnnbhhmllgdpogoicbbppfdajajgnmkjehnhnbmkljgkinimjblapmkfbcc]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-dfacokhhdahlbiiaodojcjfppegbdjipkpkikffcalenkjgknopcmnelmpbdedhj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-dfigpcnjinekjjkllldcefkpidobbokcakkcjpdlcchddcejmcogandjklbkgepm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-diagagjnaaiieclmjdobgjbnbhjgnkjcbbkmbcdeegmebkcgiplknmjpcchfaegi]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ebkoifhaibbbednhddclcobhddjflbcipfgdphbkpjjndhkmkcknmgonjkklcibm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-edlhnoofkfbmnjdpojdmmeeeedcfabpobgelbjmneggolgficeinmpfdhkhclioi]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-eieeipehjmjecbkimhnaajhhnddhngngcaioknmpmnbofgkdgdodkoppajgfdbaa]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-elembdpdnkjeldidohddkgnncjpldocfmegkndpidfmenfcecgcfakokjfmigkco]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-fdnhieieeojnpegcjkpkocjkdeacmdmjpmjhdphgalihfahlkibemokoicogopif]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-fhhhobinajfdifkmghamfdoemddeonfjlhihcgnmejojnjcgabkaiooookibjoek]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-gcpfifacpghaaafbogmjknbdnnifcmndjphhjdopnjpmgfaobkekiolekakmdolj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ggielndlcpgbabpomnmfmngnepobpmlcgenonlbgjlhgcioocjjjimefkfkljibj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ghedhpoicjahdabepgibjeniojpfcejohdbnekcfinfbemclkejkaklkllngpkbj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-gmdfjanpopokoomknooimfokoibbhocjapeabamffokjmijemfiahgmohbcingfe]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-gnamgagepkenmlfppbkogljhgnjbljlgbalfgfgopjgadcopokjdpipcpgkcndec]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-heaklpibkdjkidckjldleomnhnighjoobgbmaimeeibcimjndeabjfjjnhjeflmp]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-hglpelkgfhjhfiallchakinbbpajaeokdmemapgdhilpghogflgkghfniflgilkl]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-hipbmmiomloonciajioigllmmcaadnefbdfbehjabmcneeogmmldlmjnpibjpohk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-hllkpjekaoimnmohoonbmlfknbfhkgemmkinoeomlngmpopbkfhgelknhncgbanm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-hlonncfglahfibfdnocejgahdojkebelapfpaddmklfopgdlokkkngjgblfpccln]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-icgknipikojaaaagfghaffigokpocoacknldpfhejgacfkfghbhjchmhemdgjifa]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-idnmcppdhgoehinppbgijeakclefepefadidkihcocgkcnnpkemdonkgokmalhef]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-igbhdjnckiapcjelfnpgahgpjbobmofjaiimnhohbghndebeeccakhcooialpdkj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ihfnmfifejhbgpfehfpcblejainckepnpbknbjjjiippdfhejkjcelhckfjelegi]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ijmooglemkaneleonjabmdaplkhebpfppkmmeecfmgkboeoljgchnblcfaejjfed]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-inhakldiickkfmgemgaikfgacnellkmnnndlppnbnplcdeibmljmeccmgecapmci]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-jchnmcgmijgoipfbhnlmpmbfooalheeffmbgpmfioeajddobdigppbgkhfeldkod]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-jfkpmhlfncphbliknnbbncmkjmeedogekgjjlhaghodldedokmjefklakhckllmm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-jmddngjmnpjcgapaniianiekfdcojocecghkdjjfeapojnilgingakbanlpgkmhe]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-kffojhjplkkejcglljanhfcoeighpojdcmlaceeognlilngblipdlaeddeagfmjk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-kkmgoidckbclfjahbjdplagjdojaonbgildcbamnnkebdkemlnjaapnfnbmoddpo]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-knjbfibmjhemlebaoophmmejaajoghdobjnhbenboomebingmeafifangkdnnamp]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-lomdiknmpinpabkmllpneokclknamopafgbjpbhabkjadiennpdcglohbjdbmfbo]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-lpaoccondeiepfcjdeffbmeeilhpjmoddgmbfliojmnenimgecidjipdadokebcj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-lpleimonbjlcjnjiiljbjjklfdkpappmgnccnigldechegnaianhifiebpcfigjf]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-mecaalhkgaaiggcccflmgebhdkbklicjekbhkmpmembjpejjggpdkcabdkmolikj]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ngggljjijdjhjjhjdnggjacaccbpilkheaojgdmoagnpbajhnnehjeoagfmmanee]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-nkmknhfnjanndlepjchlpfiodkkdocjfojjofpppoaifidjlgejkfkgbalfnnopm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-npfpfeidaejpplndnbghmbihiddphpmmdbbjnnanlcchbhakkabblognnedpkeep]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-nppedojnclbedlilhphmicffgdlhkadelhekbjgacjejjcmdcallalcfdkokipjh]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-obfmiojabjmdehhfpgcnckjmpjhcgpfkiibjcigjbbcmegbddccimdhgcglfijen]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-oenohjkajfjmhdggggiifmgilmcjgdhjdemfphhkcojiclncmmgaoakhgiclkaje]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-oggldncffcmpjpibihpmcbkejennlgggghdfhjfgggcahanmofhmjinfobficopk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ohfbfklfepeamcnibopieedomkpmgodoahlonibadoigpigbihfcfnjchanjabgp]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-okghlacnaipipagjfelobiingjpjebfhcofinpeogpefjmoogippjghhhbjhbpoh]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-oljdmgjlpollhkclbgmamnoemoigcpjdkclbjhjfooilkekckhhdholncahnbian]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-pdfkjcaogicgejhjjfjehahnmidapglngfkekeedopfljobjfcmicbaocpfknopa]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-phppapalkkeplhijgcpcinkcagdijdjcanohojalfbejhjndjikcgippdiboakkk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_every_safety_slot_stays_a_rule_line_at_any_stored_level[case-ppjonhkfdokhcgkopokpmhkfjlpfgoeleipjcclfifdgadopikjooengnlamjhad]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_safety_slot_requires_mandatory_level_to_convert. Issue #144 refuses advisory safety numbers before validating a destination. Mandatory rule-line conversion keeps its assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-aaclgmaaohnpfhleohpaieldaajhbdaoehbaifebnigpnkhkfnajmjlkmbdgpien]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-celacdfeoklppdpaoopjnpifknoeakcedkojjfmhohjocgjmndajnapkojgfgnlk]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-cogohofimilmmghkhbichadoimcdhnikpllenlbfkccilpmkllemfldbncibjjdf]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-cpfgakdfgnnaiegocpcmpmecnaomaoooahepangdeonmlbmeplcincgghejjekho]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-dcjiboljlggloodgniaofiacjbaagejnljhddpollcgnjniboghnnhmljchlcpkd]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-dlejkcgnefhjnjadegebhmfgifbpoclebiccjkflhhjnploadambjgmcidphbpbe]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ehldnnklgjpechmdaolekhehfochfhlmiegmeogjglkmklhhaecaahiofbmhnmde]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ekoaflchmockbcgobhdejjlmjeejgbblcpklhlhoofncfhmpnaipdehfdbimkbfp]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-elhojpjbehbaahhaabdamlioapbencpliccalfokjblpcibdhlgokknmldodlmgc]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-eoicabkoljpdhomkefpjdkmlmhkdfcipgdhjagdidlcpbbgaamafknfknpdffeif]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-gblendpaapnohbdffnebooiekbmkgmfgbjpejacbcobfncaocbiaoalfpolailma]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-gdbcfbgpohnggeaobohdgndpadcegcclepiojjpapnaoamcdlknjfeggcbooilan]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-gmngohfkfkgmmhhmfkigmlibfnmdpcolehioceobbgkbglkkkenlfpphkapabjog]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-hkeeclkfgjnlnapkgnekdgpejpdcaffooknfbjfobpfkolmodkkoohhhklgbkaed]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-hnofjeahoideafeoijfncphgbhmjmmkgbomichcpgppcmhmlcaaihicjhhnlagkn]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-hojoimmgnjappmobonghfhcdkbpeifgaimlicghdgfgdfpgdmkmpgbngnechgaif]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ijdbmemdlogdppchialkcngbjajocdkpjbngjbppfbamnoefdldidnjmjhnlbhbg]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ijmmggjfligicomnlikgooapbchenkalpkbmchicjfcjeaaholjafefnnjjmfeik]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-jbbidlaeejfihkkidaaolcommjfldgeglkmhabofneihdphidjeojombndllokba]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-jdcmeggmaioihjcnokmhhdgdmocobhaolmafejjppebgimlapgnglgbllcpcilhe]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ljhapnkpknnkfoifnnbgdbenloeokdjhbilpljoppchidkmgaapjcehnkkljalmb]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-lnijemeielkmomonepbpldcfhhcckijomeniepolahcdpggpiocblnmkdhodaeap]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ncfiaiphojjfhdnnpjfpbpfkmfbhbopdcighfkcihchdohhokemddfekfbgpnnpd]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ndgeioncececablignkokbbcgmabmijmmdpeelaccnihaojhaimdnnpgpeapdned]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-oankagckkemfgeebfidoidfbecfdnhfagganpoamhemibojgjpabjmhbhaoaajag]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ogemlajmegkflmdignklinfkpmnljdfemlbfbnkhpfhdaeibacdfnmkbbpmcagha]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-oomlbccmobgpfbaljbhggabpfadjnjfnmkpnagkfcfplmghjhddeiofgpljkmepn]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-opimgoaelbffobjkdniaopgjbjdpadjfkkbnpgdicckhbnajcmggnakdpfbneggl]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-phdicbnlehlndgpolcbcopfjjbeglnfccmcolglboihlejnghmadbcicaanoohee]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
+      "node": "tests/test_rule_catalogue_v2_conversion_cleanup.py::test_protected_time_becomes_protected_data_with_its_safety_restriction[case-ppgcjjokbinpfgfklenceceohhkdknmomjjaoadaiimgafabogdapaibpnllffnm]",
+      "owner": "maintainer",
+      "reason": "Renamed to test_protected_time_requires_mandatory_level_to_convert. Issue #144 refuses advisory protected-time restrictions. Mandatory cases retain the rule and fact assertions."
+    },
+    {
       "node": "tests/test_rules_explained_contract.py::test_department_explained_conflicts_are_server_bound_and_reached",
       "owner": "maintainer",
       "reason": "Renamed by parametrisation over safety and non-safety rules; every assertion remains in both parameters."
