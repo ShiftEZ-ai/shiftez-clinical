@@ -40,7 +40,8 @@ class StopLossTests(unittest.TestCase):
                 self.assertFalse(policy.removal_only(json.dumps(helper.before).encode(),json.dumps(after).encode()))
                 for path in ('.github/workflows/ci.yml','ci/hardening.json','ci/known-failures.json','tests/quarantine.py','pytest.ini'):
                     self.assertEqual(policy.tier(path,b'{}',b'{}',helper.inventory)[0],1)
-                with self.assertRaises(ValueError):policy.tier('AGENTS.md',None,b'private',helper.inventory)
+                # The root agent instructions are public; a nested copy is still refused.
+                with self.assertRaises(ValueError):policy.tier('docs/AGENTS.md',None,b'private',helper.inventory)
                 with self.assertRaises(ValueError):workflow_privacy.check('runs-on: self-hosted')
                 with self.assertRaises(ValueError):helper.run_guard('apps/change.py',branch='main',merge_tree='e'*40)
                 (root/'README.md').write_text('not empty')

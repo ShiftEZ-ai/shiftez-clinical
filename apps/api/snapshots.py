@@ -459,11 +459,15 @@ def _baseline_inputs_view(payload):
 
 
 DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
+REVIEW_POLICY_BASIS = 'current_mandatory_with_captured_safety'
 
 
-def draft_policy_hint(workspace):
-    """Identify the draft rule basis for receipts made before the live overlay."""
-    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
+def draft_policy_hint(workspace, *, current_mandatory=False):
+    """Identify the policy basis shared by snapshots and their currency hints."""
+    status = getattr(workspace, 'status', None)
+    if status in {'submitted', 'approved'} or status == 'draft' and current_mandatory:
+        return {'draft_policy_basis': REVIEW_POLICY_BASIS}
+    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if status == 'draft' else {}
 
 
 def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
@@ -1060,8 +1064,9 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     else:
         department = db.get(m.Department, workspace.department_id)
         org = db.get(m.Organisation, department.organisation_id)
-    draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
-    mandatory_overlay_changed = False
+    draft_rules = (draft_policy_hint(workspace, current_mandatory=current_mandatory)
+                   if (mandatory_rules or current_mandatory) and not current_scheduling else {})
+    current_mandatory = draft_rules.get('draft_policy_basis') == REVIEW_POLICY_BASIS
     baseline = None
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
@@ -1106,15 +1111,16 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=bool(draft_rules) or current_mandatory,
+                                              include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,
                                               validity_baseline=validity_baseline)
-            mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
             if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
                 from packages.domain.rule_lines import seeded_policies
 
                 captured = seeded_policies(saved_inputs.get("policies") or [], saved_inputs.get("policy_seed_lines") or [])
                 effective = live_safety_inputs(db, workspace, saved_inputs, current=live_inputs,
-                                              include_mandatory=True, validity_baseline=validity_baseline)["policies"]
+                    include_mandatory=True,
+                    current_mandatory=draft_policy_hint(workspace).get('draft_policy_basis') == REVIEW_POLICY_BASIS,
+                    validity_baseline=validity_baseline)["policies"]
                 if captured != effective:
                     shared_inputs['_rule_map_policies'] = (captured, effective)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
@@ -1123,8 +1129,6 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     result = DomainSnapshot(result, read_quality=read_quality)
     if draft_rules:
         result['_draft_policy_basis'] = draft_rules['draft_policy_basis']
-    if current_mandatory and mandatory_overlay_changed:
-        result['_mandatory_overlay_changed'] = True
     if result['organisation']['id'] != org.id:
         raise ValueError('Snapshot inputs belong to another organisation')
     department_ids = result.pop('department_ids')

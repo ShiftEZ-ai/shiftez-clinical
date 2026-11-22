@@ -60,7 +60,8 @@ def test_approved_listed_quota_rows_keep_independent_dates_and_settings(h, same_
 
     snapshot = h.snapshot(workspace)
     assert compatibility_issues(snapshot) == []
-    copies = [copy for copy in active_rules(snapshot) if copy['id'] == original['id']]
+    copies = sorted((copy for copy in active_rules(snapshot) if copy['id'] == original['id']),
+                    key=lambda copy: copy['template_line']['line'])
     assert [copy['template_line']['line'] for copy in copies] == [0, 1]
     assert [copy['template_line']['person_id'] for copy in copies] == [first, first if same_person else second]
     # Compare complete primitive rule bodies with separately approved native facts.

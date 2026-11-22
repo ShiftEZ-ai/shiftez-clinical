@@ -121,7 +121,7 @@ def blocking_sources(department_ids, lo, hi):
             (m.Event.start < hi) & m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True))}
 
 
-def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
+def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None, now=None):
     """Project missing series occurrences for this window without changing delivery/history."""
     # Retain moved originals too; an overnight recurrence may exceed 24 hours across DST.
     sources = blocking_sources(department_ids, lo, hi)
@@ -132,7 +132,7 @@ def blocking_occurrences(db, department_ids, lo, hi, *, acquired=None):
     rows = [row for row in stored if not row.cancelled and aware(row.start) < hi and aware(row.end) > lo
             and row.data['type'].get('blocks_duties')]
     existing = {(row.event_id, aware(row.original_start)): row for row in stored}
-    active_after = max(lo, m.now())
+    active_after = max(lo, now or m.now())
     for event in acquired_rows('events'):
         if not event.repeat:
             continue
