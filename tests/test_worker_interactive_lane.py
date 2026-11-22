@@ -8,13 +8,13 @@ from sqlalchemy import update
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.settings import Settings
 from apps.api.services import planning, staffing
 from apps.worker import main as worker
 from packages.domain.worker_contract import JOB_LEASE_SECONDS
 from tests.clock_support import freeze_clock
 
-pytestmark = pytest.mark.parametrize(
-    'h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+both = pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 
 WAIT = 60  # upper bound for a blocked thread; every wait ends on an event, never on time
 LANE = worker.INTERACTIVE_KINDS
@@ -93,6 +93,7 @@ def run_main_in_background(h):
     return thread, outcome
 
 
+@both
 def test_lane_answers_fill_options_before_a_running_check_ends_and_leaves_the_check_identical(
         h, rota, held_check, monkeypatch):
     workspace, shift_id = rota
@@ -127,6 +128,7 @@ def test_lane_answers_fill_options_before_a_running_check_ends_and_leaves_the_ch
     assert h.detail(workspace)['workspace']['revision'] == revision_after_reference
 
 
+@both
 def test_lane_never_claims_a_kind_outside_its_allowlist(h, rota):
     workspace, _ = rota
     assert 'validation' not in LANE and LANE == frozenset({'fill_options', 'planner_preview'})
@@ -144,6 +146,7 @@ def test_lane_never_claims_a_kind_outside_its_allowlist(h, rota):
     assert job(h, queued['id'])['status'] == 'succeeded'
 
 
+@both
 def test_lane_and_main_loop_never_claim_the_same_job(h, rota):
     workspace, shift_id = rota
     engine = h.app.state.engine.execution_options(rota_defer_busy_writer=False)
@@ -168,6 +171,7 @@ def test_lane_and_main_loop_never_claim_the_same_job(h, rota):
             db.execute(update(m.Job).where(m.Job.id == queued['id']).values(status='succeeded', completed_at=m.now()))
 
 
+@both
 def test_lost_lane_job_is_recovered_by_its_lease(h, rota):
     workspace, shift_id = rota
     queued = queue_fill(h, workspace, shift_id)
@@ -181,6 +185,7 @@ def test_lost_lane_job_is_recovered_by_its_lease(h, rota):
     assert recovered['status'] == 'succeeded' and recovered['attempts'] == 2 and recovered['result']['candidates']
 
 
+@both
 def test_lane_preview_records_only_its_receipt(h):
     workspace = h.shift(h.workspace('Interactive lane preview'))['workspace']
     drain(h)
@@ -192,6 +197,7 @@ def test_lane_preview_records_only_its_receipt(h):
     assert h.detail(workspace) == before
 
 
+@both
 def test_lane_refuses_a_job_that_writes_rota_data_while_it_runs(h, rota, monkeypatch):
     workspace, shift_id = rota
     before = h.detail(workspace)
@@ -209,6 +215,7 @@ def test_lane_refuses_a_job_that_writes_rota_data_while_it_runs(h, rota, monkeyp
     assert h.detail(workspace) == before
 
 
+@both
 def test_lane_refuses_a_kind_that_stores_a_check(h, rota):
     workspace, _ = rota
     queued = queue_check(h, workspace)
@@ -218,3 +225,25 @@ def test_lane_refuses_a_kind_that_stores_a_check(h, rota):
     refused = job(h, queued['id'])
     assert refused['status'] == 'failed' and refused['error_code'] == 'INTERACTIVE_WRITE_REFUSED'
     assert stored_check(h, workspace['id'], queued['id'])[0] == before
+
+
+def test_lane_loop_claims_only_its_kinds_and_waits_for_its_own_wake(monkeypatch):
+    stopped, passes, waits = threading.Event(), [], []
+
+    def one_pass(engine, *, settings, kinds):
+        passes.append(kinds)
+        if len(passes) == 3:
+            stopped.set()
+        return len(passes) == 1  # work, then idle
+
+    class Wake:
+        def wait(self, seconds):
+            waits.append(seconds)
+
+        def clear(self):
+            pass
+
+    monkeypatch.setattr(worker, 'process_one', one_pass)
+    worker.interactive_loop(None, Settings(), stopped, Wake())
+    assert passes == [LANE, LANE, LANE]
+    assert waits == [Settings().worker_poll_seconds] * 2  # no wait after a pass that worked
