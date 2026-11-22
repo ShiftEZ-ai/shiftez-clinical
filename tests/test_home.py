@@ -151,6 +151,40 @@ def test_home_counts_only_decisions_this_person_may_take(h):
     assert counts(h.get('coordinator', '/api/home'))['patterns'] == 1
 
 
+def test_a_rota_months_ahead_waits_on_home_for_whoever_may_review_it(h):
+    """A submitted rota three months ahead is outside Home's near-dates window, yet the Schedule offers it for review:
+    Home offers it too, to the approver only, and offers it to publish once approved."""
+    identity(h, 'programme', ['programme_lead'])
+    identity(h, 'planner-approver', ['coordinator', 'approver'])
+    start = clock_now().date() + timedelta(days=99)
+
+    def submitted(name, role, day):
+        at = lambda hour: f'{day.isoformat()}T{hour:02}:00:00+03:00'
+        w = h.command(role, 'workspace.create', {'name': name, 'starts_on': day.isoformat(),
+                      'ends_on': (day + timedelta(days=7)).isoformat()})['workspace']
+        w = h.shift(w, start=at(8), end=at(12), role=role)['workspace']
+        return h.lifecycle(w, 'submit', role=role)['workspace']
+
+    # Whoever made the rota may not approve it, however far its month: Home follows the same rule.
+    own = submitted('Own far rota', 'planner-approver', start + timedelta(days=35))
+    progress = h.get('planner-approver', '/api/workspaces/' + own['id'])['review_progress']
+    assert not progress['can_decide'] and progress['decision_reason'] == 'SELF_APPROVAL'
+    # Submitted last, so a later submission does not leave it out of date (that would be Rota to resubmit).
+    far = submitted('Far review rota', 'coordinator', start)
+    assert h.get('approver', '/api/workspaces/' + far['id'])['review_progress']['can_decide']
+    review = next(i for i in h.get('approver', '/api/home')['attention'] if i['key'] == 'reviews')
+    assert review['rota_id'] == far['id'] and review['rota_name'] == 'Far review rota'
+    for role in ('coordinator', 'programme', 'staff'):
+        assert 'reviews' not in keys(h.get(role, '/api/home')), role
+    attention = h.get('planner-approver', '/api/home')['attention']
+    mine = next((i for i in attention if i['key'] == 'reviews'), None)
+    assert mine and mine['count'] == 1 and mine['rota_id'] == far['id'], attention
+    approved = h.lifecycle(far, 'approve', role='approver')['workspace']
+    assert approved['status'] == 'approved'
+    publish = next(i for i in h.get('approver', '/api/home')['attention'] if i['key'] == 'to_publish')
+    assert publish['rota_id'] == far['id']
+
+
 def test_people_attention_counts_only_active_people_with_the_relevant_gap(h):
     missing_eligibility = h.configure('people', {'display_name': 'Active eligibility gap'})['record']
     missing_rank = h.configure('people', {'display_name': 'Active rank gap'})['record']
