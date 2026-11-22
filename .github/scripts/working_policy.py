@@ -20,7 +20,19 @@ import node_census
 import hardening
 from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, decode_retired
 
-from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_agent_path, private_ignore_content
+from agent_names import AGENT_FILES, AGENT_DIRECTORIES, AGENT_PREFIXES, private_ignore_content
+from agent_names import private_agent_path as agent_name_path
+
+# The public agent instructions at the repository root, by exact name and byte-encoded as in agent_names;
+# nested copies, other cases and tool folders stay private.
+PUBLIC_AGENT_FILES = frozenset(bytes(value).decode("ascii") for value in (
+    (65, 71, 69, 78, 84, 83, 46, 109, 100),
+    (67, 76, 65, 85, 68, 69, 46, 109, 100),
+))
+
+
+def private_agent_path(path):
+    return path not in PUBLIC_AGENT_FILES and agent_name_path(path)
 
 HOOKS = {
     "pytest_runtest_makereport", "pytest_report_teststatus", "pytest_collection_modifyitems",
