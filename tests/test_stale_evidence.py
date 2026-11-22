@@ -55,7 +55,8 @@ def evidence(tmp_path, monkeypatch):
         resource = command[-1].removeprefix(prefix)
         runs = [packet["run"], *packet["other_runs"]]
         if resource.startswith("workflows/ci.yml/runs?event="):
-            rows = [run for run in runs if f"event={run['event']}&" in resource]
+            rows = [run for run in runs if f"event={run['event']}&" in resource
+                    and ("&branch=" not in resource or f"&branch={run['head_branch']}&" in resource)]
             return json.dumps({"workflow_runs": rows}).encode()
         for run in runs:
             artifact_id = run["id"] + 333
@@ -180,6 +181,14 @@ def test_reports_bound_nightly_evidence(tmp_path, monkeypatch, evidence):
     evidence["other_runs"].append(group)
     evidence["run"].update(event="schedule", head_branch="dev", conclusion="failure")
     assert evaluate(tmp_path, monkeypatch, scope=set())
+    assert evidence["downloads"] == ["artifacts/456/zip"]
+
+
+def test_default_main_reads_main_nightly_evidence(tmp_path, monkeypatch, evidence):
+    group = evidence["run"] | {"id": 124, "conclusion": "failure"}
+    evidence["other_runs"].append(group)
+    evidence["run"].update(event="schedule", head_branch="main", conclusion="failure")
+    assert evaluate(tmp_path, monkeypatch, scope=set(), branch="main", default="main")
     assert evidence["downloads"] == ["artifacts/456/zip"]
 
 

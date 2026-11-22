@@ -343,6 +343,15 @@ class TwoObservationGateTests(unittest.TestCase):
                         self.assertNotIn("selection", plan)
                         self.assertEqual(actual, files)
 
+    def test_retry_reads_the_quarantine_the_verdict_reads(self):
+        import trusted_ci
+        # main is the release branch only while it is not the default; after the rename it is integration.
+        cases = {("main", "dev"): "base", ("dev", "dev"): "candidate", ("main", "main"): "candidate",
+                 ("dev", "main"): "candidate"}
+        for (branch, default), expected in cases.items():
+            with self.subTest(branch=branch, default=default):
+                self.assertEqual(trusted_ci.quarantine_revision(branch, default, "base", "candidate"), expected)
+
     def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):
         import trusted_ci
         import trusted_verdict

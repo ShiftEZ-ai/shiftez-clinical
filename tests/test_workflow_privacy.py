@@ -150,7 +150,7 @@ class DefaultBranchTests(unittest.TestCase):
             lines = path.read_text(encoding="utf-8").splitlines()
             for number, line in enumerate(lines):
                 where = path.relative_to(self.REPO).as_posix() + ":" + str(number + 1)
-                if "refs/heads/dev" in line:
+                if "refs/heads/dev" in line or "branch=dev" in line or "queue/dev/" in line:
                     offenders.append(where)
                 if line.strip() == "- dev":
                     triggers += 1

@@ -18,8 +18,8 @@ def github_get(repository, resource):
     )
 
 
-def workflow_runs(repository, event, page=1):
-    branch = "&branch=dev" if event == "schedule" else ""
+def workflow_runs(repository, event, default, page=1):
+    branch = f"&branch={default}" if event == "schedule" else ""
     response = policy.decode(github_get(repository, f"workflows/ci.yml/runs?event={event}&status=completed"
                                                      f"{branch}&per_page=100&page={page}"))
     rows = response["workflow_runs"]
@@ -105,7 +105,7 @@ def confirmed_nodes(repository, git, tip, base, nodes, default):
             return {}
         # ponytail: one page per event bounds the PR lookup; older retained evidence can use pagination if needed.
         for event in ("merge_group", "schedule"):
-            runs = [run for run in workflow_runs(repository, event)
+            runs = [run for run in workflow_runs(repository, event, default)
                     if dev_run(run, event, git, tip, base, default)
                     and (run["conclusion"] == "success" or event == "schedule" and run["conclusion"] == "failure")]
             if runs:

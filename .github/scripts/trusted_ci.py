@@ -91,6 +91,11 @@ def pr_changed_files(base, candidate, git):
     return {path.decode() for path in policy.paths(git(*diff, base, candidate, "--"))}
 
 
+def quarantine_revision(branch, default, base, candidate):
+    """A release reads the accepted base's quarantine; integration reads the candidate's. main releases only while it is not the default."""
+    return base if branch == "main" and default != "main" else candidate
+
+
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
     if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
@@ -406,7 +411,8 @@ def main():
         base = candidate["base_sha"]
         current = policy.read_file(candidate["sha"], policy.KNOWN)
         old = policy.read_file(base, policy.KNOWN)
-        _, quarantine = quarantine_policy(base, base if branch == "main" else candidate["sha"], old, current)
+        _, quarantine = quarantine_policy(base, quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"]),
+                                          old, current)
         listed = maker.listed_nodes(maker.decode_list(current) if current is not None else None) | quarantine.keys()
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
