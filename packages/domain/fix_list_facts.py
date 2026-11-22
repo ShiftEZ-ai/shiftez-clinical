@@ -35,14 +35,16 @@ def plural(label, count):
     return label if count == 1 or label.lower().endswith('s') else label + 's'
 
 
-def who_label(data, tree):
-    """Name a single positive audience honestly; compound/negated audiences use the existing fallback."""
+def who_words(data, tree):
+    """Name a single positive audience honestly, as (one, many); compound/negated audiences use the existing fallback.
+    A person's name is a name, not a noun: it never takes a plural."""
     from packages.contracts.schemas import CONDITION_FIELD_DEFINITIONS
+    everyone = (FIX_LIST_WORDS['person'], FIX_LIST_WORDS['people'])
     if not tree:
-        return FIX_LIST_WORDS['person']
+        return everyone
     if 'conditions' in tree:
         nodes = tree['conditions']
-        return who_label(data, nodes[0]) if len(nodes) == 1 else FIX_LIST_WORDS['person'] if not nodes else None
+        return who_words(data, nodes[0]) if len(nodes) == 1 else everyone if not nodes else None
     values = tree.get('values') or []
     if tree.get('op', 'any') not in {'any', 'all', 'is'} or len(values) != 1:
         return None
@@ -50,13 +52,14 @@ def who_label(data, tree):
     collection = next((f['kind'] for f in CONDITION_FIELD_DEFINITIONS if f['key'] == field and not f['session']), None)
     if field == 'tags':
         # Tag conditions store names, unlike the ID-valued catalogue operands.
-        return values[0]
+        return values[0], plural(values[0], 2)
     if not collection:
         return None
     rows = data.get(collection) or {}
     row = rows.get(values[0], {}) if isinstance(rows, dict) else next(
         (row for row in rows if row.get('id') == values[0]), {})
-    return row.get('name') or row.get('display_name') or None
+    name = row.get('name') or row.get('display_name') or None
+    return None if not name else (name, name) if collection == 'people' else (name, plural(name, 2))
 
 
 def session_context(data, shift):
@@ -118,7 +121,7 @@ def where_label(context, shift_ids):
 
 def presentation(context, check, evidence, shift_ids, person_ids, template, *, level, family):
     where = where_label(context, shift_ids)
-    missing, facts = [], {}
+    missing, facts, many = [], {}, {}
     from .finding_causes import COVERAGE_CODES
     for row in evidence:
         if row['code'] not in COVERAGE_CODES:
@@ -127,6 +130,7 @@ def presentation(context, check, evidence, shift_ids, person_ids, template, *, l
         source = (context.get('sources') or {}).get(json.dumps(
             [row.get('rule_id'), detail.get('line'), detail.get('slot')]), {})
         label, have = source.get('who_label'), detail.get('available')
+        many[label] = source.get('who_many') or label
         need = detail.get('required', detail.get('target'))
         if not label or not isinstance(have, int) or not isinstance(need, int) or not 0 <= have < need:
             continue
@@ -142,11 +146,11 @@ def presentation(context, check, evidence, shift_ids, person_ids, template, *, l
     if missing and len(missing) == 1:
         fact = missing[0]
         detail_line = FIX_LIST_WORDS['detail_missing'].format(sessions=sessions, have=fact['have'], need=fact['need'],
-                                                            who=plural(fact['who_label'], fact['need']))
+                                                            who=fact['who_label'] if fact['need'] == 1 else many[fact['who_label']])
         if where and template.get('missing'):
             amount = fact['need'] - fact['have']
             text = (FIX_LIST_WORDS['one_missing'].format(ordinal=ordinal(fact['have'] + 1), who=fact['who_label'])
-                    if amount == 1 else FIX_LIST_WORDS['many_missing'].format(count=amount, who=plural(fact['who_label'], amount)))
+                    if amount == 1 else FIX_LIST_WORDS['many_missing'].format(count=amount, who=many[fact['who_label']]))
             sentence = template['missing'].format(where=where['label'], missing=text)
         diagnoses = {(row.get('cause') or {}).get('code') for row in evidence}
         if where and diagnoses <= {'no_eligible_people', 'empty_population'} and template.get('eligibility'):

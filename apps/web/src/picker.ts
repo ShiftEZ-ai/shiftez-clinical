@@ -16,7 +16,7 @@
  * Every native <select> in the app opens through `enhanceSelects()` below, so the <select> stays the single
  * holder of the value (forms, tests and screen readers keep working) while people get the searchable list.
  */
-import {el, icon, phoneQuery, placeNear, type Choice} from './dom.js';
+import {distinct, el, icon, phoneQuery, placeNear, type Choice} from './dom.js';
 
 export type PickerConfig = {
   label: string;
@@ -108,6 +108,9 @@ export function sheetHead(label: string, close: () => void): HTMLElement {
 /** Open the picker under `anchor`; the panel is placed inside `host` (a descendant of any open dialog). */
 export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerConfig): () => void {
   current?.close();
+  // Same-named choices told apart, in place: what the caller reads back (a pick's label) says the same.
+  const told = distinct(cfg.choices);
+  if (told !== cfg.choices) cfg.choices.splice(0, cfg.choices.length, ...told);
   const id = `picker-${++sequence}`;
   const itemsOf = () => cfg.choices.map((c, index) => ({c, index, label: fold(c.label), extra: fold([c.group, c.hint, c.keywords].filter(Boolean).join(' '))}));
   let items: Item[] = itemsOf();
