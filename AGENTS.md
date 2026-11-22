@@ -2,12 +2,14 @@
 
 ## Project facts
 - Repository: https://github.com/ShiftEZ-ai/shiftez-clinical · main branch: main
-- Board (private): https://github.com/orgs/ShiftEZ-ai/projects/2 · Project brief: pinned item on the board
-- Environments: ci, staging, production
-- Milestones: v0.1.1 due 2026-11-27; next v0.1.2
+- Board (private): https://github.com/orgs/ShiftEZ-ai/projects/2 · Project brief: the board's README
+- Release plan: https://github.com/ShiftEZ-ai/shiftez-clinical/milestones (the milestones are the plan; never copy
+  them here)
 - Leads (thread titles): "ShiftEZ Master", "ShiftEZ Delivery", "ShiftEZ Design"
-- Other definition files: DELIVERY.md (branching, checks, test policy, environments, releases, deploys, security,
-  speed gates), DESIGN.md (the visual and interaction contract)
+- UI project: yes · environments: ci, dev, staging, production (each described in DELIVERY.md § Environments)
+- Other repos: none
+- Links: DELIVERY.md (how code ships) · DESIGN.md (look and feel) · the portfolio engineering standard and the
+  orchestration skill (private; agents receive both through their session hooks)
 
 ## Product and current goal
 A clinical rota product: planning, rules, auto-scheduling (OR-Tools CP-SAT), review, approval and publication,
@@ -17,6 +19,8 @@ user, who manages people, requests and rules, and creates schedules by hand and 
 ## Commands
 - Set up: `npm ci` · `pip install --require-hashes -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock`
 - Build the web client: `python scripts/build_web.py` · Run locally (API + worker): `python scripts/dev.py`
+- Lint: `python -m ruff check --select F821,F822,F823 .` · Typecheck: `npm run typecheck` · Format: no formatter is
+  enforced · All fast checks: `npm run check`
 - Affected tests: `python scripts/affected_tests.py --run` · Full tests: hosted CI and the merge queue only
 - Local services: a disposable PostgreSQL in `TEST_POSTGRES_URL` with `ROTA_ALLOW_DISPOSABLE_TEST_DB=yes` and
   `ROTA_ALLOW_TEST_ROLES=yes`; Chromium for browser tests in `CHROMIUM_EXECUTABLE`
@@ -88,7 +92,7 @@ Product rules:
 - Rule changes go propose → approve (a different person) → activate, audited and undoable. A department may grant an
   audited, time-bound self-approval permission; every use needs a reason and is announced and marked Self-approved.
 
-UI rules (detail in DESIGN.md; changing its principles needs the owner's yes):
+UI rules (detail in DESIGN.md, owned by the Design Lead):
 - Every screen, control and sentence earns its place; no taglines, helper text or secondary labels (errors,
   empty-state next steps and accessible names are not secondary labels). Never show what is already obvious.
 - Collections share one toolbar: Saved view → period → Search → Filter → Group → Sort → View settings. One dropdown
@@ -101,13 +105,12 @@ UI rules (detail in DESIGN.md; changing its principles needs the owner's yes):
 - A major new screen starts from an approved mockup.
 
 ## Who decides
-- Only the owner decides: money; access only he can grant; production deployments; destructive operations on real
-  data; making private things public; closing the project.
+- Only the owner decides: money; access only he can grant (admin access included); secrets; production
+  deployments; destructive operations on real data; making private things public; closing the project.
 - Safety, approval and exception rule changes: the Master Lead, with one independent full-diff review (a risk path).
 - DESIGN.md principles and mockups: the Design Lead.
 - Release and data-safety policy: the Delivery Lead (DELIVERY.md).
 - Changing AGENTS.md: the Master Lead.
-- Production is never erased by a release; a destructive migration needs the owner's confirmation on production.
 
 ## Risk paths (need one independent review before landing)
 A risk-path change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict
