@@ -417,9 +417,7 @@ def _baseline_hint(db, workspace):
         return memo[key]
     from .workspace_baselines import latest
     row = latest(db, workspace.id, include_payload=False)
-    if row is None:
-        return [None, None]
-    hint = [row.id, row.payload_hash]
+    hint = [row.id, row.payload_hash] if row is not None else [None, None]
     memo[key] = hint
     return hint
 
@@ -558,7 +556,7 @@ def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
             result.update({wid: value for wid, stamp, value in db.execute(
                 select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(by_id),
                     C.audience == CANONICAL_AUDIENCE, C.kind == 'feasibility_fingerprint'))
-                if value is not None and stamp == input_stamp(db, by_id[wid])})
+                if value is not None and stamp == input_stamp(db, by_id[wid], for_feasibility=True)})
     for workspace in workspaces:
         if workspace.id in result:
             continue
@@ -602,7 +600,7 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace) for wid, workspace in rows.items()}
+    stamps = {wid: input_stamp(db, workspace, for_feasibility=True) for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
@@ -1050,8 +1048,12 @@ def _draft_catalogue_refs(db, workspace):
 
 def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_overrides,
                       current_scheduling, mandatory_rules, current_mandatory, shared_inputs,
-                      scope_interval_cache, rule_map_bindings, draft_inputs=None, draft_refs=None, reuse_catalogue=False):
-    if current_scheduling:
+                      scope_interval_cache, rule_map_bindings, current_goals=False, current_generation_defaults=False,
+                      draft_inputs=None, draft_refs=None, reuse_catalogue=False):
+    if current_goals:
+        from .workspace_baselines import workspace_generation_context
+        department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
+    elif current_scheduling:
         department, org = db.execute(select(m.Department, m.Organisation)
             .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
             .where(m.Department.id == workspace.department_id)).one()
@@ -1129,13 +1131,20 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     result.update({"workspace": record(workspace, exclude=("validation",)), "department": record(department),
                    "operational": operational,
                    "quota_policy_limit": quota_policy_limit()})
+    from .workspace_baselines import CAPTURED_GENERATION_STATES, frozen_department_settings, workspace_generation_defaults
     department_settings = result['department']
     if baseline is not None:
-        from .workspace_baselines import frozen_department_settings
-        department_settings = {**department_settings, **frozen_department_settings(
-            result, workspace.department_id, baseline.included_sources)}
+        frozen = frozen_department_settings(result, workspace.department_id, baseline.included_sources)
+        department_settings = {**department_settings, **frozen}
+        if workspace.status in CAPTURED_GENERATION_STATES:
+            defaults = workspace_generation_defaults(db, workspace, department, frozen_settings=frozen)
+            department_settings['generation_defaults'] = defaults
+        elif current_generation_defaults:
+            department_settings['generation_defaults'] = result['department']['generation_defaults']
         result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
+    elif current_goals:
+        department_settings['generation_defaults'] = goal_defaults
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
     # A published rota keeps the rules it was approved under: rules activated, changed or retired later
@@ -1360,16 +1369,19 @@ def _snapshot_window_inputs(db, department_ids, people, lo, hi, availability_lo,
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    current_goals: bool = False, current_generation_defaults: bool = False,
                     own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
                     fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None) -> dict:
+    current_scheduling = current_scheduling or current_goals
     options = dict(operational=operational, policy_overrides=policy_overrides, fact_overrides=fact_overrides,
                    current_scheduling=current_scheduling, mandatory_rules=mandatory_rules,
                    current_mandatory=current_mandatory, shared_inputs=shared_inputs,
-                   scope_interval_cache=scope_interval_cache, rule_map_bindings=rule_map_bindings)
+                   scope_interval_cache=scope_interval_cache, rule_map_bindings=rule_map_bindings,
+                   current_goals=current_goals, current_generation_defaults=current_generation_defaults)
     if _edit_sources is None:
         context = _snapshot_context(db, workspace, **options)
     else:

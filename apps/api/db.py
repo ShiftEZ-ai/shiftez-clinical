@@ -638,6 +638,7 @@ def retain_snapshot_input_savepoint(session, transaction):
 def discard_rolled_back_snapshot(session, previous_transaction):
     session.info.get('_request_parents', {}).clear()
     session.info.get('_request_authority', {}).clear()
+    session.info.pop('_baseline_hints', None)
     session.info.pop('write_domain_snapshots', None)
     session.info.pop('_live_safety_sources', None)
     session.info.pop('_activation_projection_cache', None)
@@ -660,6 +661,7 @@ def discard_finished_snapshot_input_state(session, transaction):
     if transaction.parent is None:
         session.info.pop('_request_parents', None)
         session.info.pop('_request_authority', None)
+        session.info.pop('_baseline_hints', None)
         session.info.pop('_request_workspace_criteria', None)
         session.info.pop('_snapshot_input_revisions', None)
 

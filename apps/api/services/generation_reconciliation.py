@@ -101,7 +101,7 @@ def prepare(db, actor, command):
             additions[index] = {**addition, 'participant': {**addition['participant'], 'id': ident}}
         normalized = {**result, 'additions': additions}
     from .planning import background_checks_available, complete_check
-    defaults = frozen.get('generation_defaults') or frozen.get('department', {}).get('generation_defaults') or {}
+    defaults = current['department'].get('generation_defaults')
     baseline = workspace.validation if (not workspace.base_publication_id
         and not population_changed and complete_check(workspace.validation, current, defaults)) else None
     if not population_changed and not workspace.base_publication_id and background_checks_available(db):
