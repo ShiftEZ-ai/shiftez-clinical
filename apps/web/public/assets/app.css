@@ -3900,6 +3900,9 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .request-wishes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;color:var(--ink-2);font-size:13px}
 .request-wishes meter{width:140px;height:10px}
 .request-wish-words{flex:1 1 12rem;min-width:0} /* D-081: on a narrow toolbar the words take the next line with the calendar icon beside them, never the icon alone */
+/* A phone's toolbar puts its icon tools on the first row and Search on the second: the wish calendar with no points shown
+   beside it (a reviewer, or the calendar open) is one of those icons, never a row of its own under Search. */
+@media(max-width:720px){.dt-toolbar>.request-wishes:not(:has(>.request-wish-summary:not([hidden]))){order:-1;flex:none}}
 /* Equal tiles in even columns (C19): a kind never sits alone on a short row of uneven pills. */
 .request-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;border:0;margin:0;padding:0;grid-column:1/-1}
 .request-kinds legend{margin-bottom:8px;font-weight:600;color:var(--ink)}
@@ -4143,6 +4146,9 @@ b.tl-more{color:var(--accent-text)}
 /* Session panel tabs (Session | Why | Rules) and the Why tab. The open panel's subject is ringed on the schedule and its
    header carries the same accent edge, so it is always clear what opened the panel. */
 [data-session].is-explained,[data-person].is-explained{background-color:var(--accent-soft);border-radius:6px;scroll-margin:24px}
+/* A session brought into view on the week grid (a link, the panel's subject, arrow keys) stops below its sticky day header
+   and group heading (their real heights, planner_week.ts stickTops), never under them. */
+.wk-grid :is([data-session],[data-rk]){scroll-margin-top:calc(var(--wk-head-h,56px) + var(--wk-group-h,0px) + 8px)}
 .wk-cell.is-explained::before{content:'Open in panel';display:block;font-size:10.5px;font-weight:700;color:var(--accent-text);margin-bottom:2px}
 .wk-panel-body>.page-tabs-wrap{gap:10px}
 .wk-tab,.why{display:flex;flex-direction:column;gap:10px;min-width:0}

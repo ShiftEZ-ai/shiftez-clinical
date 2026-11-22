@@ -20,7 +20,7 @@ import {openPalette,compactSearch,type PaletteItem} from './palette.js';
 import {exportDialog,type ExportSource} from './schedule_export.js';
 import {scheduleGrid} from './schedule_grid.js';
 import {DIMENSIONS,TIME_AXES,isDim,personDim,dimOf,type Dim,type Column as GridColumn} from './schedule_dimensions.js';
-import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
+import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
 import {calendarPeriod,addDays,filterShifts,isClosed,closureText,absentFrom,grantOverlap,membershipCovers,LAYER_DEFAULTS,savedLayers,type PlanRange} from './planner_logic.js';
 import {normalSearch,recordMatcher,fieldMatcher,searchParam,serverCapability,type SearchOptions} from './search.js';
 /** The Schedule's session search options (search.ts), saved with the planner view (search_options). */
@@ -2387,7 +2387,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(!routeShift&&shiftLink&&draftData&&!partial(draftData)&&String(draftData.workspace.id)===shiftLink.rota){const s=draftData.shifts.find(x=>String(x.id)===shiftLink!.id);
     if(!s||toLocal(s.start,zoneNow).slice(0,10)!==shiftLink.day)routeShift=shiftLink.id;}
   if(routeShift&&draftData){const s=draftData.shifts.find(x=>String(x.id)===routeShift);
-    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(planDay&&day!==planDay)notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
+    if(s){const day=toLocal(s.start,zoneNow).slice(0,10);if(linkMoved(planDay,day,ws,routeQuery.get('panel')!=='session'))notify(SESSION_MOVED(formatDay(s.start,zoneNow)),'info');planDay=day;}
     else{notify(SESSION_REMOVED,'warning');routeShift='';shiftLink=null;routeQuery.delete('shift');routeQuery.delete('panel');}}
   // F4 (maintenance): an amendment opens on the week of its first change (review_week_start), not on its first day.
   const changedWeek=String((draftData as {change_diff?:{review_week_start?:string|null}|null}|null)?.change_diff?.review_week_start||'');
