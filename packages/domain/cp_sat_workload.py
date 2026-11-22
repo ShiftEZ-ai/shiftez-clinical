@@ -13,9 +13,9 @@ from .cp_sat import runs
 
 from .conditions import counting_views, has_session_lines, scope_tree
 from .time import aware, local_midnight
-from .validation import (ancestor_ids, exception_for, named_people, policy_applies, scope_intervals,
+from .validation import (ancestor_ids, exception_for, named_people, policy_applies,
                          workload_matches, workload_windows, person_rows, workload_gap_blockers,
-                         workload_day_groups, consecutive_day_count)
+                         workload_day_groups, workload_weekend_groups, consecutive_day_count)
 
 
 def add_workload_limits(model, data, by_person, pairings, penalise):
@@ -165,24 +165,19 @@ def add_workload_limits(model, data, by_person, pairings, penalise):
             if rule['kind'] == 'max_consecutive_weekends':
                 weekends, focused, overtime = defaultdict(list), defaultdict(list), defaultdict(list)
                 context_weekends, context_overtime = defaultdict(bool), defaultdict(bool)
-                for shift, participant, a, b, x in selected:
-                    for lo, hi in scope_intervals(data, scope, pid, a, b):
-                        day = lo.astimezone(ZoneInfo(zone)).date()
-                        last = (hi - timedelta(microseconds=1)).astimezone(ZoneInfo(zone)).date()
-                        while day <= last:
-                            offset = (day.weekday() - rule['weekend_start']) % 7
-                            if offset < rule['weekend_days']:
-                                first = day - timedelta(days=offset)
-                                weekends[first].append(x)
-                                if shift['id'] in focus:
-                                    focused[first].append(x)
-                                if participant['overtime']:
-                                    overtime[first].append(x)
-                                if fixed_context((shift, participant, a, b, x)):
-                                    context_weekends[first] = True
-                                    if participant['overtime']:
-                                        context_overtime[first] = True
-                            day += timedelta(days=1)
+                focal_ids = {id(row) for row in focal}
+                for first, rows in workload_weekend_groups(data, policy, pid, selected).items():
+                    for row in rows:
+                        x = row[4]
+                        weekends[first].append(x)
+                        if id(row) in focal_ids:
+                            focused[first].append(x)
+                        if row[1]['overtime']:
+                            overtime[first].append(x)
+                        if fixed_context(row):
+                            context_weekends[first] = True
+                            if row[1]['overtime']:
+                                context_overtime[first] = True
                 worked = {day: either(weekends[day]) for day in sorted(weekends)}
                 any_focal = either([x for _, _, _, _, x in focal])
                 for last in sorted(weekends):
@@ -335,7 +330,8 @@ def add_workload_limits(model, data, by_person, pairings, penalise):
                 else:
                     maximum, ceiling = rule['maximum'], len(selected)
                     counted_rows = selected[bisect_left(starts, a):bisect_left(starts, b)]
-                    for shift, participant, c, d, x in counted_rows:
+                    for row in counted_rows:
+                        shift, participant, c, d, x = row
                         group = rule.get('group_by', 'all')
                         if group == 'supervisor':
                             pairs = pairs_by_trainee[shift['id'], pid]
@@ -357,14 +353,14 @@ def add_workload_limits(model, data, by_person, pairings, penalise):
                                 counted = model.new_bool_var('supervised_work')
                                 model.add_min_equality(counted, [pair, x])
                                 groups[supervisor].append(counted)
-                                if shift['id'] in focus:
+                                if id(row) in focal_ids:
                                     focused_groups[supervisor].append(counted)
                         else:
                             key = c.astimezone(ZoneInfo(zone)).weekday() if group == 'weekday' else None
                             groups[key].append(x)
                             if fixed_context((shift, participant, c, d, x)):
                                 context_totals[key] += 1
-                            if shift['id'] in focus:
+                            if id(row) in focal_ids:
                                 focused_groups[key].append(x)
                 # Calendar windows contain every duty that touches them, so when all counted work is in the
                 # rota being scheduled the window is necessarily active: a plain (stronger) linear constraint.

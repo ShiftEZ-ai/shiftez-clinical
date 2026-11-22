@@ -380,6 +380,10 @@ let legendSeq=0;
 /** An entry a reader can use (Fairness's people): hovering or focusing it highlights its marks (`hover`), choosing it
  *  acts (`act`, with `aria` as its name); `note`: a short figure after its words (a total). */
 export type LegendUse={hover?:(on:boolean)=>void;act?:()=>void;note?:string;aria?:string};
+const legendFits=new WeakMap<Element,()=>void>();
+function fitLegends(scope:ParentNode){
+  for(const key of scope.querySelectorAll('.view-legend'))legendFits.get(key)?.();
+}
 // What a key lists is chosen in its collection's one View settings (Properties, Colour by, Layers): the key has no
 // settings button of its own (D-163: one View settings per collection).
 export function legend(label='Legend'){
@@ -398,13 +402,16 @@ export function legend(label='Legend'){
   // One line below its view reviewed: the entries that don't fit, the last first, go behind the one "+N",
   // which lists every entry. The first entry always stays; print shows them all (app.css).
   let width=-1;
-  const fit=()=>{root.querySelector(':scope>.lg-more')?.remove();
+  const fit=()=>{
+    width=root.hidden||!root.isConnected?0:root.clientWidth;
+    if(!width)return;
+    root.querySelector(':scope>.lg-more')?.remove();
     const lis=[...root.querySelectorAll<HTMLElement>(':scope>li[data-lg-entry]')];for(const l of lis)l.hidden=false;
-    if(root.hidden||!root.isConnected)return;
     const list=()=>lis.map(l=>{const i=items.get(l.dataset.lgK||'');return i?el('span',{class:'lg-pop'},...entry({...i,mark:i.mark.cloneNode(true) as HTMLElement})):'';});
     for(let i=lis.length-1,n=1;i>0&&root.scrollWidth>root.clientWidth+1;i--,n++){lis[i].hidden=true;root.querySelector(':scope>.lg-more')?.remove();
       root.append(el('li',{class:'lg-more'},overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list})));}};
-  observeSize(root,(_,{width:w})=>{if(w!==width){width=w;fit();}});
+  legendFits.set(root,fit);
+  observeSize(root,()=>{if(root.clientWidth!==width)fit();});
   const add=(key:string,mark:string|HTMLElement,text:string,order=1,use?:LegendUse)=>{
     if(items.has(key))return;
     items.set(key,{mark:typeof mark==='string'?el('span',{class:'lg-swatch '+mark,'aria-hidden':'true'}):mark,label:text,order,use});
@@ -517,6 +524,10 @@ export const statusTone=(state:string):Tone=>STATUS_TONES[state]||'neutral';
  *  exception and a swap in review all read "Waiting for approval". Other states keep their own word. */
 const STATUS_LABELS:Record<string,string>={submitted:'Waiting for approval',proposed:'Waiting for approval',reviewing:'Waiting for approval',outdated:'Needs resubmitting'};
 export const statusLabel=(state:string)=>STATUS_LABELS[state]||state.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
+/** one verdict per rota. A detail read (compact, window or whole) carries the server's review_progress.stale_inputs
+ *  and decides; only a rota list row with no detail read falls back to the list's own `outdated`. */
+export const rotaOutdated=(w:Record<string,unknown>,detail?:{review_progress?:{stale_inputs?:boolean}|null}|null)=>
+  ['submitted','approved'].includes(String(w.status))&&(detail?.review_progress?!!detail.review_progress.stale_inputs:!!w.outdated);
 /** Labelled facts (a definition list): "Rules · 27 → 9". */
 export const ruleFacts=(facts:[string,Child][])=>el('dl',{class:'rule-facts'},...facts.map(([label,value])=>el('div',{},el('dt',{},label),el('dd',{},value))));
 /** A badge for a record's state, coloured from the one status palette; `label` overrides the wording. */
@@ -873,7 +884,10 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   // One with `keep` moves to its record's new button instead, and closes only when that record is gone.
   placer = placeNear(panel, () => state.anchor, {placement: options.placement}, () => {
     if (openPopover?.node !== panel) return false;
-    if (options.keep) { if (opened && !rehome()) { close(); return false; } return true; }
+    if (options.keep) {
+      if (opened && !rehome() && !(awaited && awaited.key === state.key)) { close(); return false; }
+      return true;
+    }
     if (!state.key && opened && !state.anchor.isConnected && (panel.matches('[role=menu]') || panel.querySelector('[role=menu]'))) { close(); return false; }
     return true;
   });
@@ -913,7 +927,7 @@ export function awaitAdoption(key: string): () => void {
     if (awaited !== mine) return;
     awaited = null;
     // After the new button's own hand-over (a microtask queued when it was built); one waiting for a frame is pendingAdopt's.
-    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key) openPopover.close(); });
+    queueMicrotask(() => { if (openPopover?.key === key && !openPopover.anchor.isConnected && pendingAdopt?.key !== key && !openPopover.rehome()) openPopover.close(); });
   };
 }
 /** A screen redrew itself while its popover was open: the popover stays open and now belongs to the new button.
@@ -1483,7 +1497,11 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 export const footerStatus=(...children:Child[])=>el('div',{class:'footer-status'},...children);
 /** The page the shell is building, detached until it is shown (app.ts renderPage): its reads may answer before then. */
 let pageBuilding:HTMLElement|null=null;
-export const buildingPage=(content:HTMLElement|null)=>{pageBuilding=content;};
+export const buildingPage=(content:HTMLElement|null)=>{
+  // The legend can paint off-page. Fit it on mount before the first resize callback.
+  if(!content&&pageBuilding?.isConnected)fitLegends(pageBuilding);
+  pageBuilding=content;
+};
 /** Whether a late answer may still draw into `node`: it is on screen, or in the page being built. Never `isConnected`
  *  alone, which drops an answer that lands before the page is shown; a replaced page's detached nodes stay gone. */
 export const alive=(node:Node|null|undefined)=>!!node&&(node.isConnected||!!pageBuilding?.contains(node));
@@ -1913,7 +1931,7 @@ export function area(label: string, value = '', rows = 3): Field<HTMLTextAreaEle
 /** Every single-choice dropdown. A native <select> holds the value (forms, tests and screen readers rely on it);
  *  clicking or typing on it opens the shared searchable picker (see picker.ts). */
 export function select(label: string, choices: Choice[], value = '', required = true, emptyLabel = 'Not specified'): Field<HTMLSelectElement> {
-  watchErrors();
+  watchErrors();choices=distinct(choices);
   const id=`field-${++fieldSequence}`,input=el('select',{id,name:label,required});
   if(!required&&!choices.some(c=>c.value===''))input.append(el('option',{value:''},emptyLabel));
   // Required with nothing chosen: a "Choose…" placeholder, so an untouched form cannot quietly save the first option.
@@ -1975,8 +1993,27 @@ export type Choice={value:string;label:string;group?:string;hint?:string;keyword
   /** An icon before the label (a relative value's clock). */glyph?:IconName;
   /** A line above this one in the list (Is empty after the type's own operators). */divider?:boolean;
   /** Multiple choice: this value stands alone (a relative "Me"): choosing it clears the others and another clears it. */exclusive?:boolean};
+/** Choices that read alike told apart (two people with the same name), for every field and picker: each repeated
+ *  label gains what differs between them (their hint, such as a short code, else their group, such as a rank, else
+ *  their place in the order by value), and the repeats take that one stable order by value. Unique labels are unchanged
+ *  (the same list comes back), so applying it again changes nothing. */
+export function distinct(choices:Choice[]):Choice[]{
+  const same=new Map<string,Choice[]>();
+  for(const c of choices)if(c.value!==''){const k=c.label.trim().toLocaleLowerCase();same.set(k,[...(same.get(k)||[]),c]);}
+  const repeats=[...same.values()].filter(xs=>xs.length>1);if(!repeats.length)return choices;
+  const next=new Map<Choice,Choice>();
+  for(const xs of repeats){
+    const ordered=[...xs].sort((a,b)=>a.value<b.value?-1:a.value>b.value?1:0);
+    const tells=(f:(c:Choice)=>string|undefined)=>xs.every(c=>f(c))&&new Set(xs.map(f)).size===xs.length;
+    const by=tells(c=>c.hint)?'hint':tells(c=>c.group)?'group':'';
+    // A hint moved into the label is not said twice beside it.
+    xs.forEach((c,i)=>{const o=ordered[i];next.set(c,{...o,label:`${o.label} · ${by==='hint'?o.hint:by==='group'?o.group:i+1}`,...(by==='hint'?{hint:undefined}:{})});});
+  }
+  return choices.map(c=>next.get(c)||c);
+}
 /** Every multi-choice field. Up to 7 options show inline; longer lists become one compact picker. */
 export function multi(label: string, choices: Choice[], values: string[]=[], emptyText='None selected'): {wrap:HTMLElement; values:()=>string[]; labels:()=>string[]} {
+  choices=distinct(choices);
   if(choices.length>LONG_LIST){const p=multiPick(label,choices,values,undefined,emptyText);return {wrap:el('div',{class:'pick-field'},el('span',{class:'pick-label'},label),p.wrap),values:p.values,labels:p.labels};}
   // A choice that can't be taken is shown disabled with why (its hint), never left out (maintenance).
   const checks=choices.map(c=>{const field=check(c.label,values.includes(c.value)&&!c.disabled,c.disabled?c.hint||'':'');field.input.disabled=!!c.disabled;return {value:c.value,label:c.label,field};});
@@ -1990,7 +2027,7 @@ export function multi(label: string, choices: Choice[], values: string[]=[], emp
  *  unsaved-changes guard and tests read it like any other field; the button carries the whole list as its name. */
 export function multiPick(label:string,choices:Choice[],values:string[]=[],onChange?:(values:string[])=>void,emptyText='None selected',creatable=false,
   /** Below the list each time it opens ("5 inactive clinics not shown · Show"). */extra?:()=>HTMLElement|null){
-  const chosen=new Set(values);
+  choices=distinct(choices);const chosen=new Set(values);
   const trigger=el('button',{type:'button',class:'pick-button','aria-haspopup':'dialog','aria-expanded':'false'}) as HTMLButtonElement;
   // The trigger's name lists every value, so its "+N" only shows (the one "+N", aria-hidden).
   const box=el('span',{class:'pick-values'}),more=overflowMore(0,label,{as:'hidden',cls:'rp all pick-more'});
@@ -2049,9 +2086,10 @@ function watchPick(box:Element){
   for(const ref of watching){const b=ref.deref();if(b?.isConnected)shown.add(b);else if(!b||shown.has(b)){if(b)unwatchPick.get(b)?.();watching.delete(ref);}}
   unwatchPick.get(box)?.();watching.add(new WeakRef(box));unwatchPick.set(box,observeSize(box,refit));
 }
-// A web font arriving changes every width without resizing anything: fit the fields and the footer again.
+// A web font can change the text widths without resizing their containers.
 if(typeof document!=='undefined')document.fonts?.addEventListener('loadingdone',()=>{
   document.querySelectorAll('.pick-values').forEach(b=>fits.get(b)?.());
+  fitLegends(document);
   const slot=document.querySelector<HTMLElement>('.app-footer .page-status');if(slot)fitFooter(slot);});
 /** Plain data tables: numeric columns align right, and an empty table says so instead of showing bare headings. */
 export function table(headings: Child[], rows: Child[][], emptyText='Nothing to show yet.'): HTMLElement {
@@ -2063,6 +2101,8 @@ export function table(headings: Child[], rows: Child[][], emptyText='Nothing to 
 }
 /** Each open dialog's own close, so leaving a page closes it the same way (closeDialogs). */
 const closers=new WeakMap<HTMLDialogElement,()=>void>();
+/** Each open dialog's unsaved-changes guard, so leaving a page asks a changed one first (askDirtyDialog). */
+const guards=new WeakMap<HTMLDialogElement,ReturnType<typeof guard>>();
 /** A modal dialog. `close` (given to build and returned) closes at once, for use after saving; Close, Escape and a
  *  click on the backdrop go through the unsaved-changes guard (`tryClose`). `onClose` runs once, as it closes by any
  *  way (Cancel, Escape, the browser, leaving the page): the native `close` event comes a task later, after the next
@@ -2075,7 +2115,7 @@ export function showDialog(title: string, description: string, build: (body:HTML
   // Its toasts (and their Undo) move to whatever is underneath before the dialog goes.
   const close=()=>{if(closed)return;closed=true;g.dispose();if(dialog.open)dialog.close();releaseToasts(dialog);dialog.remove();returnFocus(opener);for(const run of closing)run();};
   closers.set(dialog,close);
-  const g=guard(dialog,close);
+  const g=guard(dialog,close);guards.set(dialog,g);
   const body=el('div',{class:'dialog-body'});
   dialog.append(el('header',{class:'dialog-head'},el('div',{},el('h2',{id:titleId},title),description?el('p',{class:'muted'},description):''),iconButton('Close dialog','close',g.tryClose,{class:'bare'})),body);
   // A build that throws leaves no closed, orphaned dialog behind: it goes, and the error reaches the caller's reportError.
@@ -2097,6 +2137,19 @@ export function showDialog(title: string, description: string, build: (body:HTML
 /** Going to another page closes the dialogs left open on the previous one, each through its own close (its `onClose`
  *  runs now, before the next page reads the state). */
 export function closeDialogs(){for(const d of document.querySelectorAll<HTMLDialogElement>('dialog[open]'))(closers.get(d)||(()=>{d.close();releaseToasts(d);d.remove();}))();}
+/** Leaving a page (Back, a link, the menu) while an open form dialog holds unsaved changes: that dialog asks its own
+ *  "Close anyway?" and nothing else happens; Discard changes closes it and goes on to `then`. Windows above it, unchanged,
+ *  close first so the question can be answered. False when no open form has unsaved changes (leaving closes them all). */
+export function askDirtyDialog(then?:()=>void){
+  // Only a form loses what was entered (a window of kept settings, Print or export, closes as before). A form whose save
+  // is under way (its Save busy) is on its way to the server: its own save may go on to the next page.
+  const open=[...document.querySelectorAll<HTMLDialogElement>('dialog[open]')].reverse(),
+    at=open.findIndex(d=>d.querySelector('form')&&guards.get(d)?.dirty()&&!d.querySelector('button[type=submit][aria-busy]'));
+  if(at<0)return false;
+  for(const d of open.slice(0,at))closers.get(d)?.();
+  const d=open[at];guards.get(d)!.tryCloseThen(()=>{closers.get(d)?.();then?.();});
+  return true;
+}
 /** A dialog opens on what it is for (WCAG 2.4.3): an [autofocus] control, else its first field, else its primary button;
  *  never on the header's Close, which the browser would pick. Fields a form draws a moment later still get the focus,
  *  unless the person already moved it. */

@@ -8,6 +8,7 @@ SQLite: BEGIN IMMEDIATE is a tested local-development analogue, not production.
 """
 from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
+from functools import cache
 import logging
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from threading import Lock, get_native_id
 import time
 from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
-from sqlalchemy.orm import Session, with_loader_criteria
+from sqlalchemy.orm import Session, load_only, with_loader_criteria
 from .errors import Problem
 from .settings import Settings
 
@@ -44,6 +45,8 @@ def filter_withdrawn_relationships(state):
             m.Mentorship, live_mentorship_clause(), include_aliases=True))
 
 
+# Reuse the SQL predicate and evaluate current rows on every read.
+@cache
 def live_mentorship_clause():
     """Owned attachments follow live rotations; adopted or independently edited mentorships stay live."""
     from . import models as m
@@ -151,7 +154,9 @@ def _snapshot_input_organisation_ids(session, row, related=None):
         if key not in related:
             related[key] = next((r for r in session.new if isinstance(r, cls) and r.id == ident), None)
             if related[key] is None:
-                related[key] = session.get(cls, ident, execution_options={'include_withdrawn': True})
+                options = ([] if cls is m.Organisation else
+                           [load_only(*(getattr(cls, name) for name in _snapshot_input_scope_columns(cls)))])
+                related[key] = session.get(cls, ident, options=options, execution_options={'include_withdrawn': True})
             if cls is m.Organisation and related[key] is not None:
                 # The identity map is weak; one import flush per row must not reload this parent.
                 _snapshot_stamp_state(session)['organisations'][ident] = related[key]
@@ -205,14 +210,36 @@ def snapshot_input_listener_classes():
     return {cls: category for _name, cls, category, *_ in snapshot_input_specs()}
 
 
-def _snapshot_attribute_changes(name, old, new, exclusions):
-    if name in exclusions:
+def _snapshot_attribute_changes(row, name, old, new, exclusions):
+    from . import models as m
+    # A selected operating calendar makes weekend days display-only.
+    if name in exclusions or (name == 'weekend_days' and isinstance(row, m.Department)
+                              and row.operating_calendar_id is not None):
         return False
     keys = {key.split('.', 1)[1] for key in exclusions if key.startswith(name + '.')}
     if keys and isinstance(old, (dict, type(None))) and isinstance(new, (dict, type(None))):
         return ({key: value for key, value in (old or {}).items() if key not in keys}
                 != {key: value for key, value in (new or {}).items() if key not in keys})
     return True
+
+
+def _wish_reservation(validation):
+    wishes = validation.get('wishes') if isinstance(validation, dict) else None
+    # The reader sorts reserved wishes by unique id, so list order is not part of the read.
+    return {wish['id']: wish for wish in wishes} if isinstance(wishes, list) else wishes
+
+
+def _wish_reservation_changes(row, name, old, new):
+    """snapshot_wishes reads a settled rota's stored check `wishes` as every other rota's wish reservation.
+
+    `validation` stays excluded otherwise: draft check saves and unchanged reservations do not stamp.
+    """
+    from . import models as m
+    from .services.wishes import SETTLED
+    if name != 'validation' or not isinstance(row, m.Workspace) or row.status not in SETTLED:
+        return False
+    from sqlalchemy.orm.attributes import NO_VALUE
+    return old is NO_VALUE or new is NO_VALUE or _wish_reservation(old) != _wish_reservation(new)
 
 
 @event.listens_for(Session, 'before_flush')
@@ -238,9 +265,11 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         category, exclusions = spec
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
-            if not any(attribute.history.has_changes() and _snapshot_attribute_changes(
-                    attribute.key, attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,
-                    getattr(row, attribute.key), exclusions) for attribute in state.attrs):
+            if not any(attribute.history.has_changes() and (
+                    _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
+                    or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))
+                    for attribute in state.attrs
+                    for old in (attribute.history.deleted[-1] if attribute.history.deleted else NO_VALUE,)):
                 continue
         if isinstance(row, m.Organisation) and row in session.new and row.id is None:
             row.id = m.uid()
@@ -287,7 +316,8 @@ def stamp_snapshot_input_statement(execution):
     def changed_values(row_parameters):
         return {name: row_parameters.get(value.key, value.value) if isinstance(value, BindParameter) else NO_VALUE
                 for name, value in values.items()}
-    if execution.is_update and values and set(values) <= exclusions:
+    if execution.is_update and values and set(values) <= exclusions and not (
+            cls.__tablename__ == 'workspaces' and 'validation' in values):
         return
     if session.autoflush and execution.execution_options.get('autoflush', True):
         session.flush()
@@ -316,8 +346,18 @@ def stamp_snapshot_input_statement(execution):
             scope_columns = _snapshot_input_scope_columns(cls)
             query = (select(*(getattr(cls, name) for name in sorted(scope_columns))).distinct()
                      if execution.is_delete else select(cls))
-            if statement.whereclause is not None:
-                query = query.where(statement.whereclause)
+            whereclause = statement.whereclause
+            if not execution.is_orm_statement and table is not cls.__table__:
+                from sqlalchemy.sql.visitors import replacement_traverse
+                if execution.is_update:
+                    # Historical tables can predate columns on the current mapper.
+                    query = query.options(load_only(*(getattr(cls, name) for name in sorted(scope_columns))))
+                if whereclause is not None:
+                    whereclause = replacement_traverse(whereclause, {}, lambda element:
+                        cls.__table__.c.get(getattr(element, 'key', None))
+                        if getattr(element, 'table', None) is table else None)
+            if whereclause is not None:
+                query = query.where(whereclause)
             query_parameters = parameters
             if isinstance(parameters, list):
                 primary_key = inspect(cls).primary_key
@@ -351,7 +391,8 @@ def stamp_snapshot_input_statement(execution):
                     changes = {name: value for name, value in parameters_for_row.items()
                                if name in inspect(cls).column_attrs and (name != 'id' or not execution.is_executemany)}
                 updated_columns[id(row)] = list(changes)
-                if changes and not any(_snapshot_attribute_changes(name, getattr(row, name), value, exclusions)
+                if changes and not any(_snapshot_attribute_changes(row, name, getattr(row, name), value, exclusions)
+                                       or _wish_reservation_changes(row, name, getattr(row, name), value)
                                        for name, value in changes.items()):
                     continue
             resolved = _snapshot_input_organisation_ids(session, row, related)
@@ -363,7 +404,8 @@ def stamp_snapshot_input_statement(execution):
                 if any(value is NO_VALUE and name in _snapshot_input_scope_columns(cls) for name, value in changes.items()):
                     ids.update(_unresolved_snapshot_input(session, row, related))
                     unresolved_ownership.append(row)
-                replacement = cls(**{**{column.key: getattr(row, column.key) for column in inspect(cls).columns}, **constants})
+                replacement = cls(**{name: constants.get(name, getattr(row, name))
+                                     for name in _snapshot_input_scope_columns(cls)})
                 resolved = _snapshot_input_organisation_ids(session, replacement, related)
                 ids.update(resolved if resolved is not None else _unresolved_snapshot_input(session, replacement, related))
         result = execution.invoke_statement()

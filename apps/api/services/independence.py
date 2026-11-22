@@ -4,7 +4,7 @@ Every "you cannot decide your own work" check in the service goes through `ensur
 exceptions to it and the trail they leave live here and nowhere else.
 """
 from zoneinfo import ZoneInfo
-from sqlalchemy import select
+from sqlalchemy import and_, case, false, or_, select, true
 from packages.contracts import schemas as s
 from apps.api import models as m
 from apps.api.auth import current_roles, department_roles, effective_roles, held_roles, role_bindings
@@ -32,6 +32,33 @@ def person_key(db, identity_id):
     """Two sign-ins for the same person count as one person."""
     identity = db.get(m.Identity, identity_id)
     return "person:" + identity.person_id if identity and identity.person_id else "identity:" + identity_id
+
+
+def subject_independent(db, actor, subjects, entered_by, *, sql=False):
+    """Subjects own personal matters; without a subject the enterer's person owns the proposal."""
+    if sql:
+        present = or_(false(), *(person.is_not(None) for person in subjects))
+        other_subjects = and_(true(), *(or_(person.is_(None), person != actor.person_id)
+                                       for person in subjects)) if actor.person_id else true()
+        other_enterer = entered_by != actor.identity_id
+        if actor.person_id:
+            other_enterer = and_(other_enterer, entered_by.not_in(select(m.Identity.id).where(
+                m.Identity.person_id == actor.person_id)))
+        return case((present, other_subjects), else_=other_enterer)
+    people = [person for person in subjects if person is not None]
+    return (actor.person_id not in people if people else
+            person_key(db, entered_by) != person_key(db, actor.identity_id))
+
+
+def ensure_subject(db, actor, action, subjects, entered_by, message, reason=None, target_id=None, *, context=None):
+    """Enforce the shared rule and retain explicit on-behalf authorship in the decision audit."""
+    permission = ensure(db, actor, action, subject_independent(db, actor, subjects, entered_by),
+                        message, reason, target_id, context=context)
+    enterer = person_key(db, entered_by)
+    subject_keys = {"person:" + person for person in subjects if person is not None}
+    if subject_keys and enterer not in subject_keys:
+        db.info.setdefault("entered_on_behalf_by", set()).add(entered_by)
+    return permission
 
 
 def today(db, department_id):

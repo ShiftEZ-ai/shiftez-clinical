@@ -511,7 +511,7 @@ def test_known_same_person_cannot_use_an_alternate_account_to_approve_policy(h):
 
 def test_known_same_person_cannot_approve_own_exception_with_an_alias(h):
     policy = quota(h, exception=True)
-    person = h.seed["people"][1]
+    person = h.seed["people"][0]
     identity(h, "exception_author", ["coordinator"], person)
     identity(h, "exception_alias", ["approver"], person)
     exc = h.command("exception_author", "exception.create", {"policy_id": policy["id"], "person_id": h.seed["people"][0], "starts_on": "2026-10-01", "ends_on": "2026-11-01", "reason": "Synthetic full-block request"})["record"]
@@ -521,7 +521,7 @@ def test_known_same_person_cannot_approve_own_exception_with_an_alias(h):
 
 def test_exception_catalogue_approval_is_actor_scoped_without_polluting_cached_records(h):
     policy = quota(h, exception=True)
-    person = h.seed['people'][1]
+    person = h.seed['people'][0]
     identity(h, 'exception_author', ['coordinator', 'approver'], person)
     identity(h, 'exception_alias', ['approver'], person)
     identity(h, 'exception_beneficiary', ['approver'], h.seed['people'][0])
@@ -555,7 +555,7 @@ def test_exception_catalogue_approval_is_actor_scoped_without_polluting_cached_r
 @pytest.mark.parametrize('subject', ['identity', 'role'])
 def test_exception_catalogue_approval_tracks_explicit_waiver_grant_and_revoke(h, subject):
     policy = quota(h, exception=True)
-    person = h.seed['people'][1]
+    person = h.seed['people'][0]
     identity(h, 'exception_author', ['coordinator'], person)
     alias_id = identity(h, 'exception_alias', ['approver'], person)
     exc = h.command('exception_author', 'exception.create', {'policy_id': policy['id'], 'person_id': h.seed['people'][0],
@@ -600,9 +600,25 @@ def test_exception_catalogue_approval_rechecks_identity_linkage_with_unchanged_e
     assert before.json()['exceptions'][0]['can_approve'] is True
     with transaction(h.app.state.engine, write=True) as db:
         linked = db.get(m.Identity, h.seed['identities'][relinked])
-        linked.person_id = reviewer_person if relinked == 'exception_author' else author_person
+        linked.person_id = reviewer_person if relinked == 'exception_author' else h.seed['people'][0]
         linked.revision += 1
     after = client.get('/api/catalogues', params={'known': ','.join(before.json()['_versions'].values())})
+    if relinked == 'exception_author':
+        # The enterer's person does not own a personal exception.
+        assert set(after.json()) == {'_versions'}
+        assert after.json()['_versions']['exceptions'] == before.json()['_versions']['exceptions']
+        changed = client.get('/api/catalogues', headers={'If-None-Match': before.headers['etag']})
+        assert changed.status_code == 200
+        assert client.get('/api/catalogues', headers={'If-None-Match': changed.headers['etag']}).status_code == 304
+        current = next(row for row in h.get('exception_alias', '/api/catalogues')['exceptions'] if row['id'] == exc['id'])
+        assert current['can_approve'] is True and current['revision'] == exc['revision']
+        approved = h.command('exception_alias', 'exception.approve', {'reason': 'Independent subject decision'},
+                             exc['id'], exc['revision'])['record']
+        assert approved['status'] == 'approved'
+        event = next(e for e in h.get('auditor', '/api/audit')['events'] if e['action'] == 'exception.approve')
+        assert event['detail']['entered_on_behalf_by'] == [h.seed['identities']['exception_author']]
+        assert 'self_approved' not in event['detail']
+        return
     assert set(after.json()) == {'exceptions', '_versions'}
     assert after.json()['exceptions'][0]['can_approve'] is False
     assert after.json()['exceptions'][0]['revision'] == exc['revision']

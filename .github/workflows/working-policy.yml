@@ -16,7 +16,7 @@ jobs:
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: refs/heads/dev
+        ref: refs/heads/${{ github.event.repository.default_branch }}
         fetch-depth: 0
         persist-credentials: false
         submodules: false
@@ -46,9 +46,14 @@ jobs:
         lfs: false
     - name: Install the trusted pinned Python before parsing candidate syntax
       run: python3 .github/scripts/hosted_ci.py runtime --tool python
+    - name: Install the trusted workflow parser
+      run: |
+        python -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
+        printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Enforce target policy without executing PR code
       env:
         POLICY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: python -I .github/scripts/working_policy.py guard
     - name: Retain policy findings for publisher label custody
       if: always()

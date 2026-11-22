@@ -50,7 +50,7 @@ def test_reserved_hours_balance_and_configurable_stability_weight(h):
 
 def test_a_small_quota_miss_no_longer_outweighs_an_unfilled_seat(h):
     # A desired seat on a 30-minute session against an advisory 6-minute hours cap. The quota counted in tenths
-    # of an hour cost 4 units against the seat's 1, so the seat stayed empty; coverage is now its own tier first.
+    # of an hour cost 4 units against the seat's 1, so the seat stayed empty; desired cover now precedes weighted quality.
     person = h.seed['people'][0]
     h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11', 'metric': 'reserved_hours',
               'comparison': 'maximum', 'amount': 0.1}, {'person_id': person}, severity='advisory')
@@ -62,8 +62,9 @@ def test_a_small_quota_miss_no_longer_outweighs_an_unfilled_seat(h):
     result = generate(data, 5)
     assert result['status'] == 'candidate_feasible', result
     assert [a['participant']['person_id'] for a in result['additions']] == [person]
-    assert [t['name'] for t in result['objectives']] == ['coverage', 'weighted']
-    assert result['objectives'][0]['value'] == 0 and result['objectives'][1]['value'] > 0
+    assert [t['name'] for t in result['objectives']] == ['coverage', 'desired_coverage', 'weighted']
+    assert [row['value'] for row in result['objectives'][:2]] == [0, 0]
+    assert result['objectives'][-1]['value'] > 0
     score = result['summary']['score']
     assert score['components']['coverage']['lost'] == 0 and score['components']['rules']['value'] < 1
     assert round(sum(w['points'] for w in score['why']), 1) == round(100 - score['score'], 1)
@@ -306,7 +307,8 @@ def test_search_without_an_incumbent_reports_unknown(h, monkeypatch):
 
 
 def test_corrupt_goal_weights_fail_validation_and_defensive_arithmetic(h, monkeypatch):
-    from packages.domain import cp_sat
+    from packages.domain import cp_sat, cp_sat_goals
+    from packages.domain.cp_sat_score import SCORE_SCALE
     goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share', 'weight': 0.0001},
              severity='advisory')
     workspace = h.workspace()
@@ -316,8 +318,13 @@ def test_corrupt_goal_weights_fail_validation_and_defensive_arithmetic(h, monkey
     data = h.snapshot(workspace)
     next(policy for policy in data['policies'] if policy['id'] == goal['id'])['definition']['rule']['weight'] = 1e-15
     assert generate(data, 5)['status'] == 'unsupported_rules'
-    # Exercise the arithmetic guard independently of the normal snapshot validation.
+    # Inject after canonical reads, which independently discard malformed goal settings.
     monkeypatch.setattr(cp_sat, 'compatibility_issues', lambda snapshot: [])
+    def corrupt_goals(model, *args, presence, **kwargs):
+        loss = model.new_int_var(0, SCORE_SCALE, 'corrupt_goal_loss')
+        presence.extend([1, 1])
+        return [(1e-15, loss), (1, loss)]
+    monkeypatch.setattr(cp_sat_goals, 'add_score_goals', corrupt_goals)
     result = generate(data, 5)
     assert result['status'] == 'invalid_inputs', result
     assert result['issues'][0]['code'] == 'SCORE_PRECISION_UNSUPPORTED'

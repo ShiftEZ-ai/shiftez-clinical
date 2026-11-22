@@ -1366,7 +1366,7 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .wk-pair{display:block;color:var(--muted)}
 .wk-key{display:flex;align-items:center;gap:5px}
 /* The view key (legend() in dom.ts): one compact strip under every view, listing only what the view draws. */
-.view-legend{list-style:none;margin:0;padding:6px 2px;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
+.view-legend{list-style:none;margin:0;padding:6px 2px;max-inline-size:100%;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:4px 14px;font-size:11.5px;color:var(--ink-2);border-top:1px solid var(--line)}
 .view-legend[hidden]{display:none}
 /* An entry is as wide as its words (live check 6cea25859: "Day numbers…" lost to a 260 px cap), at most the key's width. */
 .view-legend li{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%}
@@ -1378,10 +1378,10 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media print{.view-legend{flex-wrap:wrap}.view-legend li[hidden]{display:flex}.view-legend .lg-more{display:none}}
 .view-legend .lg-words{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media print{.view-legend .lg-words{white-space:normal}}
-/* A swatch (an entry's first child, also inside a usable entry) takes its content's width and never shrinks, so it never
-   overlaps its words: a team box is a size container (its width ignores its content), which let the "Supervision team"
-   swatch's SUP/TR pills paint over its label (live, 12dc48a22). */
-.view-legend li>:first-child,.view-legend .lg-act>:first-child{flex:none;container-type:normal}
+/* A swatch (an entry's first child, also inside a usable entry and in the +N list) takes its content's width and never
+   shrinks, so it never overlaps its words: a team box is a size container (its width ignores its content), which let the
+   "Supervision team" swatch's SUP/TR pills paint over its label (live, 12dc48a22). */
+.view-legend li>:first-child,.view-legend .lg-act>:first-child,.lg-pop>:first-child,.lg-pop>.lg-act>:first-child{flex:none;container-type:normal}
 .lg-swatch[class*=duty-]{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:var(--duty-bg);box-shadow:inset 0 0 0 1.5px var(--duty)}
 .lg-swatch.lg-same{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:var(--sub);box-shadow:inset 0 0 0 1.5px var(--line-2)}
 .lg-swatch.lg-people{display:inline-block;width:12px;height:10px;border-radius:3px;flex:none;background:linear-gradient(90deg,var(--teal-c) 0 33%,var(--violet) 33% 66%,var(--amber) 66%)}
@@ -3900,6 +3900,9 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .request-wishes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;color:var(--ink-2);font-size:13px}
 .request-wishes meter{width:140px;height:10px}
 .request-wish-words{flex:1 1 12rem;min-width:0} /* D-081: on a narrow toolbar the words take the next line with the calendar icon beside them, never the icon alone */
+/* A phone's toolbar puts its icon tools on the first row and Search on the second: the wish calendar with no points shown
+   beside it (a reviewer, or the calendar open) is one of those icons, never a row of its own under Search. */
+@media(max-width:720px){.dt-toolbar>.request-wishes:not(:has(>.request-wish-summary:not([hidden]))){order:-1;flex:none}}
 /* Equal tiles in even columns (C19): a kind never sits alone on a short row of uneven pills. */
 .request-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;border:0;margin:0;padding:0;grid-column:1/-1}
 .request-kinds legend{margin-bottom:8px;font-weight:600;color:var(--ink)}
@@ -4143,6 +4146,9 @@ b.tl-more{color:var(--accent-text)}
 /* Session panel tabs (Session | Why | Rules) and the Why tab. The open panel's subject is ringed on the schedule and its
    header carries the same accent edge, so it is always clear what opened the panel. */
 [data-session].is-explained,[data-person].is-explained{background-color:var(--accent-soft);border-radius:6px;scroll-margin:24px}
+/* A session brought into view on the week grid (a link, the panel's subject, arrow keys) stops below its sticky day header
+   and group heading (their real heights, planner_week.ts stickTops), never under them. */
+.wk-grid :is([data-session],[data-rk]){scroll-margin-top:calc(var(--wk-head-h,56px) + var(--wk-group-h,0px) + 8px)}
 .wk-cell.is-explained::before{content:'Open in panel';display:block;font-size:10.5px;font-weight:700;color:var(--accent-text);margin-bottom:2px}
 .wk-panel-body>.page-tabs-wrap{gap:10px}
 .wk-tab,.why{display:flex;flex-direction:column;gap:10px;min-width:0}

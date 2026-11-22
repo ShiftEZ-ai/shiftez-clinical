@@ -37,7 +37,7 @@ def test_run_progress_keeps_moving_while_a_redraw_waits_for_the_rota(browser, cp
     try:
         strip = page.locator('.app-footer .footer-status > .asl-strip')
         expect(strip.locator(STEP)).to_have_text('2/5 Preparing')
-        held, release = hold(page, re.compile(re.escape(cp_server) + r'/api/workspaces/' + w['id'] + r'$'))
+        held, release = hold(page, re.compile(re.escape(cp_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$'))
         # Week: a redraw that reads the rota again (held), so the People view and its run stay on screen meanwhile.
         panel = view_settings(page.locator('.planner-toolbar'))
         choose_layout(panel, SCHEDULE_VIEWS['Week'][0])
@@ -91,7 +91,7 @@ def test_month_and_homes_review_link_draw_the_window_first(browser, live_server,
     parts = []
     try:
         page.on('request', lambda r: parts.append(r.url) if '/parts?part=' in r.url else None)
-        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'$'))
+        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$'))
         page.evaluate('a => location.hash = a', address.format(id=w['id']))  # navigate() waits for the whole page
         view = page.locator('#schedule-view')
         # The window, drawn and still (no dimming, no busy state, e7d1d6ba5); whole-rota work waits, Auto-schedule says so.
@@ -115,7 +115,7 @@ def test_continue_on_a_phone_keeps_the_running_auto_schedule(browser, cp_server,
     try:
         expect(page.locator('.app-footer .asl-strip ' + STEP)).to_have_text('2/5 Preparing')
         reads = []
-        page.on('request', lambda r: reads.append(r.url) if re.search(r'/api/workspaces(/[^/?]+)?(\?limit=.*)?$', r.url) else None)
+        page.on('request', lambda r: reads.append(r.url) if re.search(r'/api/workspaces(?:\?limit=.*|/[^/?]+(?:\?view=schedule)?)?$', r.url) else None)
         page.set_viewport_size({'width': 390, 'height': 844})
         notice(page, 'Schedule planning').get_by_role('button', name='Continue anyway', exact=True).click()
         expect(page.locator('#main .phone-banner')).to_contain_text('Not optimised for phones.')
