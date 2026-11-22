@@ -7658,7 +7658,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   const runWhy=el('span',{class:'grow muted auto-why',role:'status'});
   // Review maintenance: why Run (and Fill everything else) can't start, always in words; the scope's own words first.
   const runReason=()=>{if(runnable())return '';const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;
-    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:'Every session is locked, so there is nothing to fill.');};
+    return said||(!editable?TERMS.cannotChangeRota:active||st().starting?TERMS.runGoing:live.length?'Every session is locked, so there is nothing to fill.':'This draft has no sessions, so there is nothing to fill.');};
   const syncRun=()=>{const w=editable&&!active?runScope():'',said=typeof w==='string'?w:st().scopeError;disabledWhy(run,runReason(),[],runWhy);if(!run.disabled)runWhy.textContent=said;};
   autoRunSync=()=>{if(panel.isConnected)syncRun();else autoRunSync=null;};
   function drawStep(){
