@@ -316,7 +316,7 @@ def test_older_kind_proposal_is_a_row_of_waiting_for_approval_and_opens_its_revi
         expect(row).to_be_visible()
         expect(row.locator('.badge', has_text='Older rule')).to_be_visible()
         expect(row.locator('.rt-waiting-chip')).to_have_text('Waiting for approval')
-        expect(page.locator('#main .dt-count')).to_have_text(re.compile(r'^1 of \d+ rules?$|^1 rule$'))
+        expect(page.locator('.app-footer .page-status .dt-count')).to_have_text(re.compile(r'^1 of \d+ rules?$|^1 rule$'))
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         shot(page, f'waiting-older-{role}-{width}-{scheme}')
         name = row.get_by_role('button', name=title, exact=True)
