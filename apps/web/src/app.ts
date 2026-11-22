@@ -255,8 +255,6 @@ const forgetSchedule=()=>{plannerMemo=null;scheduleCache.drafts.clear();schedule
 let scheduleEpoch=0,windowOnScreen=false;  // a window drawn, the whole rota still loading: the page is not loaded yet
 /** Why a write waits while only the window is in (its tip and description, and the footer's busy pill). */
 const WHOLE_LOADING='Loading the whole rota…';
-/** Design S2/S6: why Submit, Approve and Publish wait after an edit. */
-const CHECK_HELD='Checking the latest change…',CHECK_UNFINISHED='The latest change isn’t checked yet.';
 const wholeSeen=new Set<string>(),wholeReads=new Map<string,{epoch:number;read:Promise<WorkspaceData>}>();
 /** The rota's whole detail, read once at a time and kept only if nothing was forgotten meanwhile (a live change). */
 /** `quiet`: read behind a drawn window (D59), never on the top bar. `seen`: false for a read started ahead (readAhead),
@@ -2565,9 +2563,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
     // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
     if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
-    // Submit, Approve and Publish wait for the whole-rota check behind the latest edit (D59 notYet, with the reason).
-    const unchecked=draft&&(!fresh||serverChecking(w.validation)),checkHold=!unchecked?'':autoChecking&&!checkStalled()?CHECK_HELD:checkStop?.rota===w.id?CHECK_UNFINISHED:'';
-    for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement){hold(b);if(checkHold&&!reading)notYet(b,checkHold);}}
+    for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
@@ -2629,6 +2625,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
       :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
+    // Submit, Approve and Publish wait while the latest revision is not checked, whatever the check's state (running,
+    // waiting, stalled, not started, cancelled, failed): held in place (D59 notYet), saying what the footer says.
+    const checkHold=reading||!draft||fresh&&!serverChecking(w.validation)?'':kind==='checking'?checkSaid():kind==='provisional'?checkingWords(provisional!.status)
+      :kind==='waiting'?waitingWord('queued'):kind==='not-checked'?TERMS.notChecked
+      :['stalled','stale','check-now'].includes(kind)?validate.lastElementChild!.textContent!.split(' · ')[0]:TERMS.needsCheck;
+    if(checkHold)for(const b of workflow.children)if(b instanceof HTMLButtonElement)notYet(b,checkHold);
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
@@ -2879,7 +2881,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekView.matchPeople=schedView==='people'?[]:about.length?about:byText?rows('people').filter(p=>byText(fullNameOf(p))).map(p=>String(p.id)):[];
   // An empty view tells the filters hiding everything (Show all) from a period with nothing in it (S-01).
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
-  weekHooks.checkingNow=()=>autoChecking&&autoCheckKey.startsWith(w!.id+':')&&!checkStalled();
+  // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
+  weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
+  // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
+  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){

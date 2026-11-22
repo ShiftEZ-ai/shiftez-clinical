@@ -1,4 +1,5 @@
-"""The session panel is live for the next edit as soon as its save answers; the whole-rota check runs behind it."""
+"""The session panel is live for the next edit as soon as its save answers; the whole-rota check runs behind it, and
+Submit, Approve and Publish wait for it in the footer's own words, whatever state the check is in."""
 import re
 
 import pytest
@@ -10,7 +11,12 @@ from .test_be18_command_latency import worker_up
 
 pytestmark = pytest.mark.browser
 SAVE = 'Saved · checking the rest of the rota…'
-HELD = 'Checking the latest change…'
+QUEUED = 'Waiting to check'
+WHOLE_ROTA_CLAIM = re.compile(r'Rota check passed|must fix')
+# Every flash a session panel shows, kept as it appears (a flash can be replaced before a later assertion reads it).
+FLASHES = """() => { window.__flashes = []; new MutationObserver(() => {
+  for (const n of document.querySelectorAll('.wk-panel .wk-flash')) window.__flashes.push(n.textContent); })
+  .observe(document.body, {subtree: true, childList: true, characterData: true}); }"""
 
 
 def two_open_sessions(h):
@@ -36,42 +42,107 @@ def assign_first(page, panel):
     return name, sent.value
 
 
-def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(browser, live_server, h):
+def open_gap(page):
+    """Opens the first open place's fill panel, its candidates read synchronously (only the rota check is queued)."""
+    page.locator('.pchip.gap').first.click()
+    panel = page.locator('.wk-panel')
+    expect(panel).to_contain_text('Can work this session', timeout=20000)
+    return panel
+
+
+def start(browser, live_server, h):  # noqa: F811
     w = two_open_sessions(h)
     worker_up(h)  # a live worker: each edit queues the complete check, which no worker runs until process_one
     context, page = sign_in(browser, live_server, 'coordinator')
+    # Who can work a session is asked synchronously here, so only the rota check waits in the job queue.
+    page.route(re.compile(r'.*/api/planner/fill-options\?async_options=true$'),
+               lambda route: route.continue_(url=route.request.url.split('?')[0]))
+    return w, context, page
+
+
+def submit_of(page):
+    return page.locator('.planner-bar').get_by_role('button', name='Submit for review…', exact=True)
+
+
+def held_as_footer_says(page, words=None):
+    """Submit is held in place (focusable, aria-disabled) with the footer's own words for the check: one name per state.
+    Returns the words."""
+    submit = submit_of(page)
+    expect(submit).to_have_attribute('aria-disabled', 'true', timeout=20000)
+    if words:
+        expect(submit).to_have_attribute('data-tip', words, timeout=20000)
+    words = submit.get_attribute('data-tip')
+    assert words
+    expect(page.locator('.app-footer')).to_contain_text(words)
+    return words
+
+
+def no_whole_rota_claim(page):
+    """The save's reply checked only the edit: its flash names the change and claims no whole-rota result."""
+    page.wait_for_function("() => (window.__flashes || []).some(t => t.includes('added to the draft'))", timeout=20000)
+    said = page.evaluate('() => window.__flashes')
+    assert not [t for t in said if WHOLE_ROTA_CLAIM.search(t)], said
+
+
+def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(browser, live_server, h):  # noqa: F811
+    w, context, page = start(browser, live_server, h)
     try:
-        # Who can work a session is asked synchronously here, so only the rota check waits in the job queue.
-        page.route(re.compile(r'.*/api/planner/fill-options\?async_options=true$'),
-                   lambda route: route.continue_(url=route.request.url.split('?')[0]))
         open_rota(page, w['id'])
-        page.locator('.pchip.gap').first.click()
-        panel = page.locator('.wk-panel')
-        expect(panel).to_contain_text('Can work this session', timeout=20000)
+        page.evaluate(FLASHES)
+        panel = open_gap(page)
         first, sent = assign_first(page, panel)
         assert sent.post_data_json['expected_revision'] == w['revision']
         # (a) The save's reply makes the panel editable: its own result, and the check behind it in words.
         expect(panel.get_by_role('status').filter(has_text=first + ' added to the draft')).to_be_visible(timeout=20000)
-        slot = panel.locator('.wk-save-slot')
-        expect(slot).to_have_text(SAVE)
-        assert checks_open(h, w), 'the complete check is still waiting for a worker'
-        expect(panel.locator('.wk-panel-body button:disabled')).to_have_count(0)
-        # (c) Submit is held, focusable, with the reason.
-        submit = page.locator('.planner-bar').get_by_role('button', name='Submit for review…', exact=True)
-        expect(submit).to_have_attribute('aria-disabled', 'true')
-        expect(submit).to_have_attribute('data-tip', HELD)
-        # (b) A second edit while the check runs is sent at the current revision and saved.
+        expect(panel.locator('.wk-save-slot')).to_have_text(SAVE)
+        no_whole_rota_claim(page)
+        older = checks_open(h, w)
+        assert len(older) == 1, 'the complete check is still waiting for a worker'
+        expect(panel.locator('.wk-cands [aria-disabled=true], .wk-cands button:disabled')).to_have_count(0)
+        # (c) Submit is held, focusable, saying what the footer says: the check is queued.
+        held_as_footer_says(page, QUEUED)
+        # The older check's end reaches this page only when released (its status reads say queued until then), so it
+        # lands after the newer edit's check has started.
+        older_id, released = older[0]['id'], []
+
+        def older_status(route):
+            response = route.fetch()
+            body = response.json()
+            if not released:
+                body['job'] = {**body['job'], 'status': 'queued', 'error_code': None, 'completed_at': None}
+            route.fulfill(response=response, json=body)
+        page.route(re.compile(r'.*/api/jobs/' + re.escape(older_id) + r'/status$'), older_status)
+        # (b) A second edit while the check runs: the candidate list for it is loaded and live, and the edit is sent at
+        # the current revision and saved.
         current = h.detail(w)['workspace']['revision']
         assert current > w['revision']
-        page.locator('.pchip.gap').first.click()
-        expect(panel).to_contain_text('Can work this session', timeout=20000)
+        panel = open_gap(page)
+        assert checks_open(h, w), 'the check is still open while the next edit is chosen'
+        live = panel.locator('.wk-cand.ok').first.get_by_role('button', name=re.compile(r'^Assign (?!.* with a warning$)'))
+        expect(live).to_be_enabled()
+        expect(live).not_to_have_attribute('aria-disabled', 'true')
+        expect(panel.locator('.wk-loading')).to_have_count(0)
         second, sent = assign_first(page, panel)
         assert sent.post_data_json['expected_revision'] == current
         expect(panel.get_by_role('status').filter(has_text=second + ' added to the draft')).to_be_visible(timeout=20000)
         expect(panel.locator('.wk-save-slot')).to_have_text(SAVE)
-        expect(submit).to_have_attribute('aria-disabled', 'true')
-        # (d) Once the worker runs the checks, only the latest revision's result is drawn: the holds release and the slot
-        # empties in place.
+        newer = checks_open(h, w)
+        assert [j['id'] for j in newer] != [older_id] and newer, 'the newer edit has its own check'
+        held_as_footer_says(page, QUEUED)
+        # (d) The older check ends LAST, after the newer check started: its end (the server failed it as stale) is
+        # dropped without drawing. The footer keeps the newer check's words, no "Check stopped", and Submit stays held.
+        line = page.locator('.app-footer [data-check-line]')
+        expect(line).to_contain_text(QUEUED)
+        with page.expect_response(lambda r: r.url.endswith('/api/jobs/' + older_id + '/status'), timeout=20000):
+            released.append(True)
+        # Two ticks of the footer's clock: the page has had time to draw anything the older check's end would draw.
+        for _ in range(2):
+            ticked = line.inner_text()
+            expect(line).not_to_have_text(ticked, timeout=5000)
+        expect(page.locator('.check-stopped')).to_have_count(0)
+        expect(page.locator('.app-footer')).not_to_contain_text('Check stopped')
+        held_as_footer_says(page, QUEUED)
+        # (e) The worker runs the newer check: the holds release and the slot empties in place.
         for _ in range(5):
             if not checks_open(h, w):
                 break
@@ -79,10 +150,70 @@ def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(b
         assert not checks_open(h, w)
         latest = h.detail(w)['workspace']
         assert not latest['validation'].get('scope') and latest['revision'] >= current
-        expect(submit).not_to_have_attribute('aria-disabled', 'true', timeout=20000)
+        expect(submit_of(page)).not_to_have_attribute('aria-disabled', 'true', timeout=20000)
         expect(panel.locator('.wk-save-slot')).to_have_count(1)
         expect(panel.locator('.wk-save-slot')).to_have_text('')
         expect(page.locator('.app-footer').get_by_role('status').filter(has_text=re.compile('Waiting to check|Checking the rota'))).to_have_count(0)
         assert len({p['person_id'] for s in h.detail(w)['shifts'] for p in s['participants']}) == 2
+    finally:
+        context.close()
+
+
+def test_a_reply_the_page_cannot_patch_claims_no_result_and_a_cancelled_check_keeps_submit_held(browser, live_server, h):  # noqa: F811
+    w, context, page = start(browser, live_server, h)
+    try:
+        # The reply's delta is refused here (as for an amendment draft or after someone else's edit): the panel draws
+        # from the copy it had, whose last check was complete. The reply's own scope still says it checked only the edit.
+        scopes = []
+
+        def unpatchable(route):
+            if (route.request.post_data_json or {}).get('kind') != 'shift.update':
+                return route.continue_()
+            response = route.fetch()
+            body = response.json()
+            scopes.append(body['validation'].get('scope'))
+            body['delta'] = {**(body.get('delta') or {}), 'stale': True}
+            route.fulfill(response=response, json=body)
+        page.route(re.compile(r'.*/api/commands$'), unpatchable)
+        open_rota(page, w['id'])
+        page.evaluate(FLASHES)
+        first, _ = assign_first(page, open_gap(page))
+        no_whole_rota_claim(page)
+        assert scopes == ['command_changes'], scopes
+        held_as_footer_says(page, QUEUED)
+        # Cancel the check: the latest revision is unchecked, so Submit stays held, saying what the footer says.
+        cancel = page.locator('.app-footer').get_by_role('button', name=re.compile(r'^Cancel: '))
+        expect(cancel).to_be_visible(timeout=20000)
+        cancel.click()
+        expect(cancel).to_have_count(0, timeout=20000)
+        assert held_as_footer_says(page) not in ('', 'Checking the rota')
+    finally:
+        context.close()
+
+
+def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_saying_checking(browser, live_server, h):  # noqa: F811
+    w, context, page = start(browser, live_server, h)
+    try:
+        # Nobody runs the queued check (no live worker in the rota's summary) and the page's take-over is refused.
+        def no_worker(route):
+            response = route.fetch()
+            route.fulfill(response=response, json={**response.json(), 'worker_liveness': 'stopped'})
+
+        def refused_takeover(route):
+            sent = route.request.post_data_json or {}
+            if sent.get('kind') == 'job.cancel' and (sent.get('payload') or {}).get('only_if_queued'):
+                return route.fulfill(status=409, json={'error': {'code': 'WORKFLOW_STATE', 'message': 'The check could not be taken over.'}})
+            route.continue_()
+        page.route(re.compile(r'.*/api/workspaces/[^/?]+/summary$'), no_worker)
+        page.route(re.compile(r'.*/api/commands$'), refused_takeover)
+        open_rota(page, w['id'])
+        panel = open_gap(page)
+        first, _ = assign_first(page, panel)
+        expect(panel.get_by_role('status').filter(has_text=first + ' added to the draft')).to_be_visible(timeout=20000)
+        held_as_footer_says(page, "Check hasn't started")
+        # The panel's slot no longer says the check is running, and keeps its place.
+        expect(panel.locator('.wk-save-slot')).to_have_count(1)
+        expect(panel.locator('.wk-save-slot')).to_have_text('')
+        assert checks_open(h, w), 'the check is still queued: nobody ran it'
     finally:
         context.close()
