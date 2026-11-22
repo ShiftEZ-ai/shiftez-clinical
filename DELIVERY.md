@@ -34,8 +34,10 @@ contract in DESIGN.md.
 - Bulk-closing issues goes by content, never by title prefix, and an independent reviewer spot-checks a sample.
 
 ## Checks
-- A pull request runs static checks plus the tests its diff can reach, proven by hiding a change on purpose. The
-  merge queue runs the full suite once.
+- A pull request runs static checks plus the tests its diff can reach, proven by hiding a change on purpose.
+  Merge groups and pushes to the default branch run static checks and the full unit and browser suites.
+- The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
+  reports. If the nightly capacity check defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
   guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow

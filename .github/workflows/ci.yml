@@ -5,7 +5,7 @@ permissions:
 # Delivery's admission lock enforces the budget and gives the owner first priority.
 # Manual pushes are rare and only from the owner account.
 concurrency:
-  group: ${{ github.event_name == 'schedule' && 'ci-nightly' || format('ci-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
+  group: ci-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   PYTHON_VERSION: 3.13.5
@@ -148,14 +148,12 @@ jobs:
       id: context
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
     - name: Plan unit and browser shards by committed duration
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       id: plan
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
         MEASUREMENT: ${{ steps.select.outputs.measurement }}
       run: python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" plan --base-sha "$BASE_SHA" --measurement "$MEASUREMENT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-plan-${{ github.run_attempt }}
         path: candidate/.run/reports/shard-plan.json
@@ -215,7 +213,6 @@ jobs:
           ${{ runner.temp }}/public-ci-playwright
         key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
     - name: Download browser system packages
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: |
         apt_work=$(mktemp -d "$RUNNER_TEMP/ci-apt.XXXXXX")
         chmod 755 "$apt_work" # The APT download sandbox must be able to reach the lists and archives.
@@ -292,34 +289,28 @@ jobs:
         debs=("$apt_work/archives/"*.deb)
         if [ "${#debs[@]}" -gt 0 ]; then cp -- "${debs[@]}" "$apt_bundle/"; fi
     - name: Archive the shared downloads
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: |
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-dependencies.tar" runtime-archives public-ci-wheels public-ci-npm/_cacache
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright public-ci-apt
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-dependencies-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-dependencies.tar
         if-no-files-found: error
         retention-days: 1
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-browser-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-browser.tar
         if-no-files-found: error
         retention-days: 1
     - name: Reject environment and status destination URLs
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
     - name: Build web assets and compiled client modules
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       run: |
         python scripts/build_web.py
         python scripts/compiled_client.py stamp
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       with:
         name: ci-web-${{ github.run_attempt }}
         path: candidate/apps/web/dist/
@@ -330,7 +321,6 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
-      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}
@@ -357,7 +347,6 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
-      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}
@@ -379,21 +368,20 @@ jobs:
       measurement: ${{ needs.checks.outputs.measurement }}
       trusted_sha: ${{ needs.checks.outputs.trusted_sha }}
       bootstrap: ${{ needs.checks.outputs.bootstrap }}
-  result:
-    name: CI result
+  ci-gate:
+    name: ci-gate
     permissions:
       actions: read
       contents: read
     env:
       TRUSTED_BOOTSTRAP: ${{ needs.checks.outputs.bootstrap }}
     needs:
+    - nightly-budget
     - checks
     - static
     - unit
     - browser
-    if: >-
-      always() && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
-      && (github.event_name != 'schedule' || needs.checks.result != 'skipped')
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -405,17 +393,47 @@ jobs:
         HOSTED_KIND: ${{ runner.environment }}
       working-directory: .
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
-    - name: Every selected producer must run and succeed
+    - name: Check producer results
+      id: producers
+      shell: python
       env:
         NEEDS_JSON: ${{ toJSON(needs) }}
-      run: |-
-        python3 -I - <<'PY'
-        import json, os
-        needs=json.loads(os.environ['NEEDS_JSON'])
-        if set(needs)!={'checks','static','unit','browser'} or any(r.get('result')!='success' for r in needs.values()):
-            raise SystemExit('CI producer failed, cancelled, skipped or missing')
-        PY
+      run: |
+        import json
+        import os
+        from pathlib import Path
+
+        needs = json.loads(os.environ["NEEDS_JSON"])
+        if set(needs) != {"nightly-budget", "checks", "static", "unit", "browser"}:
+            raise SystemExit("CI producer inventory changed")
+        budget = needs.pop("nightly-budget")
+        results = {job: row["result"] for job, row in needs.items()}
+
+        if os.environ["GITHUB_EVENT_NAME"] == "schedule":
+            if budget["result"] != "success":
+                raise SystemExit("Nightly capacity check did not succeed")
+            admitted = budget.get("outputs", {}).get("admitted")
+            if admitted == "false" and all(result == "skipped" for result in results.values()):
+                message = "Nightly suites deferred by the capacity check. See Nightly capacity for the recorded reason."
+                print(message)
+                with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+                    print(message, file=summary)
+                raise SystemExit(0)
+            if admitted != "true":
+                raise SystemExit("Nightly capacity decision is missing or inconsistent")
+        elif budget["result"] == "skipped":
+            print("Nightly capacity skipped because this event is not scheduled")
+        elif budget["result"] != "success":
+            raise SystemExit("Nightly capacity check failed or was cancelled")
+
+        if any(result != "success" for result in results.values()):
+            raise SystemExit(f"Every selected CI producer must succeed: {results}")
+        with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env:
+            print("NEEDS_JSON=" + json.dumps(needs), file=env)
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            print("run_verdict=true", file=output)
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: steps.producers.outputs.run_verdict == 'true'
       with:
         ref: ${{ needs.checks.outputs.trusted_sha }}
         path: .trusted-verdict
@@ -424,41 +442,43 @@ jobs:
         submodules: false
         lfs: false
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: steps.producers.outputs.run_verdict == 'true'
       with:
         name: ci-plan-${{ needs.checks.outputs.artifact_attempt }}
         path: .candidate-evidence/plan
     - name: Detect trusted report selection
       id: reports
+      if: steps.producers.outputs.run_verdict == 'true'
       run: |
         if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
           echo 'mixed_attempts=true' >> "$GITHUB_OUTPUT"
         fi
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-      if: steps.reports.outputs.mixed_attempts == 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && steps.reports.outputs.mixed_attempts == 'true'
       with:
         pattern: ci-test-*
         path: .candidate-evidence/test-results
         merge-multiple: false
     # shortcut: transitional until the first run after merge; remove in the next CI window
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-      if: steps.reports.outputs.mixed_attempts != 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && steps.reports.outputs.mixed_attempts != 'true'
       with:
         pattern: ci-test-${{ github.run_attempt }}-*
         path: .candidate-evidence/test-results
     - name: Install the trusted pinned Python for the workflow inventory
-      if: github.event_name == 'pull_request'
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'pull_request'
       working-directory: .trusted-verdict
       run: python3 .github/scripts/hosted_ci.py runtime --tool python
     - name: Install the trusted workflow parser
-      if: github.event_name == 'pull_request'
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'pull_request'
       working-directory: .trusted-verdict
       run: |
         python -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
         printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Trusted source/node/canary/allowance verdict
+      if: steps.producers.outputs.run_verdict == 'true'
       env:
         GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
-        NEEDS_JSON: ${{ toJSON(needs) }}
         CANDIDATE_SHA: ${{ needs.checks.outputs.candidate_sha }}
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}
         UNIT_COUNT: ${{ needs.checks.outputs.unit_count }}
@@ -470,7 +490,7 @@ jobs:
         fi
         python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
     - name: Keep raw measurement or qualification evidence
-      if: always()
+      if: always() && steps.producers.outputs.run_verdict == 'true'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: known-failures-candidate-${{ github.run_attempt }}
@@ -483,8 +503,6 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
-      && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
-      && (github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

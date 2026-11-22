@@ -33,6 +33,10 @@ LEGACY_ROUTE = "Tier 1 control changes require the audited maintenance route"
 import pytest
 
 
+def git_bash():
+    return 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else 'bash'
+
+
 class PolicyTests(unittest.TestCase):
     def setUp(self):
         self.inventory = {"helpers": {"scripts/build.py"}, "product_imports": {"packages/example.py"}}
@@ -454,7 +458,7 @@ def pytest_runtest_makereport(item, call):
             (Path(trusted) / ".github/scripts/working_policy.py").write_text(guard_source, encoding="utf-8")
             env = {key: value for key, value in os.environ.items() if key != "TRUSTED_BOOTSTRAP"}
             env.update(GITHUB_STEP_SUMMARY=str(Path(trusted) / "summary"), STUB_BRANCH=branch, STUB_TIER1=tier1_path)
-            return subprocess.run(["bash", "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
+            return subprocess.run([git_bash(), "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
 
     def test_checks_runs_the_working_policy_guard_from_dev(self):
         new_guard = "import sys\nprint('working policy guard', sys.argv[1:])\n"
@@ -1270,12 +1274,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
 
 class BootstrapControlTests(unittest.TestCase):
     def test_workflow_fallback_is_only_for_missing_controls(self):
-        import shutil
         import yaml
         workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
-        bash = shutil.which('bash')
-        if os.name == 'nt':
-            bash = 'C:/Program Files/Git/bin/bash.exe'
+        bash = git_bash()
         count = 0
         for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml'):
             doc = yaml.load((workflows / name).read_text(), Loader=yaml.BaseLoader)
@@ -1290,9 +1291,8 @@ class BootstrapControlTests(unittest.TestCase):
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
                 plan, upload = checks[context_index + 1:context_index + 3]
                 self.assertEqual(plan['id'], 'plan')
-                cache_only_push = "(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))"
-                self.assertEqual(plan['if'], cache_only_push)
-                self.assertEqual(upload['if'], cache_only_push)
+                self.assertNotIn('if', plan)
+                self.assertNotIn('if', upload)
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
                 self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
                 for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
