@@ -825,6 +825,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
 
     workspace_check = None
     submission_check = None
+    checked_decisions = None
     if command.kind in {'workspace.validate', 'workspace.submit', 'workspace.approve', 'workspace.publish'}:
         # Freeze a coherent read snapshot without taking the application writer lock.
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
@@ -860,6 +861,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                workspace.status, workspace.archived_at, data['fingerprint'])
                     workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
                                        planning.validation_stamp(db, workspace))
+                    checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
     if command.kind == 'generation.apply':
@@ -1034,6 +1036,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         require_current_schema(db)
         changed_department.clear()
         db.info.pop("self_approved", None)  # a retried attempt starts clean
+        db.info.pop("entered_on_behalf_by", None)
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
@@ -1074,6 +1077,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             # revision is still identical under the writer; never rebuild history here.
             expected(workspace, command.expected_revision)
             check_context(db, actor, workspace, workspace_check[2])
+            # Recorded approval evidence: a step that recorded decisions during the check is never overwritten.
+            require((workspace.validation or {}).get('review_item_decisions') == checked_decisions, 'STALE_INPUTS',
+                    'Review decisions were recorded during the check; the completed check is retained here.', 409,
+                    {'current_revision': workspace.revision, 'validation': workspace_check[1], 'recoverable': True})
             reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
                 if command.kind == 'workspace.validate' else submission_check or (workspace_check[1], workspace_check[2])))
         else:
@@ -1202,6 +1209,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
+                                                        **({"entered_on_behalf_by": sorted(enterers)}
+                                                           if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),
                                                        **({'assignment_override_blockers': override_blockers}
                                                           if override_blockers else {})},
                                 correlation_id=correlation_id)))
