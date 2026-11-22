@@ -136,6 +136,33 @@ def test_stop_after_proven_tier_keeps_incumbent_and_operator_reason(h, monkeypat
     assert result['search_stop']['reason'] == result['stop_reason'] == 'operator_stop'
 
 
+def test_stop_during_coverage_at_its_floor_keeps_coverage_proven(h, monkeypatch):
+    data, update = snapshot(h), {}
+    data['generation_options'] = {'generation_stop_grace_seconds': 10}
+    native_solve = cp_model.CpSolver.solve
+
+    def solve(solver, model, callback=None):
+        status = native_solve(solver, model, callback)
+        # Model an interrupted search retaining a zero-deficit incumbent without a solver proof.
+        return cp_model.FEASIBLE if update and status == cp_model.OPTIMAL else status
+
+    def progress(row):
+        if (row['stage'] == 'improving' and row['objective_names'][row['tier']] == 'coverage'
+                and row.get('objective_value') == 0):
+            update['stop'] = True
+
+    monkeypatch.setattr(cp_model.CpSolver, 'solve', solve)
+    result = cp_sat.generate(data, 5, progress=progress, search_control=lambda: update)
+    assert update['stop']
+    assert result['status'] == 'candidate_feasible' and result['validation']['valid']
+    coverage, = [row for row in result['objectives'] if row['name'] == 'coverage']
+    assert coverage['value'] == 0 and coverage['proven_optimal']
+    assert coverage['search_status'] == 'FEASIBLE'
+    assert result['solver_status'] == 'FEASIBLE' and not result['optimality_proven']
+    assert result['search_stop']['reason'] == 'operator_stop'
+    assert not any('coverage was not proven' in warning for warning in result.get('warnings', ()))
+
+
 def test_stop_after_all_tiers_proven_keeps_optimal_reason(h):
     update = {}
 
@@ -186,6 +213,9 @@ def test_stop_grace_expiry_keeps_checked_incumbent_without_score(h, monkeypatch,
     assert result['additions'] and result['score'] is None
     assert result['score_completed'] is False and not result['optimality_proven']
     assert result['search_stop']['reason'] == 'operator_stop'
+    assert 'allocation_diagnostics' in result
+    assert ('objective_components' in result) is (phase == 'summary')
+    assert ('declined_wishes' in result) is (phase == 'summary')
     after = deepcopy(data)
     for addition in result['additions']:
         next(s for s in after['shifts'] if s['id'] == addition['shift_id'])['participants'].append(addition['participant'])
@@ -217,21 +247,47 @@ def test_stop_grace_expiry_in_canonical_validation_is_resumable_not_applyable(h,
     assert saved[0]['hint'] and saved[0]['checkpoint_assignments']
 
 
-def test_stop_interrupts_completion_without_solution_callbacks():
+def test_stop_interrupts_completion_without_solution_callbacks(stop_clock):
     update, interrupted = {}, threading.Event()
     control = solver_control.SolverControl(search_control=lambda: update)
     control.configure_stop_conditions(GenerationOptions())
     control.search_budget = 60
-    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=1), stop_search=interrupted.set)
 
     def solve(model, callback):
         update['stop'] = True
-        assert interrupted.wait(1), 'Completion ignored operator stop without a new solution'
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cap'
+        stop_clock[0] += 1
+        assert interrupted.wait(1), 'Completion ignored its cap without a new solution'
         return cp_model.UNKNOWN
 
     solver.solve = solve
     assert control.solve(solver, None, None) == cp_model.UNKNOWN
     assert control.stopped and control.stop_reason == 'operator_stop'
+    assert control.completion_spent == control.completion_budget == 1
+
+
+def test_stop_grace_interrupts_completion_without_solution_callbacks(stop_clock):
+    update, interrupted = {}, threading.Event()
+    control = solver_control.SolverControl(search_control=lambda: update)
+    control.configure_stop_conditions(GenerationOptions(generation_stop_grace_seconds=2))
+    control.search_budget = 60
+    control.reserve_seconds = 1
+    solver = SimpleNamespace(parameters=SimpleNamespace(max_time_in_seconds=60), stop_search=interrupted.set)
+
+    def solve(model, callback):
+        update['stop'] = True
+        control.poll()
+        assert not interrupted.wait(.2), 'Operator stop interrupted completion before its cutoff'
+        stop_clock[0] += 1
+        assert interrupted.wait(2), 'Completion spent the time reserved for validation'
+        return cp_model.FEASIBLE
+
+    solver.solve = solve
+    assert control.solve(solver, None, None) == cp_model.UNKNOWN
+    assert control.completion_spent == 1 < control.completion_budget
+    assert control.stop_deadline - stop_clock[0] == control.reserve_seconds
 
 
 @pytest.mark.parametrize('value', [0, 16, True, 1.5, '5'])

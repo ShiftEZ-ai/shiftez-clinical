@@ -6,15 +6,18 @@ from collections import defaultdict
 from collections.abc import Mapping
 from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
+from operator import itemgetter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import false, func, or_, select, tuple_
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import defer, object_session
 from . import models as m
-from .serialization import json_value, record, records_many, rows_many
+from .serialization import json_value, record, records_many, rows_many, shift_link_rows
 from packages.domain.conditions import with_tags
 from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
+from packages.domain.serialization import json_default
 from packages.domain.validation import ENGINE_VERSION
 from .settings import Settings, quota_policy_limit
 
@@ -63,12 +66,14 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     ('tags', m.Tag, 'general', 'department', 'tag', frozenset()),
     ('tag_members', m.TagMember, 'general', 'department', 'tag_member', frozenset()),
     ('people', m.Person, 'general', 'organisation', 'people', frozenset()),
-    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on',
+    ('departments', m.Department, 'general', 'organisation', 'departments', frozenset({'revision', 'catalogue_revision', 'events_checked_on', 'score_check_enabled',
         *(f'generation_defaults.{key}' for key in GENERATION_RUNTIME_OPTIONS)})),
     ('programme_calendar_entries', m.ProgrammeCalendarEntry, 'general', 'department', None, frozenset()),
     ('rotations', m.Rotation, 'general', 'department', None, frozenset()),
     # Other rotas read only these lifecycle/input fields for external schedule
     # and wish-budget context; all writer metadata remains excluded.
+    # `validation` stamps only when a settled rota's stored `wishes` reservation
+    # changes (db._wish_reservation_changes); other check saves do not.
     ('workspaces', m.Workspace, 'general', 'department', None, frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
         'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
@@ -180,18 +185,32 @@ def shift_records(db, rows, *, include_participants=True) -> list[dict]:
     """Attach clinics and optionally people in batches to ORM sessions or selected session fields."""
     rows = list(rows)
     ids = [row['id'] if isinstance(row, Mapping) else row.id for row in rows]
+    workspaces = {row.get('workspace_id') if isinstance(row, Mapping) else row.workspace_id for row in rows}
+    # Link visibility is evaluated again in SQL, within the scope of the selected rows.
+    options = {'shift_workspace_id': next(iter(workspaces))} if len(workspaces) == 1 else None
     services, people = {i: [] for i in ids}, {i: [] for i in ids}
     for chunk in (ids[k:k + 1000] for k in range(0, len(ids), 1000)):
-        sources = {'services': (m.ShiftService, m.ShiftService.shift_id.in_(chunk))}
-        if include_participants:
-            sources['assignments'] = (m.Assignment, m.Assignment.shift_id.in_(chunk))
-        acquired = records_many(db, sources)
-        for link in acquired['services']:
-            services[link['shift_id']].append(link['service_id'])
-        for assignment in sorted(acquired.get('assignments', []), key=lambda row: row['person_id']):
-            people[assignment['shift_id']].append(assignment)
-    return [{**(json_value(dict(row)) if isinstance(row, Mapping) else record(row)),
-             "service_ids": sorted(services[sid]), "participants": people[sid]} for row, sid in zip(rows, ids)]
+        for shift_id, service_id, assignment in shift_link_rows(db, chunk, include_participants=include_participants,
+                                                               execution_options=options):
+            if assignment is None:
+                services[shift_id].append(service_id)
+            else:
+                people[shift_id].append(assignment)
+    by_person = itemgetter('person_id')
+    for assignments in people.values():
+        assignments.sort(key=by_person)
+    result = []
+    for row, sid in zip(rows, ids):
+        if isinstance(row, RowMapping):
+            # Selected columns already own their decoded JSON. Format only the typed dates.
+            shift = {key: json_default(value) if isinstance(value, date) else value for key, value in row.items()}
+        elif isinstance(row, Mapping):
+            shift = json_value(dict(row))
+        else:
+            shift = record(row)
+        shift.update(service_ids=sorted(services[sid]), participants=people[sid])
+        result.append(shift)
+    return result
 
 
 def shift_record(db, row) -> dict:
@@ -386,12 +405,20 @@ def _baseline_hint(db, workspace):
     if key in memo:
         return memo[key]
     from .workspace_baselines import latest
-    row = latest(db, workspace.id)
-    if row is None:
-        return [None, None]
-    hint = [row.id, row.payload_hash]
+    row = latest(db, workspace.id, include_payload=False)
+    hint = [row.id, row.payload_hash] if row is not None else [None, None]
     memo[key] = hint
     return hint
+
+
+def _seed_baseline_hints(db, workspaces):
+    from .workspace_baselines import latest_many
+
+    baselines = latest_many(db, [workspace.id for workspace in workspaces])
+    memo = db.info.setdefault('_baseline_hints', {})
+    for workspace in workspaces:
+        row = baselines.get(workspace.id)
+        memo[workspace.id, workspace.revision] = [row.id, row.payload_hash] if row else [None, None]
 
 
 def _verified_baseline(db, workspace):
@@ -493,22 +520,37 @@ def _fingerprint_shared_inputs(db, workspace):
     return prepared_snapshot_inputs(db, organisation)
 
 
-def cheap_fingerprints(db, workspaces, *, checks):
+def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
     """Return currencies proven by stored dirty hints without rebuilding snapshots.
 
     Collection and landing reads must never rebuild a department snapshot merely
     to label a row as fresh. Missing or stale hints are omitted so callers can
     conservatively show unknown/outdated and let an authoritative read resolve it.
     """
-    from packages.domain.input_manifest import digest, toolchain
+    from packages.domain.input_manifest import digest, feasibility_token, toolchain
 
     current_toolchain = digest(toolchain(quota_policy_limit()))
     departments = {}
     revision_stamps = {}
     result = {}
+    if feasibility and workspaces:
+        _seed_baseline_hints(db, workspaces)
+        if checks:
+            from .services.read_projections import CANONICAL_AUDIENCE, input_stamp
+            C = m.WorkspaceReadProjection
+            by_id = {workspace.id: workspace for workspace in workspaces if workspace.id in checks}
+            result.update({wid: value for wid, stamp, value in db.execute(
+                select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(by_id),
+                    C.audience == CANONICAL_AUDIENCE, C.kind == 'feasibility_fingerprint'))
+                if value is not None and stamp == input_stamp(db, by_id[wid], for_feasibility=True)})
     for workspace in workspaces:
+        if workspace.id in result:
+            continue
         check = (checks or {}).get(workspace.id) or {}
         manifest = check.get('input_manifest') or {}
+        if feasibility and ('format' not in manifest or not {'content', 'mandatory_inputs', 'toolchain'} <=
+                            (manifest.get('components') or {}).keys()):
+            continue
         hint = manifest.get('dirty_hint') or {}
         department = departments.get(workspace.department_id)
         if department is None:
@@ -527,12 +569,13 @@ def cheap_fingerprints(db, workspaces, *, checks):
                       'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
-            result[workspace.id] = manifest['token']
+            result[workspace.id] = (feasibility_token({'input_manifest': manifest})
+                                    if feasibility else manifest['token'])
     return result
 
 
 def feasibility_fingerprint(db, workspace):
-    """Reads (e.g. every rule-review poll) reuse the stored token for unchanged inputs; writers always rebuild."""
+    """Reuse the stored feasibility token for unchanged inputs."""
     return feasibility_fingerprints(db, [workspace])[workspace.id]
 
 
@@ -543,7 +586,7 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace) for wid, workspace in rows.items()}
+    stamps = {wid: input_stamp(db, workspace, for_feasibility=True) for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
@@ -798,7 +841,7 @@ def event_local_date_for_hint(db, workspace, organisation, *, now=None):
     """Return the local date only when recurring blocking-event facts depend on today.
 
     ``blocking_occurrences`` clamps recurring projections to ``m.now()``'s local
-    date and drops starts before that instant.  Stored occurrences do not use the
+    date and drops occurrences that ended before that instant.  Stored occurrences do not use the
     clock, so an unaffected draft keeps the same compact hint across midnight.
     """
     timezone = (organisation.get('timezone') if isinstance(organisation, Mapping)
@@ -915,7 +958,8 @@ def _snapshot_inputs(db, org):
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
-    acquired = records_many(db, sources, exclude={'people': ('pager',)}, order_by=SCHEDULING_ORDER)
+    acquired = records_many(db, sources, exclude={'people': ('pager',)},
+        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id)})
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
@@ -944,16 +988,49 @@ def external_schedule(db, workspace, department_ids, lo, hi, zone):
     return publications, query
 
 
+def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, limit, previous, current):
+    # A shift update writes only its own draft. Each preparation transaction holds a consistent
+    # read of issued sessions, even while the edited shift and workspace revision change.
+    import pickle
+    preparation = db.info.get('_planning_preparation') or {}
+    shared = (preparation.get('kind') == 'shift.update' and not preparation['replay'] and previous is None)
+    if shared:
+        memo = db.info.setdefault('_prepared_external_schedule', {})
+        key = (workspace.id, workspace.base_publication_id, workspace.replaces_publication_id, workspace.starts_on,
+               tuple(department_ids), lo, hi, zone, limit)
+        if key in memo:
+            publications, rows = memo[key]
+            return publications, pickle.loads(rows)
+    publications, query = external_schedule(db, workspace, department_ids, lo, hi, zone)
+    external = _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit)
+    if external is None:
+        external = shift_records(db, db.scalars(query if limit is None else query.limit(limit)))
+    if shared:
+        memo[key] = publications, pickle.dumps(external, protocol=pickle.HIGHEST_PROTOCOL)
+    return publications, external
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    current_goals: bool = False, current_generation_defaults: bool = False,
                     own_shifts: list[dict] | None = None,
                     external_snapshot: dict | None = None, shared_inputs: dict | None = None,
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False) -> dict:
-    department = db.get(m.Department, workspace.department_id)
-    org = db.get(m.Organisation, department.organisation_id)
+                    rule_map_bindings: bool = False, include_manifest: bool = True,
+                    fairness_goals_out: list[dict] | None = None) -> dict:
+    current_scheduling = current_scheduling or current_goals
+    if current_goals:
+        from .workspace_baselines import workspace_generation_context
+        department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
+    elif current_scheduling:
+        department, org = db.execute(select(m.Department, m.Organisation)
+            .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
+            .where(m.Department.id == workspace.department_id)).one()
+    else:
+        department = db.get(m.Department, workspace.department_id)
+        org = db.get(m.Organisation, department.organisation_id)
     draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
     mandatory_overlay_changed = False
     baseline = None
@@ -1025,12 +1102,20 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result.update({"workspace": record(workspace, exclude=("validation",)), "department": record(department),
                    "operational": operational,
                    "quota_policy_limit": quota_policy_limit()})
+    from .workspace_baselines import CAPTURED_GENERATION_STATES, frozen_department_settings, workspace_generation_defaults
     department_settings = result['department']
     if baseline is not None:
-        from .workspace_baselines import frozen_department_settings
-        department_settings = {**department_settings, **frozen_department_settings(
-            result, workspace.department_id, baseline.included_sources)}
+        frozen = frozen_department_settings(result, workspace.department_id, baseline.included_sources)
+        department_settings = {**department_settings, **frozen}
+        if workspace.status in CAPTURED_GENERATION_STATES:
+            defaults = workspace_generation_defaults(db, workspace, department, frozen_settings=frozen)
+            department_settings['generation_defaults'] = defaults
+        elif current_generation_defaults:
+            department_settings['generation_defaults'] = result['department']['generation_defaults']
+        result["department"] = department_settings
         result["baseline"] = baseline_projection(baseline)
+    elif current_goals:
+        department_settings['generation_defaults'] = goal_defaults
     if scope_interval_cache is not None:
         result['_scope_interval_cache'] = scope_interval_cache
     # A published rota keeps the rules it was approved under: rules activated, changed or retired later
@@ -1257,7 +1342,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     from .services.schedule import in_force_shifts
     from packages.contracts.schemas import GenerationOptions
     scoring = GenerationOptions.model_validate(department_settings.get('generation_defaults') or {}).scoring
-    own = workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts
+    own = own_shifts
+    if own is None:
+        edited = db.info.get('_prepared_shift_edit')
+        own = edited[1] if edited is not None and edited[0] == workspace.id else workspace_shifts(db, workspace.id)
     if own_publication is not None and own_publication.effective_until:
         # A published rota partly replaced by a later one: only the days it is still in force.
         own = in_force_shifts(own_publication, own, org.timezone)
@@ -1277,12 +1365,9 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         if wishes != result["wishes"]:
             score_context["wishes"] = wishes
     result["focus_ids"] = [s["id"] for s in own]
-    publications, query = external_schedule(db, workspace, department_ids, lo, hi, org.timezone)
-    if quota_policies:
-        query = query.limit(MAX_SHIFTS + 1)
-    external = _unchanged_external_shifts(db, workspace, external_snapshot, result, lo, hi, MAX_SHIFTS + 1 if quota_policies else None)
-    if external is None:
-        external = shift_records(db, db.scalars(query))
+    publications, external = _snapshot_external_schedule(
+        db, workspace, department_ids, lo, hi, org.timezone, MAX_SHIFTS + 1 if quota_policies else None,
+        external_snapshot, result)
     if own_publication is not None:
         own = frozen_series_states(own, own_publication)
     published = {p.workspace_id: p for p in publications}
@@ -1293,6 +1378,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if baseline is not None:
+        # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
+        for shift in external:
+            type_id = shift['assignment_type_id']
+            if type_id not in result['types']:
+                issued = shift.get('type_snapshot') or {}
+                source = issued if issued.get('department_id') else live_inputs['types'][type_id]
+                result['types'][type_id] = json_value(source)
     from .services.published_changes import staged_availability
     result['availability'] += staged_availability(db, workspace)
     # All snapshot consumers below are evaluation entry points (fairness, rule-map,
@@ -1323,6 +1416,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result["fairness_strengths"] = scoring.strengths.model_dump()
     result['generation_options'] = json_value(department_settings.get('generation_defaults') or {})
     goals = balance_goals(result) if include_fairness else []
+    if fairness_goals_out is not None:
+        fairness_goals_out.extend(goals)
     if goals and include_fairness_history:
         from .services.fairness import history
         if any(g['definition']['rule']['metric'] in ('overtime_duties', 'overtime_hours') for g in goals):
@@ -1331,9 +1426,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["fairness_history"] = history(db, result, goals)
     if score_context:
         result["score_context"] = score_context
-    from packages.domain.input_manifest import manifest
-    result['input_manifest'] = manifest(result)
-    result['fingerprint'] = result['input_manifest']['token']
+    if include_manifest:
+        from packages.domain.input_manifest import manifest
+        result['input_manifest'] = manifest(result)
+        result['fingerprint'] = result['input_manifest']['token']
     return result
 
 
@@ -1358,9 +1454,10 @@ def domain_snapshot(db, workspace, *args, **kwargs):
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
     supported = not args and all(key in {'shared_inputs', 'own_shifts', 'mandatory_rules', 'current_mandatory',
-                                         'include_fairness', 'include_objectives', 'include_fairness_history'} or value is None
+                                         'include_fairness', 'include_objectives', 'include_fairness_history',
+                                         'include_manifest'} or value is None
                                  for key, value in kwargs.items())
-    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo'}:
+    if supported and state and state.get('kind') in {'shift.update', 'workspace.undo', 'workspace.redo', 'job.create'}:
         db.flush()
         index = state['next_snapshot']
         state['next_snapshot'] += 1
@@ -1368,8 +1465,13 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
                              'stamp': stamp})
         cached = state['prepared_snapshots'].get(index)
-        if cached and cached[0] == key and currency_match(stamp, stamp):
+        resolved = currency_match(stamp, stamp)
+        if state['kind'] == 'job.create':
+            state['generation_snapshot_key'] = key if resolved or not state['replay'] else 'unresolved'
+        if cached and cached[0] == key and resolved:
             return pickle.loads(cached[1])
+        if state['replay'] and state['kind'] == 'job.create':
+            return _domain_snapshot(db, workspace, *args, **kwargs)
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
@@ -1456,26 +1558,22 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     person_ids = {a["person_id"] for s in result["shifts"] for a in s["participants"]}
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
-    result["locations"] = {r.id: record(r) for r in db.scalars(select(m.Location).where(
-        m.Location.id.in_({s['location_id'] for s in result['shifts']})))}
-    service_ids = {sid for s in result["shifts"] for sid in s["service_ids"]}
-    result["services"] = {r.id: record(r) for r in db.scalars(select(m.Service).where(m.Service.id.in_(service_ids)))}
-    location_ids = set(result["locations"])
-    for location_id in list(location_ids):
-        row = db.get(m.Location, location_id)
-        while row and row.parent_id and row.parent_id not in result["locations"]:
-            row = db.get(m.Location, row.parent_id)
-            result["locations"][row.id] = record(row)
-    pool_ids = {d["resource_pool_id"] for shift in result["shifts"]
-                for d in shift["type_snapshot"]["definition"].get("resources", [])}
-    result["resource_pools"] = {pid: record(db.get(m.ResourcePool, pid)) for pid in pool_ids}
-    calendar_ids = {r["calendar_id"] for r in list(result["locations"].values()) + list(result["resource_pools"].values()) + list(result["services"].values()) if r.get("calendar_id")}
-    result["operating_calendars"] = {cid: record(db.get(m.OperatingCalendar, cid)) for cid in calendar_ids}
-    department_calendar_id = result['department']['operating_calendar_id']
-    if department_calendar_id in data.get('operating_calendars', {}):
-        result['operating_calendars'][department_calendar_id] = json_value(data['operating_calendars'][department_calendar_id])
-    from .services.date_sets import data as date_set_data
-    result['date_sets'] = date_set_data(db, [workspace.department_id])
+    # Keep issued evidence on the checked catalogue basis and scoped to this rota.
+    from packages.domain.validation import ancestor_ids
+    location_ids = {ident for shift in result['shifts'] for ident in ancestor_ids(data, shift['location_id'])}
+    service_ids = {ident for shift in result['shifts'] for ident in shift['service_ids']}
+    pool_ids = {demand['resource_pool_id'] for shift in result['shifts']
+                for demand in shift['type_snapshot']['definition'].get('resources', [])}
+    for key, ids in (('locations', location_ids), ('services', service_ids), ('resource_pools', pool_ids)):
+        result[key] = {ident: json_value(data[key][ident]) for ident in sorted(ids) if ident in data[key]}
+    calendar_ids = {row['calendar_id'] for key in ('locations', 'services', 'resource_pools')
+                    for row in result[key].values() if row.get('calendar_id')}
+    if department_calendar_id := result['department']['operating_calendar_id']:
+        calendar_ids.add(department_calendar_id)
+    result['operating_calendars'] = {ident: json_value(data['operating_calendars'][ident])
+                                     for ident in sorted(calendar_ids) if ident in data['operating_calendars']}
+    result['date_sets'] = {ident: json_value(row) for ident, row in data['date_sets'].items()
+                           if row['department_id'] == workspace.department_id}
     from packages.domain.fairness import offered_intervals
     from packages.domain.reports import METRIC_VERSION
     result["metric_version"] = METRIC_VERSION

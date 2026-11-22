@@ -19,7 +19,10 @@ from packages.domain.overlap import overlap_dates
 from packages.domain.quotas import applicable_policies, evaluate_quotas, period_bounds, project_report, quota_contribution
 from packages.domain.reports import workload
 from packages.domain.time import aware, local_midnight, now, overlaps, union_hours
-from packages.domain.validation import ancestor_ids, exception_for, index_person_rows, policy_applies, within_dates, workload_windows
+from packages.domain.validation import (
+    _policy_scope_key, ancestor_ids, exception_for, index_person_rows, person_scope_ids,
+    within_dates, workload_selected, workload_windows,
+)
 from .common import scoped
 from .fairness import READERS, department_data, period_records, viewer
 from .person_record import require_person
@@ -92,6 +95,35 @@ def _weekends(data, person_id, first, last):
             for start, length in sorted(definitions)]
 
 
+def _limit_usage(data, policy, person_id, entries, a, b):
+    if not _applies_during(data, policy, person_id, a, b):
+        return
+    rule = policy['definition']['rule']
+    zone = data['organisation']['timezone']
+    week_start = data['organisation']['week_start']
+    selected, _ = workload_selected(data, policy, person_id, entries)
+    windows = workload_windows(a, b, rule, zone, week_start) | {pair for _, _, c, d in selected
+               for pair in workload_windows(c, d, rule, zone, week_start) if overlaps(a, b, *pair)}
+    for start, end in sorted(windows):
+        if not _applies_during(data, policy, person_id, start, end):
+            continue
+        if rule['kind'] == 'max_hours':
+            yield start, end, None, union_hours([(max(start, c), min(end, d)) for _, _, c, d in selected
+                                                 if overlaps(start, end, c, d)])
+        else:
+            groups = defaultdict(set)
+            group_by = rule.get('group_by', 'all')
+            for shift, participant, c, _ in selected:
+                if start <= c < end:
+                    key = (participant.get('supervisor_person_id') if group_by == 'supervisor' else
+                           c.astimezone(ZoneInfo(zone)).weekday() if group_by == 'weekday' else None)
+                    groups[key].add(shift['id'])
+            for group, duties in groups.items():
+                yield start, end, group, len(duties)
+            if not groups:
+                yield start, end, None, 0
+
+
 def _limits(data, person_id, first, last):
     """Show the actual canonical limit windows; never scale a weekly ceiling to the displayed period."""
     data = {**data, 'policies': active_rules(data['policies'], context=data)}
@@ -99,39 +131,28 @@ def _limits(data, person_id, first, last):
     a, b = local_midnight(first, zone), local_midnight(last, zone)
     entries = [(s, p, aware(p['start']), aware(p['end'])) for s in data['shifts'] if not inactive(s)
                for p in s['participants'] if p['person_id'] == person_id]
+    # Selector sources and rule adjustments can differ between periods.
+    usage = {}
     for policy in data['policies']:
         rule = policy['definition']['rule']
-        if rule['kind'] not in {'max_hours', 'max_duties'} or not _applies_during(data, policy, person_id, a, b):
+        if rule['kind'] not in {'max_hours', 'max_duties'}:
             continue
-        selected = [(s, p, c, d) for s, p, c, d in entries if policy_applies(data, policy, person_id, s, c, d)
-                    and (rule.get('include_overtime', True) or not p.get('overtime', False))]
-        windows = workload_windows(a, b, rule, zone, data['organisation']['week_start']) | {pair for _, _, c, d in selected
-                   for pair in workload_windows(c, d, rule, zone, data['organisation']['week_start'])
-                   if overlaps(a, b, *pair)}
-        for start, end in sorted(windows):
-            if not _applies_during(data, policy, person_id, start, end):
-                continue
-            groups = defaultdict(set)
-            if rule['kind'] == 'max_hours':
-                actuals = [(None, union_hours([(max(start, c), min(end, d)) for _, _, c, d in selected
-                                              if overlaps(start, end, c, d)]))]
-            else:
-                group_by = rule.get('group_by', 'all')
-                for shift, participant, c, _ in selected:
-                    if start <= c < end:
-                        key = (participant.get('supervisor_person_id') if group_by == 'supervisor' else
-                               c.astimezone(ZoneInfo(zone)).weekday() if group_by == 'weekday' else None)
-                        groups[key].add(shift['id'])
-                actuals = [(key, len(ids)) for key, ids in groups.items()] or [(None, 0)]
-            for group, actual in actuals:
-                result.append({'policy_id': policy['id'], 'policy_revision': policy['revision'],
-                               'policy_name': policy['name'], 'kind': rule['kind'],
-                               'severity': policy['definition']['severity'],
-                               'strength': policy['definition'].get('strength', 'medium'),
-                               'start': start.isoformat(), 'end': end.isoformat(),
-                               'actual': round(actual, 4), 'maximum': rule.get('hours', rule.get('maximum')),
-                               'group_by': rule.get('group_by', 'all'), 'group': group,
-                               'line_id': (policy.get('template_line') or {}).get('id')})
+        people = person_scope_ids(policy['definition']['scope'])
+        if people and person_id not in people:
+            continue
+        key = (_policy_scope_key(policy), rule['kind'], rule.get('window'), rule.get('window_days'),
+               rule.get('group_by', 'all'), rule.get('include_overtime', True))
+        if key not in usage:
+            usage[key] = list(_limit_usage(data, policy, person_id, entries, a, b))
+        for start, end, group, actual in usage[key]:
+            result.append({'policy_id': policy['id'], 'policy_revision': policy['revision'],
+                           'policy_name': policy['name'], 'kind': rule['kind'],
+                           'severity': policy['definition']['severity'],
+                           'strength': policy['definition'].get('strength', 'medium'),
+                           'start': start.isoformat(), 'end': end.isoformat(),
+                           'actual': round(actual, 4), 'maximum': rule.get('hours', rule.get('maximum')),
+                           'group_by': rule.get('group_by', 'all'), 'group': group,
+                           'line_id': (policy.get('template_line') or {}).get('id')})
     return result
 
 
@@ -226,7 +247,7 @@ def read(db, actor, person_id, on: date | None = None, workspace_id=None):
             'basis': 'Planned departmental work only. Hours split at local boundaries; duties count at their start. '
                      'Current publications only; a selected draft replaces its acknowledged publication. '
                      'Rota adjustments and target overrides apply only to the rota comparison. '
-                     'Limit windows use reserved duty envelopes. External work, attendance and payroll are excluded.',
+                     'Limit windows count reserved duty time, and external commitments where a limit does not depend on the kind of work.',
             'rule_basis': 'current_rules', 'unsupported_metrics': ['nights'],
             'workspace': ({'id': workspace.id, 'name': neutral_rota_name(workspace.name), 'status': workspace.status,
                            'starts_on': workspace.starts_on.isoformat(), 'ends_on': (hi if chosen else until(rota)).isoformat()}

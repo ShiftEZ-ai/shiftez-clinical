@@ -2,7 +2,7 @@ import json
 import re
 from collections import defaultdict
 from functools import cache
-from datetime import timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 from pydantic import Field
@@ -10,11 +10,20 @@ from sqlalchemy import JSON, Text, cast, event, inspect, literal, or_, select, u
 from packages.contracts import schemas as s
 from packages.domain.recurrence import expand
 from apps.api import models as m
-from apps.api.auth import require_permission, require_role, person_access
+from apps.api.auth import _local_today, require_permission, require_role, person_access
 from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, Problem, require
 from apps.api.serialization import record, json_value
 from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped, expected, bump_inputs, history, history_many, range_overlaps, batch_input_invalidations
 from . import independence, announcements, tags
+
+
+def person_inactive_from_transition(db, actor, row, active, current):
+    """Normalize the dated state for catalogue writes and import Undo."""
+    if active:
+        return None
+    if current is None and (row is None or row.active):
+        return _local_today(db, actor.department_id)
+    return current
 
 
 def exception_identity_rows(db, actor, exceptions=None):
@@ -39,7 +48,7 @@ def exception_identity_stamp(identities):
 
 def exception_actions(db, actor, exceptions, policies, *, identities=None):
     """Add this reader's lifecycle eligibility to copies after the shared catalogue cache is read."""
-    from .policies import effective_sources, exception_is_independent
+    from .policies import effective_sources
 
     if not exceptions:
         return []
@@ -62,7 +71,7 @@ def exception_actions(db, actor, exceptions, policies, *, identities=None):
         return bool(approver and row['status'] == status and policy.get('status') == 'active'
                     and policy.get('revision') == row['policy_revision'] and definition.get('exception_allowed')
                     and not s.safety_rule(definition)
-                    and (waived or exception_is_independent(db, actor, row['created_by'], row['person_id'])))
+                    and (waived or independence.subject_independent(db, actor, (row['person_id'],), row['created_by'])))
 
     def proposer(row):
         return coordinator and independence.person_key(db, row['created_by']) == independence.person_key(db, actor.identity_id)
@@ -342,6 +351,12 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
     if kind == 'people' and row:
         value = value.model_copy(update={key: getattr(row, key) for key in ('rota_name', 'rota_aliases', 'work_email', 'work_phone', 'work_extension', 'pager', 'given_name', 'family_name')
                                         if key not in payload.value})
+    if kind == 'people':
+        inactive_from = value.inactive_from
+        if row and not row.active and 'inactive_from' not in payload.value:
+            inactive_from = row.inactive_from
+        value = value.model_copy(update={'inactive_from': person_inactive_from_transition(
+            db, actor, row, value.active, inactive_from)})
     if kind == 'event_types' and row and 'also_email' not in payload.value:
         value = value.model_copy(update={'also_email': row.also_email})
     if kind == 'rotation_types' and row and 'leave_policy' not in payload.value:
@@ -679,6 +694,8 @@ def bulk_commands(db, actor, payload):
         current = record(row)
         value = {k: current[k] for k in fields if k in current}
         value.update(payload.set)
+        if payload.catalogue == 'people' and row.active and 'inactive_from' not in payload.set:
+            value.pop('inactive_from', None)
         if payload.active is not None:
             value['active'] = payload.active
         if payload.colour is not None and in_definition:
@@ -736,6 +753,13 @@ def bulk_catalogue(db, actor, command):
     if payload.catalogue == 'recurring_series':
         from .bulk import _series_undo_acknowledgement
         undo.update(_series_undo_acknowledgement(db, actor, undo))
+    if payload.catalogue == 'people':
+        from packages.domain.validation import person_active_on
+
+        today = _local_today(db, actor.department_id)
+        for row in saved:
+            cutoff = date.fromisoformat(row['inactive_from']) if row.get('inactive_from') else None
+            row['effective_active'] = person_active_on(row['active'], cutoff, today)
     return {"records": saved, "previous_values": previous, "affected_count": affected,
             "undo": {"kind": "bulk.apply", "payload": undo},
             "message": f"{len(saved)} record{'s' if len(saved) != 1 else ''} updated."}

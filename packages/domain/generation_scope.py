@@ -1,5 +1,5 @@
 """One population predicate and transient existing-row protection for every generation path."""
-from .conditions import scope_matches_throughout, tag_scope
+from .conditions import INTERNAL, SESSION_FIELDS, has_session_lines, scope_matches_throughout, scope_segments, tag_scope
 from .time import aware
 
 
@@ -26,6 +26,44 @@ def population_allows(data, shift, person_id, participant=None):
     return person_id in data['people'] and scope_matches_throughout(
         data, tag_scope(data, {'conditions': scope['conditions']}), person_id, shift,
         aware(interval['start']), aware(interval['end']))
+
+
+def population_candidates(data, selected):
+    """Resolve the requested scope before applying live group responsibility."""
+    shifts = [shift for shift in data['shifts'] if shift['id'] in selected and not shift.get('cancelled')]
+    scope = tag_scope(data, {'conditions': data['generation_scope']['conditions']})
+    if has_session_lines(scope['conditions'], SESSION_FIELDS | INTERNAL):
+        return {shift['id']: [pid for pid in data['people'] if population_allows(data, shift, pid)] for shift in shifts}
+    # The capability predicate keys its dated grants by department and clinics.
+    # Invariant: capability_ids is the only person field that reads the duty. A new person field that reads the duty
+    # must join the grouping key below or the per-duty fallback above, or groups would share a wrong answer.
+    clinic_scoped = has_session_lines(scope['conditions'], {'capability_ids'})
+    population = {shift['id']: [] for shift in shifts}
+    contexts = {}
+    for shift in shifts:
+        lo, hi = aware(shift['start']), aware(shift['end'])
+        if lo < hi:
+            key = None
+            if clinic_scoped:
+                key = (data['types'][shift['assignment_type_id']]['department_id'], tuple(shift['service_ids']))
+            contexts.setdefault(key, []).append((shift, lo, hi))
+    for bounds in contexts.values():
+        start, end = min(lo for _, lo, _ in bounds), max(hi for _, _, hi in bounds)
+        representative = bounds[0][0]
+        for pid in data['people']:
+            windows = []
+            for lo, hi, matched in scope_segments(data, scope, pid, representative, start, end):
+                if not matched:
+                    continue
+                if windows and windows[-1][1] == lo:
+                    windows[-1] = windows[-1][0], hi
+                else:
+                    windows.append((lo, hi))
+            if windows:
+                for shift, lo, hi in bounds:
+                    if any(first <= lo and hi <= last for first, last in windows):
+                        population[shift['id']].append(pid)
+    return population
 
 
 def run_population_people(data):

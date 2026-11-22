@@ -61,6 +61,7 @@ def test_jobs_history_keeps_the_latest_hundred_runs_without_loading_proposals(h)
     me = h.get('coordinator', '/api/me')
     expected_tag = revision_etag('jobs-list', h.seed['department_id'], h.seed['identities']['coordinator'],
         me['person_id'], me['roles'], workspace['id'], None, 100, 0,
+        (workspace['revision'], workspace['status']),
         (department.revision, organisation.revision, organisation.input_revision,
          organisation.availability_revision, h.settings.generation_engine, build()['release'], tuple(stamp)))
     assert response.headers['etag'] == expected_tag

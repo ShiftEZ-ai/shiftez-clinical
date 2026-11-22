@@ -102,7 +102,8 @@ def test_workload_compares_exact_quota_bounds_and_dated_person_line_limits(h):
         '2026-10-01', '2026-11-01', 2, 3, 'below_target')
     limits = [r for r in result['limits'] if r['policy_id'] == cap['id']]
     week_start = local_midnight(date(2026, 10, 4), 'Asia/Riyadh')
-    assert {(r['maximum'], r['actual']) for r in limits if aware(r['start']) == week_start} == {(5, 1), (2, 1)}
+    # Once a dated person line is in force it counts its whole weekly window (the full-window design), so it sees both duties.
+    assert {(r['maximum'], r['actual']) for r in limits if aware(r['start']) == week_start} == {(5, 1), (2, 2)}
     assert not [r for r in result['limits'] if r['kind'] == 'max_hours']
 
 
@@ -223,3 +224,29 @@ def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget(per
 def test_department_scale_workload_read_has_a_fixed_query_and_runtime_budget_cpu_budget(person_workload_scale):
     _, _, elapsed = person_workload_scale
     assert elapsed < python_budget(1), f'150 people and 500 duties must remain a bounded read: {elapsed:.3f}s'
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_department_scale_workload_bounds_duty_applicability(scale_harness, monkeypatch, backend):
+    from apps.api.snapshots import workspace_shifts
+    from packages.domain import validation
+    from tests.test_backend_reads_scale import read_department
+
+    h = scale_harness(backend)
+    w = read_department(h)
+    with transaction(h.app.state.engine) as db:
+        shifts = workspace_shifts(db, w['id'])
+    assert len(shifts) >= 500
+    person = shifts[0]['participants'][0]['person_id']
+    calls = 0
+    original = validation.workload_matches
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validation, 'workload_matches', counted)
+    result = periods(h.get('coordinator', endpoint(person, workspace_id=w['id'])))
+    assert result['this_rota']['limits']
+    assert 0 < calls <= 2_000, f'{calls} duty applicability checks for one person with 1,000 department rules'

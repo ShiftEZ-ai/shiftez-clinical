@@ -34,7 +34,7 @@ def fix_list_context(data):
     """Small presentation/source receipt; no second rule resolver or private absence text."""
     from .conditions import active_rules, _requirements, PERSON_FIELDS
     from packages.contracts.rule_catalogue import catalogue_entry, RULE_CATALOGUE_V2, entry_kinds
-    from .fix_list_facts import who_label, session_context
+    from .fix_list_facts import who_words, session_context
     policies = {p['id']: p for p in data['policies']}
     sources = {}
     for policy in active_rules(data['policies'], context=data):
@@ -46,9 +46,10 @@ def fix_list_context(data):
             entry = next((e for e in RULE_CATALOGUE_V2 if rule['kind'] in entry_kinds(e)), None)
         who = line.get('who') or {'match': 'all', 'conditions': [node for node in
             _requirements(policy['definition']['scope']) if 'conditions' in node or node['field'] in PERSON_FIELDS]}
+        words = who_words(data, who) or (None, None)
         sources[json.dumps([policy['id'], line.get('line'), line.get('slot')])] = {
             'kind': policy['definition']['rule']['kind'], 'name': original['name'],
-            'line_id': line.get('id'), 'who': who, 'who_label': who_label(data, who),
+            'line_id': line.get('id'), 'who': who, 'who_label': words[0], 'who_many': words[1],
             'catalogue_id': entry['id'] if entry else None,
             'template': entry['fix_template'] if entry else None}
     focus = set(data['focus_ids'])
@@ -527,18 +528,18 @@ def fix_list_effect_projection(before_data, before_validation, after_data, after
 def remember_fix_list(previous, current, *, submitted=False, accepted_issues=(), summary_cache=None):
     """Persist only derived ID receipts in the existing check JSON; edits retain their normal Undo."""
     from zoneinfo import ZoneInfo
-    before = rota_summary(previous, accepted_issues=accepted_issues, cache=summary_cache)['fix_list'] if previous else None
+    before = rota_summary(previous, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list'] if previous else None
     at = current['evaluated_at']
     day = aware(at).astimezone(ZoneInfo((current.get('fix_list_context') or {}).get('timezone', 'UTC'))).date().isoformat()
     state = (previous or {}).get('fix_list_state') or {}
     since = state.get('since')
     reset_since = submitted or not since or since.get('day') != day
     if reset_since:
-        ids_after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']['causes']
+        ids_after = rota_summary(current, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list']['causes']
         since = {'at': at, 'day': day, 'ids': [c['id'] for c in ids_after]}
     current['fix_list_state'] = {'previous_ids': [c['id'] for c in (before or {'causes': []})['causes']], 'since': since}
     # Reset needs a second pass so the stored delta carries the state-aware `since` receipt.
-    after = rota_summary(current, accepted_issues=accepted_issues, cache=summary_cache)['fix_list']
+    after = rota_summary(current, accepted_issues=accepted_issues, compact=True, cache=summary_cache)['fix_list']
     current['fix_list_delta'] = fix_list_delta(before, after)
     return current
 

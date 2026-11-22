@@ -1017,21 +1017,22 @@ def outranking_by_number(policy):
     for (k, _), group in _by_number(rule).items():
         if _slot(entry, k, rule, lines[group[0]], list(lines[group[0]].get('numbers') or {}))['kind'] in NEVER_OVERRIDDEN:
             continue
-        higher = {t: [w for w in group if tiers[w] > t] for t in (1, 2)}  # a person line (3) is never outranked
-        for n in group:
-            level = lines[n]['numbers'][k].get('level', 'mandatory')
-            wins = [w for w in higher.get(tiers[n], ()) if _meets(spans[n], spans[w]) and
-                    (level is None or lines[w]['numbers'][k].get('level', 'mandatory') is None or
-                     (level == 'mandatory') == (lines[w]['numbers'][k].get('level', 'mandatory') == 'mandatory'))]
-            if wins:
-                out[(n, k)] = wins
-    return dict(sorted(out.items()))
+        levels = {n: lines[n]['numbers'][k].get('level', 'mandatory') for n in group}
+        for n, w in _pairs(group, spans):
+            if tiers[n] == tiers[w]:
+                continue
+            if tiers[n] > tiers[w]:
+                n, w = w, n
+            level, higher = levels[n], levels[w]
+            if level is None or higher is None or (level == 'mandatory') == (higher == 'mandatory'):
+                out.setdefault((n, k), []).append(w)
+    return {key: sorted(winners) for key, winners in sorted(out.items())}
 
 
-def outranking(policy):
+def outranking(policy, *, by_number=None):
     """{line index: [winning line indexes]} — the lines a more specific line takes at least one number from."""
     out = {}
-    for (n, _), wins in outranking_by_number(policy).items():
+    for (n, _), wins in (outranking_by_number(policy) if by_number is None else by_number).items():
         out.setdefault(n, set()).update(wins)
     return {n: sorted(w) for n, w in sorted(out.items())}
 
@@ -1040,14 +1041,26 @@ def line_relations(policy, would=None):
     """Editor provenance from the same groups, date spans and expansion used by active_rules."""
     rule = policy['definition']['rule']
     lines = rule.get('lines') or []
-    spans = _spans(rule, lines, policy)
-    out = {}
+    tiers = [tier(line) for line in lines]
+    if len(set(tiers)) < 2:
+        return {}
+    broader = [[] for _ in lines]
+    for left, right in _pairs(range(len(lines)), _spans(rule, lines, policy)):
+        if tiers[left] < tiers[right]:
+            broader[right].append(left)
+        elif tiers[right] < tiers[left]:
+            broader[left].append(right)
+    out, groups = {}, {}
+    def group(n, key):
+        if (n, key) not in groups:
+            line = lines[n]
+            groups[n, key] = _group(rule, line, key, list(line['numbers']))
+        return groups[n, key]
     for n, line in enumerate(lines):
         candidates = []
         strictest = {}
-        for k, other in enumerate(lines):
-            if tier(other) >= tier(line) or not _meets(spans[n], spans[k]):
-                continue
+        for k in broader[n]:
+            other = lines[k]
             if would is not None and not (would.get(line['id'], set()) & would.get(other['id'], set())):
                 continue
             shared = set(line['numbers']) & set(other['numbers'])
@@ -1057,8 +1070,7 @@ def line_relations(policy, would=None):
                 and sorted(line.get('weekdays') or range(7)) == sorted(other.get('weekdays') or range(7))
                 and line.get('start_time', '00:00') == other.get('start_time', '00:00')
                 and line.get('end_time', '24:00') == other.get('end_time', '24:00'))
-            same_settings = all(_group(rule, line, key, list(line['numbers'])) ==
-                                _group(rule, other, key, list(other['numbers'])) for key in shared)
+            same_settings = all(group(n, key) == group(k, key) for key in shared)
             strength = {key: other['numbers'][key].get('level', 'mandatory') for key in shared}
             same_strength = all(line['numbers'][key].get('level') is None or
                 (line['numbers'][key].get('level', 'mandatory') == 'mandatory') ==
@@ -1080,7 +1092,7 @@ def line_relations(policy, would=None):
                         effective[key] = values[0]
                 if reason is not None and key in {'min', 'max'}:
                     strictest.setdefault(key, []).extend(values)
-            candidates.append((reason is None, same_where, same_settings, tier(other), -k,
+            candidates.append((reason is None, same_where, same_settings, tiers[k], -k,
                 {'line_id': other['id'], 'line_no': k + 1, 'overrides': reason is None, 'reason': reason,
                  'fix': 'match_strength' if reason == 'strength_differs' else 'match_settings' if reason == 'settings_differ' and same_where else None,
                  'default_settings': deepcopy(_settings(rule, other)), 'default_severity': strength,
@@ -1104,14 +1116,18 @@ def default_line_strengths(rule, given, previous_ids=(), would=None):
     policy = {'id': 'preview', 'definition': {'rule': {**rule, 'lines': normalized}},
               'starts_on': None, 'ends_on': None}
     relations = line_relations(policy, would)
-    for line in lines:
+    changed = False
+    for n, line in enumerate(lines):
         relation = relations.get(line['id'])
         if (line['id'] not in previous_ids and not line.get('settings')
                 and line.get('measure') is None and line.get('period') is None and relation
                 and relation['reason'] in (None, 'settings_differ', 'strength_differs')):
             line['settings'] = deepcopy(relation['default_settings'])
-    policy['definition']['rule']['lines'] = [RuleLine.model_validate(line).model_dump(mode='json') for line in lines]
-    relations = line_relations(policy, would)
+            if line['settings'] != normalized[n]['settings']:
+                normalized[n] = RuleLine.model_validate(line).model_dump(mode='json')
+                changed = True
+    if changed:
+        relations = line_relations(policy, would)
     for line in lines:
         relation = relations.get(line['id'])
         if line['id'] in previous_ids or not relation or relation['reason'] not in (None, 'strength_differs'):
@@ -1157,6 +1173,11 @@ def inherited(policy, would=None):
     tiers = [tier(line) for line in lines]
     if len(set(tiers)) < 2:
         return {}
+    numbers = [set(line.get('numbers') or {}) for line in lines]
+    differing = set.union(*numbers) - set.intersection(*numbers)
+    possible = [key for key in entry['numbers'] if key != 'apply' and key in differing]
+    if not possible:
+        return {}
     spans, out, sets, held = _spans(rule, lines, policy), {}, {}, {}
     for (k, group), members in _by_number(rule).items():  # (group, number, tier): the lines that set it, in order
         for w in members:
@@ -1173,8 +1194,8 @@ def inherited(policy, would=None):
     for n, line in enumerate(lines):
         mine = (would or {}).get(line['id'])
         keys = [k for k in (line.get('numbers') or {}) if k in entry['numbers']]
-        for k in entry['numbers']:
-            if k == 'apply' or k in (line.get('numbers') or {}):
+        for k in possible:
+            if k in (line.get('numbers') or {}):
                 continue
             group = _group(rule, line, k, keys + [k])  # what this number would count on this line
             for t in range(tiers[n] - 1, 0, -1):  # the nearest tier that sets it; within it, the first line

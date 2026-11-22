@@ -548,10 +548,22 @@ def persist_generation_candidate(engine, claim, result, *, deadline=None):
     return retry_write(engine, persist, deadline=deadline)
 
 
-def job_available(db, *, recovering_worker=None):
+def enabled_jobs():
     disabled = select(m.Workspace.id).join(m.Department).where(
         m.Workspace.origin == 'auto', m.Department.score_check_enabled.is_(False))
-    enabled = or_(m.Job.workspace_id.is_(None), m.Job.workspace_id.not_in(disabled))
+    return or_(m.Job.workspace_id.is_(None), m.Job.workspace_id.not_in(disabled))
+
+
+def oldest_queued_job(engine):
+    with transaction(engine) as db:
+        job = db.execute(select(m.Job.id, m.Job.created_at).where(enabled_jobs(), m.Job.status == 'queued')
+                         .order_by(m.Job.created_at, m.Job.id).limit(1)).first()
+        return ({'job_id': job.id, 'queued_seconds': max(0, (m.now() - aware(job.created_at)).total_seconds())}
+                if job else {'job_id': None, 'queued_seconds': 0})
+
+
+def job_available(db, *, recovering_worker=None):
+    enabled = enabled_jobs()
     lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     if recovering_worker is not None:
         lost = or_(lost, m.Job.worker_id == recovering_worker)
@@ -568,9 +580,7 @@ def claim_pending(engine, *, recovering_worker=None):
 
 def claim_job(db, *, recovering_worker=None):
     require_current_schema(db)
-    disabled_auto = select(m.Workspace.id).join(m.Department).where(
-        m.Workspace.origin == 'auto', m.Department.score_check_enabled.is_(False))
-    enabled = or_(m.Job.workspace_id.is_(None), m.Job.workspace_id.not_in(disabled_auto))
+    enabled = enabled_jobs()
     # Bounded lease recovery after worker death; no lost running job remains forever.
     lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     if recovering_worker is not None:
@@ -795,13 +805,12 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
     job.completed_at = m.now()
     if job.kind == 'generation' and not error:
         from apps.api.errors import Problem
-        from apps.api.workspace_baselines import generation_manifest, verify_generation_snapshot
+        from apps.api.workspace_baselines import verify_generation_snapshot
+        from .generation_evidence import retain_completed_candidate_evidence
         try:
             workspace = db.get(m.Workspace, job.workspace_id)
             baseline = verify_generation_snapshot(db, workspace, job.input_snapshot)
-            manifest = generation_manifest(baseline, job.input_snapshot, job=job,
-                                            requester_id=job.requested_by, result=result,
-                                            status=job.status)
+            result, manifest = retain_completed_candidate_evidence(db, job, baseline, result)
             job.input_snapshot = {**job.input_snapshot, 'generation_manifest': manifest}
         except Problem as rejected:
             error, result, job.status = rejected.code, None, 'failed'
@@ -1257,8 +1266,7 @@ def prepare_deferred_generation(engine, claim, settings):
         return True
 
 
-def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False):
-    settings = settings or engine.get_execution_options().get("rota_write_settings") or Settings.from_env()
+def housekeeping(engine, settings):
     try:
         prune_security_state(engine, settings=settings)
     except DatabaseWriteDeferred:
@@ -1288,7 +1296,17 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         departments |= push_delivery.dispatch_pending(engine, settings)
     except Exception as exc:
         log.warning("push_dispatch_failed", extra={"error_code": type(exc).__name__})
-    claim = claim_pending(engine, recovering_worker=WORKER_ID if recover_owned else None)
+    return departments
+
+
+def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False):
+    settings = settings or engine.get_execution_options().get("rota_write_settings") or Settings.from_env()
+    pass_engine = engine
+    queued = oldest_queued_job(engine)
+    claim_first = queued['job_id'] is not None and queued['queued_seconds'] >= settings.worker_claim_max_defer_seconds
+    departments = set() if claim_first else housekeeping(engine, settings)
+    claim_engine = engine.execution_options(rota_defer_busy_writer=False) if claim_first else engine
+    claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None)
     # Recover a crash after final validation before TTL pruning can release its private checkpoint.
     try:
         prune_generation_state(engine, settings=settings)
@@ -1494,7 +1512,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                         'checkpoint': checkpoint, 'search_control': search_control,
                                         '_diagnostic_continuation': diagnostic_continuation,
                                         '_candidate_evidence': candidate_evidence} if native_cp_sat else {}), **diagnostic)
-                          if scheduler else generate(claim["input"]))
+                          if scheduler else generate(claim["input"], cancelled=stopped.is_set))
                 continuation = claim['input'].get('continuation')
                 if isinstance(result, dict) and isinstance(continuation, dict):
                     previous_seconds = continuation.get('previous_search_seconds', 0)
@@ -1692,6 +1710,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             # All closures now see only the probe identity after durable finish.
             claim = probe_claim
             _release_job_memory(probe_claim)
+    if claim_first:
+        # Maintenance cannot consume the newly claimed job's lease before its heartbeat starts.
+        departments |= housekeeping(pass_engine, settings)
     if not claim:
         from apps.api.services.read_projection_warming import warm_one
         warm_one(engine, settings=settings)
@@ -1850,7 +1871,15 @@ def main():
                     worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned)
                 recover_owned = False
             except DatabaseWriteDeferred:
-                log.debug('worker_pass_deferred')
+                queued = {'job_id': None, 'queued_seconds': 0}
+                if not args.push_only:
+                    try:
+                        queued = oldest_queued_job(engine)
+                    except SQLAlchemyError as exc:
+                        if not is_transient_database_error(exc):
+                            raise
+                        queued['queued_seconds'] = None
+                log.info('worker_pass_deferred', extra=queued)
             except DatabaseWriteTimeout:
                 log.warning('worker_pass_write_timeout', extra={'error_code': 'DatabaseWriteTimeout'})
                 if args.once:

@@ -9,7 +9,7 @@ from packages.contracts.schemas import safety_rule
 from .conditions import COUNT_BUCKET, OVERRIDDEN, OWN_LINE, PERSON_FIELDS, _bucket_descriptor, absolute_values, active_rules, bucket_atoms, bucket_count, change_points, has_session_lines, scope_tree, selector_sources, scope_applies, scope_has_duty_witness, scope_matches_throughout, scope_segments
 from .time import aware, local_midnight
 from .recurrence import inactive, usual_assignee_ids
-from .validation import ALL_DAYS, ancestor_ids, category_scope_ids, every_day_all_day, index_person_rows, named_people, person_scope_ids, policy_applies, restricted_intervals, scope_intervals, session_scope, within_dates
+from .validation import ALL_DAYS, ancestor_ids, category_scope_ids, every_day_all_day, index_person_rows, named_people, person_active_end, person_scope_ids, policy_applies, restricted_intervals, scope_intervals, session_scope, within_dates
 
 # The one number each rule kind has: (field, unit, which way is stricter). A rota may change these numbers.
 NUMBERS = {'min_rest': ('hours', 'hours', 'higher'), 'max_hours': ('hours', 'hours', 'lower'),
@@ -219,12 +219,14 @@ def named(data, definition):
     """What a rule's scope names outright: flat fields plus "is any of" lines, and what its lines name (people, clinics,
     duty types and days)."""
     scope, rows = definition['scope'], definition.get('per_person') or []
+    condition_values = {field: [] for field in ('person_ids', 'service_ids', 'location_ids', 'assignment_type_ids')}
+    for line in _lines(scope.get('conditions'), condition_values):
+        if line.get('op', 'any') in {'any', 'is'}:
+            condition_values[line['field']].extend(absolute_values(line) or ())
 
     def pick(field, *flat):
         values = [v for k in flat for v in (scope.get(k) if isinstance(scope.get(k), list) else [scope[k]] if scope.get(k) else [])]
-        values += [v for c in _lines(scope.get('conditions'), {field}) if c.get('op', 'any') in {'any', 'is'}
-                   for v in absolute_values(c) or ()]
-        return list(dict.fromkeys(values + [v for r in rows for v in r.get(field) or []]))
+        return list(dict.fromkeys(values + condition_values[field] + [v for r in rows for v in r.get(field) or []]))
     places = set(pick('location_ids', 'location_id'))
     weekdays = scope.get('weekdays', list(range(7)))
     if rows and all(r.get('weekdays') is not None for r in rows):
@@ -380,8 +382,11 @@ def rule_map(data, originals=None):
             '_line_index_cache': {}, '_staffing_selection_cache': {}}
     from .date_sets import prepare_date_sets
     data['_date_set_cache'] = prepare_date_sets(data)
-    people = sorted({r['person_id'] for r in data['memberships'] if r['department_id'] == dept and within_dates(r, A, B, zone)
-                     and data['people'].get(r['person_id'], {}).get('active', True)})
+    duty_end = max(B, max(ends, default=B))
+    active_ends = {pid: end for pid, person in data['people'].items()
+                   if (end := person_active_end(person, duty_end, zone)) is not None and A < end}
+    people = sorted({r['person_id'] for r in data['memberships'] if r['department_id'] == dept
+                     and r['person_id'] in active_ends and within_dates(r, A, min(B, active_ends[r['person_id']]), zone)})
 
     subs, pool_indexes = {}, {}
 
@@ -443,7 +448,7 @@ def rule_map(data, originals=None):
         for pid in (people if listed is None else [p for p in people if p in listed]):
             if (skey, pid) not in person_cache:
                 person_cache[(skey, pid)] = sum(span(lo, hi) for lo, hi, matched in
-                    scope_segments(view, scope, pid, None, A, B, extra_points=cuts) if matched)
+                    scope_segments(view, scope, pid, None, A, min(B, active_ends[pid]), extra_points=cuts) if matched)
             out[pid] = person_cache[(skey, pid)]
         return out, view
 
@@ -523,7 +528,7 @@ def rule_map(data, originals=None):
     def applies(view, copy, pid, i, a, b):
         key = (copy['id'], id(copy), pid, i)
         if key not in applies_cache:
-            applies_cache[key] = policy_applies(view, copy, pid, shifts[i], a, b)
+            applies_cache[key] = b <= active_ends[pid] and policy_applies(view, copy, pid, shifts[i], a, b)
         return applies_cache[key]
 
     def mapped(pool, only=None):
@@ -565,7 +570,7 @@ def rule_map(data, originals=None):
                 for pid, m in held.items():
                     day_mask |= m
                     sessions.update(i for i, a, b, touched in duties.get(pid, ()) if i not in sessions and m & touched and (
-                        data['types'][shifts[i]['assignment_type_id']]['department_id'] == copy['department_id']
+                        b <= active_ends[pid] and data['types'][shifts[i]['assignment_type_id']]['department_id'] == copy['department_id']
                         if exact and not touched & (touched - 1) else applies(view, copy, pid, i, a, b)))
                 pairs = ((pid, i, a, b) for pid, m in held.items() for i, a, b, touched in duties.get(pid, ()) if m & touched)
             if copy['id'] in exact_people:
@@ -801,7 +806,9 @@ def reach(data, policies, a, b, *, details=False, policy_id=None, line_id=None):
         found = reach_details(data, chosen, a, b, sources=sources, line_id=line_id)
         return {'reach': {p['id']: len({person['person_id'] for line in found.get(p['id'], {}).get('lines', [])
                                        for person in line['people']}) for p in selected}, 'details': found}
-    people, seen, out = list(data['people']), {}, {p['id']: set() for p in selected}
+    active_ends = {pid: end for pid, person in data['people'].items()
+                   if (end := person_active_end(person, b, zone)) is not None and a < end}
+    people, seen, out = list(active_ends), {}, {p['id']: set() for p in selected}
     clinic_grants = {department_id: _clinic_grants(data, department_id) for department_id in {c['department_id'] for c in chosen}}
     for c in chosen:
         if not within_dates(c, a, b, zone):
@@ -814,8 +821,9 @@ def reach(data, policies, a, b, *, details=False, policy_id=None, line_id=None):
             listed = _listed(scope)
             clinic_people, _ = _skill_context(data, scope, copies, clinic_grants[c['department_id']])
             seen[key] = {pid for pid in (people if listed is None else [p for p in people if p in listed])
-                          if (scope_has_duty_witness(data, scope, pid, lo, hi, c['department_id'])
-                              if pid in clinic_people else scope_applies(data, scope, pid, None, lo, hi))}
+                          if lo < (end := min(hi, active_ends[pid]))
+                          and (scope_has_duty_witness(data, scope, pid, lo, end, c['department_id'])
+                               if pid in clinic_people else scope_applies(data, scope, pid, None, lo, end))}
         out[c['id']] |= seen[key]
     return {rid: len(found) for rid, found in out.items()}
 
@@ -834,13 +842,15 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
     loaded = 'workspace' in data and 'shifts' in data
     counted = counting_views(data, copies)
     view = {**data, '_person_rows': index_person_rows(data), '_staffing_selection_cache': {}, '_scope_interval_cache': {}}
-    people = sorted(pid for pid, person in data['people'].items() if person.get('active', True))
-    if loaded:
-        department = data['workspace']['department_id']
-        members = {m['person_id'] for m in data['memberships'] if m['department_id'] == department and within_dates(m, a, b, zone)}
-        people = [pid for pid in people if pid in members]
-    dates = {pid: change_points(view, pid, a, b) + [b] for pid in people}
-    duties, signatures, dated_signatures = {}, {}, None
+    active_ends = {pid: end for pid, person in data['people'].items()
+                   if (end := person_active_end(person, b, zone)) is not None and a < end}
+    memberships = {}
+    for member in data.get('memberships', ()):
+        pid = member['person_id']
+        if pid in active_ends and within_dates(member, a, active_ends[pid], zone):
+            memberships.setdefault(member['department_id'], {}).setdefault(pid, []).append(member)
+    workspace_members = memberships.get(data['workspace']['department_id'], {}) if loaded else None
+    dates, duties, signatures, dated_signatures = {}, {}, {}, None
     for shift in data.get('shifts') or []:
         if inactive(shift):
             continue
@@ -856,7 +866,7 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
                                  ancestor_ids, exception_for, policy_ids={c['id'] for c in copies}, line_id=line_id)
     scope_people, session_cache, path_cache, count_cache, goal_cache, out = {}, {}, {}, {}, {}, {}
     clinic_grants = {department_id: _clinic_grants(view, department_id) for department_id in {copy['department_id'] for copy in counted}}
-    comparison_groups = None
+    comparison_groups, area_cache = None, {}
     for copy in counted:
         if not within_dates(copy, a, b, zone):
             continue
@@ -877,19 +887,28 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
             listed = _listed(scope)
             clinic_people, _ = _skill_context(view, scope, copies, clinic_grants[copy['department_id']])
             found = {}
-            for pid in people if listed is None else (pid for pid in people if pid in listed):
+            first = max(a, local_midnight(date.fromisoformat(str(copy['starts_on'])), zone)) if copy.get('starts_on') else a
+            last = min(b, local_midnight(date.fromisoformat(str(copy['ends_on'])), zone)) if copy.get('ends_on') else b
+            present = memberships.get(copy['department_id'], {})
+            candidates = present.keys() if listed is None else present.keys() & listed
+            for pid in candidates:
+                if workspace_members is not None and pid not in workspace_members:
+                    continue
+                end = min(last, active_ends[pid])
+                if first >= end:
+                    continue
+                if pid not in dates:
+                    dates[pid] = change_points(view, pid, a, active_ends[pid])
                 paths = set()
-                cuts = sorted(set(dates[pid]) | {point for field in ('starts_on', 'ends_on') if copy.get(field)
-                    and a < (point := local_midnight(date.fromisoformat(str(copy[field])), zone)) < b})
+                cuts = [first, *(point for point in dates[pid] if first < point < end), end]
                 for lo, hi in zip(cuts, cuts[1:]):
-                    present = any(member['department_id'] == copy['department_id'] and within_dates(member, lo, hi, zone)
-                                  for member in view['_person_rows']['memberships'].get(pid, ()))
-                    if present and within_dates(copy, lo, hi, zone):
+                    if any(within_dates(member, lo, hi, zone) for member in present[pid]):
                         contexts = (_scope_duty_contexts(view, [scope], pid, lo, hi, copy['department_id'])
                                     if pid in clinic_people else [(lo, hi, None)])
                         for start, end, duty in contexts:
                             if scope_matches_throughout(view, scope, pid, duty, start, end):
-                                paths.update(matched_paths(display_tree, rule_holds(view, pid, duty, start, end), display_bucket))
+                                if display_tree:
+                                    paths.update(matched_paths(display_tree, rule_holds(view, pid, duty, start, end), display_bucket))
                                 found.setdefault(pid, set()).update(paths)
             scope_people[key] = found
         row = {'line_id': line.get('id'), 'line': line.get('line'), 'slot': line.get('slot'), 'kind': rule['kind'],
@@ -897,10 +916,11 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
         if source:
             from .rule_lines import tier
             row['specificity'] = tier(source)
+        unobserved = _reach_unobserved(rule, a, b) if not loaded else []
         for pid, paths in sorted(scope_people[key].items()):
             counts = []
             if not loaded:
-                counts = _reach_unobserved(rule, a, b)
+                counts = [count.copy() for count in unobserved]
             elif rule['kind'] in {'max_duties', 'max_hours'}:
                 metric_key = (key, pid, copy['department_id'], json.dumps(rule, sort_keys=True))
                 if metric_key not in count_cache:
@@ -998,28 +1018,33 @@ def reach_details(data, copies, a, b, *, sources=None, line_id=None):
                 selected_places = bucket_atoms(bucket, 'location_ids')
                 for place in selected_places or [shift['location_id']]:
                     locations.setdefault(place, set()).update(paths)
+        area_key = (json.dumps(projected_tree, sort_keys=True), bucket, display_key, display_bucket) if not loaded else None
         for field, records, identifier, target in (('service_ids', data.get('services') or {}, 'service_id', clinics),
                                                   ('location_ids', data.get('locations') or {}, 'location_id', locations)):
             if not loaded:
-                unfiltered = not next(_lines(projected_tree, {field}), None) and not next(_lines(display_tree, {field}), None)
-                if unfiltered:
-                    def unknown(field, values=()):
-                        return None
-                    unknown.locations = data.get('locations', {})
-                    matches = bucket in bucket_keys(projected_tree, unknown)
-                    paths = set(matched_paths(display_tree, unknown, display_bucket)) if matches else set()
-                for rid in sorted(records):
-                    selected_places = bucket_atoms(bucket, 'location_ids')
-                    if field == 'location_ids' and selected_places and rid not in selected_places:
-                        continue
-                    held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}
-                    holds = lambda f, values=(), held=held, field=field: held if f == field else None
-                    holds.locations = data.get('locations', {})
+                key = (area_key, field)
+                if key not in area_cache:
+                    areas = area_cache[key] = {}
+                    unfiltered = not next(_lines(projected_tree, {field}), None) and not next(_lines(display_tree, {field}), None)
                     if unfiltered:
-                        if matches:
-                            target[rid] = paths
-                    elif bucket in bucket_keys(projected_tree, holds):
-                        target[rid] = set(matched_paths(display_tree, holds, display_bucket))
+                        def unknown(field, values=()):
+                            return None
+                        unknown.locations = data.get('locations', {})
+                        matches = bucket in bucket_keys(projected_tree, unknown)
+                        paths = set(matched_paths(display_tree, unknown, display_bucket)) if matches else set()
+                    for rid in sorted(records):
+                        selected_places = bucket_atoms(bucket, 'location_ids')
+                        if field == 'location_ids' and selected_places and rid not in selected_places:
+                            continue
+                        held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}
+                        holds = lambda f, values=(), held=held, field=field: held if f == field else None
+                        holds.locations = data.get('locations', {})
+                        if unfiltered:
+                            if matches:
+                                areas[rid] = paths
+                        elif bucket in bucket_keys(projected_tree, holds):
+                            areas[rid] = set(matched_paths(display_tree, holds, display_bucket))
+                target.update(area_cache[key])
             destination = row['clinics'] if field == 'service_ids' else row['places']
             for rid, paths in sorted(target.items()):
                 held = set(ancestor_ids(data, rid)) if field == 'location_ids' else {rid}
@@ -1121,9 +1146,15 @@ def _reach_workload_observations(data, policy, pid, entries, a, b):
         observations = [(run[0], run[-1] + timedelta(days=1), consecutive_day_count(rule, len(run), ordinary))
                         for run, ordinary in workload_day_observations(selected, zone)]
     else:
-        observations = [(run[0][0], run[-1][0] + timedelta(days=rule['weekend_days']), len(run))
-                        for run in workload_weekend_runs(data, policy, pid, selected, focus)
-                        if not rule['overtime_only'] or any(overtime for _, overtime, _ in run[-(rule['maximum'] + 1):])]
+        targets = {s['id'] for s, p, lo, hi in entries if s['id'] in focus
+                   and policy_applies(data, policy, pid, s, lo, hi)
+                   and (rule.get('include_overtime', True) or not p['overtime'])}
+        observations = []
+        for run in workload_weekend_runs(data, policy, pid, selected, targets):
+            window = run[-(rule['maximum'] + 1):]
+            if any(focused for _, _, focused in window) and (
+                    not rule['overtime_only'] or any(overtime for _, overtime, _ in window)):
+                observations.append((run[0][0], run[-1][0] + timedelta(days=rule['weekend_days']), len(run)))
     for first, last, actual in observations:
         lo, hi = local_midnight(first, zone), local_midnight(last, zone)
         if overlaps(a, b, lo, hi):

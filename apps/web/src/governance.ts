@@ -246,6 +246,8 @@ export async function approvalDialog(ctx:Context,data:WorkspaceData,summary:(for
   if(!decides){notDecider(data);return;}
   // SX-17: an amendment is approved as changes, not as a whole rota.
   const noun=w.base_publication_id?'Approve changes':'Approve rota';
+  // One Approve at a time: a quick press while the address's own review opens finds it already open.
+  if([...document.querySelectorAll('dialog[open] .dialog-head h2')].some(h=>h.textContent===noun))return;
   // Further reviews are mentioned only when the route has more steps after this one (the route's own data).
   const later=pending?(data.review_progress?.steps||[]).filter((s:Row)=>!s.complete&&s.key!==pending.key).length:0;
   // L11: the review strip beside it already names the step; only what follows it is said here.

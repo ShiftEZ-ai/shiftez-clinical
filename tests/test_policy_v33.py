@@ -1,6 +1,6 @@
 """Public v3.3 regressions: dispatch, private paths, YAML, expiry and ledger boundaries."""
 import copy
-from datetime import date,timedelta
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -39,6 +39,21 @@ class V33Tests(unittest.TestCase):
                 trusted_ci.select()
                 self.assertEqual(output.call_args.args[0]['measurement'],'false')
                 self.assertEqual(output.call_args.args[0]['candidate_sha'],'a'*40)
+    def test_root_measurement_dispatches_only_from_the_default_branch(self):
+        path=self.folder/'event.json'
+        for default in ('dev','main',None):
+            path.write_text(json.dumps({'inputs':{'root_measurement':'true'},'repository':{'default_branch':default}}))
+            for ref in ('refs/heads/dev','refs/heads/main'):
+                with self.subTest(default=default,ref=ref), \
+                     patch.dict(os.environ,{'GITHUB_EVENT_PATH':str(path),'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':ref}), \
+                     patch.object(trusted_ci,'settings',return_value={'unit_shards':1,'browser_shards':1}), \
+                     patch.object(trusted_ci,'pinned_root',return_value={'sha':'c'*40}), \
+                     patch.object(trusted_ci.subprocess,'check_output',return_value='b'*40),patch.object(trusted_ci,'output') as output:
+                    if ref=='refs/heads/'+str(default):
+                        trusted_ci.select()
+                        self.assertEqual(output.call_args.args[0]['candidate_sha'],'c'*40)
+                    else:
+                        with self.assertRaises(ValueError): trusted_ci.select()
     def test_every_private_agent_variant_is_a_guard_refusal(self):
         cases = set(names.AGENT_FILES) | set(names.AGENT_SPECIAL_PATHS)
         for directory in names.AGENT_DIRECTORIES:
@@ -97,37 +112,38 @@ class V33Tests(unittest.TestCase):
                         self.assertNotIn(job_id, saves)
                         saves[job_id] = step['if']
         self.assertEqual(restores, {('ci.yml', 'checks')})
-        self.assertEqual(saves, {('ci.yml', 'checks'): "github.event_name == 'push' && github.ref == 'refs/heads/dev' && "
+        self.assertEqual(saves, {('ci.yml', 'checks'): "github.event_name == 'push' && github.ref == "
+                                "format('refs/heads/{0}', github.event.repository.default_branch) && "
                                 "steps.dependency-cache.outputs.cache-hit != 'true'"})
         self.assertEqual(keys, {"public-ci-${{ runner.os }}-${{ runner.arch }}-"
                                 "${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', "
                                 "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertIn('dev', doc['on']['push']['branches'])
+        self.assertEqual(doc['on']['push']['branches'], ['dev', 'main'])
         for job in ('unit', 'browser', 'static', 'result'):
-            self.assertIn("(github.event_name != 'push' || github.ref != 'refs/heads/dev')", doc['jobs'][job]['if'])
+            self.assertIn("(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))", doc['jobs'][job]['if'])
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')
-    def test_expiry_only_renewal_is_ci_eligible_but_remains_tier1(self):
+    def test_expiry_only_edit_is_refused_and_remains_tier1(self):
         old={'schema':3,'fails':[],'unstable':[{'node':self.node,'class':'unstable','owner':'test-owner','reason':'Reviewed flake','issue':1,'expires_on':'2026-11-01'}]}
         new=copy.deepcopy(old);new['unstable'][0]['expires_on']='2026-12-01'
         a,b=json.dumps(old).encode(),json.dumps(new).encode()
-        self.assertTrue(policy.renewal_only(a,b,today=date(2026,11,17)))
         self.assertFalse(policy.removal_only(a,b))
+        self.assertTrue(policy.removal_only(a,json.dumps({**old,'unstable':[]}).encode()))
         self.assertEqual(policy.tier(policy.KNOWN,a,b,self.inventory)[0],1)
-    def test_renewal_cannot_add_or_change_metadata(self):
+    def test_allowance_edit_cannot_add_or_change_metadata(self):
         old={'schema':3,'fails':[],'unstable':[{'node':self.node,'expires_on':'2026-11-01','owner':'test-owner'}]}
         for new in ({**old,'fails':['new']},{**old,'unstable':[{**old['unstable'][0],'owner':'changed','expires_on':'2026-12-01'}]},
                     {**old,'unstable':[{**old['unstable'][0],'expires_on':'2026-10-01'}]}):
-            self.assertFalse(policy.renewal_only(json.dumps(old).encode(),json.dumps(new).encode(),today=date(2026,11,17)))
-    def test_real_verdict_accepts_reviewed_renewal_without_lifting_ci(self):
+            self.assertFalse(policy.removal_only(json.dumps(old).encode(),json.dumps(new).encode()))
+    def test_expiry_edit_is_refused_while_the_reader_honors_a_valid_existing_entry(self):
         old={'schema':3,'tree':'a'*40,'root_evidence_sha256':'b'*64,'root_runs':[],
              'classifications_sha256':'c'*64,'cleanup_cap':0,'fails':[],
              'unstable':[{'node':self.node,'class':'unstable','issue':1,'owner':'test-owner','reason':'Reviewed flake','expires_on':'2026-11-01'}]}
         renewed=copy.deepcopy(old);renewed['unstable'][0]['expires_on']='2026-12-01'
-        self.assertTrue(policy.renewal_only(json.dumps(old).encode(),json.dumps(renewed).encode(),today=date(2026,11,17)))
-        self.assertTrue(maker.evaluate(renewed,old,[{self.node:'failed'}],today=date(2026,11,17)))
+        self.assertFalse(policy.removal_only(json.dumps(old).encode(),json.dumps(renewed).encode()))
+        self.assertTrue(maker.evaluate(renewed,renewed,[{self.node:'failed'}],today=date(2026,11,17)))
         with self.assertRaisesRegex(ValueError,'Expired'):
             maker.evaluate(old,old,[{self.node:'failed'}],today=date(2026,11,17))
     def test_same_pr_node_ledger_addition_only_passes_actual_disappearance(self):

@@ -114,6 +114,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
         raise ValueError('Model capture requires feasibility-only compilation')
     if _on_objectives is not None and feasibility_only:
         raise ValueError('Objective capture requires full compilation')
+    stop_message = None
     try:
         if snapshot.get('planning_group_id') and snapshot.get('lookahead') == 'coupled' and not feasibility_only:
             from .group_generation import generate as group_generate, witness_progress
@@ -155,19 +156,28 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
                 'additions': [], 'removals': [], 'optimality_proven': False,
                 'solver_status': 'UNKNOWN', 'weighted_status': 'UNKNOWN'}
         if isinstance(exc, StopGraceExpired):
-            result = {**(control.validated_result or result), 'score_completed': False,
-                      'message': ('Stopped; final score not completed.' if control.validated_result else
-                                  'Stopped; canonical validation not completed. The incumbent remains available to resume.')}
+            result = {**(control.validated_result or result), 'score_completed': False}
+            stop_message = ('Stopped; final score not completed.' if control.validated_result else
+                            'Stopped; canonical validation not completed. The incumbent remains available to resume.')
             if control.validated_result is not None:
                 control.progress({**control.context, 'stage': 'ready', 'best_score': None,
                                   'shared_validation_passed': result['validation']['valid'],
                                   'elapsed_seconds': time.monotonic() - control.started,
                                   'search_elapsed_seconds': control.search_spent,
                                   'phase_timings': control.timings()})
+    result.setdefault('score_completed', False)
+    from .generation_outcome import SCORE_OPTIMISATION_UNFINISHED, generation_outcome, score_value, solver_status
+    if control.stopped and result['status'] == 'candidate_feasible' and not result['score_completed']:
+        if not result.get('optimality_proven'):
+            stop_message = SCORE_OPTIMISATION_UNFINISHED
+        if (saved := (result.get('summary') or {}).get('score_saved')) is not None:
+            saved['score_completed'] = False
+    if stop_message and stop_message not in (result.get('message') or ''):
+        result['message'] = ' '.join(filter(None, (result.get('message'), stop_message)))
     control.phase(None)
-    from .generation_outcome import generation_outcome, score_value, solver_status
     result['solver_status'] = solver_status(result)
     result['score'] = score_value(result)
+    outcome = generation_outcome(result)
     final_stop_reason = control.stop_reason
     if control.stopped and result.get('status') != 'cancelled':
         final_stop_reason = 'optimal' if result.get('optimality_proven') else 'operator_stop'
@@ -181,7 +191,9 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
     else:
         search_stop_reason = {'target_gap': 'gap', 'target_score': 'score', 'stop_by': 'clock',
                               'slice_limit': 'time_limit'}.get(final_stop_reason, final_stop_reason)
-        if search_stop_reason not in {'optimal', 'time_limit', 'plateau', 'gap', 'score', 'clock', 'operator_stop'}:
+        if search_stop_reason == 'optimal' and outcome['status'] != 'OPTIMAL':
+            search_stop_reason = 'model_proven'
+        if search_stop_reason not in {'optimal', 'model_proven', 'time_limit', 'plateau', 'gap', 'score', 'clock', 'operator_stop'}:
             search_stop_reason = 'no_search' if not control.search_spent and not control.improvements_found else 'time_limit'
         search_stop_detail = result.get('message', '')
     search_seconds = result.get('search_elapsed_seconds', control.search_spent)
@@ -189,7 +201,7 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
         search_seconds = 0
     return {**result, 'on_conflict': options.on_conflict, 'stop_reason': final_stop_reason, 'search_stop': {
                 'reason': search_stop_reason, 'search_seconds': search_seconds, 'detail': search_stop_detail},
-            'generation_outcome': generation_outcome(result), **scope_receipt(snapshot), 'phase_timings': control.phase_timings,
+            'generation_outcome': outcome, **scope_receipt(snapshot), 'phase_timings': control.phase_timings,
             'score_completion_seconds': control.completion_spent,
             'live_score_metrics': control.score_metrics,
             'improvements_found': control.improvements_found,
@@ -548,7 +560,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         publish_issues(protected_conflicts, 'protected')
     tolerated.update(citation_finding_key(f) for f in [*outside, *protected_conflicts])
     kept_sessions = {f['shift_id'] for f in protected_conflicts}
-    if not feasibility_only:
+    # Greedy repair uses the original generation boundaries and can move its own suggestions.
+    greedy_repair = snapshot.get('_greedy_required_cover', False)
+    generating = not feasibility_only or greedy_repair
+    greedy_placements = snapshot.get('_greedy_placements', frozenset())
+    if generating:
         # Fixed usual pools cannot substitute absent members; retain only existing gaps as visible diagnostics.
         kept_sessions.update(s['id'] for s in shifts if s['id'] in selected
             and series_definition(s).get('usual_assignees_fixed') and s.get('usual_assignee_unavailability'))
@@ -630,11 +646,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 restriction_policies.append(policy)
         candidate_data = {**data, 'policies': restriction_policies}
         fixed_people = {pid for pid, participant in original.items() if sid not in editable or (
-            assignment_fixed(shift, participant) if feasibility_only else keep_assignment(data, shift, participant))}
+            keep_assignment(data, shift, participant) if generating else assignment_fixed(shift, participant))}
         reports = {}
         for pid in focused_candidate_people(data, shift):
             control.check()
-            if not feasibility_only and (not population_allows(data, shift, pid)
+            if generating and (not population_allows(data, shift, pid)
                     or pid not in fixed_people and (sid not in editable
                         or pid not in original and not series_candidate_allowed(data, shift, pid))):
                 continue
@@ -675,7 +691,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     participant.update({k: original[pid][k] for k in ('start', 'end', 'segments')})
                 x = model.new_bool_var(f'{sid}:{pid}')
                 decisions.add((sid, pid))
-                if pid in original:
+                if greedy_repair:
+                    model.add_hint(x, int((sid, pid) in greedy_placements))
+                elif pid in original:
                     model.add_hint(x, 1)
             else:
                 participant, x = {**original[pid]}, model.new_constant(1)
@@ -1168,6 +1186,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     append_coverage_score_row(sum(choices[sid, pid] for pid in present_at(shift, a, b, True)),
                         interval_requirements, (b - a) // timedelta(microseconds=1))
             continue
+        repair_targets = {}
         supervision = definition.get('supervision')
         needs_pairing = supervision and (bool(attachments_on(shift)) or supervision.get('require_pairing') or any(
             (p['definition']['rule']['kind'] in {'supervision_limit', 'spread_evenly'} or
@@ -1305,7 +1324,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         limit(sum(counted.values()), rule['maximum'] + extra, policy, len(counted), minutes, subject=sid,
                               people=counted, sessions=[s['id'] for s in group], start=a, end=b)
             interval_requirements = []
-            for r in definition['requirements']:
+            for i, r in enumerate(definition['requirements']):
                 if not (start + timedelta(minutes=r['from_minute']) <= a and b <= (
                         start + timedelta(minutes=r['to_minute']) if r.get('to_minute') is not None else end)):
                     continue
@@ -1321,9 +1340,18 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 if r['maximum'] is not None:
                     model.add(total <= r['maximum']).with_name('duty:' + sid)
                 if r['target'] is not None and r['target'] > r['minimum']:
-                    deficit = model.new_int_var(0, r['target'], 'desired_cover')
-                    model.add(cover + deficit >= r['target'])
-                    desired_coverage.append(minutes * deficit)
+                    if greedy_repair:
+                        kept_target = min(r['target'], sum((sid, pid) in greedy_placements for pid in available))
+                        if kept_target > r['minimum']:
+                            if i not in repair_targets:
+                                # Count the worst loss once across splits of this configured target.
+                                repair_targets[i] = model.new_int_var(0, r['target'], 'dropped_desired_cover')
+                                desired_coverage.append(repair_targets[i])
+                            model.add(cover + repair_targets[i] >= kept_target)
+                    else:
+                        deficit = model.new_int_var(0, r['target'], 'desired_cover')
+                        model.add(cover + deficit >= r['target'])
+                        desired_coverage.append(minutes * deficit)
                 seats = defaultdict(list)
                 for clause in r['capabilities']:
                     eligible = [pid for pid in available if clause['capability_id'] in caps[pid]]
@@ -1596,9 +1624,19 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     if diagnostic_proposal:
         result['diagnostic_objective_order'] = objective_order
     if feasibility_only:
-        objectives = [[]]
-        # The structural proof captures the same zero objective as the feasibility search.
-        model.minimize(0)
+        if greedy_repair:
+            moves = [1 - choices[pair] for pair in sorted(greedy_placements & decisions)]
+            additions = [choices[pair] for pair in sorted(decisions - greedy_placements)]
+            # Each weight exceeds the full range of all lower priorities. Break ties by adding only needed work.
+            move_weight = len(additions) + 1
+            desired_weight = (len(moves) + 1) * move_weight
+            objectives = [[desired_weight * cp_model.LinearExpr.sum(desired_coverage),
+                           move_weight * cp_model.LinearExpr.sum(moves), *additions]]
+            model.minimize(cp_model.LinearExpr.sum(objectives[0]))
+        else:
+            objectives = [[]]
+            # The structural proof captures the same zero objective as the feasibility search.
+            model.minimize(0)
     # Compile score bounds with the full domains; only search mode fixes the dormant deficits.
     if not diagnostic_proposal:
         for index in diagnostic_domains:
@@ -1987,6 +2025,9 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     def complete_score(partial):
         """Evaluate derived score variables at fixed coverage decisions, keeping a valid full-model hint."""
         control.check()
+        if control.stopped and snapshot.get('_group_witness_population') is not None:
+            # Leave the grace for group validation and scoring.
+            return None, cp_model.UNKNOWN
         completed = model.clone()
         completed.clear_objective()
         completed.clear_hints()
@@ -2035,16 +2076,12 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             raise ValueError('Prepared solution hint does not match its model')
         if available_search() <= 0:
             control.stage('scoring')
-        if control.stopped:
-            status = cp_model.UNKNOWN
-        else:
-            solver, status = complete_score(hint)
+        solver, status = complete_score(hint)
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             values, pairs, overtime_values, lead_values = keep_incumbent()
         elif status == cp_model.UNKNOWN and control.stopped:
             values, pairs, overtime_values, lead_values = keep_incumbent(hint)
             compiled_score_complete = False
-            result['solver_status'] = 'UNKNOWN'
         elif status == cp_model.INFEASIBLE:
             if hint_repaired:
                 # Rules or eligibility may have changed since the checkpoint.
@@ -2068,7 +2105,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     # Every rule is in the model in both passes; the shortlist only narrows who the first pass may choose.
     control.phase('preparation')
     width = options.shortlist_width
-    chances, shortlisted = defaultdict(int), set()
+    chances, shortlisted = defaultdict(int), set(snapshot.get('_greedy_placements', ()))
     for shift in sorted(shifts, key=lambda s: (aware(s['start']), s['id'])):
         control.check()
         sid = shift['id']
@@ -2210,6 +2247,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             # 5-10x sooner. The wall-clock shortlist pays one cold start; deterministic work budgets
             # and the full-candidate pass retain the core/portfolio fallback.
             deficit = names[tier] in {'coverage', 'desired_coverage', 'rules'}
+            diagnostic_desired = diagnostic_proposal and names[tier] == 'desired_coverage'
             limit = (remaining * (.5 if shortlist else 1)
                      if names[tier] in {'coverage', 'desired_coverage'} or values is None else share)
             if names[tier] == 'desired_coverage' and fill_budget is not None:
@@ -2237,13 +2275,13 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                     trial_solver.parameters.max_time_in_seconds = 60 + 20 * budget
                 else:
                     trial_solver.parameters.max_time_in_seconds = budget
-                # Presolve pays off on a fresh or narrowed model; widening a schedule in hand starts from a
-                # complete hint.
-                trial_solver.parameters.cp_model_presolve = shortlist or values is None
+                # A diagnostic required-cover hint can leave all desired seats empty. Presolve the
+                # desired search under the required-cover bound even when the hint is complete.
+                trial_solver.parameters.cp_model_presolve = shortlist or values is None or diagnostic_desired
                 control.context.update(tier=tier, candidates='shortlist' if shortlist else 'all')
                 control.stage("finding" if values is None else "improving", tier=tier)
-                # Keep improving while it pays: stop once the last few seconds brought nothing (or only a trickle).
-                control.stall_seconds = (None if feasibility_only or deterministic or names[tier] == 'coverage'
+                # Give diagnostic desired cover its allocated slice so the inherited hint cannot trigger a plateau.
+                control.stall_seconds = (None if feasibility_only or deterministic or names[tier] == 'coverage' or diagnostic_desired
                                          else options.stop_without_improvement_seconds or None)
                 # Widen the provisional shortlist on its ordinary plateau. Spend the fairness extension
                 # comparing every eligible candidate, not polishing an artificially restricted audience.
@@ -2278,10 +2316,6 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 if is_fill:
                     fill_spent += max(0, clock() - solve_started)
                 if search_model is not model and status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                    if control.stopped:
-                        values, pairs, overtime_values, lead_values = keep_incumbent(solver.response_proto.solution)
-                        compiled_score_complete = False
-                        break
                     evaluator, completion_status = complete_score(solver.response_proto.solution)
                     if completion_status == cp_model.INFEASIBLE:
                         return {**result, 'status': 'translation_error', 'optimality_proven': False,
@@ -2341,7 +2375,10 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 if now != row['value']:
                     row.update(value=now, proven_optimal=False)
             outcome[tier] = {'tier': tier, 'name': names[tier], 'value': best,
-                             'proven_optimal': status == cp_model.OPTIMAL and not shortlist or best <= floor(),
+                             # A stopped search claims no proof for a later tier it was improving; coverage at its floor
+                             # stays proven, since later tiers and the coverage warning depend on it.
+                             'proven_optimal': status == cp_model.OPTIMAL and not shortlist or best <= floor() and (
+                                 not control.stopped or names[tier] == 'coverage'),
                              'stopped_without_improvement': control.stalled, 'search_status': solver.status_name(status)}
             if control.fairness_plateau:
                 outcome[tier]['search'] = control.last_search
@@ -2570,16 +2607,20 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         return {**result, 'status': 'translation_error', 'additions': [], 'removals': [],
                 'optimality_proven': False, 'message': 'Solver and validation disagree; no changes can be applied.'}
     control.validated_result = {**result,
+        **({'warnings': result['warnings'].copy()} if 'warnings' in result else {}),
         'status': 'candidate_with_gaps' if diagnostic_proposal or not validation_ok else 'candidate_feasible',
         'first_solution_seconds': control.first_solution_seconds}
     if not feasibility_only:
         from .solver_diagnostics import explain_unmet_requirements
         result['allocation_diagnostics'] = explain_unmet_requirements(data, validation, tiers)
+        control.validated_result['allocation_diagnostics'] = result['allocation_diagnostics']
         if result['allocation_diagnostics']:
             result.setdefault('warnings', []).extend(dict.fromkeys(row['message'] for row in result['allocation_diagnostics']))
+            control.validated_result['warnings'] = result['warnings'].copy()
     if not feasibility_only:
         from .score import schedule_score
         result['objective_components'] = schedule_score(data, validation, options.model_dump(mode='json'), baseline=score_baseline)['components']
+        control.validated_result['objective_components'] = result['objective_components']
         def incumbent_value(expression):
             if isinstance(expression, int):
                 return expression
@@ -2593,6 +2634,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
     control.check()
     from .wish_reasons import declined_wishes
     result['declined_wishes'] = declined_wishes(data, validation, evidence, preferences_applied=not feasibility_only)
+    control.validated_result['declined_wishes'] = result['declined_wishes']
     control.check()
     if not any(f['severity'] == 'error' and f['code'] not in permitted_deficits and not kept_finding(f)
                and citation_finding_key(f) not in locked_supervision_keys
@@ -2607,8 +2649,8 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         result['summary']['score_before'] = before_score
         saved = schedule_score(after_data, after_validation, scoring)
         control.check()
-        result['score_completed'] = True
-        if control.has_progress:
+        result['score_completed'] = compiled_score_complete
+        if compiled_score_complete and control.has_progress:
             from .score import progress_score
             live_score = progress_score(saved)
             if live_score is not None:
@@ -2627,8 +2669,9 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
         result['summary']['fixed_breaches'] = fixed_breaches
         result['summary']['fixed_breach_count'] = len(fixed_breaches)
         result['summary']['message'] = result['message']
+    ready_score = {} if compiled_score_complete else {'best_score': None}
     if diagnostic_proposal or (locked_staffing and not validation_ok):
-        control.stage('ready', shared_validation_passed=validation_ok)
+        control.stage('ready', shared_validation_passed=validation_ok, **ready_score)
         return {**result, 'status': 'candidate_with_gaps', 'optimality_proven': False,
                 'message': (DIAGNOSTIC_PROPOSAL_MESSAGE
                             if diagnostic_proposal else 'Locked sessions still have open places. The editable sessions have been scheduled; no locked assignments were changed.'),
@@ -2636,7 +2679,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
                 'elapsed_seconds': time.monotonic() - control.started}
     control.stage('ready', shared_validation_passed=validation_ok,
                   selected_scope_validation_passed=not any(f['severity'] == 'error' and in_scope(f)
-                                                          for f in validation_observations))
+                                                          for f in validation_observations), **ready_score)
     return {**result, 'status': 'candidate_feasible' if validation_ok else 'candidate_with_gaps',
             'first_solution_seconds': control.first_solution_seconds,
             'elapsed_seconds': time.monotonic() - control.started}

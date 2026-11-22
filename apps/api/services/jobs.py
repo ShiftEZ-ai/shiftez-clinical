@@ -596,19 +596,16 @@ def continue_generation(db, actor, command, settings):
             and (previous.result or {}).get('algorithm_version', COMPILER_VERSION) == COMPILER_VERSION,
             'STALE_SCHEDULER', 'The scheduler changed; start a fresh run', 409)
     baseline_defaults, _ = baseline_generation_context(db, workspace)
-    saved_defaults = s.GenerationOptions.model_validate(snapshot.get('generation_defaults') or {})
     options = s.GenerationOptions.model_validate(snapshot.get('generation_options') or {})
     from packages.domain.solver_resume import resume_key
     current_snapshot = {**snapshot, 'generation_defaults': baseline_defaults.model_dump(mode='json')}
     require(resume_key(snapshot, options, False, False) == resume_key(current_snapshot, options, False, False),
             'STALE_INPUTS', 'The draft scheduling inputs changed; start a fresh run', 409)
-    live_defaults = s.GenerationOptions.model_validate(generation_defaults_record(
-        db.get(m.Department, actor.department_id).generation_defaults) or {})
     minutes = value.minutes if value.minutes is not None else options.search_minutes
-    require(minutes <= live_defaults.max_search_minutes, 'SEARCH_MINUTES_LIMIT',
-            f'Search time cannot exceed the department maximum of {live_defaults.max_search_minutes} minutes', 422)
+    require(minutes <= baseline_defaults.max_search_minutes, 'SEARCH_MINUTES_LIMIT',
+            f'Search time cannot exceed the captured maximum of {baseline_defaults.max_search_minutes} minutes', 422)
     snapshot['generation_options'] = {**options.model_dump(mode='json'),
-        'max_search_minutes': live_defaults.max_search_minutes}
+        'max_search_minutes': baseline_defaults.max_search_minutes}
     if value.minutes is not None:
         snapshot['generation_options']['search_minutes'] = value.minutes
     if (previous.result or {}).get('status') == 'requirements_conflict' and has_generation_checkpoint(previous):
@@ -617,8 +614,7 @@ def continue_generation(db, actor, command, settings):
         snapshot['diagnostic_proposal'] = True
         snapshot['generation_options'] = {**s.GenerationOptions.model_validate(
             snapshot.get('generation_options') or {}).model_dump(mode='json'), 'on_conflict': 'continue_flagged'}
-    snapshot['generation_defaults'] = {**saved_defaults.model_dump(mode='json'),
-                                       'max_search_minutes': live_defaults.max_search_minutes}
+    snapshot['generation_defaults'] = baseline_defaults.model_dump(mode='json')
     if value.minutes is not None:
         snapshot['generation_options_overridden'] = True
     previous_continuation = (snapshot.get('continuation') or {}).get('total_search_seconds', 0)
@@ -683,12 +679,14 @@ def cancel_job(db, actor, command):
 
 
 def apply_generation(db, actor, command):
+    from .generation_reconciliation import GenerationInputsChanged, load_apply_job, proposal_guard_matches
+
     value = s.GenerationApply.model_validate(command.payload)
     plan = db.info.get('_generation_plan')
     require(plan is not None, 'RECONCILIATION_REQUIRED', 'Prepare this proposal before entering the writer transaction', 409)
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     workspace = draft(db, actor, value.workspace_id, workspace.revision)
-    job = scoped(db, m.Job, value.job_id, actor)
+    job, version = load_apply_job(db, actor, value.job_id)
     require(job.workspace_id == workspace.id and job.kind == "generation" and job.status == "succeeded",
             "JOB_STATE", "Select a completed generation job for this workspace", 409)
     require(plan['actor_id'] == actor.identity_id and plan['department_id'] == actor.department_id
@@ -697,7 +695,6 @@ def apply_generation(db, actor, command):
     require_application_toolchain(job)
     require_latest_run(db, job)
     before = workspace_content(db, workspace)
-    from .generation_reconciliation import GenerationInputsChanged
     from apps.api.snapshots import preparation_stamp
     if plan.get('writer_current_inputs'):
         # Repeated changes retain the existing current-input reply instead of introducing a new error.
@@ -709,7 +706,7 @@ def apply_generation(db, actor, command):
     current = current_data['fingerprint']
     unchanged = (workspace.content_revision == receipt['content_revision'] and current == receipt['current_fingerprint']
                  and currency_match(plan['currency_hint'], currency_hint(db, workspace))
-                 and snapshot_hash({k: v for k, v in (job.result or {}).items() if k != 'reconciliation'}) == plan['result_hash'])
+                 and proposal_guard_matches(job.result or {}, version, plan['result_guard']))
     if not unchanged or not (receipt['addition_indexes'] or receipt['removal_indexes']):
         if not unchanged:
             from apps.api.input_changes import changed_facts

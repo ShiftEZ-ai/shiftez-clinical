@@ -49,14 +49,14 @@ from .version import __version__, build
 from .rate_limit import enforce, session_identity
 from .errors import Problem, problem_payload, require, INTEGRITY_CONFLICT_MESSAGE
 from .logging_setup import configure_logging
-from .serialization import record, job_record, json_value
+from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
 from .settings import Settings
 from .read_io import IndependentFileResponse, IndependentStaticFiles, background_io
 from packages.web_assets import WEB, asset_url, available_bundle_version
 from .schema import supported_revision
 from .snapshots import (domain_snapshot,
-                        publication_snapshot, workspace_shifts, fingerprint, snapshot_hash)
+                        publication_snapshot, fingerprint, snapshot_hash)
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
@@ -326,6 +326,12 @@ def create_app(settings: Settings | None = None, engine=None):
         static = request.url.path.startswith("/assets/") and response.status_code < 400
         route = request.scope.get("route")
         cache_control = response.headers.get("Cache-Control", "no-cache" if static else "no-store")
+        # Server time (application and database) only on replies to a signed-in session, so a slow call can be split from
+        # its network path. Never on identity routes or any unauthenticated reply: separate timings there would sharpen
+        # account probing (OWASP information exposure).
+        if (getattr(request.state, "session_authenticated", False) and request.url.path.startswith("/api/")
+                and not request.url.path.startswith(("/api/account-links/", "/api/account/password"))):
+            response.headers["Server-Timing"] = f"app;dur={(time.monotonic() - started) * 1000:.1f}, db;dur={db_metrics['ms']:.1f}"
         response.headers.update({"X-Correlation-ID": correlation, "Cache-Control": cache_control, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
                                  "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
@@ -1388,11 +1394,13 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor)['people']
+            current = current_people(db, actor, today)['people']
             aliases = imported_aliases(db, actor)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
+                if not employee_number_redacted:
+                    person['configured_active'] = person['active']
                 person.update(current.get(person['id'], {}))
                 person['employee_number_redacted'] = employee_number_redacted
             from .services.people import visible_people
@@ -1637,13 +1645,14 @@ def create_app(settings: Settings | None = None, engine=None):
         """Active people, with the same field visibility as the people catalogue."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
+            from .services.independence import today
+            from .services.people import active_people_on, current_people, visible_people
+            day = today(db, actor.department_id)
             rows = list(db.execute(select(m.Person.id, *(getattr(m.Person, f) for f in DIRECTORY_FIELDS)).where(
-                m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True)).order_by(
+                m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            from .services.people import current_people
-            current = current_people(db, actor)['people']
-            from .services.people import visible_people
+            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}
@@ -2538,15 +2547,15 @@ def create_app(settings: Settings | None = None, engine=None):
                 response.headers.update(cached)
                 return conditional_json(request, s.WorkspaceCompactDetail.model_validate(workspace_detail.compact(db, actor, workspace)), actor,
                                         tag=tag)
-            from .services.conditional_reads import conditional_response
+            from .services.conditional_reads import conditional_response, revision_etag
             from .services.workspace_reads import fast_etag
             workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
                 defer(m.Workspace.validation), defer(m.Workspace.review_snapshot)))
             fast_tag = fast_etag(db, actor, workspace, include_job_state=True)
-            cached = conditional_response(request, fast_tag)
+            tag = revision_etag("workspace-schedule", fast_tag) if view == "schedule" else fast_tag
+            cached = conditional_response(request, tag)
             if isinstance(cached, Response):
                 return cached
-            response.headers.update(cached)
             # The validator above reads only scalar metadata. Hydrate the large JSON
             # columns only for a 200 response that will actually project them.
             db.refresh(workspace, attribute_names=("validation", "review_snapshot"))
@@ -2602,23 +2611,23 @@ def create_app(settings: Settings | None = None, engine=None):
             # Staff wishes on the rota's days (markers in the planner); they change without the rota changing.
             from .services.wishes import planner_effects, snapshot_wishes
             from .services.published_changes import review_payload
-            data.update(review_payload(db, workspace, actor))
             canonical = db.info.get('read_snapshots', {}).get(workspace.id)
-            wishes = (canonical['wishes'] if canonical is not None and workspace.status == 'draft'
-                      else snapshot_wishes(db, [workspace.department_id], workspace))
-            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
-                              if workspace.status == 'draft' else wishes)
+            use_canonical = canonical is not None and workspace.status == 'draft'
+            wishes = (canonical['wishes'] if use_canonical else snapshot_wishes(db, [workspace.department_id], workspace))
             from .snapshots import project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
-            own_shifts = None
-            if canonical is not None and workspace.status == "draft":
+            if use_canonical:
                 focus = set(canonical.get("focus_ids") or ())
                 own_shifts = [row for row in canonical.get("shifts", ()) if row.get("id") in focus]
-            data["shifts"] = project_series_shifts(
-                                                   db, workspace,
-                                                   workspace_shifts(db, workspace.id) if own_shifts is None else own_shifts,
-                                                   external_out=external_context if data["wishes"] else None)
+            else:
+                own_shifts = workspace_detail.full_shifts(db, workspace.id)
+            projected = project_series_shifts(db, workspace, own_shifts, external_out=external_context if wishes else None)
+            # A canonical check may use a narrower set of sessions than the review diff.
+            data.update(review_payload(db, workspace, actor, projected_shifts=None if use_canonical else projected))
+            data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
+                              if workspace.status == 'draft' else wishes)
+            data["shifts"] = projected
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
             data['shifts'] = session_actions(db, actor, data['shifts'])
@@ -2636,7 +2645,12 @@ def create_app(settings: Settings | None = None, engine=None):
                     external = shift_records(db, db.scalars(query)) if publications else []
             planner_effects(data, org.timezone, external_shifts=external)
             disclose_leave(db, actor, data["workspace"].get("validation"))
-            return data
+        if view == "schedule":
+            from .serialization import schedule_projection
+            data = schedule_projection(data)
+        result = JSONResponse(projection_json_value(data))
+        result.headers.update(cached)
+        return result
 
     @app.get("/api/publications")
     def publications(request: Request):
@@ -2983,12 +2997,12 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             from .services.conditional_reads import conditional_response
-            tag = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
-            cached = conditional_response(request, tag)
+            validator = fairness.goals_etag(db, actor, workspace_id, who, starts_on, ends_on)
+            cached = conditional_response(request, validator[0])
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
-            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on)
+            return fairness.goals(db, actor, workspace_id, who, starts_on, ends_on, validator=validator)
 
     @app.get("/api/fairness/exposure", response_model=s.FairnessExposure)
     def fairness_exposure(request: Request, response: Response, rows: str | None = Query(None, max_length=20000), cols: str | None = Query(None, max_length=20000),
@@ -3395,8 +3409,8 @@ def create_app(settings: Settings | None = None, engine=None):
             require_role(actor, "coordinator", "operator", "approver")
             from packages.domain.worker_contract import JOB_STATES
             require(status is None or status in JOB_STATES, "SCHEMA_INVALID", "Unknown job status", 422)
-            if workspace_id:
-                scoped(db, m.Workspace, workspace_id, actor)
+            workspace = scoped(db, m.Workspace, workspace_id, actor, options=(
+                defer(m.Workspace.validation), defer(m.Workspace.review_snapshot))) if workspace_id else None
             from .services.conditional_reads import conditional_response, revision_etag
             department = db.get(m.Department, actor.department_id)
             organisation = db.get(m.Organisation, department.organisation_id)
@@ -3416,6 +3430,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 *([m.Job.status == status] if status else [])]
             tag = revision_etag("jobs-list", actor.department_id, actor.identity_id, actor.person_id,
                                 sorted(actor.roles), workspace_id, status, limit, offset,
+                                (workspace.revision, workspace.status) if workspace else None,
                                 (department.revision, organisation.revision, organisation.input_revision,
                                  organisation.availability_revision, settings.generation_engine, build()["release"],
                                  job_stamp(db, department_id=actor.department_id)))
@@ -3442,7 +3457,10 @@ def create_app(settings: Settings | None = None, engine=None):
                                'generation_scope', 'generation_scope_source', 'run_context', 'generation_manifest',
                                'planning_group_version_id', 'planning_group_id', 'lookahead', 'planning_context',
                                'proof_scope', 'completion'}
-            return {"jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
+            from .workspace_baselines import workspace_generation_defaults
+            return {**({"generation_defaults": workspace_generation_defaults(db, workspace, department)}
+                       if workspace else {}),
+                    "jobs": [{**job_record(row, include_result=False, include_progress_solution=False,
                                              input_snapshot={key: value for key, value in projection['input_snapshot'].items()
                                                              if key in list_input_keys},
                                        result_metadata=projection['result'], input_fingerprint=effective),

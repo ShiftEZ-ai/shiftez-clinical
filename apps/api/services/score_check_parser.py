@@ -25,6 +25,7 @@ from pathlib import PurePath
 from xml.etree import ElementTree as ET
 
 from packages.contracts.schemas import SCORE_CHECK_LIMITS
+from packages.domain.validation import person_active_on
 from .staff_import import match_key
 
 
@@ -351,6 +352,15 @@ def _clock(value):
     return value if re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d|24:00', value) else None
 
 
+def person_match_days(assignments):
+    """Each match covers a person's whole file, so use their latest assigned day."""
+    days = {}
+    for item in assignments:
+        person, day = item['person'], date.fromisoformat(item['date'])
+        days[person] = max(day, days.get(person, day))
+    return days
+
+
 def parse_score_check_file(data, filename=None, *, file_ref=None, people=(), duty_types=(), clinics=(),
                            period_start=None, period_end=None, group=''):
     """Return the shared RotaExtraction shape, without persisting or applying suggestions."""
@@ -378,9 +388,15 @@ def parse_score_check_file(data, filename=None, *, file_ref=None, people=(), dut
             return
         if len(declared[kind]) >= 10000:
             raise ScoreCheckParseError('The spreadsheet has too many distinct people, duty codes or clinics')
-        candidates = {'people': people, 'duty_codes': duty_types, 'clinics': clinics}[kind]
+        item = {'file_ref': prepared.file_ref, 'cell_refs': [ref]}
+        if kind == 'people':
+            item['as_written'] = value
+            declared[kind][value] = item
+            result[kind].append(item)
+            return
+        candidates = duty_types if kind == 'duty_codes' else clinics
         match = match_score_check_label(value, candidates)
-        item = {'file_ref': prepared.file_ref, 'cell_refs': [ref], 'confidence': match['confidence'], 'reason': match['reason']}
+        item.update(confidence=match['confidence'], reason=match['reason'])
         if kind == 'duty_codes':
             item.update(code=value, meaning_as_written=value, suggested_type_id=match['suggested_id'], kind='other')
             candidate = next((c for c in duty_types if str(c.get('id')) == match['suggested_id']), {})
@@ -388,13 +404,10 @@ def parse_score_check_file(data, filename=None, *, file_ref=None, people=(), dut
                 item['kind'] = candidate.get('kind') if candidate.get('kind') in ('duty', 'leave', 'off', 'other') else 'duty'
         else:
             item['as_written'] = value
-            if kind == 'people':
-                item['suggested_person_id'] = match['suggested_id']
-            else:
-                candidate = next((c for c in clinics if str(c.get('id')) == match['suggested_id']), {})
-                location = candidate.get('kind') == 'location'
-                item['suggested_location_id'] = match['suggested_id'] if location else None
-                item['suggested_service_id'] = None if location else match['suggested_id']
+            candidate = next((c for c in clinics if str(c.get('id')) == match['suggested_id']), {})
+            location = candidate.get('kind') == 'location'
+            item['suggested_location_id'] = match['suggested_id'] if location else None
+            item['suggested_service_id'] = None if location else match['suggested_id']
         declared[kind][value] = item
         result[kind].append(item)
 
@@ -535,6 +548,16 @@ def parse_score_check_file(data, filename=None, *, file_ref=None, people=(), dut
                 result['warnings'].append({'file_ref': prepared.file_ref, 'message': f'{sheet}: group exceeds 160 characters; choose a shorter group'})
             else:
                 file_groups.add(inferred_group)
+    match_days = person_match_days(result['assignments'])
+    candidates_by_day = {}
+    for item in result['people']:
+        label = item['as_written']
+        day = match_days[label]
+        if day not in candidates_by_day:
+            candidates_by_day[day] = [{**p, 'active': True} for p in people
+                                      if person_active_on(p.get('active', True), p.get('inactive_from'), day)]
+        match = match_score_check_label(label, candidates_by_day[day])
+        item.update(suggested_person_id=match['suggested_id'], confidence=match['confidence'], reason=match['reason'])
     if len(file_groups) > 1:
         result['warnings'].append({'file_ref': prepared.file_ref, 'message': 'Sheets contain different groups; choose a group explicitly'})
     result['files'].append({'file_ref': prepared.file_ref,

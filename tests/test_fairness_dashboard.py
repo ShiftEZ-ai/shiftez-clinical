@@ -74,7 +74,8 @@ def test_draft_schedule_currency_matches_the_check_gate(h, changed_input):
         row = db.get(m.Workspace, workspace['id'])
         stored = row.validation
         department = db.get(m.Department, row.department_id)
-        assert complete_check(stored, domain_snapshot(db, row), department.generation_defaults) is True
+        source = domain_snapshot(db, row)
+        assert complete_check(stored, source, source['department']['generation_defaults']) is True
         if changed_input == 'session':
             shift = db.get(m.Shift, created['shift_id'])
             shift.end += timedelta(hours=1)
@@ -91,12 +92,17 @@ def test_draft_schedule_currency_matches_the_check_gate(h, changed_input):
             grant.revoked = True
             grant.revision += 1
             db.get(m.Organisation, department.organisation_id).input_revision += 1
-    assert h.get('coordinator', url)['schedule']['fresh'] is False
+    # A later scoring change leaves the draft's captured settings and check current.
+    expected_fresh = changed_input == 'scoring'
+    assert h.get('coordinator', url)['schedule']['fresh'] is expected_fresh
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Workspace, workspace['id'])
-        department = db.get(m.Department, row.department_id)
-        assert complete_check(row.validation, domain_snapshot(db, row), department.generation_defaults) is False
+        source = domain_snapshot(db, row)
+        assert complete_check(row.validation, source, source['department']['generation_defaults']) is expected_fresh
         assert row.validation == stored
+    if changed_input == 'scoring':
+        h.refresh_draft_baseline(workspace)
+        assert h.get('coordinator', url)['schedule'] is None
 
 
 def test_draft_schedule_currency_discards_legacy_cached_verdict(h, monkeypatch):
@@ -105,12 +111,12 @@ def test_draft_schedule_currency_discards_legacy_cached_verdict(h, monkeypatch):
     url = '/api/fairness/goals?workspace_id=' + workspace['id']
     current_schedule = fairness_service.schedule
 
-    def legacy_etag(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-        return fairness_service._dashboard_etag(db, actor, 'fairness-goals', workspace_id, who, starts_on, ends_on,
-                                                workspace_id=workspace_id)
+    def legacy_tag(actor, workspace_id, who, starts_on, ends_on, inputs):
+        # The goals read stores its projection under this tag; an older release stored it under the legacy one.
+        return fairness_service._dashboard_tag('fairness-goals', actor, (workspace_id, who, starts_on, ends_on), inputs)
 
     with monkeypatch.context() as legacy:
-        legacy.setattr(fairness_service, 'goals_etag', legacy_etag)
+        legacy.setattr(fairness_service, '_goals_tag', legacy_tag)
         legacy.setattr(fairness_service, 'schedule',
                        lambda db, row: {**current_schedule(db, row), 'fresh': False})
         cached = client.get(url)

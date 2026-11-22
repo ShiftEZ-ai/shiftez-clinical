@@ -13,6 +13,8 @@ import subprocess
 
 import pytest
 
+from packages.contracts.rule_catalogue import FIX_LIST_WORDS
+from packages.domain.rota_summary import generation_fix_lists
 from .test_client_autoschedule_live import GLOBALS, FAKE_DOM
 
 FACTS = {'scoreDelta': None, 'before': {'must': 2, 'could': 0, 'checked_at': None, 'places_filled': 2, 'places_total': 2, 'places_open': 0},
@@ -29,6 +31,61 @@ def run(client_modules, body, data):
     out = subprocess.run(['node', '--input-type=module', '-e', script, json.dumps(data)],
                          capture_output=True, text=True, check=True, timeout=15)
     return json.loads(out.stdout)
+
+
+def test_solver_receipt_distinguishes_unfinished_score_from_no_candidate(client_modules):
+    candidate = {'kind': 'generation', 'result': {'status': 'candidate_feasible',
+        'solver_status': 'FEASIBLE', 'score': None, 'score_completed': False, 'change_count': 1}}
+    empty = {'kind': 'generation', 'result': {'status': 'needs_more_time',
+        'solver_status': 'UNKNOWN', 'score': None, 'score_completed': False, 'change_count': 0}}
+    text = run(client_modules, "console.log(JSON.stringify(a.map(j=>m.solverReceipt(j).textContent)));",
+               [candidate, empty])
+    assert text[0].endswith(' · score unfinished')
+    assert text[1].endswith(' · no score: nothing placed')
+
+
+def test_solver_receipt_of_a_stopped_run_ignores_its_capped_summary_score(client_modules):
+    stopped = {'kind': 'generation', 'result': {'status': 'candidate_feasible', 'solver_status': 'FEASIBLE',
+        'score': None, 'score_completed': False, 'change_count': 1,
+        'summary': {'score_saved': {'score': 80, 'score_completed': False}}}}
+    finished = {'kind': 'generation', 'result': {'status': 'candidate_feasible', 'solver_status': 'FEASIBLE',
+        'score': None, 'change_count': 1, 'summary': {'score_saved': {'score': 80}}}}
+    text = run(client_modules, "console.log(JSON.stringify(a.map(j=>m.solverReceipt(j).textContent)));",
+               [stopped, finished])
+    assert text[0].endswith(' · score unfinished')
+    assert text[1].endswith(' · score: 80')
+
+
+def test_stopped_run_treats_copied_fix_lists_as_unknown(client_modules):
+    before = {'summary': FACTS['after'], 'causes': []}
+    result = {
+        'status': 'candidate_feasible', 'input_fingerprint': 'f', 'stop_reason': 'operator_stop',
+        'score_completed': False, 'score': None, 'search_stop': {'reason': 'operator_stop'},
+        'validation': {'valid': True, 'error_count': 0},
+        'additions': [{'shift_id': 's1', 'participant': {'person_id': 'p1'}}], 'removals': [],
+    }
+    fallback = generation_fix_lists({'fix_list_before': before}, result)
+    assert fallback['fix_list_after']['summary'] == before['summary']
+    known = {**result, 'fix_list_before': before, 'fix_list_after': before}
+    stopped, complete = run(client_modules, """
+        const read = result => {
+            const facts = m.runFacts({kind: 'generation', result});
+            const head = m.resultHead(facts, {changes: 1, scoreDelta: null});
+            const changes = m.changesByCause(facts, 1);
+            return {before: facts.before, after: facts.after, afterCauses: facts.afterCauses,
+                changesByCause: facts.changesByCause, missing: facts.fixListMissing,
+                head: head?.nodes[0].textContent ?? null, changes: changes ? changes.textContent : ''};
+        };
+        console.log(JSON.stringify(a.map(read)));
+    """, [{**result, **fallback}, known])
+    sentence = FIX_LIST_WORDS['generation_fallback']
+    assert stopped['head'] is None
+    assert stopped['before'] is None and stopped['after'] is None
+    assert stopped['afterCauses'] == [] and stopped['changesByCause'] == []
+    assert stopped['missing'] == sentence and stopped['changes'] == ''
+    assert complete['before'] == complete['after'] == before['summary']
+    assert complete['missing'] == ''
+    assert complete['head'] == 'Nothing must be fixed'
 
 
 # The outcome box (nodes[0]) says readiness; the proof words are the head's own line after the numbers ( "keep

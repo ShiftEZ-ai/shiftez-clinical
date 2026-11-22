@@ -3,6 +3,7 @@
 
 SOLVER_STATUSES = frozenset({'OPTIMAL', 'FEASIBLE', 'INFEASIBLE', 'UNKNOWN'})
 DIAGNOSTIC_PROPOSAL_MESSAGE = 'Incomplete diagnostic proposal. Review it; it is not a feasible operational rota.'
+SCORE_OPTIMISATION_UNFINISHED = 'complete; score optimisation unfinished'
 
 
 def solver_status(result):
@@ -20,7 +21,9 @@ def solver_status(result):
 
 
 def score_value(result):
-    """Return the compact score for a generation receipt, or None when nothing was placed."""
+    """Return the compact score only when available and final."""
+    if result.get('score_completed') is False:
+        return None
     summary = result.get('summary') or {}
     saved = summary.get('score_saved') or summary.get('score')
     if not isinstance(saved, dict):
