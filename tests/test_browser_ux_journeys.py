@@ -7,7 +7,7 @@ from datetime import date
 from apps.api import models as m
 from apps.api.db import transaction
 from .test_browser import browser, live_server, sign_in, navigate, open_rota, open_scheduling, new_draft  # noqa: F401
-from .test_browser import whole_list
+from .test_browser import whole_list, save_dialog
 
 pytestmark = pytest.mark.browser
 
@@ -44,6 +44,8 @@ def test_an_empty_draft_offers_add_session_in_the_week_and_in_auto_schedule(brow
         panel = page.locator('#auto-panel')
         expect(panel.get_by_role('status').filter(has_text='This draft has no sessions yet.')).to_be_visible()
         expect(panel.get_by_role('button', name='Run auto-schedule')).to_be_disabled()
+        # Beside Run: the draft has no sessions, never "every session is locked".
+        expect(panel.locator('.auto-why')).to_have_text('This draft has no sessions, so there is nothing to fill.')
         panel.get_by_role('button', name='Add session', exact=True).click()
         expect(page.get_by_role('heading', name='Add session', exact=True)).to_be_visible()
     finally:
@@ -62,6 +64,9 @@ def test_new_draft_says_when_there_are_no_recurring_sessions_yet(browser, live_s
         expect(patterns).to_have_attribute('data-hint', 'None set up yet · Configuration')
         expect(dialog.locator('.missing-setup')).to_have_count(0)
         expect(dialog.get_by_text('Use all active recurring sessions')).to_be_hidden()
+        # Nothing to choose, nothing asked: the rota is created without a recurring session.
+        dialog.get_by_label('Rota name', exact=True).fill('No recurring sessions')
+        save_dialog(dialog)
     finally:
         context.close()
 
