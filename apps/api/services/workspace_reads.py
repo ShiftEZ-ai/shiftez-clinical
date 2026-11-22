@@ -1,5 +1,6 @@
 """Compact stored-check metadata; one owner for write-time and legacy streaming projection."""
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, inspect, literal, select, union_all
 from sqlalchemy.orm import object_session
@@ -111,7 +112,7 @@ def summary_etag(db, actor, workspace, view, group_version_id):
                m.Workspace.validation['fingerprint'].as_string(),
                m.Department.revision, m.Department.catalogue_revision,
                m.Organisation.revision, m.Organisation.input_revision,
-               m.Organisation.availability_revision)
+               m.Organisation.availability_revision, m.Organisation.timezone)
         .join(m.Department, m.Department.id == m.Workspace.department_id)
         .join(m.Organisation, m.Organisation.id == m.Department.organisation_id)
         .where(m.Workspace.id == workspace.id)
@@ -123,10 +124,12 @@ def summary_etag(db, actor, workspace, view, group_version_id):
     ).where(m.Workspace.department_id == workspace.department_id, m.Workspace.archived_at.is_(None))).one()
     from .operations import worker_state
     from .rota_summary import validation_job_stamp
+    now = m.now()
+    day = now.astimezone(ZoneInfo(row.timezone)).date()
     return revision_etag("workspace-summary", workspace.id, actor.identity_id, actor.person_id,
-                         sorted(actor.roles), view, group_version_id, tuple(row), tuple(periods),
+                         sorted(actor.roles), view, group_version_id, tuple(row), tuple(periods), day,
                          validation_job_stamp(db, workspace_id=workspace.id),
-                         worker_state(db, m.now())['worker_liveness'],
+                         worker_state(db, now)['worker_liveness'],
                          workspace.rule_adjustments or [], workspace.target_overrides or [],
                          workspace.accepted_issues or [], *draft_policy_hint(workspace).values())
 
