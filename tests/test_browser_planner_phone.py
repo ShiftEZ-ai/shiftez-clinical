@@ -106,12 +106,12 @@ def test_switching_views_revalidates_instead_of_resending_the_rota(browser, live
     try:
         navigate(page, "planner")
         expect(page.locator(".wk-grid")).to_be_visible()
-        detail = "/api/workspaces/" + w["id"]
+        detail = "/api/workspaces/" + w["id"] + "?view=schedule"
         seen = []
         page.on("response", lambda r: r.url.endswith(detail) and seen.append(r.status))
         for name in ("Month", "People", "Coverage", "List", "Week"):
             pick_view(page, name)
-        page.wait_for_timeout(300)
+            expect(page.locator('#schedule-view[data-reading]')).to_have_count(0)
         assert seen and set(seen) == {304}, seen  # revalidated, never sent again
         # An edit elsewhere sends the new rota once.
         seen.clear()

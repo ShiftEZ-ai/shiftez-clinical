@@ -1,6 +1,7 @@
 """Prepare a current-input plan outside the writer lock; compare-and-commit owns writes."""
 from copy import deepcopy
 from uuid import uuid5, NAMESPACE_URL
+from sqlalchemy import literal_column, select
 from packages.contracts import schemas as s
 from packages.domain.proposal_reconciliation import reconcile
 from packages.domain.generation_scope import selected_session_ids
@@ -23,18 +24,47 @@ def refresh_inputs(db, actor, command, plan):
     return {**plan, 'current_data': current, 'current_stamp': preparation_stamp(db, workspace)}
 
 
+def load_apply_job(db, actor, job_id):
+    if db.get_bind().dialect.name != 'postgresql':
+        return scoped(db, m.Job, job_id, actor), None
+    # Read the version and its payload in the same statement. Scoped reuses the row and checks visibility.
+    row = db.execute(select(m.Job, literal_column('jobs.xmin::text'), literal_column('jobs.ctid::text'))
+                     .where(m.Job.id == job_id).execution_options(populate_existing=True)).one_or_none()
+    job = scoped(db, m.Job, job_id, actor)
+    return job, (row[1], row[2]) if row is not None else None
+
+
+def proposal_body(result):
+    return {key: value for key, value in result.items() if key != 'reconciliation'}
+
+
+def proposal_guard(result, version):
+    body = proposal_body(result)
+    return version, body if version is not None else snapshot_hash(body)
+
+
+def proposal_guard_matches(result, version, guard):
+    prepared_version, expected = guard
+    if prepared_version is not None:
+        if version == prepared_version:
+            return True
+        # A different row can still contain the same proposal. Compare all original guarded content.
+        expected = snapshot_hash(expected)
+    return snapshot_hash(proposal_body(result)) == expected
+
+
 def prepare(db, actor, command):
     value = s.GenerationApply.model_validate(command.payload)
     workspace = draft(db, actor, value.workspace_id, command.expected_revision)
-    job = scoped(db, m.Job, value.job_id, actor)
+    job, version = load_apply_job(db, actor, value.job_id)
     require(job.workspace_id == workspace.id and job.kind == 'generation' and job.status == 'succeeded',
             'JOB_STATE', 'Select a completed proposal for this rota', 409)
     result = job.result or {}
     from .jobs import require_application_toolchain, require_latest_run
-    require_application_toolchain(job)
-    require_latest_run(db, job)
     require(result.get('status') in {'candidate_feasible', 'candidate_with_gaps', 'unknown_time_limit'},
             'NO_CANDIDATE', 'This job did not produce an applicable proposal')
+    require_application_toolchain(job)
+    require_latest_run(db, job)
     def indexes(kind, requested):
         rows = result.get(kind, [])
         selected = list(range(len(rows))) if requested is None else sorted(set(requested))
@@ -62,10 +92,14 @@ def prepare(db, actor, command):
     population = union_population(current, [{'population_recorded': True, 'population_people': contribution}])
     population_changed = current.get('applied_planning_population') != population
     current['applied_planning_population'] = population
-    normalized = deepcopy(result)
     assignment_ids = {i: str(uuid5(NAMESPACE_URL, job.id + ':' + str(i))) for i in ai}
-    for i, ident in assignment_ids.items():
-        normalized['additions'][i]['participant']['id'] = ident
+    normalized = result
+    if assignment_ids:
+        additions = list(result['additions'])
+        for index, ident in assignment_ids.items():
+            addition = additions[index]
+            additions[index] = {**addition, 'participant': {**addition['participant'], 'id': ident}}
+        normalized = {**result, 'additions': additions}
     from .planning import background_checks_available, complete_check
     defaults = frozen.get('generation_defaults') or frozen.get('department', {}).get('generation_defaults') or {}
     baseline = workspace.validation if (not workspace.base_publication_id
@@ -113,7 +147,7 @@ def prepare(db, actor, command):
             input_manifest={key: plan['data']['input_manifest'][key] for key in ('format', 'token', 'components', 'dirty_hint')})
         remember_fix_list(workspace.validation, plan['validation'], accepted_issues=workspace.accepted_issues or [],
                           summary_cache=summary_cache)
-    return {'receipt': receipt, 'assignment_ids': assignment_ids, 'result_hash': snapshot_hash({k: v for k, v in result.items() if k != 'reconciliation'}),
+    return {'receipt': receipt, 'assignment_ids': assignment_ids, 'result_guard': proposal_guard(result, version),
             'actor_id': actor.identity_id, 'department_id': actor.department_id, 'workspace_id': workspace.id,
             'validation': plan['validation'], 'data': plan['data'], 'population_contribution': contribution,
             'currency_hint': currency_hint(db, workspace), 'current_data': captured,

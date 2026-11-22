@@ -26,7 +26,8 @@ def propose(db, actor, command):
     value = s.AvailabilityPatternInput.model_validate(command.payload)
     person_access(db, actor, value.person_id)
     # A coordinator's own pattern is proposed like anyone else's, so someone else approves it.
-    coordinator = actor.permits("coordinator") and actor.person_id != value.person_id
+    coordinator = actor.permits("coordinator") and independence.subject_independent(
+        db, actor, (value.person_id,), actor.identity_id)
     require_pattern_person(actor, value.person_id)
     row = m.AvailabilityPattern(department_id=actor.department_id, created_by=actor.identity_id,
                                 status="active" if coordinator else "proposed", decided_by=actor.identity_id if coordinator else None,
@@ -35,6 +36,8 @@ def propose(db, actor, command):
     db.add(row)
     db.flush()
     if coordinator:
+        independence.ensure_subject(db, actor, "request.decide", (row.person_id,), row.created_by,
+                                    "A different coordinator must decide this weekly availability", row.note, row.id)
         bump_inputs(db, actor, availability=True)
     else:
         outbox(db, actor, "availability-pattern:" + row.id, "request", {
@@ -51,7 +54,7 @@ def decide(db, actor, command, *, batch=False, approval_context=None):
     require(row.status == "proposed", "WORKFLOW_STATE", "Only proposed patterns can be decided", 409)
     require(decision_allowed(db, actor, row, approval_context=approval_context),
             "SELF_APPROVAL", "A different coordinator must decide this weekly availability", 403)
-    independence.ensure(db, actor, "request.decide", row.person_id != actor.person_id and row.created_by != actor.identity_id,
+    independence.ensure_subject(db, actor, "request.decide", (row.person_id,), row.created_by,
                         "A different coordinator must decide this weekly availability", value.reason, row.id, context=approval_context)
     row.status, row.decided_by = ("active" if value.decision == "approve" else "declined"), actor.identity_id
     row.decided_at = m.now()

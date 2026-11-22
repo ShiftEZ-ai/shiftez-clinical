@@ -4,6 +4,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 from .test_browser import browser, live_server, sign_in, navigate, pick_view, toolbar, close_popover, planner_filter, filter_pick, show_names, view_settings  # noqa: F401
+from .legend_guard import legend_entries
 from .test_governed_leadership import activate, proposal, line
 from .test_browser_fairness_dashboard import published_month, october, section
 
@@ -49,45 +50,54 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
     try:
         navigate(page, 'planner')
         if viewport:  # phones open the day list: its key names the duty colours it paints
-            expect(key(page)).to_contain_text('Clinical review session')
-            expect(key(page)).to_contain_text('Night cover')
-            expect(key(page)).not_to_contain_text('Unused duty')
+            with legend_entries(page, key(page)) as entries:
+                for text in ('Clinical review session', 'Night cover'):
+                    expect(entries.filter(has_text=text)).to_have_count(1)
+                expect(entries.filter(has_text='Unused duty')).to_have_count(0)
             page.get_by_role('radiogroup', name='Calendar layout').get_by_role('radio', name='Grid', exact=True).click()
         legend = key(page)
         expect(legend).to_have_count(1)
-        expect(legend).to_contain_text('Team lead')
-        # A row name does not explain its colour: every drawn hue keeps its key entry.
-        for text in ('Clinical review session', 'Night cover'):
-            expect(legend).to_contain_text(text)
-        expect(legend.locator('abbr.wk-tag.lead')).to_have_text('TL')  # the same tag as on the chip
+        with legend_entries(page, legend) as entries:
+            # A row name does not explain its colour: every drawn hue keeps its key entry.
+            for text in ('Team lead', 'Clinical review session', 'Night cover'):
+                expect(entries.filter(has_text=text)).to_have_count(1)
+            expect(entries.locator('abbr.wk-tag.lead')).to_have_text('TL')  # the same tag as on the chip
+            for text in ('Unused duty', 'Overtime', 'Trainee', 'Breaks a rule'):
+                expect(entries.filter(has_text=text)).to_have_count(0)
         expect(page.locator('.wk-grid .pchip abbr.wk-tag.lead')).to_have_text('TL')
-        for text in ('Unused duty', 'Overtime', 'Trainee', 'Breaks a rule'):
-            expect(legend).not_to_contain_text(text)
         # Filter to one duty type: only its colour, and no team lead mark.
         duty_filter(page, 'Clinical review session')
-        expect(legend).to_contain_text('filtered')
-        expect(legend).not_to_contain_text('Team lead')
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='filtered')).to_have_count(1)
+            expect(entries.filter(has_text='Team lead')).to_have_count(0)
         # Weekend columns remain drawn even when no duty matches the filter.
         duty_filter(page, 'Unused duty')
-        expect(legend).to_contain_text('Weekend')
-        for text in ('Clinical review session', 'Night cover', 'Unused duty', 'Team lead'):
-            expect(legend).not_to_contain_text(text)
-        expect(legend.get_by_role('button', name='Change what is shown', exact=True)).to_be_visible()
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Weekend')).to_have_count(1)
+            for text in ('Clinical review session', 'Night cover', 'Unused duty', 'Team lead'):
+                expect(entries.filter(has_text=text)).to_have_count(0)
+        expect(view_settings(page.locator('.planner-toolbar'))).to_be_visible()
+        close_popover(page)
         duty_filter(page, 'Any')
-        expect(legend).to_contain_text('Team lead')
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Team lead')).to_have_count(1)
         # Colour by service, then rank: the key follows the drawn hue even when a group names it too.
         colour_by(page, 'Service')
-        expect(legend).to_contain_text('Continuity clinic')
-        expect(legend).not_to_contain_text('Clinical review session')
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Continuity clinic')).to_have_count(1)
+            expect(entries.filter(has_text='Clinical review session')).to_have_count(0)
         colour_by(page, 'Rank')
-        expect(legend).to_contain_text('Demo practitioners')
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Demo practitioners')).to_have_count(1)
         colour_by(page, 'Duty type')
-        # The owner removed person dictionaries; codes recover full names on hover/focus/open.
-        expect(legend).not_to_contain_text('Alex Morgan')
+        # Codes recover full names on hover/focus/open, without a person dictionary in the key.
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Alex Morgan')).to_have_count(0)
         show_names(page, 'code')
-        expect(legend.locator('.code-chip')).to_have_count(0)
-        expect(legend).not_to_contain_text('Alex Morgan')
-        expect(legend).not_to_contain_text('Jordan Lee')
+        with legend_entries(page, legend) as entries:
+            expect(entries.locator('.code-chip')).to_have_count(0)
+            for text in ('Alex Morgan', 'Jordan Lee'):
+                expect(entries.filter(has_text=text)).to_have_count(0)
         chip = page.locator(f'.wk-grid {draft_chip(h.seed["people"][0])}')
         chip.hover()
         expect(page.get_by_role('tooltip')).to_contain_text('Alex Morgan')
@@ -97,19 +107,24 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
         chip.click()
         expect(page.locator('.wk-panel')).to_contain_text('Alex Morgan')
         page.keyboard.press('Escape')
-        expect(legend).not_to_contain_text('Taylor Noor')
+        with legend_entries(page, legend) as entries:
+            expect(entries.filter(has_text='Taylor Noor')).to_have_count(0)
         show_names(page, 'full')
-        expect(legend.locator('.code-chip')).to_have_count(0)
+        with legend_entries(page, legend) as entries:
+            expect(entries.locator('.code-chip')).to_have_count(0)
         # People: duty codes with their names; Coverage: the cell states drawn.
         pick_view(page, 'People')
-        expect(key(page)).to_contain_text('Night cover')
-        expect(key(page).locator('.pg-chip').filter(has_text='NC')).to_have_count(1)
-        expect(key(page)).not_to_contain_text('Unused duty')
+        with legend_entries(page, key(page)) as entries:
+            expect(entries.filter(has_text='Night cover')).to_have_count(1)
+            expect(entries.locator('.pg-chip').filter(has_text='NC')).to_have_count(1)
+            expect(entries.filter(has_text='Unused duty')).to_have_count(0)
         pick_view(page, 'Coverage')
-        expect(key(page)).to_contain_text('Clinical review session')
-        expect(key(page)).to_contain_text('No session')
+        with legend_entries(page, key(page)) as entries:
+            for text in ('Clinical review session', 'No session'):
+                expect(entries.filter(has_text=text)).to_have_count(1)
         duty_filter(page, 'Night cover')
-        expect(key(page)).not_to_contain_text('Clinical review session')
+        with legend_entries(page, key(page)) as entries:
+            expect(entries.filter(has_text='Clinical review session')).to_have_count(0)
         assert not errors
     finally:
         context.close()
@@ -121,11 +136,14 @@ def test_empty_planner_has_no_legend(browser, live_server, h):
     try:
         navigate(page, 'planner')
         expect(page.locator('.wk-grid')).to_be_visible()
-        # An empty grid still draws weekend columns: only that encoding and the settings control belong in its key.
+        # An empty grid still shades its weekend columns, and every shading on screen has its key entry (as the filtered
+        # grid above, with no duty drawn): only that entry, no duty colour, mark or day numbers.
         legend = key(page)
         expect(legend).to_have_count(1)
-        expect(legend).to_have_text('Weekend')
-        expect(legend.get_by_role('button', name='Change what is shown', exact=True)).to_be_visible()
+        with legend_entries(page, legend) as entries:
+            expect(entries).to_have_count(1)
+            expect(entries.filter(has_text='Weekend')).to_have_count(1)
+        expect(view_settings(page.locator('.planner-toolbar'))).to_be_visible()
     finally:
         context.close()
 

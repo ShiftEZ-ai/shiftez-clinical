@@ -61,12 +61,15 @@ def test_locking_is_one_click_with_undo_and_shows_where_it_is(browser, live_serv
         page.get_by_role('menuitem', name=re.compile('^Lock this session')).click()
         expect(lock_mark).to_be_visible()
         assert locked(h, w) == [True, False]
+        bar = page.locator('#selection-bar')
+        before_unlock = bar.get_attribute('data-bar')
         lock_mark.click()
         expect(lock_mark).to_have_count(0)
         assert locked(h, w) == [False, False]
+        # The unlock patches the grid before the refresh replaces its selection bar.
+        expect(bar).not_to_have_attribute('data-bar', before_unlock)
         # The selection bar never calls a staffed session "open"; Lock there is instant too.
         page.locator('.wk-check').first.check()
-        bar = page.locator('#selection-bar')
         expect(bar).not_to_contain_text('open')
         bar.get_by_role('button', name=re.compile('More')).click()
         page.get_by_role('menuitem', name='Lock').click()

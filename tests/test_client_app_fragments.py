@@ -18,6 +18,19 @@ def node(script):
     return json.loads(out.stdout)
 
 
+def test_model_proven_stop_hides_continue_search(client_modules):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    resumable = cut(source, r'const resumable\s*=\s*(.*?);')
+    got = node(r"""
+const check=reason=>{
+  const editable=true,cpSat=true,currentDraft=true,stale=false,discarded=false,canContinue=false;
+  const latest={currency:'',status:'succeeded'},result={resume_available:true,status:'candidate_feasible',search_stop:{reason}};
+  return (""" + resumable + r""");
+};
+console.log(JSON.stringify({optimal:check('optimal'),model:check('model_proven'),plateau:check('plateau')}));""")
+    assert got == {'optimal': False, 'model': False, 'plateau': True}
+
+
 def test_your_own_stop_or_add_time_on_a_queued_run_is_read_back_within_3_s(client_modules):
     """Restore ee3c5da9f (schedulingPanel): a queued run is read back 3 → 10 → 30 s apart. Your own Stop and keep best
     or Add time restarts that back-off, so its outcome is read 3 s later, not after a 30 s wait. The poll step (the
@@ -122,3 +135,51 @@ async function read(workspaceId='',draftNone=false,sourcePublication=''){
 console.log(JSON.stringify([await read(),await read('selected'),await read('',true),await read('',false,'version')]));
 """)
     assert got == ['submitted', 'draft', 'draft', 'draft']
+
+
+def test_a_failed_refresh_toasts_only_when_the_page_shows_nothing_of_its_own(client_modules):
+    """A refresh failing over rows keeps their stale banner, over a page that did not load its own Retry: no toast,
+    so a pulse after pulse does not repeat one. Only a page with neither says the refresh failed."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    refresh = cut(source, r'\n(async function refreshOnce\(stale.*?\n\})\n')
+    got = node(r"""
+let me={}, refreshForeground=null, refreshScopes, refreshChanges=[], accessRead, inPlace=true, refreshSkipped,
+  refreshFailed=false, redrawOwed=false, foregroundRender=false, pageFailed=false, banner=null;
+const savedKinds=new Set(), routeParts=[], toasts=[];
+const pageStep=()=>'people/', sessionKey=()=>1, view='people';
+const forgetReads=()=>{}, readAfresh=()=>{}, applyDisplay=()=>{}, showConnection=()=>{}, loadNavBadges=()=>{};
+const ME_SCOPES=[], LIST_SCOPES=[], loadCatalogues=async()=>{}, readerBusy=()=>false, renderPage=async()=>{};
+const background=async()=>{throw new Error('Connection lost.');};
+const sessionChanged=()=>false, document={querySelector:()=>banner};
+const notify=message=>toasts.push(message);
+""" + refresh + r"""
+const runs=[];
+for(const [failed,shown] of [[false,null],[false,{}],[true,null],[true,null]]){
+  pageFailed=failed;banner=shown;toasts.length=0;await refreshOnce();runs.push([toasts.length,refreshFailed]);}
+console.log(JSON.stringify(runs));""")
+    assert got == [[1, True], [0, True], [0, True], [0, True]]
+
+
+def test_a_start_whose_lists_fail_says_the_page_did_not_load(client_modules):
+    """Signed in with the frame drawn, People, Requests or Rules whose lists fail at start-up say only that the page did
+    not load, in the page with Retry; before the frame (the account unread) and on the Schedule, the start-up screen."""
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    start = cut(source, r'\n(function startFailed\(.*?\n\})\n')
+    got = node(r"""
+let view='people', pageFailed=false, shown=null;
+const calls=[], boot=async()=>calls.push('boot');
+const bootFailure=(e,retry,signedIn)=>calls.push(['start-up screen',signedIn]);
+const el=(tag,attrs,...children)=>children[0];
+const readFailed=(name,e,retry)=>({name,message:e.message,retry:typeof retry});
+const failedPageName=()=>view==='people'?'People':'the schedule';
+const document={querySelector:()=>({replaceChildren:node=>{shown=node;}})};
+""" + start + r"""
+const e=new Error('Connection lost.'),runs=[];
+for(const [page,framed] of [['people',false],['people',true],['schedule',true]]){
+  view=page;pageFailed=false;shown=null;calls.length=0;startFailed(e,framed);runs.push([calls.slice(),shown,pageFailed]);}
+console.log(JSON.stringify(runs));""")
+    assert got == [
+        [[['start-up screen', True]], None, False],
+        [[], {'name': 'People', 'message': 'Connection lost.', 'retry': 'function'}, True],
+        [[['start-up screen', True]], None, False],
+    ]

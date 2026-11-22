@@ -511,6 +511,7 @@ class Person(Record, Base):
     given_name: Mapped[str] = mapped_column(String(160), server_default="")
     family_name: Mapped[str] = mapped_column(String(160), server_default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    inactive_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     title: Mapped[str] = mapped_column(String(160), default="", server_default="")
     work_email: Mapped[str] = mapped_column(String(254), default="", server_default="")
     work_phone: Mapped[str] = mapped_column(String(80), default="", server_default="")
@@ -1854,7 +1855,7 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
 
         @event.listens_for(cls, 'before_update')
         def update_read_projections(_mapper, _connection, job):
-            from .serialization import (job_read_metadata, job_result_metadata, job_result_projection,
+            from .serialization import (job_read_metadata, job_result_metadata, refresh_job_result_projection,
                                         job_result_with_reconciliation)
             if job.kind == 'generation' and job.supersedes is None:
                 clear_supersession_done_marker(_connection)
@@ -1864,7 +1865,7 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
             if metadata is None:
                 frozen = job.input_snapshot or {}
                 metadata = job_read_metadata(frozen, job.result)
-                job.result_summary = job_result_projection(job.kind, job.result)
+                job.result_summary = refresh_job_result_projection(job)
             if state.attrs.input_snapshot.history.has_changes():
                 frozen = job.input_snapshot
                 refreshed = job_read_metadata(frozen, job_result_with_reconciliation(job, job.result))
@@ -1889,9 +1890,18 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
                     result_metadata = {**(result_metadata or {}),
                                        'generation_manifest': manifest}
                 metadata = {**metadata, 'result': result_metadata}
-                job.result_summary = job_result_projection(job.kind, job.result)
+                job.result_summary = refresh_job_result_projection(job)
             if metadata != job.read_metadata:
                 job.read_metadata = metadata
+
+
+class JobCandidateEvidence(Base):
+    __tablename__ = 'job_candidate_evidence'
+    job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id'), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shift_id: Mapped[str | None] = mapped_column(String(36))
+    payload: Mapped[dict] = mapped_column(JSON)
+    __table_args__ = (Index('ix_job_candidate_evidence_shift', 'job_id', 'shift_id', 'ordinal'),)
 
 
 class ReviewRoute(Record, DepartmentRecord, Base):
