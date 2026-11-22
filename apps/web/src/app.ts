@@ -1070,7 +1070,9 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
   // An outage is declared only when the pulse fails too (LABEL-FE: one endpoint refusing is not the server down), and
   // after it only what failed is read again (a page that did not load or could not refresh), never in a loop.
   if(now==='ok'&&wasDown&&me){wasDown=false;showConnection(true);if(refreshFailed||pageFailed)void refresh(true);return;}
-  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},()=>{wasDown=true;}).finally(()=>{probing=false;});}
+  if(now==='down'&&!wasDown&&!probing&&me){probing=true;background('/api/pulse').then(()=>{},e=>{wasDown=true;
+    // Confirmed down: rows on screen say at once that they could not be refreshed (not only the footer), and are read again when it is back.
+    if(!sessionChanged(e)){refreshFailed=true;showConnection(false,e);}}).finally(()=>{probing=false;});}
   paintConnection();});
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
@@ -1530,8 +1532,9 @@ async function refreshOnce(stale=()=>false){
     if(inPlace!==undefined){if(inPlace)showStale(false);return;}
     foregroundRender=!quiet;await renderPage(quiet);}
   catch(e){if(sessionChanged(e)||stale())return;refreshFailed=true;showConnection(false,e);
-    // A page showing data carries the stale banner; with nothing on screen, a message says the refresh failed.
-    if(!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
+    // A page showing data carries the stale banner, a page that did not load its own Retry; with nothing on screen, a
+    // message says the refresh failed.
+    if(!pageFailed&&!document.querySelector('#main>.stale-banner'))notify('The latest server state could not be retrieved. Previously confirmed saves remain saved. '+(e as Error).message,'error',undefined,e);}
 }
 /** Signing in and reloading take the same path: no splash. Once the account is known the app frame (sidebar, top bar
  *  with the person's name, footer) appears at once with the page as a skeleton; the sign-in card fades out over it. */
@@ -1556,13 +1559,13 @@ async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
   // stuck, and a late answer to an older start is dropped. The older start's account read is aborted, so even its late
   // 401 cannot report the session as ended (api.ts drops an aborted read's answer before the session-expired event).
-  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();
+  const mine=++bootAttempt,stale=()=>mine!==bootAttempt;booting=true;readAfresh();bootRead?.abort();const own=bootRead=new AbortController();let framed=false;
   try{if(!card)await rotateIfDue();
     // SW3-C-P01: after /api/me confirms the viewer may read leave types, start that read beside the catalogues. An
     // inactive staff account gets no forbidden background request; the account response is the permission boundary.
     const account=await request<Me>('/api/me',{signal:own.signal});if(stale())return;me=account;const leave=leaveTypesRead(account);rememberAccount(me.identity_id,me.display_name,me.account?.username);applyDisplay();readRoute('home');catalogues={people:[]};
     if(stepOf()===null)history.replaceState({step:0},'');shownStep=stepOf()!;
-    shell();document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
+    shell();framed=true;document.querySelector('#main')!.append(el('div',{},pageSkeleton()));if(card)fadeOut(card);
     // A page cached from an earlier release talks to a newer server: say so (About Rota shows the same).
     if(me.release&&me.release!==WEB_RELEASE)newVersion();
     // The live baseline is read before the page: a change after it moves the next pulse (one refresh), one before it is
@@ -1580,7 +1583,13 @@ async function boot(card?:HTMLElement|null){
     await renderPage();if(alert!==undefined){if(alert)openNoteTarget(alert as Row);else navigate('inbox');}
     if(justUpdated())notify('Updated to the latest version.','success');  // the silent reload of maintenance landed
     void reconcile();}
-  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else bootFailure(e,()=>void boot(),true);}
+  catch(e){if(stale())return;booting=false;if(sessionChanged(e))return;if(e instanceof ApiError&&[401,403].includes(e.status)){await showLogin(SIGNED_OUT[e.code]||'');}else startFailed(e,framed);}
+}
+/** Signed in with the frame drawn, a page whose lists did not load says only that, in the page with Retry (as a page
+ *  that fails later does), never that the app can't be reached; the Schedule keeps the start-up screen's words. */
+function startFailed(e:unknown,framed:boolean){
+  if(!framed||view==='schedule'){bootFailure(e,()=>void boot(),true);return;}
+  pageFailed=true;document.querySelector('#main')?.replaceChildren(el('div',{},readFailed(failedPageName(),e,()=>void boot())));
 }
 /** The one start-up failure screen (signed in or out, N-12): what happened, what staff do meanwhile, Retry, and Sign out
  *  for a signed-in account that may be the problem. */
