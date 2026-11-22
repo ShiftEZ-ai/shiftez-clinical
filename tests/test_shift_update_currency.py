@@ -84,7 +84,8 @@ def test_shift_update_checks_writer_currency(h, monkeypatch, record_property, ca
                 assert absence(h, person_id=person)['kind'] == 'recorded_leave'
             elif case == 'C3':
                 assert any(row['code'] == 'RESTRICTION' for row in current()[2]['findings'])
-                freeze_clock(monkeypatch, START + timedelta(seconds=1))
+                # Ongoing occurrences still block; once this one ends (07:00Z) it no longer projects.
+                freeze_clock(monkeypatch, START + timedelta(hours=1, seconds=1))
             else:
                 h.command(other, 'shift.update', edit_payload(workspace, shift, service_ids=[h.seed['services'][1]]),
                           revision=workspace['revision'])
@@ -104,11 +105,8 @@ def test_shift_update_checks_writer_currency(h, monkeypatch, record_property, ca
         assert bool(receipt) == saved
 
     if case == 'C3':
+        # The clock changed which recurring occurrences project after preparation; replay refuses, never stores.
         assert all(row['code'] != 'RESTRICTION' for row in before_writer[2]['findings'])
-        if saved:
-            assert stored['findings'] == fresh['findings']
-            assert stored['fingerprint'] == fresh['fingerprint']
-            return
     assert reply.status_code == 409
     assert error == ('STALE_REVISION' if case == 'C4' else 'STALE_INPUTS')
     assert revision == before_writer[0]
