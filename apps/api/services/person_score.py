@@ -12,7 +12,8 @@ from packages.domain.conditions import counting_key
 from packages.domain.generation import COVERAGE_CODES, duty_labels, coverage_findings, citation_finding_key
 from packages.domain.rota_summary import normalized_check
 from packages.domain.score import schedule_score
-from packages.domain.validation import evaluate, finding_observations, index_person_rows
+from packages.domain.time import local_midnight
+from packages.domain.validation import evaluate, finding_observations, index_person_rows, person_active_end
 from packages.contracts import schemas as s
 from .common import scoped
 from .fairness import READERS, sees_everyone, viewer
@@ -49,7 +50,7 @@ def _worsened(before, after):
 
 def contributions(db, actor, person_id, workspace_id=None, open_limit=20, open_offset=0):
     viewer(actor)
-    require_person(db, actor, person_id, READERS)
+    person = require_person(db, actor, person_id, READERS)
     draft = None
     if workspace_id:
         require(sees_everyone(actor), 'FORBIDDEN', 'Drafts are visible to planners only', 403)
@@ -65,12 +66,13 @@ def contributions(db, actor, person_id, workspace_id=None, open_limit=20, open_o
                                                  m.Publication.id).limit(1))
     published = db.get(m.Workspace, publication.workspace_id) if publication else None
     return {'person_id': person_id,
-            'draft': _record(db, actor, person_id, draft, None, open_limit, open_offset) if draft else None,
-            'published': _record(db, actor, person_id, published, publication, open_limit, open_offset)
+            'draft': _record(db, actor, person, draft, None, open_limit, open_offset) if draft else None,
+            'published': _record(db, actor, person, published, publication, open_limit, open_offset)
                          if published else None}
 
 
-def _record(db, actor, person_id, workspace, publication, limit, offset):
+def _record(db, actor, person, workspace, publication, limit, offset):
+    person_id = person.id
     check = normalized_check(publication.validation if publication else workspace.validation) or {}
     issued = check.get('score') or {}
     complete = 'contributions' in issued
@@ -114,9 +116,11 @@ def _record(db, actor, person_id, workspace, publication, limit, offset):
         dirty.get('content_revision') == workspace.content_revision
         and manifest.get('components', {}).get('toolchain') == digest(toolchain(quota_policy_limit()))))
     current_data = None
-    person = db.get(m.Person, person_id)
     person_facts = ((manifest.get('sources') or {}).get(f'people:{person_id}') or {}).get('facts') or {}
-    if not person.active or person_facts and person_facts.get('active') != person.active:
+    start, end = (local_midnight(day, org.timezone) for day in (workspace.starts_on, workspace.ends_on))
+    active_end = person_active_end({'active': person.active, 'inactive_from': person.inactive_from}, end, org.timezone)
+    if (active_end is None or active_end <= start
+            or person_facts and person_active_end(person_facts, end, org.timezone) != active_end):
         fresh = False
     if check and not publication and limit:
         current_data = domain_snapshot(db, workspace, include_fairness=False,

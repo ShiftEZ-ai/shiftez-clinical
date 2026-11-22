@@ -259,23 +259,29 @@ def test_waiting_to_claim_does_not_consume_new_job_lease_on_postgres(pg, monkeyp
 def assert_waiting_to_claim_preserves_lease(h, monkeypatch):
     job_id = generation_job(h)
     clock = simulated_clock(monkeypatch)
+    before_claim = clock[0]
     finish_attempts = []
+    claim_pending = worker.claim_pending
     retry_write = worker.retry_write
     lease_seconds = h.settings.db_pool_timeout_seconds + worker.GENERATION_HEARTBEAT_SECONDS + 1
     monkeypatch.setattr(worker, 'JOB_LEASE_SECONDS', lease_seconds)
 
+    def wait_for_claim(engine, **kwargs):
+        clock[0] += lease_seconds * 2
+        return claim_pending(engine, **kwargs)
+
     def write(engine, operation, **kwargs):
-        if operation is worker.claim_job:
-            clock[0] += lease_seconds * 2
         if (kwargs.get('context') or {}).get('job_phase') == 'finish':
             finish_attempts.append(clock[0])
             if len(finish_attempts) == 1:
                 raise DatabaseWriteTimeout()
         return retry_write(engine, operation, **kwargs)
 
+    monkeypatch.setattr(worker, 'claim_pending', wait_for_claim)
     monkeypatch.setattr(worker, 'retry_write', write)
     assert worker.process_one(h.app.state.engine, scheduler=lambda *args, **kwargs: {'status': 'candidate_feasible'})
     assert len(finish_attempts) >= 2
+    assert finish_attempts[0] >= before_claim + lease_seconds * 2
     assert finish_attempts[1] > finish_attempts[0]
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Job, job_id)

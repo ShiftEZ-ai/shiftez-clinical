@@ -312,13 +312,15 @@ def _home_uncached(db, actor, *, max_days):
             .order_by(C.name, C.id).limit(2))] if pending_acknowledgements else [])
 
     current = lambda cls: and_(cls.department_id == dept, cls.starts_on <= today, or_(cls.ends_on.is_(None), cls.ends_on > today))
-    people = select(func.count()).select_from(m.Person).where(m.Person.organisation_id == actor.organisation_id, m.Person.active.is_(True))
     if can("admin", "credentialer"):
+        from .people import active_people_on
+        people = select(func.count()).select_from(m.Person).where(
+            m.Person.organisation_id == actor.organisation_id, active_people_on(today))
         E = m.Eligibility
         add(55, "no_eligibility", db.scalar(people.where(~m.Person.id.in_(select(E.person_id).where(current(E))))) or 0)
     if can("admin", "coordinator"):
         from .people import current_people_counts
-        add(56, "no_rank", current_people_counts(db, actor)['people_without_current_rank'])
+        add(56, "no_rank", current_people_counts(db, actor, today)['people_without_current_rank'])
     if can("admin"):
         add(57, "no_hours", count(m.Service, m.Service.active.is_(True), m.Service.calendar_id.is_(None)))
     if can(*PERMISSIONS["feedback.triage"]):
