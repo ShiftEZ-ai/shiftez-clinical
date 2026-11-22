@@ -80,7 +80,7 @@ def held_as_footer_says(page, words=None, press=False):
                                 ".map(id => document.getElementById(id)?.textContent || '').join(' ')")
     assert words in described, described
     if press:
-        submit.click()
+        submit.click(force=True)  # a real press on the held control (Playwright waits for aria-disabled ones otherwise)
         expect(page.locator('#toast-tray .toast').last).to_have_text(words)
     return words
 
