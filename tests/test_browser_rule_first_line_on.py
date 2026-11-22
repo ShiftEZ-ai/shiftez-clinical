@@ -1,7 +1,7 @@
-"""The first line of a rule never in force turns it on (#1200), on the rule's own page as on the Rules list: the switch
-reads On, the proposal says it turns the rule on, and once approved the rule is in force and read by the rule map. A
-rule in force that is off stays off when a line is added. Release blocker: a new safety rule approved with its first
-line stayed off while the confirmation said the change was active."""
+"""The first line of a rule never in force turns it on (#1200), on the rule's page (where the Rules list's New line
+also opens it): the switch reads On, the proposal says it turns the rule on, and once approved the rule is in force and
+read by the rule map. A rule in force that is off stays off when a line is added. Release blocker: a new safety rule
+approved with its first line stayed off while the confirmation said the change was active."""
 import re
 import uuid
 
@@ -25,13 +25,16 @@ def someone(h):
     return next(p for p in h.get('admin', '/api/catalogues')['people'] if p['id'] == h.seed['people'][0])['display_name']
 
 
-def add_person_line(page, name, maximum):
+def add_person_line(page, name, maximum, choose_mandatory=False):
     main = page.locator('#main')
     main.get_by_role('button', name='New line: a person, rank, clinic or #tag').click()
     page.get_by_role('combobox', name='Search New line').fill(name)
     page.get_by_role('option', name=re.compile('^' + re.escape(name))).first.click()
     panel = page.locator('.rc-line-panel')
     panel.get_by_label('Maximum', exact=True).fill(str(maximum))
+    if choose_mandatory:  # with no broader line to take it from, a new line starts advisory
+        panel.get_by_role('button', name=re.compile('^Maximum: advisory')).click()
+        page.get_by_role('menuitemradio', name='Mandatory', exact=True).click()
     panel.get_by_role('button', name='Keep change').click()
     panel.get_by_role('button', name='Close panel', exact=True).click()
     expect(main.locator('tr').filter(has_text=name)).to_contain_text(f'{maximum} Mandatory')
@@ -58,8 +61,8 @@ def test_the_first_line_of_a_new_rule_turns_it_on_and_it_is_in_force_once_approv
         navigate(page, 'rules/duties_per_week')
         switch = page.get_by_role('switch', name=SWITCH)
         expect(switch).not_to_be_checked()
-        add_person_line(page, name, 3)
-        expect(switch).to_be_checked()  # the first line turns it on, as the Rules list's + New line does
+        add_person_line(page, name, 3, choose_mandatory=True)
+        expect(switch).to_be_checked()  # the first line turns it on
         expect(page.locator('#main .rc-summary')).to_contain_text('On')
         propose_in_page(page, name, '2 changes', ['Turns the rule on'])
         proposed = entry(h, 'duties_per_week')['proposed']

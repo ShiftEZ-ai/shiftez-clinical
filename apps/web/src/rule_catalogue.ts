@@ -594,8 +594,8 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
     status.textContent=[n?`${plural(n,'change')} not yet proposed`:''].filter(Boolean).join(' · ');};
   /** After any change: the draft is kept (it counts on the Rules page too), the table, the check and the panel follow. */
   const changed=(keep=true)=>{draftVersion++;
-    // The first line of a rule never in force turns it on, as on the Rules list (switch it off to keep it off); its
-    // last line removed turns it back off, so an empty draft proposes nothing.
+    // The first line of a rule never in force turns it on (switch it off to keep it off); its last line removed turns
+    // it back off, so an empty draft proposes nothing. The Rules list's New line opens its line here too.
     const had=lineCount>0,has=draft.lines.length>0;lineCount=draft.lines.length;
     if(!e.rule&&had!==has&&draft.on!==has){draft.on=has;showOn();}
     if(keep&&editable)keepDraft(e,draft);found=null;recheck();rows.splice(0,rows.length,...draft.lines.map((line,n)=>({entry:e,line,n})),...proposedRows);table.refresh();paint();summary();panel.sync();};
