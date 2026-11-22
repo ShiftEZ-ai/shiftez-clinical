@@ -39,8 +39,9 @@ PATTERNS = {
     "secret-assignment": re.compile(
         r"(?i)(?:password|passwd|secret|token|api[_-]?key)[\w-]{0,64}[\"']?[ \t]{0,40}[:=][ \t]{0,40}[bru]{0,2}[\"']"
         r"([A-Za-z0-9+/=_.~-]{20,256})[\"']"),
-    # ASCII digits only (other scripts' digits would crash ipaddress); "a.b.c.d-e.f.g.h" is a range, so both ends count.
-    "ipv4": re.compile(r"(?<![\w.])(?<![A-Za-z]-)([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![\w]|\.[0-9]|-[A-Za-z])"),
+    # ASCII digits only (other scripts' digits would crash ipaddress). A dash beside an address hides nothing: ranges,
+    # file names (backup-<ip>.tar) and host names (<ip>-prod) all count.
+    "ipv4": re.compile(r"(?<![\w.])([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![\w]|\.[0-9])"),
     "wildcard-dns-host": re.compile(r"(?i)\b(?:sslip|nip|xip)\.io\b|\.ts\.net\b|\b(?:duckdns\.org|ddns\.net)\b"),
     # These two find their literal tail first; HOST_BEFORE then checks the host in front of it (fast on big trees).
     "private-tld": re.compile(rf"(?i)\.{_TLD}(?![\w-]|\.\w|\()"),
@@ -60,7 +61,9 @@ DOC_NETWORKS = [ipaddress.ip_network(n) for n in ("127.0.0.0/8", "192.0.2.0/24",
 # Version markers and pins only. Tool and product words (python, node, postgres, release, "Name/") are not: they
 # also precede real hosts. A "Name/a.b.c.d" product token counts as a version only when it ends in .0, as host
 # addresses almost never do.
-VERSION_CONTEXT = re.compile(r"(?i)(?:\bv|\bversion|\bver|==|>=|<=|~=)\s*[\"':=]*\s*$")
+# "v" must touch the value (v1.2.3.4; not "curl -v <ip>"), and a pin must follow a name with no space (pkg==1.2.3.4;
+# not `host == "<ip>"`).
+VERSION_CONTEXT = re.compile(r"(?i)(?:\bv|\bver(?:sion)?\s*[\"':=]*\s*|[\w\]](?:==|>=|<=|~=))$")
 PRODUCT_CONTEXT = re.compile(r"\b[A-Z][A-Za-z]+/$")
 PLACEHOLDER = re.compile(r"(?i)example|placeholder|changeme|dummy|redacted|fake|test|sample|fixture|your[_-]|xxxx")
 PROSE = re.compile(r"[a-z]{7,}")  # a random literal rarely holds 7 lowercase letters in a row; a word does

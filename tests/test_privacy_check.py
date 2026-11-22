@@ -73,7 +73,8 @@ def test_clean_samples_pass(line):
 
 HOST = "10." + "4.5.6"
 TOOL_WORD_HITS = ["postgres:" + HOST, "POSTGRES=" + HOST, "node: " + HOST, "python " + HOST, "release " + HOST,
-                  "Upstream/" + HOST, "~" + HOST, "^" + HOST]
+                  "Upstream/" + HOST, "~" + HOST, "^" + HOST, "x-" + HOST, HOST + "-host", "backup-" + HOST + ".tar",
+                  "curl -v " + HOST + ":8080", "nc -v " + HOST, 'if host == "' + HOST + '"', "assert addr == '" + HOST + "'"]
 
 
 @pytest.mark.parametrize("line", TOOL_WORD_HITS)
@@ -86,7 +87,7 @@ def test_both_ends_of_an_address_range_hit():
     assert len(hits) == 2
 
 
-def test_other_script_digits_neither_crash_nor_print():
+def test_other_script_digits_do_not_crash_the_check():
     fullwidth = "".join(chr(0xFF10 + int(c)) if c.isdigit() else c for c in HOST)
     assert ids("host " + fullwidth) == []
 
