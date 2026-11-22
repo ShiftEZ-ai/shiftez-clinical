@@ -3536,7 +3536,11 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
       notify('Published · staff are told.'+(discarded?` Undo restores the ${discarded===1?'discarded draft':`${discarded} discarded drafts`}.`:'')+(stale.length?` ${stale.map(x=>x.name).join(', ')} now overlap${stale.length===1?'s':''} a published rota; open ${stale.length===1?'it':'them'} to choose how ${stale.length===1?'it fits':'they fit'}.`:''));
       await said;
     };
-  },approved?'Publish':'Submit for review');
+  },approved?'Publish':'Submit for review',(error,close)=>{
+    if(!approved&&error instanceof ApiError&&error.code==='VALIDATION_FAILED'
+      &&(error.details as {refresh_baseline?:boolean}|undefined)?.refresh_baseline)
+      return button('Refresh',()=>{close();return refreshDraftBaseline(w,refresh).catch(reportError);},'secondary small');
+  });
 }
 
 /** Compact rota health: open places, blocking issues and warnings. Each opens a list you can act on. */
