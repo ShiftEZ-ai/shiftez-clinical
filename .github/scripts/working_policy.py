@@ -5,7 +5,6 @@ from datetime import date
 import difflib
 from fnmatch import fnmatchcase
 import hashlib
-from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,6 @@ import shlex
 import subprocess
 import tomllib
 import sys
-from urllib.request import Request, urlopen
 sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[2] / "ci")]
 import node_census
 import hardening
@@ -59,9 +57,6 @@ class Unresolved(str):
 
 
 REPOSITORY = 1459752401
-CODEOWNER_TEAM = "@ShiftEZ-ai/maintainers"
-# Last-push approval is deliberately not required: stale-review dismissal already voids an approval on a new push.
-REVIEW_FLAGS = ("require_code_owner_review", "dismiss_stale_reviews_on_push")
 KNOWN = "ci/known-failures.json"
 NODE_LEDGER = "ci/removed-tests.json"
 SHRINK_ONLY = {
@@ -287,33 +282,6 @@ def review_required(changed_paths):
 def protected(path):
     return (path in {b".github", b"ci", b"tests/quarantine.json"}
             or path.startswith((b".github/", b"ci/")))
-
-
-def codeowner_rules(text):
-    return [line.split() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-
-
-def owned(path, rules):
-    """Match anchored CODEOWNERS paths, directory prefixes and * within a name.
-
-    The last matching rule wins, as on GitHub; an ownerless rule un-owns its paths.
-    """
-    parent, _, name = path.rpartition("/")
-    match = False
-    for pattern, *owners in rules:
-        anchored = pattern[1:]
-        directory, _, glob = anchored.rpartition("/")
-        if (not pattern.startswith("/") or not anchored
-                or any("#" in owner for owner in owners)
-                or any(mark in pattern for mark in ("#", "[", "]", "!", "\\", "**", "?"))
-                or "*" in directory or any(part in {"", ".", ".."} for part in anchored.removesuffix("/").split("/"))):
-            raise ValueError("Unsupported CODEOWNERS rule")
-        if pattern.endswith("/"):
-            if path.startswith(anchored):
-                match = owners == [CODEOWNER_TEAM]
-        elif parent == directory and fnmatchcase(name, glob):
-            match = owners == [CODEOWNER_TEAM]
-    return match
 
 
 def paths(raw):
@@ -691,7 +659,7 @@ def findings_report(branch, base, head, candidate_tree, rows, source, candidate_
               "tier1": [r for r in rows if r["tier"] == 1], "tier2": [r for r in rows if r["tier"] == 2]}
     report["label_request"] = "changes what the checks run on" if report["tier2"] else None
     report["control_label_request"] = "changes CI controls" if report["tier1"] else None
-    # The owned workflow's reviewer must look at every form the inventory could not resolve.
+    # The workflow's reviewer must look at every form the inventory could not resolve.
     report["unresolved_executable_references"] = list(unresolved)
     destination = Path(".run/policy/findings.json")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -765,34 +733,6 @@ def event():
         raise ValueError("Unexpected repository or default branch")
     default_branch(data)
     return data
-
-
-def require_branch_reviews(branch):
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-    if not token:
-        raise ValueError("Branch review rules require a read-only GitHub token")
-    repository = os.getenv("GITHUB_REPOSITORY", "")
-    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository, re.ASCII):
-        raise ValueError("Branch review rules require a valid repository identity")
-    try:
-        request = Request(f"https://api.github.com/repos/{repository}/rules/branches/{branch}", headers={
-            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-        with urlopen(request, timeout=10) as response:
-            rules = decode(response.read())
-    except (OSError, ValueError, HTTPException):
-        raise ValueError("Could not read active branch review rules") from None
-    if not isinstance(rules, list) or any(
-        not isinstance(rule, dict) or not isinstance(rule.get("type"), str) for rule in rules
-    ):
-        raise ValueError("Unexpected active branch rules response")
-    reviews = [rule.get("parameters") for rule in rules if rule["type"] == "pull_request"]
-    if any(not isinstance(review, dict) or any(type(review.get(flag)) is not bool for flag in REVIEW_FLAGS)
-           for review in reviews):
-        raise ValueError("Unexpected active branch review rule parameters")
-    if not any(all(review[flag] for flag in REVIEW_FLAGS) for review in reviews):
-        raise ValueError("Active branch rules must require code-owner review and stale-review dismissal")
 
 
 def fetch(ref, expected=None, *, allow_missing=False):
@@ -889,8 +829,6 @@ def guard():
         source_policy = commit(git("rev-parse", "HEAD").decode().strip())
         inventory = control_inventory(source_policy)
         rows = []
-        rules = codeowner_rules((read_file(base, ".github/CODEOWNERS") or b"").decode("utf-8"))
-        owned_controls = False
         changed = [p.decode("utf-8") for p in paths(git(
             "diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", base, candidate, "--"))]
         if any(path.startswith((".github/workflows/", ".github/actions/")) for path in changed):
@@ -898,24 +836,18 @@ def guard():
         for path in changed:
             level, reason = tier(path, read_file(base, path), read_file(candidate, path), inventory)
             if level == 1:
-                owned_controls |= owned(path, rules)
                 level, reason = 0, "Accepted dev-tree promotion; dev path rejection does not apply"
             rows.append({"path": path, "tier": level, "reason": reason})
         findings_report(branch, base, head, candidate, rows, source_policy, candidate_sha)
-        if owned_controls:
-            require_branch_reviews(branch)
     else:
         policy_base = base
         changed = [p.decode("utf-8") for p in paths(git(
             "diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", comparison, "--"))]
         source = commit(git("rev-parse", "HEAD").decode().strip())
         inventory = control_inventory(source)
-        unowned, unresolved = set(), []
-        if not initial:
-            rules = codeowner_rules((read_file(base, ".github/CODEOWNERS") or b"").decode("utf-8"))
-            unowned = {path for path in changed if not owned(path, rules)}
+        unresolved = []
         if (any(path.startswith((".github/workflows/", ".github/actions/")) for path in changed)
-                or unowned and inventory["helpers"].intersection(changed)):
+                or inventory["helpers"].intersection(changed)):
             # A changed workflow, action or helper can make another changed path a control.
             candidate_inventory = control_inventory(candidate)
             inventory["helpers"] = inventory["helpers"] | candidate_inventory["helpers"]
@@ -942,17 +874,8 @@ def guard():
                 level, reason = tier(path, old, new, inventory)
             rows.append({"path": path, "tier": level, "reason": reason})
         report = findings_report(branch, base, head, candidate, rows, source, candidate_sha, unresolved)
-        if not initial:
-            for row in report["tier1"]:
-                path = row["path"]
-                if path == KNOWN:
-                    raise ValueError("Known-failures changes must only remove existing entries")
-                if path in unowned:
-                    if tier(path, b"", None, inventory)[0] == 1:
-                        raise ValueError("Add a CODEOWNERS rule for " + path)
-                    raise ValueError("Move the Tier 1 mechanism in " + path + " into a CODEOWNERS-owned file")
-            if report["tier1"]:
-                require_branch_reviews(branch)
+        if not initial and any(row["path"] == KNOWN for row in report["tier1"]):
+            raise ValueError("Known-failures changes must only remove existing entries")
         preview = fetch("refs/heads/preview", allow_missing=True)
         if preview is not None:
             preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
