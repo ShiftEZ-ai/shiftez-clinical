@@ -290,6 +290,8 @@ class TwoObservationGateTests(unittest.TestCase):
             events += [(event, owned, [], "dev", False, False)
                        for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
             events = [(*case, "dev") for case in events]
+            events += [("push", owned, [], "main", False, False, "main"),
+                       ("push", owned, [], "main", False, False, "dev")]
             # After the rename the default branch main selects, and a dev target runs in full.
             events += [("pull_request", owned, [], "main", False, True, "main"),
                        ("pull_request", shared, [], "main", False, True, "main"),
@@ -323,7 +325,8 @@ class TwoObservationGateTests(unittest.TestCase):
                     return b"x = 1\n"
                 with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index,
                                   default=default), \
-                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false"}), \
+                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
+                                             "GITHUB_REF": "refs/heads/" + branch}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
@@ -335,7 +338,8 @@ class TwoObservationGateTests(unittest.TestCase):
                          "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    replicas = [1] if event in ("pull_request", "merge_group") else [1, 2]
+                    single = event in ("pull_request", "merge_group") or (event == "push" and branch == default)
+                    replicas = [1] if single else [1, 2]
                     self.assertEqual(maker.context(base)["replicas"], replicas)
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["sha"], candidate)
