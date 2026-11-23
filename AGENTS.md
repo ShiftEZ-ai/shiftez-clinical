@@ -13,8 +13,12 @@
 
 ## Product and current goal
 A clinical rota product: planning, rules, auto-scheduling (OR-Tools CP-SAT), review, approval and publication,
-fairness, and staff preferences. It serves any clinical department; none is built in. The current release serves one
-user, who manages people, requests and rules, and creates schedules by hand and by auto-schedule, with fast screens.
+fairness, and staff preferences. It serves any clinical department; none is built in. The current release puts one
+department of about 150 people on it: the department's administrators manage people, access, requests, rules and
+announcements and create schedules by hand and by auto-schedule; every employee can use a phone to see their schedule,
+open any duty or colleague for details and contact numbers (within the contact privacy rules), send requests and swap
+requests, read announcements and sync their schedule to a calendar. Screens are fast on desktop and phone. Later
+releases host many organisations on one deployment, each isolated from the others.
 
 ## Commands
 - Set up: `npm ci` · `pip install --require-hashes -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock`
@@ -120,23 +124,27 @@ UI rules (detail in DESIGN.md, owned by the Design Lead):
 - Changing AGENTS.md: the Master Lead.
 
 ## Risk paths (need one independent review before landing)
-A risk-path change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict
-that names the head. A re-cut that only merges `main` keeps the earlier verdict only when the Delivery Lead confirms a
-clean merge. No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion. Everything
-else lands on green checks. Risk paths are rule resolution and safety rule kinds, sign-in, permissions, privacy,
-migrations and anything that deletes or rewrites data, the pipeline's own gates, production configuration and
-policy files:
+Only a change whose mistake would be irreversible, silent or public is a risk path. It gets one independent review of
+the full PR diff (merge base to exact head), recorded as a verdict that names the head. One review per change: a fix to
+a review finding is checked by tests, not by another review round, unless the fix itself touches a risk path. A re-cut
+that only merges `main` keeps the verdict when the Delivery Lead confirms a clean merge. Everything else, including
+docs, design, UI without data exposure, tests, dependency bumps and refactors, lands on green checks. The risk paths:
 - Safety rules and rule resolution: `packages/domain/conditions.py`, `packages/domain/rule_lines.py`,
   `packages/domain/solver_rules.py`, `packages/contracts/rule_catalogue.py`, `SAFETY_*` in
   `packages/contracts/schemas.py`. Changing safety, approval or exception rules goes to the Master Lead.
-- Sign-in and permissions: `apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`,
+- Sign-in, permissions and secrets: `apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`,
   `apps/api/services/workspace_access.py`, `apps/api/services/auth_configuration.py`, `PERMISSIONS` in
-  `packages/contracts/schemas.py`.
-- Privacy: `apps/api/data_crypto.py`, `packages/contracts/audit.py`, read filtering of personal data.
-- Migrations and data deletion: `migrations/`, any command that deletes or rewrites data.
-- Pipeline gates and policy files: `.github/`, `ci/`, `tests/quarantine.json`, test-runner and build configuration,
-  `package.json`, `AGENTS.md`, `DELIVERY.md`, `DESIGN.md`.
-- Production configuration: `infra/`, `apps/api/settings.py`.
+  `packages/contracts/schemas.py`, credential handling, and anything that makes something public.
+- Privacy: `apps/api/data_crypto.py`, read filtering of personal data, API response shapes and queries that decide
+  which personal data a role sees, exports, prints and outbound messages that carry personal data, and adding a
+  dependency or an install script.
+- Data loss: `migrations/`, audit and history (`packages/contracts/audit.py`), backups and restore (`scripts/backup*`),
+  and any command that deletes, rewrites or restores data.
+- Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, the `scripts` section of `package.json`, test-runner or build
+  configuration only where it decides which tests run or whether a failure counts, and deleting, skipping or
+  weakening a test.
+- Production configuration and deploys: `infra/`, `apps/api/settings.py`. The engineering standard's "High risk" is the
+  definition; this list fits inside it.
 
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,
