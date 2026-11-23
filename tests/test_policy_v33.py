@@ -134,8 +134,9 @@ class V33Tests(unittest.TestCase):
                                 "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(doc['on']['push']['branches'], ['dev', 'main'])
-        for job in ('unit', 'browser', 'static', 'result'):
-            self.assertIn("(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))", doc['jobs'][job]['if'])
+        for job in ('unit', 'browser', 'static'):
+            self.assertEqual(doc['jobs'][job]['if'], "always() && !cancelled() && needs.checks.result == 'success'")
+        self.assertEqual(doc['jobs']['ci-gate']['if'], "always()")
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')
