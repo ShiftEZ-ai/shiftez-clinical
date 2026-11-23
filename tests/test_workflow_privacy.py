@@ -1,6 +1,10 @@
 """Pipeline regression: environments may disclose names, never destination URLs."""
+from io import BytesIO
+import json
 from pathlib import Path
 import sys
+import tarfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import yaml
@@ -180,6 +184,93 @@ class DefaultBranchTests(unittest.TestCase):
                     result = subprocess.run([bash, "-c", 'set -euo pipefail; image=img\n' + block + '\necho "${tags[@]}"'],
                                             env=env, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.stdout.strip() if result.returncode == 0 else None, expected, result.stderr)
+
+    def test_public_image_requires_main_and_a_passing_scan_before_push_and_attestation(self):
+        doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
+        jobs = doc["jobs"]
+        self.assertEqual(set(doc["on"]), {"push"})
+        self.assertEqual(doc["permissions"], {"contents": "read"})
+        self.assertEqual(jobs["publish"]["permissions"], {
+            "contents": "read", "packages": "write", "id-token": "write", "attestations": "write",
+        })
+        for name, job in jobs.items():
+            if name != "publish":
+                permissions = job.get("permissions", {})
+                self.assertTrue(permissions == "read-all" or
+                                (isinstance(permissions, dict) and set(permissions.values()) <= {"read"}))
+
+        private_push, scanner, scan, login, push, attest = jobs["publish"]["steps"][-6:]
+        self.assertEqual(private_push["id"], "push")
+        self.assertNotIn("if", private_push)
+        main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        self.assertEqual(scanner["if"], main_push)
+        self.assertEqual(scanner["working-directory"], "scripts")
+        when_present, _, when_absent = scanner["run"].partition("else\n")
+        self.assertIn("if [[ -f privacy_check.py ]]; then", when_present)
+        self.assertIn('echo \'available=true\' >> "$GITHUB_OUTPUT"', when_present)
+        self.assertIn("$GITHUB_STEP_SUMMARY", when_absent)
+        self.assertNotIn("$GITHUB_OUTPUT", when_absent)
+        self.assertEqual(scan["if"], f"steps.{scanner['id']}.outputs.available == 'true'")
+        self.assertNotIn("continue-on-error", scan)
+        self.assertTrue(scan["run"].startswith("set -euo pipefail\n"))
+        self.assertIn("--load --provenance=false", scan["run"])
+        self.assertNotIn("--push", scan["run"])
+        self.assertIn('docker image save --output "$archive" "$image:$tag"', scan["run"])
+        self.assertIn('python3 scripts/scan_public_image.py "$archive"', scan["run"])
+        passed = f"steps.{scan['id']}.outcome == 'success'"
+        self.assertEqual(login["if"], passed)
+        self.assertEqual(push["if"], passed)
+        self.assertEqual(push["env"], {
+            "IMAGE": "${{ steps.public_scan.outputs.image }}", "TAG": "${{ steps.public_scan.outputs.tag }}",
+        })
+        self.assertIn('docker push "$IMAGE:$TAG"', push["run"])
+        self.assertIn('docker buildx imagetools inspect "$IMAGE@$digest"', push["run"])
+        self.assertEqual(jobs["publish"]["outputs"], {
+            "digest": "${{ steps.push.outputs.digest }}", "public-digest": "${{ steps.public_push.outputs.digest }}",
+        })
+        self.assertEqual(attest["if"], f"steps.{push['id']}.outcome == 'success'")
+        self.assertRegex(attest["uses"], r"^actions/attest-build-provenance@[0-9a-f]{40}$")
+        self.assertEqual(attest["with"], {
+            "subject-name": "${{ steps.public_scan.outputs.image }}",
+            "subject-digest": "${{ steps.public_push.outputs.digest }}",
+            "push-to-registry": "true",
+            "create-storage-record": "false",
+        })
+
+
+def test_public_image_scan_rejects_config_and_removed_layer_content(tmp_path, capsys):
+    from scripts import scan_public_image
+
+    marker = "planted value"
+
+    def tar(files):
+        data = BytesIO()
+        with tarfile.open(fileobj=data, mode="w") as archive:
+            for name, content in files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(content)
+                archive.addfile(entry, BytesIO(content))
+        return data.getvalue()
+
+    image = tmp_path / "image.tar"
+    manifest = [{"Config": "config.json", "Layers": ["first.tar", "second.tar"]}]
+    with patch.dict(sys.modules, {"privacy_check": SimpleNamespace(
+            findings=lambda text: [(1, "test-pattern")] if marker in text else [])}):
+        for value, expected in (("clean", 0), (marker, 1)):
+            image.write_bytes(tar({
+                "manifest.json": json.dumps(manifest).encode(),
+                "config.json": json.dumps({"config": {"Env": [f"VALUE={value}"]}}).encode(),
+                "first.tar": tar({"removed.txt": value.encode()}),
+                "second.tar": tar({".wh.removed.txt": b""}),
+            }))
+            assert scan_public_image.main(image) == expected
+            result = capsys.readouterr()
+            assert marker not in result.out + result.err
+            assert result.out.splitlines() == (
+                ["test-pattern: 2", "Image privacy scan: 2 hits"] if expected else ["Image privacy scan: 0 hits"]
+            )
+        image.write_bytes(tar({"manifest.json": json.dumps(manifest).encode()}))
+        assert scan_public_image.main(image) == 2
 
 
 if __name__ == "__main__":

@@ -149,6 +149,7 @@ contract in DESIGN.md.
 - A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
   No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
   Nothing in the repository names or reveals where the product runs.
+- Once the privacy scanner is available, public images built on `main` carry provenance and deploy gates verify it before deploying with `gh attestation verify oci://<image>@<digest> --repo ShiftEZ-ai/shiftez-clinical`.
 - The operator machine pushes the image to each server over a private network by exact digest; the server verifies
   it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
   facts live outside this repository.
