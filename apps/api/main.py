@@ -1948,7 +1948,12 @@ def create_app(settings: Settings | None = None, engine=None):
             # The trial rolls back its writes. One snapshot keeps admission and both
             # views consistent without acquiring the instance-wide writer.
             trial = engine.execution_options(isolation_level='REPEATABLE READ')
-            return JSONResponse(retry_write(trial, operation, serialize=False))
+            try:
+                return JSONResponse(retry_write(trial, operation, serialize=False))
+            except OperationalError as exc:
+                if getattr(exc.orig, 'sqlstate', None) in {'40001', '40P01'}:
+                    raise DatabaseWriteTimeout() from None
+                raise
         return JSONResponse(retry_write(engine, operation))
 
     @app.get("/api/workspaces/{workspace_id}/compare")
