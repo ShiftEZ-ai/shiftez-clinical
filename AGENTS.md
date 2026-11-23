@@ -13,8 +13,12 @@
 
 ## Product and current goal
 A clinical rota product: planning, rules, auto-scheduling (OR-Tools CP-SAT), review, approval and publication,
-fairness, and staff preferences. It serves any clinical department; none is built in. The current release serves one
-user, who manages people, requests and rules, and creates schedules by hand and by auto-schedule, with fast screens.
+fairness, and staff preferences. It serves any clinical department; none is built in. The current release puts one
+department of about 150 people on it: the department's administrators manage people, access, requests, rules and
+announcements and create schedules by hand and by auto-schedule; every employee can use a phone to see their schedule,
+open any duty or colleague for details and contact numbers (within the contact privacy rules), send requests and swap
+requests, read announcements and sync their schedule to a calendar. Screens are fast on desktop and phone. Later
+releases host many organisations on one deployment, each isolated from the others.
 
 ## Commands
 - Set up: `npm ci` · `pip install --require-hashes -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock`
