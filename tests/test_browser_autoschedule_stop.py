@@ -16,7 +16,7 @@ from apps.worker.main import claim_job, finish_job, heartbeat_job, prepare_defer
 from packages.contracts.rule_catalogue import FIX_LIST_WORDS
 from packages.contracts.schemas import GENERATION_CONFLICT_CHOICES, GENERATION_STOP_REASONS
 from packages.domain.rota_summary import generation_fix_lists
-from .test_browser import auto_setup, open_rota, open_scheduling, wait_run_created, browser, live_server  # noqa: F401
+from .test_browser import auto_setup, open_rota, open_scheduling, sign_in, wait_run_created, browser, live_server  # noqa: F401
 from .test_browser_autoschedule_budget import confirm
 from .test_browser_autoschedule_live import STEP, rota, seen_done
 from .test_browser_cp_sat import cp_server  # noqa: F401
@@ -71,8 +71,12 @@ def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server
     prepare_deferred_generation(engine, claim, engine.get_execution_options()['rota_write_settings'])
     assert retry_write(engine, lambda db: heartbeat_job(db, claim, {'stage': 'finding'}))
 
-    context, page, panel = _open(browser, cp_server, h, w, DESKTOP, 'light')
+    context, page = sign_in(browser, cp_server, 'coordinator', viewport=DESKTOP, color_scheme='light')
     try:
+        open_rota(page, w['id'])
+        # The running job opens the panel as it loads. Pressing the toggle can close it instead.
+        panel = page.locator('#auto-panel')
+        expect(panel).to_be_visible()
         strip = page.locator('.app-footer .asl-strip')
         expect(strip.locator(STEP)).to_have_text('3/5 Searching')
         panel.get_by_role('button', name='Stop and keep best', exact=True).click()
