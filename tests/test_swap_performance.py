@@ -25,6 +25,9 @@ def department_swap_audiences(scale_harness, request):
     with pytest.MonkeyPatch.context() as monkeypatch, ordered_clock(monkeypatch):
         identity(h, 'staff_two', ['staff'], h.seed['people'][1])
         identity(h, 'staff_three', ['staff'], h.seed['people'][2])
+        # Capture capacity for this scale fixture before adding the overlapping duties.
+        with transaction(h.app.state.engine, write=True) as db:
+            db.get(m.Location, h.seed['locations'][0]).capacity = 1000
         workspace = h.shift(h.workspace(start='2026-10-04', end='2026-11-01'))['workspace']
         with transaction(h.app.state.engine, write=True) as db:
             extra = [m.Person(organisation_id=h.seed['organisation_id'], display_name=f'Synthetic audience staff {i:03}')
@@ -42,7 +45,6 @@ def department_swap_audiences(scale_harness, request):
                 originals = list(db.execute(select(model.__table__).where(model.person_id == people[0])).mappings())
                 db.execute(insert(model), [{**dict(row), 'id': m.uid(), 'person_id': person.id}
                                            for person in extra for row in originals])
-            db.get(m.Location, h.seed['locations'][0]).capacity = 1000
             template = db.scalar(select(m.Shift).where(m.Shift.workspace_id == workspace['id']))
             first = db.scalar(select(m.Assignment.id).where(m.Assignment.shift_id == template.id))
             shifts, assignments, services = [], [], []

@@ -169,7 +169,7 @@ def prepare_preview(db, actor, command):
         "message": "Contact details checked. Scheduling inputs are unchanged; no rota validation is needed. Nothing saved or approved." if metadata_only else
             ("Impact not calculated: the upcoming sessions are more than this check covers. Nothing saved or approved; saving still validates each rota."
              if totals["partial"] else
-             "Nothing saved or approved. Current-compliance comparison uses the proposed definitions; frozen sessions/publications are not rewritten. Draft type changes still require explicit refresh.")}
+             "Nothing saved or approved. Current-compliance comparison uses the proposed definitions. Stricter staffing and place limits apply to drafts immediately. Other draft type changes require explicit refresh.")}
     from .leave_disclosure import overlap_labels
     from .contacts import redact_reply
     return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)), "workspaces": captured}
