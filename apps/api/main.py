@@ -4088,6 +4088,14 @@ def create_app(settings: Settings | None = None, engine=None):
         return StreamingResponse(rows(), media_type="text/csv; charset=utf-8", headers={
             "Content-Disposition": f'attachment; filename="{filename}"', **({"X-Export-Truncated": str(cap)} if total > cap else {})})
 
+    def limit_command_request(token, *, account=False):
+        subject = session_identity(engine, token)
+        enforce(engine, "commands", [subject], settings.rate_commands_per_minute, 60,
+                "Too many changes in a short time; wait a minute and try again")
+        if account:
+            enforce(engine, "account-commands", [subject], 60, 3600,
+                    "Too many account changes in a short time; try again later")
+
     @app.post("/api/commands")
     async def command_endpoint(command: s.Command, request: Request):
         require(command.kind not in {'score_import.upload', 'score_import.add_files', 'score_check.upload'},
@@ -4098,11 +4106,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
         def handle():
             log.info("command_handler_started", extra={**fields, "threadpool_wait_ms": round((time.monotonic() - queued) * 1000, 2)})
-            enforce(engine, "commands", [session_identity(engine, request.cookies.get(cookie_name))], settings.rate_commands_per_minute, 60,
-                    "Too many changes in a short time; wait a minute and try again")
-            if command.kind.startswith("account."):
-                enforce(engine, "account-commands", [session_identity(engine, request.cookies.get(cookie_name))], 60, 3600,
-                        "Too many account changes in a short time; try again later")
+            limit_command_request(request.cookies.get(cookie_name), account=command.kind.startswith("account."))
             return execute(engine, settings, request.cookies.get(cookie_name), request.headers.get("x-csrf-token"),
                            request.headers.get("idempotency-key"), command, request.state.correlation_id)
 
@@ -4135,6 +4139,25 @@ def create_app(settings: Settings | None = None, engine=None):
                 return departments.preview(db, actor, command, settings)
             return redact_reply(db, actor, bulk.preview(db, actor, command, settings))
         return retry_write(engine, preview)
+
+    @app.post("/api/account-onboarding/preview")
+    def account_onboarding_preview(value: s.AccountOnboarding, request: Request):
+        """Review a department's staff selection without issuing invitations."""
+        from .services import account_onboarding
+        bulk_read_limit(request)
+        with transaction(engine) as db:
+            return account_onboarding.preview(db, actor_for(request, db, write=True), value, settings)
+
+    @app.post("/api/account-onboarding/apply")
+    def account_onboarding_apply(value: s.AccountOnboardingApply, request: Request):
+        """Apply a reviewed selection and download only the invitations issued by this request."""
+        from .services import account_onboarding
+        token, csrf = request.cookies.get(cookie_name), request.headers.get("x-csrf-token")
+        limit_command_request(token, account=True)
+        result = account_onboarding.apply(engine, settings, token, csrf, value, request.state.correlation_id)
+        request.state.session_authenticated = True
+        return JSONResponse(result, headers={"Cache-Control": "private, no-store",
+                                             "Content-Disposition": 'attachment; filename="staff-invitations.json"'})
 
     @app.post("/api/bulk/resolve")
     def bulk_resolve(value: s.BulkSelection, request: Request):
