@@ -363,7 +363,7 @@ class TwoObservationGateTests(unittest.TestCase):
 
         config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
-        for producer in ("static", "result"):
+        for producer in ("static", "ci-gate"):
             self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
                           [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
         event = self.folder / "schedule.json"

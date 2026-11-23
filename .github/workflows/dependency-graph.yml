@@ -2,8 +2,8 @@ name: Dependency graph
 permissions:
   contents: read
 concurrency:
-  group: dependency-graph
-  cancel-in-progress: true
+  group: dependency-graph-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   submit:
     name: Submit locked dependencies
