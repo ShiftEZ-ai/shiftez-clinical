@@ -61,47 +61,6 @@ def test_an_independent_request_decision_wears_no_self_approved_badge(browser, l
         context.close()
 
 
-def test_record_leave_announces_self_approval_for_the_selected_person(browser, live_server, h):
-    person, other = h.seed['people'][:2]
-    coordinator = identity(h, 'leave_coordinator', ['coordinator'], person=person)
-    h.command('admin', 'self_approval.grant', {'identity_id': coordinator, **GRANT})
-    context, page = sign_in(browser, live_server, 'leave_coordinator')
-    try:
-        navigate(page, 'requests')
-        whole_list(page)
-        page.get_by_role('button', name='New request', exact=True).click()
-        dialog = page.get_by_role('dialog')
-        dialog.get_by_role('radio', name='Leave or absence', exact=True).check()
-        people = dialog.locator('fieldset[name="People"]')
-        own = people.locator(f'input[value="{person}"]')
-        independent = people.locator(f'input[value="{other}"]')
-        mark = dialog.get_by_text('Self-approved', exact=True)
-        independent.check()
-        expect(mark).to_be_hidden()
-        expect(dialog.get_by_label('Reason', exact=True)).to_be_visible()
-        own.check()
-        expect(mark).to_be_visible()
-        expect(dialog.locator('.request-details').get_by_text(
-            'Your leave will be self-approved when recorded.', exact=True)).to_be_visible()
-        own.uncheck()
-        expect(mark).to_be_hidden()
-        independent.uncheck()
-        own.check()
-        reason = dialog.get_by_label('Reason for self-approval', exact=True)
-        expect(reason).to_have_js_property('required', True)
-        dialog.get_by_label('Type', exact=True).select_option(label='Annual')
-        reason.fill('Reviewed with a colleague by phone')
-        dialog.get_by_role('button', name='Record leave', exact=True).click()
-        expect(dialog).to_be_hidden()
-        row = page.locator('#main [data-row]').filter(has=page.get_by_text('Self-approved', exact=True))
-        expect(row).to_have_count(1)
-        row.locator('td[data-col=type], .dt-card-title').first.click()
-        expect(page.locator('.request-panel .request-status').get_by_text('Self-approved', exact=True)).to_be_visible()
-        expect(page.locator('.request-panel .request-history').get_by_text('Self-approved', exact=True)).to_have_count(1)
-    finally:
-        context.close()
-
-
 @pytest.mark.parametrize('on_behalf', [False, True], ids=['own-request', 'on-behalf'])
 def test_admin_request_decision_announces_only_actual_self_approval(browser, live_server, h, on_behalf):
     person, other = h.seed['people'][:2]

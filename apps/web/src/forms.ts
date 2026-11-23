@@ -4,7 +4,7 @@ import {ruleReview} from './rule_review.js';
 import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
-import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES,selfApprovedBadge} from './dom.js';
+import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
 import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
@@ -1082,16 +1082,6 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
     const isLeave=()=>requestOnly?requestKind.input.value==='leave':LEAVE_RECORD_KINDS.includes(kind.input.value);
     const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=1000;
     const privacy=el('small',{class:'hint',id:reason.input.id+'-hint'},'Private · no patient information');reason.wrap.append(privacy);reason.input.setAttribute('aria-describedby',privacy.id);
-    if(many&&ctx.me.person_id&&mayDecide(ctx.me,'request.decide',true)){
-      const own=ctx.me.person_id,reasonLabel=reason.wrap.querySelector('label')!;
-      const message='Your leave will be self-approved when recorded.';
-      const approval=el('div',{},selfApprovedBadge(),' ',el('span',{},message));approval.hidden=true;
-      const showApproval=()=>{const self=many.values().includes(own);if(approval.hidden===!self)return;
-        approval.hidden=!self;reasonLabel.textContent=self?'Reason for self-approval':'Reason';
-        if(self&&approval.isConnected)announce(message,true);};
-      reason.wrap.prepend(approval);
-      many.wrap.addEventListener('change',showApproval);showApproval();
-    }
     // Whole days (most leave): pick dates only; it runs from the first day's start to the end of the last day.
     const allDay=check('All day',false);
     // All day swaps the two times for one range of days (the shared date picker), carrying the days across.
