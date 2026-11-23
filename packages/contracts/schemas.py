@@ -6553,6 +6553,24 @@ class AccountInvite(Schema):
     reason: Reason
 
 
+AccountOnboardingFingerprint = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+
+
+class AccountOnboardingRow(Schema):
+    person_id: ID
+    username: Username
+    email: Email
+
+
+class AccountOnboarding(Schema):
+    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=200)
+    reason: Reason
+
+
+class AccountOnboardingApply(AccountOnboarding):
+    expected_fingerprint: AccountOnboardingFingerprint
+
+
 SESSION_IDLE_MINUTES_MIN = 5
 SESSION_MAX_HOURS_MIN = 1
 SESSION_IDLE_MINUTES_DEFAULT = 480
