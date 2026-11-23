@@ -260,6 +260,8 @@ class ImporterV34Tests(unittest.TestCase):
                                  ['opened', 'synchronize', 'reopened', 'ready_for_review'])
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
+                plan = next(step for step in jobs['checks']['steps'] if step.get('id') == 'plan')
+                self.assertIn('.trusted-controls/.github/scripts/trusted_ci.py" plan', plan['run'])
                 limits = {
                     'unit': "${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}",
                     'browser': "${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}",
@@ -267,6 +269,13 @@ class ImporterV34Tests(unittest.TestCase):
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')
                     self.assertEqual(jobs[shard]['strategy'].get('max-parallel'), limit)
+                    count = shard + '_count'
+                    self.assertEqual(jobs['checks']['outputs'][count],
+                                     '${{ steps.plan.outputs.' + count + ' || steps.select.outputs.' + count + ' }}')
+                    self.assertEqual(jobs['checks']['outputs'][shard + '_matrix'],
+                                     '${{ steps.plan.outputs.' + shard + '_matrix }}')
+                    self.assertEqual(jobs[shard]['strategy']['matrix']['shard'],
+                                     '${{ fromJSON(needs.checks.outputs.' + shard + '_matrix) }}')
             for job_id, job in jobs.items():
                 with self.subTest(workflow=name, job=job_id):
                     if name == 'ci.yml' and job_id in ('unit', 'browser'):
