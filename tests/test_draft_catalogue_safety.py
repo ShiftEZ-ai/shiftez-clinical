@@ -3,8 +3,9 @@ from copy import deepcopy
 
 import pytest
 
-from packages.domain import cp_sat, generation
-from packages.domain.validation import effective_type_definition
+from packages.contracts.schemas import GenerationOptions
+from packages.domain import cp_sat, generation, solver_resume, validation
+from packages.domain.solver_control import SolverControl
 from tests.test_generation_apply_scale import completed_proposal
 
 
@@ -33,7 +34,7 @@ def finding(report, code, **detail):
 
 
 @pytest.mark.parametrize('captured, live', [(1, 2), (2, 1)], ids=['tightened', 'loosened'])
-def test_minimum_cover_checks_and_schedules_to_the_stricter_value(store, captured, live):
+def test_minimum_cover_checks_and_schedules_to_the_stricter_value(store, captured, live, monkeypatch):
     h = store
     supervision_scope = {'trainee_category_ids': [h.seed['trainee_category']],
                          'capability_id': h.seed['supervisor_capability']}
@@ -49,12 +50,34 @@ def test_minimum_cover_checks_and_schedules_to_the_stricter_value(store, capture
 
     snapshot = h.snapshot(checked)
     assert snapshot['shifts'][0]['type_snapshot'] == frozen
-    assert effective_type_definition(snapshot, snapshot['shifts'][0])['supervision'] == {
+
+    def merge_during_search(*args, **kwargs):
+        pytest.fail('Draft staffing should be resolved before either scheduler reads it')
+
+    monkeypatch.setattr(validation, 'effective_issued_definition', merge_during_search)
+    assert validation.effective_type_definition(snapshot, snapshot['shifts'][0])['supervision'] == {
         **supervision_scope, 'trainees_per_supervisor': 1, 'require_pairing': True}
     for solve in (cp_sat.generate, generation.generate):
         result = solve(snapshot, time_budget_seconds=10, deterministic=True)
         assert result['status'] == 'candidate_feasible' and result['validation']['valid'], result
         assert len(result['additions']) == 1 and not result['removals']
+
+
+def test_resumed_cp_sat_validation_uses_stricter_draft_staffing(h):
+    staffing(h, 1, 3)
+    draft = h.shift(h.workspace())['workspace']
+    staffing(h, 2, 3)
+    snapshot = h.snapshot(draft)
+    options = GenerationOptions.model_validate(snapshot['generation_options'])
+    prepared = cp_sat._prepare(snapshot, 5, 1, SolverControl(), options, False, False)
+    assert 'model' in prepared, prepared
+    key = solver_resume.resume_key(snapshot, options, False, False)
+    checkpoint = solver_resume.compress_state(solver_resume.prepared_state(key, prepared))
+    restored = solver_resume.restore(solver_resume.decompress_state(checkpoint), key)
+
+    checked = validation.evaluate(restored['data'])
+    assert finding(checked, 'COVERAGE_GAP', required=2, available=1)
+    assert 'TYPE_VERSION_CHANGED' not in {row['code'] for row in checked['findings']}
 
 
 @pytest.mark.parametrize('captured, live', [(3, 1), (1, 3)], ids=['tightened', 'loosened'])

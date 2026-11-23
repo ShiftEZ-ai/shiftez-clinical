@@ -773,13 +773,12 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                 # limits from the verified capture before comparing them.
                 if key == "locations" and ident in live:
                     after["capacity"] = min((before or row)["capacity"], live[ident]["capacity"])
-                if key == "types":
-                    # The session's saved definition is the third input to the domain reader.
-                    sources = (("captured", before), ("live", live.get(ident)))
-                    after["draft_safety"] = {
-                        label: {field: source["definition"].get(field) for field in ("requirements", "supervision")}
-                        for label, source in sources if source
-                    }
+                if key == "types" and before is not None and ident in live:
+                    fields = ("requirements", "supervision")
+                    captured_safety = {field: before["definition"].get(field) for field in fields}
+                    live_safety = {field: live[ident]["definition"].get(field) for field in fields}
+                    if captured_safety != live_safety:
+                        after["draft_safety"] = {"captured": captured_safety, "live": live_safety}
                 overlaid[ident] = after
                 if (before and before.get("department_id") == workspace.department_id
                         and any(before.get(field) != after.get(field) for field in LIVE_VALIDITY_FIELDS)):

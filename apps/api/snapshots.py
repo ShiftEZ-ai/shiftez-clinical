@@ -18,7 +18,7 @@ from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.serialization import json_default
-from packages.domain.validation import ENGINE_VERSION
+from packages.domain.validation import ENGINE_VERSION, prepare_draft_type_safety
 from .settings import Settings, quota_policy_limit
 
 
@@ -1482,6 +1482,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
     if baseline is not None:
+        from .workspace_baselines import CAPTURED_GENERATION_STATES
+        if workspace.status in CAPTURED_GENERATION_STATES:
+            if draft_safety := prepare_draft_type_safety(result, own):
+                result["_draft_type_safety"] = draft_safety
         # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
         for shift in external:
             type_id = shift['assignment_type_id']

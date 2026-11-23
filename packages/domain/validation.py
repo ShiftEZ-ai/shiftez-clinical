@@ -284,18 +284,44 @@ def _supervision_scope(supervision):
     return supervision["capability_id"], frozenset(supervision["trainee_category_ids"])
 
 
-def _draft_type_safety(data, shift):
-    if shift.get("workspace_id") != data.get("workspace", {}).get("id"):
-        return None, None
-    typ = data.get("types", {}).get(shift.get("assignment_type_id"), {})
-    overlay = typ.get("draft_safety")
-    if overlay is None:
-        return None, None
-    live = overlay.get("live")
-    if (live is not None and live != overlay.get("captured")
-            and valid_dates(typ, aware(shift["start"]), aware(shift["end"]), data["organisation"]["timezone"])):
-        return overlay, live
-    return overlay, None
+def prepare_draft_type_safety(data, shifts):
+    """Prepare only duties affected by catalogue safety drift, once at snapshot assembly."""
+    types, zone = data["types"], data["organisation"]["timezone"]
+    workspace_id = data["workspace"]["id"]
+    fields = ("requirements", "supervision")
+    operational = data.get("operational")
+    prepared = {}
+    for shift in shifts:
+        if shift["workspace_id"] != workspace_id:
+            continue
+        typ = types.get(shift["assignment_type_id"])
+        if typ is None:
+            continue
+        overlay = typ.get("draft_safety")
+        if overlay is None and shift["type_revision"] == typ["revision"]:
+            continue
+        issued = shift["type_snapshot"]["definition"]
+        current = typ["definition"]
+        captured = overlay["captured"] if overlay else None
+        live = overlay["live"] if overlay else current
+        if not valid_dates(typ, aware(shift["start"]), aware(shift["end"]), zone):
+            live = None
+        sources = [source for source in (captured, live) if source is not None
+                   and any(source.get(field) != issued.get(field) for field in fields)]
+        if not sources:
+            continue
+        scopes = {_supervision_scope(source["supervision"]) for source in (issued, *sources)
+                  if source.get("supervision")}
+        effective = current if operational else issued
+        for source in ([issued] if operational else []) + sources:
+            effective = effective_issued_definition(effective, source, draft=True)
+        prepared[shift["id"]] = (effective, len(scopes) > 1)
+    return prepared
+
+
+def _prepared_draft_type(data, shift):
+    if prepared := data.get("_draft_type_safety"):
+        return prepared.get(shift.get("id"))
 
 
 def effective_issued_definition(issued, current, *, draft=False):
@@ -348,34 +374,29 @@ def effective_type_definition(data, shift):
     """Resolve draft and operational safety while keeping each caller's definition detached."""
     issued = shift['type_snapshot']['definition']
     operational = bool(data.get('operational'))
-    current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
+        current = prepared[0]
+    else:
+        current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
     published = _published_session(data, shift) if operational else False
-    draft_safety, live_safety = _draft_type_safety(data, shift)
     cache = data.get('_line_index_cache')
     if cache is not None:
         definitions = cache.setdefault('effective_type_definitions', {})
-        key = id(issued), id(current), id(draft_safety), live_safety is not None, operational, published
+        key = id(issued), id(current), operational, published
         entry = definitions.get(key)
-        if entry is not None and entry[0] is issued and entry[1] is current and entry[3] is draft_safety:
+        if entry is not None and entry[0] is issued and entry[1] is current:
             return pickle.loads(entry[2])
     if operational and published:
         effective = effective_issued_definition(issued, current)
-    elif draft_safety is not None:
-        authored = current if operational else issued
-        effective = authored
-        for source in (issued if operational else None, draft_safety.get("captured"), live_safety):
-            if source is not None and source is not effective:
-                effective = effective_issued_definition(effective, source, draft=True)
-        if effective is authored:
-            effective = effective_issued_definition(authored, None)
     else:
-        definition = (current if operational else issued) or {}
+        definition = (current if operational or prepared else issued) or {}
         effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
         # Retain the sources so their identities cannot be reused during this run.
         encoded = pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
-        definitions[key] = issued, current, encoded, draft_safety
+        definitions[key] = issued, current, encoded
         return pickle.loads(encoded)
     return effective
 
@@ -1108,20 +1129,18 @@ def validate_session_setup(data, shift, shifts, definition, add):
     sid, start, end = shift['id'], aware(shift['start']), aware(shift['end'])
     typ = data["types"][shift["assignment_type_id"]]
     published = data.get('operational') and _published_session(data, shift)
-    draft_safety, live_safety = _draft_type_safety(data, shift)
-    if draft_safety is not None:
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
         authored = typ["definition"] if data.get("operational") else shift["type_snapshot"]["definition"]
     else:
         authored = definition
     if not valid_dates(shift['type_snapshot'] if published else typ, start, end, zone):
         add("TYPE_INACTIVE", "Assignment type is inactive or outside its effective interval", sid)
     # Different supervision scopes cannot be represented by one duty-type slot.
-    if draft_safety and len({_supervision_scope(source["supervision"]) for source in
-                             (shift["type_snapshot"]["definition"], draft_safety.get("captured"), live_safety)
-                             if source and source.get("supervision")}) > 1:
+    if prepared and prepared[1]:
         add("TYPE_VERSION_CHANGED", "Supervision scope changed; review and refresh the draft duty inputs", sid)
     elif (sid not in data.get("_issued_type_versions", ()) and shift["type_revision"] != typ["revision"]
-            and not display_only_change(shift.get("type_snapshot"), typ, live_staffing=draft_safety is not None)
+            and not display_only_change(shift.get("type_snapshot"), typ, live_staffing=prepared is not None)
             and not published):
         add("TYPE_VERSION_CHANGED", "Type changed; explicitly refresh the draft definition and review its impact", sid,
             severity="error")

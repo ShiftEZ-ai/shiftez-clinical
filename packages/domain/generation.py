@@ -689,8 +689,13 @@ def pair_attached(data, shifts, added, removals, period):
     """Pair each trainee with the consultant they are attached to when both are on a session (required first), where
     the rota check allows it. Only work this run may change: its own additions, or unfixed draft assignments."""
     mine = {id(r['participant']): r for r in added}
+    draft_safety = data.get('_draft_type_safety', {})
     for shift in shifts:
-        if shift['locked'] or not effective_type_definition(data, shift).get('supervision'):
+        if shift['locked']:
+            continue
+        definition = (effective_type_definition(data, shift) if shift['id'] in draft_safety
+                      else shift['type_snapshot']['definition'])
+        if not definition.get('supervision'):
             continue
         a, b = aware(shift['start']), aware(shift['end'])
         here = {p['person_id']: p for p in shift['participants']}
@@ -991,6 +996,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                     added.append({'shift_id': shift['id'], 'participant': promoted, **duty_labels(data, shift)})
 
     name_leads()
+    draft_safety = data.get('_draft_type_safety', {})
     for strict_first, overflow_phase, stage, shift in (
             (strict_first, phase, stage, shift)
             for strict_first in _sweep_modes(baseline)
@@ -1002,7 +1008,8 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
             break
         if shift["locked"]:
             continue
-        definition = effective_type_definition(data, shift)
+        definition = (effective_type_definition(data, shift) if shift['id'] in draft_safety
+                      else shift['type_snapshot']['definition'])
         # Who could take this session at all (active, qualified, not away, on leave or restricted) never changes during
         # the run: decide it once per session, not for every person at every seat.
         a, b = aware(shift['start']), aware(shift['end'])
