@@ -151,6 +151,7 @@ class ImporterV34Tests(unittest.TestCase):
             'working-policy.yml': {
                 'group': 'working-policy-${{ github.head_ref || github.run_id }}', 'cancel-in-progress': pr_only,
             },
+            'image.yml': {'group': 'image-${{ github.ref }}-${{ github.sha }}', 'cancel-in-progress': 'false'},
             'dependency-graph.yml': {
                 'group': 'dependency-graph-${{ github.ref }}', 'cancel-in-progress': 'false',
             },
@@ -202,6 +203,7 @@ class ImporterV34Tests(unittest.TestCase):
             ('pull_request', 'skipped', None, dict(success, unit='failure'), False, False),
             ('merge_group', 'skipped', None, dict(success, browser='cancelled'), False, False),
             ('push', 'skipped', None, dict(success, static='skipped'), False, False),
+            ('push', 'skipped', None, dict(success, unit='failure'), False, False),
             ('push', 'skipped', None, {'checks': 'success'}, False, False),
         )
         for event, budget, admitted, results, verdict, deferred in cases:
@@ -276,6 +278,9 @@ class ImporterV34Tests(unittest.TestCase):
                                      '${{ steps.plan.outputs.' + shard + '_matrix }}')
                     self.assertEqual(jobs[shard]['strategy']['matrix']['shard'],
                                      '${{ fromJSON(needs.checks.outputs.' + shard + '_matrix) }}')
+                    self.assertEqual(jobs['checks']['outputs']['replicas'], '${{ steps.plan.outputs.replicas }}')
+                    self.assertEqual(jobs[shard]['strategy']['matrix']['replica'],
+                                     '${{ fromJSON(needs.checks.outputs.replicas) }}')
             for job_id, job in jobs.items():
                 with self.subTest(workflow=name, job=job_id):
                     if name == 'ci.yml' and job_id in ('unit', 'browser'):
