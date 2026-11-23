@@ -57,7 +57,7 @@ def test_recorded_leave_uses_the_subject_and_persists_the_self_approval_mark(h, 
     reason = 'Reviewed with a colleague by phone'
     own = h.command('leave_coordinator', 'availability.record', {**payload, 'private_reason': reason})['record']
     independent = h.command('leave_coordinator', 'availability.record', {
-        **payload, 'person_id': other, 'private_reason': 'Routine update'})['record']
+        **payload, 'person_id': other, 'private_reason': 'Routine update'})
     expected_mark = [{'action': 'request.decide', 'permission_id': permission['id']}]
     marked, = (e for e in h.get('auditor', '/api/audit?self_approved=true')['events'] if e['action'] == 'availability.record')
     assert marked['target_id'] == own['id'] and marked['detail']['self_approved'] == expected_mark
@@ -74,12 +74,18 @@ def test_recorded_leave_uses_the_subject_and_persists_the_self_approval_mark(h, 
         earlier = h.command('leave_coordinator', 'availability.record', {**payload, 'private_reason': reason,
             'start': '2026-10-05T10:00:00Z', 'end': '2026-10-05T11:00:00Z'})['record']
 
-    for row, self_approved in [(own, True), (earlier, True), (independent, False)]:
+    independent_event, = (e for e in h.get('auditor', '/api/audit')['events']
+                          if e['detail'].get('receipt_id') == independent['receipt_id'])
+    assert independent_event['action'] == 'availability.record' and independent_event['target_id'] is None
+    assert 'self_approved' not in independent_event['detail']
+
+    for row, self_approved in [(own, True), (earlier, True), (independent['record'], False)]:
         detail = h.get('coordinator', '/api/requests/all?id=' + row['id'])
-        event, = (e for e in detail['history'] if e['action'] == 'availability.record')
         item = listed(h, 'coordinator', row['id'])
         assert item['stage'] == detail['item']['stage'] == 'approved'
-        assert all(x.get('self_approved', False) is self_approved for x in (row, item, detail['item'], event))
+        assert all(x.get('self_approved', False) is self_approved for x in (row, item, detail['item']))
+        assert [e['action'] for e in detail['history'] if e.get('self_approved')] == (
+            ['availability.record'] if self_approved else [])
         assert reason not in str(detail)
 
 
