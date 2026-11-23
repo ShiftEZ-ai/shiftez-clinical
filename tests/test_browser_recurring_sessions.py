@@ -21,9 +21,9 @@ WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 
 NOTE = 'Reference fixed clinic; named assignees confirmed by the user. Synthetic test data.'
 
 
-def shot(page, name):
+def shot(page, name, *, animations='allow'):
     if SHOTS:
-        page.screenshot(path=os.path.join(SHOTS, name + '.png'), full_page=False)
+        page.screenshot(path=os.path.join(SHOTS, name + '.png'), full_page=False, animations=animations)
 
 
 def duty_types(h):
@@ -340,8 +340,7 @@ def test_form_requires_fields_limits_dates_beside_the_field_and_saves_on_first_c
         expect(excluded.locator('.date-chip')).to_have_count(5)
         shot(page, 'recurring-form-light')
         page.emulate_media(color_scheme='dark')
-        page.evaluate('Promise.all(document.getAnimations().map(a=>a.finished))')  # the theme's colour transition
-        shot(page, 'recurring-form-dark')
+        shot(page, 'recurring-form-dark', animations='disabled')
         # Saved on the first click once the check is current and changes nothing.
         expect(form.get_by_text(re.compile(r'Configuration checked\.'))).to_be_visible(timeout=20000)
         form_submit(form).click()
