@@ -926,12 +926,17 @@ def latest(db, workspace_id, *, include_payload=True):
     return db.scalar(query.order_by(*_latest_ordering()).limit(1))
 
 
+def ranked_baseline_keys(query):
+    """Rank candidate baseline identities without reading their payloads."""
+    B = m.WorkspaceBaseline
+    return query.with_only_columns(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
+        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')).subquery()
+
+
 def latest_many(db, workspace_ids):
     """Read only the latest baseline identity and hash for each workspace."""
     B = m.WorkspaceBaseline
-    ranked = select(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
-        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')
-    ).where(B.workspace_id.in_(workspace_ids)).subquery()
+    ranked = ranked_baseline_keys(select(B.id).where(B.workspace_id.in_(workspace_ids)))
     rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
     return {row.workspace_id: row for row in rows}
 
@@ -1018,15 +1023,19 @@ def baseline_rows(db):
     return db.info.setdefault('_baseline_rows', {})
 
 
+def verified_baseline_keys(db):
+    baseline_rows(db)
+    return db.info.setdefault('_verified_baseline_keys', set())
+
+
 def verify_in_transaction(db, row):
     """Return a verified payload for read-only use by this transaction."""
     if row is None:
         return None
     if object_session(row) is not db or not db.in_transaction() or row in db.dirty:
         return verify(row)
-    baseline_rows(db)
+    keys = verified_baseline_keys(db)
     cache = db.info.setdefault('_verified_baselines', OrderedDict())
-    keys = db.info.setdefault('_verified_baseline_keys', set())
     key = row.id, row.payload_hash
     if key not in cache:
         cache[key] = json_value(row.canonical_payload) if key in keys else verify(row)

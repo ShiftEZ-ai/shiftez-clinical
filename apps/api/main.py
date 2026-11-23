@@ -1748,7 +1748,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/catalogue/preview")
     def catalogue_preview(command: s.Command, request: Request):
-        from .services.catalogue_preview import build_preview, capture_before, prepare_preview, evaluate_preview
+        from .services.catalogue_preview import StaleBeforeCapture, build_preview, capture_before, prepare_preview, evaluate_preview
         postgres = engine.dialect.name == 'postgresql'
         reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
 
@@ -1761,10 +1761,20 @@ def create_app(settings: Settings | None = None, engine=None):
                                         skip_contact_snapshots=skip_contact_snapshots)
             return retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command, before))
 
-        prepared = capture_and_trial(skip_contact_snapshots=True)
-        if prepared is None:
-            # The contact trial changed a scheduling input. Capture its baseline after releasing the writer.
-            prepared = capture_and_trial(skip_contact_snapshots=False)
+        def prepare():
+            prepared = capture_and_trial(skip_contact_snapshots=True)
+            if prepared is None:
+                # The contact trial changed a scheduling input. Capture its baseline after releasing the writer.
+                prepared = capture_and_trial(skip_contact_snapshots=False)
+            return prepared
+
+        try:
+            prepared = prepare()
+        except StaleBeforeCapture:
+            if command.expected_fingerprint:
+                raise
+            log.info("catalogue_preview_recapture", extra={"correlation_id": request.state.correlation_id})
+            prepared = prepare()
         return evaluate_preview(build_preview(engine, prepared))
 
     @app.get("/api/catalogues/{kind}/{object_id}/history")

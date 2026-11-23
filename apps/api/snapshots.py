@@ -1570,7 +1570,7 @@ def _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, option
     return held[1]
 
 
-def domain_snapshot(db, workspace, *args, reuse_writer_snapshot=True, **kwargs):
+def domain_snapshot(db, workspace, *args, **kwargs):
     """Reuse detached preparation inputs only after checking current relational currency."""
     import pickle
     state = db.info.get('_planning_preparation')
@@ -1608,10 +1608,6 @@ def domain_snapshot(db, workspace, *args, reuse_writer_snapshot=True, **kwargs):
         state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL),
                                               event_currency)
         return value
-    if not reuse_writer_snapshot:
-        # Single-use trial snapshots need the authoritative rows, without a cache key or serialized copy.
-        db.flush()
-        return _domain_snapshot(db, workspace, *args, **kwargs)
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)
     db.flush()

@@ -261,7 +261,7 @@ def spread_department(h):
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypatch, backend):
-    from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, catalogue_source_reader
+    from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, capture_issued_sources, catalogue_source_reader
 
     freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
     h = scale_harness(backend)
@@ -307,8 +307,9 @@ def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypa
     }
 
     def snapshot_bytes(db, w, shared, *, operational):
-        snapshot = snapshots.domain_snapshot(db, w, operational=operational, shared_inputs=shared,
-            mandatory_rules=operational, reuse_writer_snapshot=False)
+        db.flush()
+        snapshot = snapshots._domain_snapshot(db, w, operational=operational, shared_inputs=shared,
+            mandatory_rules=operational)
         encoded = json.dumps((snapshot, getattr(snapshot, 'read_quality', None)),
                              sort_keys=True, separators=(',', ':')).encode()
         return hashlib.sha256(encoded).hexdigest(), snapshot.get('applied_planning_population'), len(snapshot['wishes'])
@@ -320,8 +321,10 @@ def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypa
             assert len(workspaces) == 40
             trial = db.begin_nested()
             try:
+                issued = capture_issued_sources(db, actor.organisation_id, workspaces)
                 preview_service.write_catalogue(db, actor, command, update=case != 'create', preview_only=True)
-                captured = capture_catalogue_sources(db, actor.organisation_id, workspaces, captured_at=m.now())
+                captured = capture_catalogue_sources(db, actor.organisation_id, workspaces,
+                                                     captured_at=m.now(), issued_sources=issued, before_baselines={})
                 proposed = snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
                 assert proposed['organisation']['input_revision'] > revision
                 expected = {(w.id, operational): snapshot_bytes(db, w, proposed, operational=operational)

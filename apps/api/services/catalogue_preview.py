@@ -5,10 +5,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 from apps.api import models as m
 from apps.api.auth import require_role
-from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, catalogue_source_reader
-from apps.api.errors import require
+from apps.api.catalogue_snapshot_sources import (
+    capture_catalogue_sources, capture_issued_sources, capture_verified_baselines, catalogue_source_reader,
+)
+from apps.api.errors import Problem, require
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import domain_snapshot, prepared_event_currency_matches, snapshot_hash, snapshot_inputs, tag_data
+from apps.api.workspace_baselines import baseline_rows, verified_baseline_keys
 from packages.contracts.schemas import CATALOGUE_SCHEMAS, PersonInput
 from packages.domain.time import local_midnight
 from packages.domain.validation import evaluate
@@ -26,6 +29,12 @@ class BeforeCapture:
     currency: tuple
     snapshots: dict
     event_windows: list
+    baselines: dict
+    issued_sources: dict
+
+
+class StaleBeforeCapture(Problem):
+    """The writer found that the earlier read lost currency before the trial."""
 
 
 def contact_update(command, payload, before):
@@ -116,9 +125,11 @@ def source_fingerprint(db, actor, command, *, day=None):
         "change": change})
 
 
-def _require_current(condition):
-    require(condition,
-            "STALE_PREVIEW", "The proposed change, reason, active workspaces or current inputs changed. Recalculate configuration impact.", 409)
+def _require_current(condition, *, before_capture=False):
+    if not condition:
+        problem = StaleBeforeCapture if before_capture else Problem
+        raise problem(409, "STALE_PREVIEW",
+                      "The proposed change, reason, active workspaces or current inputs changed. Recalculate configuration impact.")
 
 
 def assert_precondition(db, actor, command):
@@ -174,7 +185,9 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
         snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared, _event_currency=event_window)
         if event_window:
             event_windows.append(event_window)
-    return BeforeCapture(currency, snapshots, event_windows)
+    # Publication currency in this reader is matched under the writer before this evidence is used.
+    issued = capture_issued_sources(db, actor.organisation_id, rows) if rows else {}
+    return BeforeCapture(currency, snapshots, event_windows, capture_verified_baselines(db), issued)
 
 
 def prepare_preview(db, actor, command, before):
@@ -185,13 +198,14 @@ def prepare_preview(db, actor, command, before):
     token = _preview_token(db, actor, command, day)
     if before is not None:
         _require_current(before.currency == _capture_currency(db, actor, token) and
-                         all(prepared_event_currency_matches(db, window, now=captured_at) for window in before.event_windows))
+                         all(prepared_event_currency_matches(db, window, now=captured_at) for window in before.event_windows),
+                         before_capture=True)
     # Pattern versions do not alter materialised duties. Applying/reconciling the
     # pattern has its own draft preview and validator; avoid rechecking every rota.
     rows, totals = (([], {"workspace_count": 0, "session_count": 0, "partial": False})
                     if payload.catalogue == "recurring_series" else scope(db, actor, day=day))
     if before is not None:
-        _require_current(before.snapshots.keys() == {row.id for row in rows})
+        _require_current(before.snapshots.keys() == {row.id for row in rows}, before_capture=True)
     metadata_only = False
     if contact_update(command, payload, before_record):
         original = contact_inputs(db, actor, before_record)
@@ -209,7 +223,9 @@ def prepare_preview(db, actor, command, before):
         try:
             result = write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True)
             if rows:
-                captured = capture_catalogue_sources(db, actor.organisation_id, rows, captured_at=captured_at)
+                captured = capture_catalogue_sources(db, actor.organisation_id, rows, captured_at=captured_at,
+                                                     issued_sources=before.issued_sources,
+                                                     before_baselines=before.baselines)
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",
@@ -238,9 +254,15 @@ def build_preview(engine, prepared):
         return prepared
     with catalogue_source_reader(engine, captured, actor) as (db, captured_at):
         shared = snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
+        verified_baseline_keys(db).update(before.baselines)
+        replayed = {w.id: (w, baseline) for w, baseline in db.execute(select(m.Workspace, m.WorkspaceBaseline)
+            .outerjoin(m.WorkspaceBaseline, m.WorkspaceBaseline.workspace_id == m.Workspace.id)
+            .where(m.Workspace.id.in_(before.snapshots)))}
+        memo = baseline_rows(db)
         for ident, previous in before.snapshots.items():
-            w = db.get(m.Workspace, ident)
-            _require_current(w is not None)
+            _require_current(ident in replayed)
+            w, baseline = replayed[ident]
+            memo[(ident, w.revision)] = baseline
             workspaces.append({"workspace_id": w.id, "name": w.name, "status": w.status, "before": previous,
                 "after": domain_snapshot(db, w, operational=True, shared_inputs=shared, _event_now=captured_at),
                 "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False, _event_now=captured_at)

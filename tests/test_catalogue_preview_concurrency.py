@@ -34,6 +34,7 @@ def setup_preview(h):
 def test_changed_workspace_between_snapshot_and_writer_refuses_preview(both, monkeypatch):
     h = both
     resource, workspace, command = setup_preview(h)
+    command['expected_fingerprint'] = preview(h, command)['source_fingerprint']
     retry_write = main.retry_write
 
     def archive_then_acquire(engine, operation, **kwargs):
@@ -49,6 +50,34 @@ def test_changed_workspace_between_snapshot_and_writer_refuses_preview(both, mon
     assert stored["capacity"] == 2
 
 
+@pytest.mark.parametrize('concurrent_writes', [1, 2])
+def test_unbound_preview_recaptures_once(both, monkeypatch, caplog, concurrent_writes):
+    h = both
+    _, workspace, command = setup_preview(h)
+    workspaces = [workspace, h.workspace('Second concurrent rota')]
+    retry_write = main.retry_write
+    admissions = []
+
+    def archive_then_acquire(engine, operation, **kwargs):
+        index = len(admissions)
+        admissions.append(index)
+        if index < concurrent_writes:
+            row = workspaces[index]
+            h.command('coordinator', 'workspace.archive', {'reason': 'Concurrent cleanup'}, row['id'], row['revision'])
+        return retry_write(engine, operation, **kwargs)
+
+    monkeypatch.setattr(main, 'retry_write', archive_then_acquire)
+    with caplog.at_level('INFO', logger='rota.api'):
+        result = preview(h, command, status=200 if concurrent_writes == 1 else 409)
+
+    assert admissions == [0, 1]
+    assert [rec.message for rec in caplog.records].count('catalogue_preview_recapture') == 1
+    if concurrent_writes == 1:
+        assert [impact['workspace_id'] for impact in result['impacts']] == [workspaces[1]['id']]
+    else:
+        assert result['error']['code'] == 'STALE_PREVIEW'
+
+
 def test_expired_projected_blocking_event_refuses_baseline_on_same_day(both, monkeypatch):
     h = both
     _, _, command = setup_preview(h)
@@ -61,7 +90,9 @@ def test_expired_projected_blocking_event_refuses_baseline_on_same_day(both, mon
     # Use sessions issued at the pinned clock so the only change is the projected event.
     h.clients.pop('admin').close()
     h.client('admin')
-    assert preview(h, command)["impacts"]
+    original_preview = preview(h, command)
+    assert original_preview["impacts"]
+    command['expected_fingerprint'] = original_preview['source_fingerprint']
     retry_write = main.retry_write
 
     def advance_clock_then_acquire(engine, operation, **kwargs):
