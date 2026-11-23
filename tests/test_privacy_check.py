@@ -232,11 +232,21 @@ def test_author_and_committer_are_scanned(tmp_path):
     assert [line.split(" ", 2)[2] for line in lines] == ["author:1: private-tld", "committer:1: private-tld"]
 
 
-def test_a_long_line_scans_in_linear_time():
-    line = ("-" * 10 + "QUJD" * 10) * 4000
+@pytest.fixture
+def long_clean_line():
+    return ("-" * 10 + "QUJD" * 10) * 4000
+
+
+def test_a_long_line_has_no_hits(long_clean_line):
+    assert ids(long_clean_line) == []
+
+
+@pytest.mark.wall_benchmark
+def test_a_long_line_scans_in_linear_time(long_clean_line):
     started = time.perf_counter()
-    assert ids(line) == []
-    assert time.perf_counter() - started < 1
+    ids(long_clean_line)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1
 
 
 def test_all_mode_scans_every_tracked_file_at_head(repo):
