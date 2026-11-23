@@ -304,9 +304,10 @@ def _skill_context(data, scope, pool, by_clinic):
     return people, people if presence or negative else frozenset()
 
 
-def rule_map(data, originals=None):
+def rule_map(data, originals=None, *, reach_only=False):
     """The rule map of the snapshot's rota. `originals`: the department rules as they are before this rota's
-    adjustments, by id (for the department's number and for rules switched off here)."""
+    adjustments, by id (for the department's number and for rules switched off here).
+    Assignment closure can use the same reach without building the display projection."""
     from .rule_lines import bound_policies, catalogue_display_policies, safety_display_key
     if not data.get('_catalogue_v2_materialized') and (data.get('source_bindings') or data.get('scheduling_facts')):
         data = {**data, 'policies': bound_policies(data['policies'], data), '_catalogue_v2_materialized': True}
@@ -317,7 +318,8 @@ def rule_map(data, originals=None):
     n = (last - first).days
     days = [(first + timedelta(days=i)).isoformat() for i in range(n)]
     A, B, full = local_midnight(first, zone), local_midnight(last, zone), (1 << n) - 1
-    bindings, binding_sources = _binding_values(data, A, B, zone)
+    if not reach_only:
+        bindings, binding_sources = _binding_values(data, A, B, zone)
     dept = ws['department_id']
     focus = set(data['focus_ids'])
     shifts = [s for s in data['shifts'] if s['id'] in focus and not inactive(s)]
@@ -573,7 +575,7 @@ def rule_map(data, originals=None):
                         b <= active_ends[pid] and data['types'][shifts[i]['assignment_type_id']]['department_id'] == copy['department_id']
                         if exact and not touched & (touched - 1) else applies(view, copy, pid, i, a, b)))
                 pairs = ((pid, i, a, b) for pid, m in held.items() for i, a, b, touched in duties.get(pid, ()) if m & touched)
-            if copy['id'] in exact_people:
+            if not reach_only and copy['id'] in exact_people:
                 ask = exact_people[copy['id']]
                 yes, no = said.setdefault(copy['id'], (set(), set()))
                 for pid, i, a, b in pairs:
@@ -588,6 +590,11 @@ def rule_map(data, originals=None):
         return out
 
     found = mapped(copies)
+    if reach_only:
+        empty = (), {}, 0, None
+        reach = (found.get(policy['id'], empty) for policy in policies)
+        return {'rules': [{'sessions': sessions, 'people': masks, 'days': _days(mask)}
+                          for sessions, masks, mask, _ in reach]}
     # Who follows a line that names no person (a programme's or a rank's line), on which rota days: the planner shows
     # that line's number as theirs. {rule id: {person: [(first day, end day, line index in the rule's per_person)]}}.
     line_people, first_slots = {}, {}

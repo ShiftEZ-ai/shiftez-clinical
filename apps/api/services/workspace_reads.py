@@ -189,17 +189,17 @@ def _stored_check_stamps(db, workspace_ids):
         projection.kind == 'stored_check')).all())
 
 
-def check_stamp(db, workspace, *, stored_stamps=None):
+def check_stamp(db, workspace, *, stored_stamps=None, validation=...):
     # Deferred collection reads must reuse the compact projection without hydrating
     # the full validation JSON; write listeners still include the changed value.
-    if 'validation' not in workspace.__dict__:
+    if validation is ... and 'validation' not in workspace.__dict__:
         if stored_stamps is None:
             stored_stamps = _stored_check_stamps(db, [workspace.id])
         stamp = stored_stamps.get(workspace.id)
         if stamp is not None:
             return stamp
     return digest([source_identity(db), workspace.revision, workspace.accepted_issues,
-                   workspace.validation])
+                   workspace.validation if validation is ... else validation])
 
 
 def stored_checks(db, workspaces):
@@ -220,24 +220,28 @@ def stored_checks(db, workspaces):
 
 
 def store_check(_mapper, connection, workspace):
-    # Only already-loaded checks participate; metadata edits must not hydrate a large deferred check.
     state = inspect(workspace)
-    if 'validation' not in workspace.__dict__:
-        return
+    projection_changed = any(state.attrs[key].history.has_changes() for key in
+                             ('validation', 'accepted_issues', 'rule_adjustments', 'target_overrides'))
+    if 'validation' not in workspace.__dict__ and not projection_changed:
+        return  # Unrelated metadata edits need no deferred validation read.
     db = object_session(workspace)
     preparation = db.info.get('_planning_preparation') if db is not None else None
     if (preparation and preparation.get('kind') == 'shift.update'
-            and (not preparation['replay'] or not state.attrs.validation.history.has_changes())):
-        # Preparation rolls back. Replay projects the final check on the flush that stores it.
+            and (not preparation['replay'] or not projection_changed)):
         return
+    check = workspace.__dict__.get('validation', ...)
+    if check is ...:
+        workspace_table = m.Workspace.__table__
+        check = connection.scalar(select(workspace_table.c.validation).where(workspace_table.c.id == workspace.id))
     if connection.dialect.name == 'postgresql':
         from sqlalchemy.dialects.postgresql import insert
     else:
         from sqlalchemy.dialects.sqlite import insert
     C = m.WorkspaceReadProjection.__table__
     value = dict(workspace_id=workspace.id, audience=CANONICAL_AUDIENCE, kind='stored_check',
-                 stamp=check_stamp(db, workspace), value=check_projection(workspace, workspace.validation))
+                 stamp=check_stamp(db, workspace, validation=check), value=check_projection(workspace, check))
     connection.execute(insert(C).values(**value).on_conflict_do_update(
         index_elements=['workspace_id', 'audience', 'kind'], set_={key: value[key] for key in ('stamp', 'value')}))
-    if state.attrs.validation.history.has_changes() or state.attrs.accepted_issues.history.has_changes():
+    if projection_changed:
         connection.execute(C.delete().where(C.c.workspace_id == workspace.id, C.c.kind == 'warm'))
