@@ -489,6 +489,7 @@ export type BadgeTone=Tone|''|`duty-${string}`;
 export type BadgeOptions={icon?:IconName|null;tip?:string;as?:'button'}&Record<string,unknown>;
 export const badge=(value:string,tone:BadgeTone='',cls='',{icon:glyph,tip,as,...attrs}:BadgeOptions={})=>
   el(as||'span',{...(as?{type:'button'}:{}),...attrs,class:['badge',tone,cls].filter(Boolean).join(' '),'data-tip':tip||undefined},glyph?icon(glyph):null,value.replaceAll('_',' '));
+export const selfApprovedBadge=()=>badge('Self-approved','warn','audit-self');
 /** The Needs-you row's words (UIUX-AUDIT C9; DESIGN › Fix list: one shared row shape). */
 export function needText(title:Child|Child[],line?:Child|Child[],o:{id?:string;tip?:string;cls?:string}={}):HTMLElement{
   return el('span',{class:'home-need-text',...(o.id?{id:o.id}:{})},el('strong',{},...[title].flat()),

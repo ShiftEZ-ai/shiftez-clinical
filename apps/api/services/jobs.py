@@ -793,6 +793,7 @@ def apply_generation(db, actor, command):
         "applied": s.GenerationApplied(addition_indexes=addition_indexes, removal_indexes=removal_indexes,
             added_count=len(additions), removed_count=len(removals)).model_dump()})
     job.revision += 1
+    result['job'] = job_record(job, include_result=False, include_progress_solution=False)
     return result
 
 
