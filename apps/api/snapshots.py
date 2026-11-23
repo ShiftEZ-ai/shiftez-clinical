@@ -458,8 +458,8 @@ def _baseline_inputs_view(payload):
             for key, value in payload.items()}
 
 
-DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
-REVIEW_POLICY_BASIS = 'current_mandatory_with_captured_safety'
+DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits_and_catalogue_safety'
+REVIEW_POLICY_BASIS = 'current_mandatory_with_captured_and_live_catalogue_safety'
 
 
 def draft_policy_hint(workspace, *, current_mandatory=False):

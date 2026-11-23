@@ -16,7 +16,7 @@ from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
 from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified, person_active_for_interval
-from .validation import coverage_boundary_inputs, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
+from .validation import coverage_boundary_inputs, effective_type_definition, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
 from .supervision_levelling import levelled_order, session_spread_policies
@@ -690,7 +690,7 @@ def pair_attached(data, shifts, added, removals, period):
     the rota check allows it. Only work this run may change: its own additions, or unfixed draft assignments."""
     mine = {id(r['participant']): r for r in added}
     for shift in shifts:
-        if shift['locked'] or not shift['type_snapshot']['definition'].get('supervision'):
+        if shift['locked'] or not effective_type_definition(data, shift).get('supervision'):
             continue
         a, b = aware(shift['start']), aware(shift['end'])
         here = {p['person_id']: p for p in shift['participants']}
@@ -1002,12 +1002,13 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
             break
         if shift["locked"]:
             continue
+        definition = effective_type_definition(data, shift)
         # Who could take this session at all (active, qualified, not away, on leave or restricted) never changes during
         # the run: decide it once per session, not for every person at every seat.
         a, b = aware(shift['start']), aware(shift['end'])
         candidates = stage_people[stage, shift['id']] if stage is not None else data['people']
         pool = [pid for pid in candidates if population_allows(data, shift, pid) and person_active_for_interval(data, pid, a, b) and series_candidate_allowed(data, shift, pid)
-                and qualified(data, pid, shift, shift['type_snapshot']['definition'], a, b)
+                and qualified(data, pid, shift, definition, a, b)
                 and not rotation_blocks(data, pid, a, b) and not restriction_blocks(data, pid, shift, a, b)
                 and not any(overlaps(a, b, aware(r['start']), aware(r['end'])) for r in person_rows(data, 'availability', pid))]
         for _seat in range(100):
@@ -1059,7 +1060,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                         overtime_priorities[pid] = marginal_priority(data, shift, {
                             'person_id': pid, 'start': shift['start'], 'end': shift['end'], 'overtime': True}, history[pid])
             overtime_order = sorted(ordered, key=lambda pid: -settings[pid][2] - overtime_priorities.get(pid, 0))
-            candidates = ([] if shift['type_snapshot']['definition'].get('extra_cover', False)
+            candidates = ([] if definition.get('extra_cover', False)
                           else [(pid, False) for pid in ordered]) + [(pid, True) for pid in overtime_order if settings[pid][1]]
             for pid, overtime in candidates:
                 if pid in current_ids or (not coverage_needed and pid not in quota_need):
@@ -1074,7 +1075,6 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                 if interrupted():
                     timed_out = True
                     break
-                definition = shift["type_snapshot"]["definition"]
                 a, b = aware(shift['start']), aware(shift['end'])
                 displaced = [(s, p) for s, p in history[pid] if overlaps(a, b, aware(p['start']), aware(p['end']))]
                 if displaced and (period.get('base_publication_id')

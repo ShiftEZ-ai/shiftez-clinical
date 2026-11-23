@@ -660,7 +660,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     organisation = db.get(m.Organisation, department.organisation_id)
     if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
             or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
-            or not {"policies", "exceptions"} <= set(current)):
+            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
         current = _live_safety_snapshot(db, workspace)
     result = dict(frozen)
     for key in LIVE_OPERATIONAL_KEYS:
@@ -768,8 +768,19 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             for ident, row in (result.get(key) or {}).items():
                 after = ({**row, **{field: live[ident].get(field, row.get(field)) for field in LIVE_VALIDITY_FIELDS}}
                          if ident in live else {**row, "active": False})
-                overlaid[ident] = after
                 before = captured.get(ident)
+                # Referenced rows may already come from live. Read the previous
+                # limits from the verified capture before comparing them.
+                if key == "locations" and ident in live:
+                    after["capacity"] = min((before or row)["capacity"], live[ident]["capacity"])
+                if key == "types":
+                    # The session's saved definition is the third input to the domain reader.
+                    sources = (("captured", before), ("live", live.get(ident)))
+                    after["draft_safety"] = {
+                        label: {field: source["definition"].get(field) for field in ("requirements", "supervision")}
+                        for label, source in sources if source
+                    }
+                overlaid[ident] = after
                 if (before and before.get("department_id") == workspace.department_id
                         and any(before.get(field) != after.get(field) for field in LIVE_VALIDITY_FIELDS)):
                     validity_changes.append({"catalogue": key, "record_id": ident, "name": before.get("name", ident),
