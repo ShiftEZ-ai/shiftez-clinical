@@ -19,10 +19,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-ins
     && rm -rf /var/lib/apt/lists/*
 ARG CI_PIP_INDEX_URL=""
 ARG CI_PIP_TRUSTED_HOST=""
+ARG PUBLIC_IMAGE=0
 RUN if [ -n "$CI_PIP_INDEX_URL" ]; then \
       export PIP_INDEX_URL="$CI_PIP_INDEX_URL" PIP_TRUSTED_HOST="$CI_PIP_TRUSTED_HOST"; \
     fi \
-    && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements/postgres.lock \
+    && if [ "$PUBLIC_IMAGE" = 1 ]; then set -- --no-compile; fi \
+    && python -m pip install "$@" --no-cache-dir --require-hashes --only-binary=:all: -r requirements/postgres.lock \
     && groupadd --gid 10001 rota && useradd --uid 10001 --gid 10001 --no-create-home rota
 COPY apps/process_memory.py ./apps/process_memory.py
 COPY apps/api ./apps/api

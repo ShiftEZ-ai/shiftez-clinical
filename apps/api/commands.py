@@ -861,7 +861,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
-    if command.kind == 'generation.apply':
+    feasibility_preparation = None
+    feasibility = command.kind == 'job.create' and command.payload.get('kind') == 'feasibility'
+    if command.kind == 'generation.apply' or feasibility:
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
                   if engine.dialect.name == 'postgresql' else engine)
         with transaction(reader) as db:
@@ -871,8 +873,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             actor = authenticate(db, token, csrf, write=True, settings=settings)
             require_role(actor, *command_roles(command))
             if not existing_receipt(db, actor):
-                from .services.generation_reconciliation import prepare
-                generation_plan = prepare(db, actor, command)
+                if feasibility:
+                    planner_tools.assert_precondition(db, actor, command)
+                    feasibility_preparation = jobs.prepare_feasibility(db, actor, command, settings)
+                else:
+                    from .services.generation_reconciliation import prepare
+                    generation_plan = prepare(db, actor, command)
 
     activation_preparation = None
     if command.kind in {'policy.activate', 'policy.activate_many'}:
@@ -1045,6 +1051,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info['_track_input_changes'] = True
         if generation_plan is not None:
             db.info['_generation_plan'] = generation_plan
+        if feasibility_preparation is not None:
+            db.info['_feasibility_preparation'] = feasibility_preparation
         if activation_preparation is not None:
             db.info['_activation_preparation'] = activation_preparation
             db.info['_activation_timing'] = True

@@ -13,8 +13,12 @@
 
 ## Product and current goal
 A clinical rota product: planning, rules, auto-scheduling (OR-Tools CP-SAT), review, approval and publication,
-fairness, and staff preferences. It serves any clinical department; none is built in. The current release serves one
-user, who manages people, requests and rules, and creates schedules by hand and by auto-schedule, with fast screens.
+fairness, and staff preferences. It serves any clinical department; none is built in. The current release puts one
+department of about 150 people on it: the department's administrators manage people, access, requests, rules and
+announcements and create schedules by hand and by auto-schedule; every employee can use a phone to see their schedule,
+open any duty or colleague for details and contact numbers (within the contact privacy rules), send requests and swap
+requests, read announcements and sync their schedule to a calendar. Screens are fast on desktop and phone. Later
+releases host many organisations on one deployment, each isolated from the others.
 
 ## Commands
 - Set up: `npm ci` · `pip install --require-hashes -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock`
@@ -36,6 +40,10 @@ reused everywhere:
 - Rule lines: `packages/domain/rule_lines.py`, called by `conditions.active_rules`; every check reads rules through it.
 - Schedule score: `packages/domain/score.py`.
 - Fairness: `packages/domain/fairness.py`.
+- Golden scenarios: `tests/scenarios/golden/v1/` (manifest, scenarios, known gaps), seeded through public API
+  commands by `scripts/golden_scenarios.py` and checked by `tests/golden_checks.py`. It is the one reviewed
+  rule-and-scheduling scenario pack; extend it, never start a second one. Department-scale fixtures stay in
+  `tests/scheduler_departments.py`.
 - Rule reach: `packages/domain/rule_map.py`.
 - Contracts: `packages/contracts/schemas.py` → `scripts/generate_contracts.py` → `apps/web/src/generated.ts`. Kinds,
   fields, limits and roles (`ROLE_NAMES`) come from the contracts or the API, never copied into the frontend.
@@ -51,6 +59,9 @@ Definition of done:
 - Every finding is an issue first, one per root cause. Every PR names its issue on a line of its own: "Closes #n",
   or "Refs #n" for a partial fix. "Part of #n" and "Fixes #n" are refused.
 - Tests at every layer the change touches, by DELIVERY.md § Test policy; no skipped or retried tests.
+- A fixed bug in rule resolution, rule checking or auto-scheduling that a small rota reproduces adds or extends a
+  golden scenario with its expected outcome and check, in the same PR. When the pack cannot state it (no binding
+  rule, outside the CP-SAT path), the PR says so and the regression test sits with the code it fixes.
 - Commit messages say what changed and where (no backend change under `fix(web)`). A user-visible change adds one
   `Changelog:` line to the PR description. Decisions and the options considered go in the issue or PR.
 - A PR that changes engine, validator, greedy, score or fairness outputs says "outputs change for existing data".
