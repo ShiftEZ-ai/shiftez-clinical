@@ -65534,6 +65534,152 @@
     "title": "FixListDelta",
     "type": "object"
   },
+  "AccountOnboardingRow": {
+    "additionalProperties": false,
+    "properties": {
+      "person_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Person Id",
+        "type": "string"
+      },
+      "username": {
+        "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+        "title": "Username",
+        "type": "string"
+      },
+      "email": {
+        "maxLength": 254,
+        "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+        "title": "Email",
+        "type": "string"
+      }
+    },
+    "required": [
+      "person_id",
+      "username",
+      "email"
+    ],
+    "title": "AccountOnboardingRow",
+    "type": "object"
+  },
+  "AccountOnboarding": {
+    "$defs": {
+      "AccountOnboardingRow": {
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "username": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+            "title": "Username",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "username",
+          "email"
+        ],
+        "title": "AccountOnboardingRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "rows": {
+        "items": {
+          "$ref": "#/$defs/AccountOnboardingRow"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "title": "Rows",
+        "type": "array"
+      },
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "rows",
+      "reason"
+    ],
+    "title": "AccountOnboarding",
+    "type": "object"
+  },
+  "AccountOnboardingApply": {
+    "$defs": {
+      "AccountOnboardingRow": {
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "username": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+            "title": "Username",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "username",
+          "email"
+        ],
+        "title": "AccountOnboardingRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "rows": {
+        "items": {
+          "$ref": "#/$defs/AccountOnboardingRow"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "title": "Rows",
+        "type": "array"
+      },
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "expected_fingerprint": {
+        "pattern": "^[a-f0-9]{64}$",
+        "title": "Expected Fingerprint",
+        "type": "string"
+      }
+    },
+    "required": [
+      "rows",
+      "reason",
+      "expected_fingerprint"
+    ],
+    "title": "AccountOnboardingApply",
+    "type": "object"
+  },
   "ObservedRuleEffect": {
     "$defs": {
       "FindingRecitation": {
