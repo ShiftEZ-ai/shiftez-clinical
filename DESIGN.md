@@ -1,8 +1,7 @@
-# Product experience direction
+# Design
 
-Mode: Operate. Redesign in place (vanilla TypeScript, no runtime dependencies).
-Mockup names and numbers are
-illustrative only; nothing from them is seeded into the application.
+Owned by the Design Lead; changed only through a reviewed PR. Engineering rules are in AGENTS.md, delivery rules in DELIVERY.md.
+Mockup names and numbers are illustrative only; nothing from them is seeded into the application.
 
 ## Visual contract
 
@@ -35,7 +34,7 @@ illustrative only; nothing from them is seeded into the application.
   key, `legend()` in `dom.ts`: `key.mark(node, entry, swatch, words)` stamps the drawn element (`data-lg`) and adds its
   entry, so nothing can be drawn without its key and no view builds its own. The key lists only what the view draws
   (as drawn) and is always visible, one line below its view, never hidden (its line, "+N"
-  and print are stated once, under the status footer). A sheet or panel that opens over a view never
+  and print: see Status footer). A sheet or panel that opens over a view never
   covers its key: it stops above the key or the key docks in its foot. The Rules views tag what they draw
   (`ruleMark`, `RULE_MARKS` in `rule_catalogue.ts`).
   Shared renderers take the view's key (`colourRule` `seen`/`seenChip`, `issueMarker({key})`, timeline `Bar.keys`).
@@ -52,13 +51,12 @@ illustrative only; nothing from them is seeded into the application.
   for a value it does not name is never self-explained: it goes through the key (`tests/test_web_ssot_guards.py` lists the
   allowed places). The session panel has its own key (its pills' duty hue and its team boxes); Year keys its today ring
   and the underline of a named date.
-  A key **never scrolls sideways, clips or cuts an entry**: what its one line cannot hold goes behind "+N", which lists
-  every entry (it replaces an earlier wrapping key, whose aim, never losing Open place or Weekend,
-  "+N" keeps). An entry can be usable (`LegendUse`): hover or focus highlights its marks, a click acts, a short note
+  A key **never scrolls sideways, clips or cuts an entry**; its "+N" replaces an earlier wrapping key and keeps that
+  key's aim, never losing Open place or Weekend. An entry can be usable (`LegendUse`): hover or focus highlights its marks, a click acts, a short note
   (a total) follows its words (Fairness's people: their line highlights, their sessions open). One legend system only:
   no footer legends (`footerLegend` retired; the Rules and checks pages' keys sit beside their views). A chart of one
   point says nothing: one value is said in words and the chart (and its key entries) starts at two.
-- Footer is one line; overflow collapses into a clickable +N.
+- The status footer is one line (see Status footer).
 - Never show what is obvious from context or already shown on the same screen (e.g. no date in the footer).
 - One primary colour: every primary button is the teal accent (Add session and New rota too; no near-black primary).
   The action that starts a rota is named **New rota** everywhere.
@@ -105,7 +103,8 @@ illustrative only; nothing from them is seeded into the application.
   `--sub`; 5.89:1 and 6.78:1 on `--surface`), the cancelled-item recipe; only its non-text marks (icons, dots, outside buttons)
   fade to 38 %. It was opacity 28 % (1.52:1 light, 1.88:1 dark at the worst hue) and 38 % (1.82:1, 2.44:1). Nothing in
   it is transparent, so sticky heads stay opaque. Print shows the rota undimmed.
-- **A state is in words, never only a title**. A `title` is not shown on keyboard focus or touch (SC 1.4.13),
+- **A state is in words, never only a title**. A `title` is not shown on keyboard focus or touch (the browser draws it, so WCAG 2.2 SC 1.4.13 Content on
+  Hover or Focus does not cover it),
   and it is not reliably read, so a state that changes what someone decides carries visible words. A
   staff-import chip that will be added shows "+". The key below the rows names both states ("Will be added",
   "Already current"), and each chip carries the same words as visually hidden text. Do not use `aria-description`
@@ -118,7 +117,7 @@ illustrative only; nothing from them is seeded into the application.
 - Danger is solid: an armed confirm button and an error toast are solid red
   (`--err-solid`) with white text in both themes (AA); an error toast also carries an
   alert icon. An armed button (`armed()` in `dom.ts`, the one same-button confirm) has no
-  time limit (WCAG 2.2.1): it stays armed until the mouse pointer or focus leaves it, or
+  time limit (WCAG 2.2 SC 2.2.1 Timing Adjustable): it stays armed until the mouse pointer or focus leaves it, or
   Escape; it never shrinks. Use it only for actions that cannot be undone (publish, end,
   delete for good); a reversible action acts at once and offers Undo instead. One exception: **Archive** a rota takes a reason and the armed press, then offers Undo, because it changes what staff or
   reviewers see. Archive, Restore and Delete draft are one action per rota state, named only by the server's
@@ -151,7 +150,7 @@ illustrative only; nothing from them is seeded into the application.
   the table's edge), each heading stacked above the next; a resized heading clips its own button, so its text ends in
   an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Ctrl D is its
   keyboard way, no pointer equivalent yet) and the native × of search fields.
-- Touch targets (WCAG 2.2 SC 2.5.5): on a phone every interactive target is at least 44 × 44 CSS px, from one block
+- Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
   options, menu rows, tabs, search fields, pickers, link buttons, the skip link). Pills and chips that act as buttons,
   issue markers, and the one-line footer keep their look and take a centred invisible 44 px `::after` as their target. A person's name in running
@@ -159,7 +158,9 @@ illustrative only; nothing from them is seeded into the application.
   The phone footer row is 44 px (the target height); items keep their size (≤ 26 px, one line), and the bottom
   safe-area inset sits below that row, never inside it.
 - Nothing overflows: long or unbreakable words wrap (`overflow-wrap` on `body`); a chip, a badge or a one-line label
-  that must stay on one line ends in an ellipsis (`.chip-text`, `.truncate`) with its full wording in a tooltip; a strip
+  that must stay on one line ends in an ellipsis (`.chip-text`, `.truncate`, `.clamp-2` for two lines) with its full
+  wording in the shared hover tip while it is cut, never a screen's own title (so no content is lost: WCAG 2.2 SC 1.4.12
+  Text Spacing); a strip
   that clips or scrolls draws its controls' focus rings inside (`outline-offset:-2px`). Layouts that depend on the page
   column's width (Schedule header, footer, Rules rows) use `@container work`, so a docked panel gets the phone layout
   too; the Week's toolbar follows its own column (`.planner-main`), and a narrow day column wraps its head's whole
@@ -175,7 +176,7 @@ People, Programmes, Insights, Rules, Configuration, Access & approvals, System; 
 name and tooltip, the same number the Inbox says: `unreadCount`). One page
 per subject; a page that merged several old ones uses tabs, each tab with the roles of the page it replaced, and the open
 tab lives in the address (`#system/audit`). Old addresses redirect through one alias map (`apps/web/src/routes.ts`).
-Home is everyone's landing page (approved mockups HomeCoord / HomeStaff; `home.ts`), never a wall of tiles: main column
+Home is everyone's landing page (the approved coordinator and staff Home mockups; `home.ts`), never a wall of tiles: main column
 and a 340px side column (one column on phones). **Needs you** is one ranked list (server priority order): a tone count pill,
 a title, one muted context line and one action per row; zero rows hidden; "All clear ✓" when empty. Planners also get
 **Rota** (last, this and the next two months: the published days teal where they fall and named as ranges, the draft
@@ -228,7 +229,7 @@ and a desktop window narrowed below it gets the same rule at once.
   Planners also get the **Fix list**: Home lists their draft's row with **Fix list**,
   which opens readable and actionable there (search, filter, the evidence behind Show evidence, each cause's action under its row). An action
   that needs the planner (a scoped auto-schedule, a session's cover) lands on the desktop notice as any planning link.
-- **Phone-finishable coordinator work (mockups B1, B6):** on a published session a
+- **Phone-finishable coordinator work (approved mockups):** on a published session a
   coordinator can Replace… and Mark absent from a phone (the session panel rises as a sheet). Home's Needs you lists
   only rows a phone can finish (`onPhone` in `home.ts`: requests, swaps and person facts to decide, a rota review,
   a reported absence → Replace, a draft's Fix list), then one quiet line naming the rest, "1 more item needs a
@@ -258,7 +259,7 @@ and a desktop window narrowed below it gets the same rule at once.
 ## Interaction contract
 
 - **Disclosure**: no ▸/▶ triangle or other disclosure arrow glyph is ever shown. The base CSS hides every `<summary>` marker; a summary is a plain text control in the accent colour (24px target, 44px on a phone, visible focus, underline on hover, the native expanded state), worded as what it reveals ("How this was made", "Run details"); a toggle that changes its words is a button with `aria-expanded` (More / Show less). `tests/test_browser_disclosure.py` fails on any marker.
-- **Fix list** (mockups A; `fix_list.ts`): one server object (`rota_summary.py`,
+- **Fix list** (the approved Fix list mockup; `fix_list.ts`): one server object (`rota_summary.py`,
   `GET /api/workspaces/{id}/fix-list`) is every surface's count: Home, the footer, Rota tools, Submit, the approver's
   review and the auto-schedule result. Two levels only, **Must fix** (a mandatory rule is broken: Submit is blocked) and
   **Could improve** (advisory goals and fairness; never blocks). The count is of causes, ranked by the checks one fix
@@ -273,7 +274,7 @@ and a desktop window narrowed below it gets the same rule at once.
   acknowledged gaps: only causes that are not safety kinds, one reason each, press twice; the approver accepts or
   rejects each item (a reject with its reason) and may add an optional note, never a fixed one (a self-approval still
   gives its reason). On these surfaces its words replace blocking, warning, issue, task and finding.
-- **Fix list beside the Planner** (mockup direction A): on a desktop the Fix list is the Planner's docked side
+- **Fix list beside the Planner** (the approved Fix list mockup): on a desktop the Fix list is the Planner's docked side
   panel (`dockPanel` key `fix-list`), opened by the footer's health, Rota tools, Home, the run card and a must-fix marker's
   **Fix** (the same item). Must fix is open, Could improve collapsed (Show), grouped by what to do when the server
   says so. A row is one plain sentence (the server's), its line (`detail_line`; never checks counts or score numbers), a **Safety** tag on every safety cause, and where it is: one date chip per
@@ -351,7 +352,7 @@ and a desktop window narrowed below it gets the same rule at once.
   lost (the number and its share, never a coloured bar), sorted by points lost; a tier or a Fair share weight changes
   through the governed rule proposal; Must lines last, not editable. The score's parts that lost points sit beside it;
   the plain explanation is its "?". Coordinators see this tab only. History with Restore sits beside Reset.
-- Auto-schedule run card (mockup direction A): one card, no steps. Setup is one line (dates,
+- Auto-schedule run card (the approved run card mockup): one card, no steps. Setup is one line (dates,
   clinics, people, keep existing) with Change, which opens those fields under it; anything that changes what happens
   (nothing to fill, what the basic scheduler does not weigh, a choice kept on this device) stays above them. Then the
   priorities as one segmented choice (the contract's presets, the chosen one's weights under it) and the two search
@@ -408,7 +409,7 @@ and a desktop window narrowed below it gets the same rule at once.
   (one column below 900px); Mark a spot is red, Hide area is a solid slate block; "Details sent" lists exactly what
   goes. My feedback for everyone (phone too); System › Feedback for admins and auditors (desktop).
 - Status footer, on every screen: the screen's own status on the left (Schedule with a
-  draft: open places, blocking, overlap / other drafts and the score, each opening a list;
+  draft: open places, Must fix, overlap / other drafts and the score, each opening a list;
   Schedule published only: the published days in view for planners, your duties in view for
   staff; a page with one list: its row count; others add theirs with `footerStatus()`),
   general status on the right as icons when all is well, words in the tooltip and accessible name; a change of state
@@ -422,7 +423,7 @@ and a desktop window narrowed below it gets the same rule at once.
   still waiting after 10 s shows a neutral "Updating…" with a small spinner at the footer's left until it lands, never
   a warning or a connection state, nor while another footer state already says it (a job's own progress such as
   "Checking the rota · m:ss", or a save's "Saving…") (supersedes "Server busy"; an opening page keeps its
-  skeleton's Still loading · m:ss after 15 s; on failure “Couldn’t load <section>.” + Retry; on timeout “Didn’t load in 1:00.” + Retry); a connection dot, offline red with "Offline · retrying" shown in words beside it
+  skeleton's Still loading line, see Loading); a connection dot, offline red with "Offline · retrying" shown in words beside it
   (colour is never the only signal); an amber flask "Test environment: test
   accounts only" / a shield for Production). The footer holds status only, never a legend (a
   screen's key is the shared `legend()` beside its view; `footerLegend` retired). A view's key (`legend()`, dom.ts) lists every
@@ -432,13 +433,14 @@ and a desktop window narrowed below it gets the same rule at once.
   tap;
   Properties, Colour by and Layers in View settings choose both; the key has no settings button of its own (one View settings per collection).
   **A legend is always BELOW the content it explains and ONE line only, on every page; never above, never multi-line**.
-  The one `legend()` component draws a single line under its grid, schedule or table. What does not fit goes behind "+N",
-  which is the footer's +N overflow, not a second mechanism. "+N" opens the shared popover on hover, focus, click and
-  tap. The popover lists every item, one per line, as symbol and meaning. "Always visible" means this one-line strip
+  The one `legend()` component draws a single line under its grid, schedule or table. What does not fit (the last first; the first entry
+  always stays) goes behind the key's own "+N" (`overflowMore`, the shared "+N"), which lists every entry. The footer's
+  "? +N" (below) is a separate button that lists status items only; no legend entry ever goes there. "+N" is a button: a click, tap or Enter opens the
+  shared popover, and hover or focus shows only its tip. The popover lists every item, one per line, as symbol and meaning. "Always visible" means this one-line strip
   plus +N. Exports cannot hover, so a PNG or PDF prints the full list at the bottom of the page instead of +N
   (nothing hidden). Every
   status item shows inline while it fits; as the width shrinks the ones that no longer fit (the last first) go behind
-  one "? +N" button, which lists them (same icons, words and actions); legend entries go first, then status items; the
+  one "? +N" button, which lists them (same icons, words and actions); the
   button shows only while something is hidden. Real widths (ResizeObserver), refitted on resize and live updates.
   A phone keeps the first item (the main count or the rota health) and the button. It is the only place for
   rota health. Its controls (rota health, score, overlap, proposal, Needs a check) act through one delegated handler
@@ -461,7 +463,7 @@ and a desktop window narrowed below it gets the same rule at once.
   column heads stay in sight; its group heads stick under the day header at one height (the tallest), so one stuck
   over another never shows the other beneath it. `tests/test_browser_sticky.py` sweeps every screen for it, and the
   Schedule's Week, Month and People with each docked panel open (Fix list, rules, session).
-- Loading, one helper (`loading.ts`; approved mockups L1 light / L1b dark): nothing shows for a wait under 300 ms; once
+- Loading, one helper (`loading.ts`; the approved light and dark loading mockups): nothing shows for a wait under 300 ms; once
   shown a state stays at least 400 ms; content fades in (rows ~80 ms apart), never pops; waits are aria-busy and said once
   in one polite live region; reduced motion keeps every state without movement; colours from tokens only. Pages: a 2 px
   accent bar under the top bar (`topProgress`) only for a wait over 300 ms that the person started — opening a page or
@@ -473,16 +475,16 @@ and a desktop window narrowed below it gets the same rule at once.
   skeleton fills its content area down to the footer, its rows repeating to the height. A wait is
   only its skeleton: nothing is drawn over it or over the page — no spinner card, no "Still
   loading…" — and its words ("Loading Schedule…") are for screen readers only, said once. Past 15 s one quiet line in
-  flow at the top of the skeleton (in a card, panel or dock, inside its body), Still loading · m:ss after 15 s; on
-  failure “Couldn’t load <section>.” + Retry; on timeout “Didn’t load in 1:00.” + Retry; Still loading in
-  muted text, its clock said once; a failure ending in error tone, a timeout ending in warning tone; it takes its room
+  flow at the top of the skeleton (in a card, panel or dock, inside its body), the **Still loading line**, says "Still
+  loading · m:ss"; on failure it reads “Couldn’t load <section>.” + Retry, on timeout “Didn’t load in 1:00.” + Retry;
+  Still loading in muted text, its clock said once; a failure ending in error tone, a timeout ending in warning tone; it takes its room
   from the skeleton's rows, so nothing moves, and never takes focus. A read the caller can replace offers Retry on the Still loading line (idempotent reads only; a late answer is dropped). The 15 s is one constant (`loading.ts` `RETRY_AFTER`), never a literal at a
   call site. No loading state is positioned over content (`tests/test_web_loading.py`). Header and toolbar stay usable. Start-up: until the account is read, the deployment's emblem (72 px, the configured branding; `index.html` draws the
   generated default before any code runs) and the app's name sit in the middle of the screen on both axes, with one
   thin accent line under them (`skeleton('boot')`, the top bar's indeterminate movement). The screen fades in after
   300 ms (a quick start never shows it) and the emblem breathes slowly (2.8 s, scale 1–1.04); reduced motion keeps it
-  all, standing still, the line a full bar. Nothing else shows while it waits; past 15 s one quiet line under the bar,
-  Still loading · m:ss after 15 s; on failure “Couldn’t load <section>.” + Retry; on timeout “Didn’t load in 1:00.” + Retry, which moves nothing. The same 15 s applies before the app's code has run
+  all, standing still, the line a full bar. Nothing else shows while it waits; past 15 s the Still loading line sits
+  under the bar and moves nothing. The same 15 s applies before the app's code has run
   (`startup.ts`), so a module that never answers ends in the timeout with Retry (a reload); a module that fails, or a failed
   start, keeps the same centred column with "<short name> can’t be reached", the reason and its buttons. The frame
   comes first once signed in and each Home card loads, fails and retries on its own. A live update that changes the
@@ -512,7 +514,8 @@ and a desktop window narrowed below it gets the same rule at once.
   person shows joining or leaving the session at once). Every draft edit, forward or Undo, applies in place from its
   reply (the sessions changed or removed, the issues that came and went, the rota's health): the Schedule reads only
   the draft again — two requests per action, no page refresh, scroll and selection kept. Long jobs (auto-schedule)
-  show a real percentage, the step (in the footer's run strip), time left of the allowance and Cancel, never block, and say when a run finishes while you
+  show a real percentage, the step and time used (in the footer's run strip; time left of the allowance is on the run
+  card) and Cancel, never block, and say when a run finishes while you
   work elsewhere.
 - Auto-schedule live view (approved mockup; `autoschedule_live.ts`, `autoschedule_motion.ts`): while a
   run is shown, People and Week follow the solver's real better schedules (never simulated progress). Hybrid flies the
@@ -522,7 +525,7 @@ and a desktop window narrowed below it gets the same rule at once.
   preferences) turns motion off like the department's Off, and the grid holds still while the solver goes on. The strip is the one live region for the
   step (the panel's stage line is one only on phones, where the strip is hidden); in a full footer the rota's health
   folds after the screen's other items. The footer's run strip is one item: step ("3/5
-  Improving", Roll), 120×4 time bar (`--line` track, `--accent` fill, `--ok` at Done), "1:13 left" / "1:44 used"; one
+  Improving", Roll), 120×4 time bar (`--line` track, `--accent` fill, `--ok` at Done), time used ("1:44 used", never a time left); one
   polite announcement per step. At Done a "Ready for review" card shows only what the footer does not (score gain,
   duties changed, better schedules) when the Auto-schedule panel is closed (an open panel shows its review); changed
   cells keep a quiet accent ring. Settings: Configuration › Auto-schedule & scoring › Animation (labels only, a
@@ -555,7 +558,7 @@ and a desktop window narrowed below it gets the same rule at once.
   each rank its own rank tint (`rankColour`), groups violet, people blue, clinics teal, #tags their own colour (`.rp`, `tagRef`) — first N then "+N".
   Tri-state boxes roll up to select-all; one selection bar. A rule's page opens a line in the docked item panel (`dockPanel`) and
   outlines the line it edits. Needs attention: issues grouped by kind, each with a ★ recommended fix and Apply.
-- Filters (`conditionBuilder` in `conditions.ts`, the one builder; approved mockups K1f + K1g):
+- Filters (`conditionBuilder` in `conditions.ts`, the one builder; the approved rule line panel and reach popover mockups):
   Notion-style rows `[Where | And/Or menu] [icon field menu] [part menu] [operator menu] [value picker] … [⋯]`. The joiner column is a fixed
   76px (64px inside a group; 56px on a narrow condition box, so "And"/"Or" stay whole); "Where" is plain text. Every chip is bordered, 30px and sized to its content (native
   selects through the shared picker, `field-sizing:content`); the field chip carries its type icon (calendar, people,
@@ -566,14 +569,14 @@ and a desktop window narrowed below it gets the same rule at once.
   rule / Add filter group); **Delete filter** (same-button confirm) clears every rule. Labels "Filter on", "Part",
   "Operator", "Joiner" stay visually hidden for assistive technology.
   - **Operators** come from the contract per field type (`CONDITION_OPERATORS`), in words ("Is within" with the hint "a
-    moving range"), then a divider and **Is empty / Is not empty** on every type; choosing either replaces the value
+    moving range", kept because a saved filter that shifts with today would otherwise be mistaken for fixed dates), then a divider and **Is empty / Is not empty** on every type; choosing either replaces the value
     with plain muted "no value needed" (never a button).
   - **One value picker** for dates, numbers and text (`openValue`, on the shared `openPicker`): search on top, a
     **Relative** group first (the viewer's values from GET /api/conditions/catalogue — hidden, not disabled, where they
     mean nothing), then the exact value (the shared date field and its inline calendar, or what is typed). Typing in a
     date's search asks POST /api/conditions/parse-date and lists only the matches, the understood one first and
     highlighted (`.picker-row.best`, Enter picks); a value with an N ("Next N days…") fills the search with an example.
-    Footer: "Last / Next N always include today." Rule and audience conditions list only "Relative to the duty" and an
+    Footer: "Last / Next N always include today." (kept: whether today counts changes which records match). Rule and audience conditions list only "Relative to the duty" and an
     exact date, the footer saying why. Choice fields keep `multiPick`, with the relative values (Me, My programme,
     Clinics I can work at) first; one stands alone in a row (`Choice.exclusive`).
   - **Relative values** show a clock, the name and today's dates muted ("This month 1–31 Oct"; the whole range and
@@ -606,10 +609,10 @@ and a desktop window narrowed below it gets the same rule at once.
   as [field][part][operator] then [value], never clipped. "Not …" pills in tables are muted, never struck through
   (strikethrough means an old value in the approval diff). The lines table marks a who or where counted per value with one small Each icon
   (`eachMark`); nothing marks the default.
-- The rule line panel (K1f; 560px by default, resizable): title "who at where · numbers" with a lone green ✓ ("No duplicate or overlap" on hover)
+- The rule line panel (approved mockup; 560px by default, resizable): title "who at where · numbers" with a lone green ✓ ("No duplicate or overlap" on hover)
   once checked clean; the family pill with an (i) (the rule's description); "This line says" in a tinted box; Who and
   Where headings carry the reach as links ("WHO · 15 people", "WHERE · 9 clinics": accent, dotted underline), also in
-  the sentence. A link opens the reach popover (K1g, `rule_line_reach.ts`): title and period ("this week" with a rota,
+  the sentence. A link opens the reach popover (approved mockup; `rule_line_reach.ts`): title and period ("this week" with a rota,
   else "today"), search, people grouped by the filter row that matched them (sentence-case headings on one line, cut
   with "…", the whole filter in the tooltip; counts per group, first 5 then "+ N more"), each with initials, name, rank and a load bar "n/limit" (amber at the limit, red over, accent below; the
   number is always written); a person opens Which rule applies? for them; the footer says "1 over · 1 at the limit"
@@ -619,7 +622,7 @@ and a desktop window narrowed below it gets the same rule at once.
   "Advisory · medium" outline, dashed "↰ …" from the broader line; kept in place but hidden while the field is empty); it opens the shared menu (Mandatory, Advisory · low …
   critical, Inherit where allowed; the current one ticked, the level in its tooltip and name) and an untouched level is
   kept as it is; a new number takes the strength of the line it overrides (the broader line with the same where), else advisory (medium) unless the rule allows only Mandatory.
-- Line relation (`.rc-relation`, mockups B3–B5): one row inside "This line says" while a line is edited, proposed or
+- Line relation (`.rc-relation`, the approved line relation mockups): one row inside "This line says" while a line is edited, proposed or
   approved, from the server's resolution (the same one the checks use): ✓ "Overrides line N for <who> · <its numbers>"
   or, warning-toned (`.rc-says.is-warn`, icon + words), "Does not override line N: <why>. Both apply, …" with its one
   fix as a button ("Make it Mandatory"). "line N" opens that line and tints its table row. Effect (`.rc-effect` rows
@@ -683,8 +686,8 @@ and a desktop window narrowed below it gets the same rule at once.
   (`TableViewDefinition.timeline`). **Every timeline shows a visible key**: the
   shared `legend` (dom.ts, the Schedule's and the export's) below the timeline, filled from what is laid out
   (`Bar.keys`, `TimelineRow.keys`), so it lists only the marks this view and range draw, a swatch and a word each, and a
-  bare short label (AB, CD, EF) as its code with its full name. One line with "+N" (see Every mark has a
-  legend entry), on a phone too; no disclosure arrow; never hidden. People ›
+  bare short label (AB, CD, EF) as its code with its full name. One line with "+N" (see Status footer), on a
+  phone too; no disclosure arrow; never hidden. People ›
   Timeline, Where is everyone, Programmes › Rotation board and the Planner's Who's available all show it. Hover cards only where a pointer hovers; a bar opens its docked panel
   (conflict card with one recommended fix ★, a waiting change with Approve/Decline, Change dates, Remove armed). Only
   rows near the viewport are drawn (150 people × a year). Phones: an agenda (a person's own: Now with progress, then by
@@ -757,7 +760,7 @@ and a desktop window narrowed below it gets the same rule at once.
     (`.dt-parent`, "For 42 selected people", a menu: back, remove one).
   - **Universal Change form** (docked panel, 620px, stepper Change → Preview → Results): rows on the condition-row
     pattern — What to change (fields + actions from `BULK_COLLECTIONS`) → How (Set to / Clear / Move by days / Add /
-    Remove) → the field's shared input → ×; "+ Add another change"; "Everything else keeps its current value"; Reason
+    Remove) → the field's shared input → ×; "+ Add another change"; Reason
     (required for destructive changes). Change… is always the bar's primary; at most one or two shortcuts; ⋯; the
     destructive action last.
   - **Preview** (820px, Wider to full width): tiles (`.bulk-tile`: ready / no change needed / to resolve here /
@@ -812,7 +815,7 @@ and a desktop window narrowed below it gets the same rule at once.
   against their trigger with a small arrow pointing at it (flipping above or beside when there is no room); the
   trigger keeps an accent ring and tint while open (`.is-open`, `aria-expanded=true`), a hover card rings its element
   (`.is-pointed`), and a side panel keeps the item it explains highlighted (`panelHighlight`, `.is-explained`).
-- Dropdowns: one picker behaviour — every list has a search box (a key typed on the
+- Dropdowns: one picker behaviour and look (the picker's caret, no native chrome) — every list has a search box (a key typed on the
   closed field starts it); a list longer than 7 also leads with recent picks; keyboard per WAI-ARIA APG; popovers open
   on the side with room and scroll inside when taller, never past the status footer, their head and foot staying in view
   (Reset, Save as view) and the wheel or a swipe never scrolling the page behind them; a phone sheet the same. Menus are `role=menu` with `menuitemradio` for single choices.
@@ -855,7 +858,7 @@ and a desktop window narrowed below it gets the same rule at once.
 - One View picker: views (Year Month Week Day People Coverage List, keys Y M W D P C L),
   Layers (Published always on; one draft or No draft; Show drafts: Edit one / Side by side /
   Overlay; Leave and wishes; My duties), Colour by, Names, Density. One primary in the
-  toolbar: Add session with a draft, New draft without. Rota actions live in the top bar:
+  toolbar: Add session with a draft, New rota without. Rota actions live in the top bar:
   Auto-schedule, Submit for review… (a draft) or Publish… (an approved rota), Rota tools ⋯. A button names the step that
   happens. The sidebar logo is the link Home.
 - Dots (Year, Month): one per day. Fill = state (solid published, hollow draft, half = two
@@ -866,7 +869,7 @@ and a desktop window narrowed below it gets the same rule at once.
   start–end, never a named part of the day; Then by nests one more level); day headers show sessions and
   open places; hovering a session shows its people and rule checks. Day: lanes × hours,
   published bars solid, draft bars dashed; Overlay badges Changed / New.
-- Overlap choice (`overlapChoice` in `schedule.ts`), one component in New draft (under the
+- Overlap choice (`overlapChoice` in `schedule.ts`), one component in New rota (under the
   dates, which stay editable), the footer overlap pill and Publish…: a radio group — Start
   after it (default) / Replace from a date (date + mini timeline) / Change the published rota
   — with unavailable options shown disabled with the server's reason; the primary button
@@ -985,7 +988,6 @@ and a desktop window narrowed below it gets the same rule at once.
 - Tags (Configuration › Tags): one chip per tag everywhere (`tagRef` in `tags.ts`): "#Name" in the tag's palette hue
   with its member count; hover lists the members, click opens them with "Open tag". Pickers that choose people,
   clinics, places, duty types or programmes offer the tags labelling that kind under "Tags".
-- Text never overflows controls: single-line labels truncate with a tooltip.
 - Optional explanations use the existing accessible help control beside the thing they explain. Do not put
   migration, storage or implementation notes in permanent panels below working collections. Additional approved
   Rules remain discoverable from a counted context control with searchable rule details; migration stays inside
@@ -998,7 +1000,7 @@ and a desktop window narrowed below it gets the same rule at once.
 - Displayed dates stay whole. Ranges may wrap between dates, never between a date's day, month and year; narrow tables
   scroll within their own viewport, and pinned names must not cover other columns or their controls.
 
-## Changes to a published rota (mockups B1, B2)
+## Changes to a published rota (approved mockups)
 
 - A coordinator changes a published session from its panel: each person has one ⋯ menu (Replace…, Swap with another
   duty…, Mark absent, Move to another session…); the footer has Add a person and Close the session… (reason, approval
@@ -1053,6 +1055,3 @@ cleared at sign-out.
   [W3C i18n, Inline markup and bidirectional text](https://www.w3.org/International/articles/inline-bidi-markup/),
   [UAX #9 isolates](https://www.unicode.org/reports/tr9/#Explicit_Directional_Isolates),
   [MDN `<bdi>`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/bdi).
-- Text cut by `.truncate` or `.clamp-2` shows its full text in the shared hover tip while it is cut (WCAG 1.4.12); no
-  screen adds its own title for that.
-- Every dropdown looks like the shared picker it opens (the picker's caret, no native chrome).
