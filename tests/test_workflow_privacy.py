@@ -1,7 +1,13 @@
 """Pipeline regression: environments may disclose names, never destination URLs."""
+import base64
+import gzip
+import hashlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tarfile
 from types import SimpleNamespace
@@ -14,6 +20,8 @@ if not HELPERS.is_dir():
     HELPERS = Path(__file__).resolve().parent
 sys.path.insert(0, str(HELPERS))
 import workflow_privacy
+
+SHELL = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
 
 
 class WorkflowPrivacyTests(unittest.TestCase):
@@ -167,11 +175,9 @@ class DefaultBranchTests(unittest.TestCase):
             self.assertEqual(doc["on"]["push"]["branches"], ["dev", "main"])
 
     def test_default_branch_image_keeps_the_dev_tag_names(self):
-        import os, shutil, subprocess
         doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
         script = next(step["run"] for step in doc["jobs"]["publish"]["steps"] if step.get("id") == "push")
         block = script[script.index("case "):script.index("esac") + 4]
-        bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
         commit = "0123456789ab" + "c" * 28
         for default in ("dev", "main", ""):
             other = "main" if default == "dev" else "dev"
@@ -181,7 +187,7 @@ class DefaultBranchTests(unittest.TestCase):
                 with self.subTest(default=default, ref=ref_type + "/" + ref_name):
                     env = {**os.environ, "REF_TYPE": ref_type, "REF_NAME": ref_name, "COMMIT": commit,
                            "DEFAULT_BRANCH": default}
-                    result = subprocess.run([bash, "-c", 'set -euo pipefail; image=img\n' + block + '\necho "${tags[@]}"'],
+                    result = subprocess.run([SHELL, "-c", 'set -euo pipefail; image=img\n' + block + '\necho "${tags[@]}"'],
                                             env=env, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.stdout.strip() if result.returncode == 0 else None, expected, result.stderr)
 
@@ -214,17 +220,20 @@ class DefaultBranchTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", scan)
         self.assertTrue(scan["run"].startswith("set -euo pipefail\n"))
         self.assertIn("--load --provenance=false", scan["run"])
+        self.assertIn("--build-arg PUBLIC_IMAGE=1", scan["run"])
+        self.assertNotIn("PUBLIC_IMAGE", private_push["run"])
         self.assertNotIn("--push", scan["run"])
         self.assertIn('docker image save --output "$archive" "$image:$tag"', scan["run"])
-        self.assertIn('python3 scripts/scan_public_image.py "$archive"', scan["run"])
+        self.assertIn('python3 scripts/scan_public_image.py "$archive" "$base_config" "$image_id"', scan["run"].splitlines())
         passed = f"steps.{scan['id']}.outcome == 'success'"
         self.assertEqual(login["if"], passed)
         self.assertEqual(push["if"], passed)
         self.assertEqual(push["env"], {
             "IMAGE": "${{ steps.public_scan.outputs.image }}", "TAG": "${{ steps.public_scan.outputs.tag }}",
+            "IMAGE_ID": "${{ steps.public_scan.outputs.image-id }}",
         })
         self.assertIn('docker push "$IMAGE:$TAG"', push["run"])
-        self.assertIn('docker buildx imagetools inspect "$IMAGE@$digest"', push["run"])
+        self.assertIn('docker buildx imagetools inspect --raw "$IMAGE@$digest"', push["run"])
         self.assertEqual(jobs["publish"]["outputs"], {
             "digest": "${{ steps.push.outputs.digest }}", "public-digest": "${{ steps.public_push.outputs.digest }}",
         })
@@ -237,8 +246,56 @@ class DefaultBranchTests(unittest.TestCase):
             "create-storage-record": "false",
         })
 
+    def test_only_public_build_disables_install_time_bytecode(self):
+        dockerfile = (self.REPO / "infra/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("ARG PUBLIC_IMAGE=0", dockerfile.splitlines())
+        install = dockerfile.split("RUN if [ -n \"$CI_PIP_INDEX_URL\" ]; then", 1)[1].split("\nCOPY ", 1)[0]
+        stubs = 'python() { printf "%s\\n" "$@"; }; groupadd() { :; }; useradd() { :; };\n'
+        for public in ("0", "1"):
+            with self.subTest(public=public):
+                env = {**os.environ, "PUBLIC_IMAGE": public, "CI_PIP_INDEX_URL": ""}
+                result = subprocess.run([SHELL, "-ec", stubs + 'if [ -n "$CI_PIP_INDEX_URL" ]; then' + install],
+                                        env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0)
+                self.assertIn("--require-hashes", result.stdout.splitlines())
+                self.assertEqual("--no-compile" in result.stdout.splitlines(), public == "1")
 
-def test_public_image_scan_rejects_config_and_removed_layer_content(tmp_path, capsys):
+
+def test_public_publish_stops_on_scan_failure_or_config_mismatch(tmp_path):
+    repo = DefaultBranchTests.REPO
+    doc = yaml.load((repo / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
+    steps = {step.get("id"): step for step in doc["jobs"]["publish"]["steps"]}
+    published = "sha256:" + "a" * 64
+
+    def run(step, stubs, **values):
+        output = tmp_path / "github-output"
+        output.write_text("")
+        env = {**os.environ, "GITHUB_OUTPUT": output.as_posix(), "GITHUB_STEP_SUMMARY": "/dev/null", **values}
+        result = subprocess.run([SHELL, "-c", stubs + steps[step]["run"]],
+                                env=env, cwd=repo, capture_output=True, text=True, timeout=30)
+        return result.returncode, output.read_text().splitlines()
+
+    scan = run("public_scan", """
+docker() { :; }
+git() { :; }
+python3() { return 44; }
+""", COMMIT="0" * 40, GITHUB_REPOSITORY="owner/repo", GITHUB_SERVER_URL="", RUNNER_TEMP=tmp_path.as_posix())
+    assert scan == (44, [])
+
+    push = """
+docker() {
+  if [[ "$1" == push ]]; then printf '%s: digest: %s\n' "$TAG" "$PUBLISHED"; fi
+}
+jq() { printf '%s\n' "$REMOTE_CONFIG"; }
+"""
+    for remote in ("wrong", "matching"):
+        result = run("public_push", push, IMAGE="image", TAG="tag", IMAGE_ID="matching",
+                     REMOTE_CONFIG=remote, PUBLISHED=published)
+        expected = [f"digest={published}"] if remote == "matching" else []
+        assert result == (int(remote != "matching"), expected)
+
+
+def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path, capsys):
     from scripts import scan_public_image
 
     marker = "planted value"
@@ -253,24 +310,72 @@ def test_public_image_scan_rejects_config_and_removed_layer_content(tmp_path, ca
         return data.getvalue()
 
     image = tmp_path / "image.tar"
-    manifest = [{"Config": "config.json", "Layers": ["first.tar", "second.tar"]}]
-    with patch.dict(sys.modules, {"privacy_check": SimpleNamespace(
-            findings=lambda text: [(1, "test-pattern")] if marker in text else [])}):
-        for value, expected in (("clean", 0), (marker, 1)):
-            image.write_bytes(tar({
-                "manifest.json": json.dumps(manifest).encode(),
-                "config.json": json.dumps({"config": {"Env": [f"VALUE={value}"]}}).encode(),
-                "first.tar": tar({"removed.txt": value.encode()}),
-                "second.tar": tar({".wh.removed.txt": b""}),
-            }))
-            assert scan_public_image.main(image) == expected
+    base_config = tmp_path / "base.json"
+    exceptions = tmp_path / "exceptions.json"
+    upstream = marker.encode()
+    base_layer = tar({"base.txt": upstream})
+    root = "usr/local/lib/python3.13/site-packages"
+    installed = f"{root}/module.py"
+    record = f"{root}/module.dist-info/RECORD"
+    wheel_digest = base64.urlsafe_b64encode(hashlib.sha256(upstream).digest()).decode().rstrip("=")
+    wheel_record = f"module.py,sha256={wheel_digest},{len(upstream)}\n".encode()
+    excepted = "generated.bin"
+    exceptions.write_text(json.dumps({excepted: {hashlib.sha256(upstream).hexdigest(): ["test-pattern"]}}))
+
+    def digest(data):
+        return "sha256:" + hashlib.sha256(data).hexdigest()
+
+    def config(layers, value="clean"):
+        return {"os": "linux", "architecture": "amd64", "rootfs": {"type": "layers", "diff_ids": layers},
+                "config": {"Env": [f"VALUE={value}"]}}
+
+    def make_image(files, later, *, value="clean", changed_base=False, missing_config=False):
+        layers = [base_layer, tar(files), tar(later)]
+        content = json.dumps(config([digest(layer) for layer in layers], value)).encode()
+        manifest = [{"Config": "config.json", "Layers": ["base.tar.gz", "first.tar", "second.tar"]}]
+        members = {
+            "manifest.json": json.dumps(manifest).encode(),
+            "base.tar.gz": gzip.compress(tar({"new-base.txt": upstream}) if changed_base else base_layer),
+            "first.tar": layers[1],
+            "second.tar": layers[2],
+        }
+        if not missing_config:
+            members["config.json"] = content
+        image.write_bytes(tar(members))
+        return digest(content)
+
+    def findings(text):
+        return [(1, "test-pattern")] if marker in text else []
+
+    base_config.write_text(json.dumps(config([digest(base_layer)])))
+    good = {installed: upstream, record: wheel_record, excepted: upstream}
+    removed = {".wh.removed.txt": b""}
+    with (patch.dict(sys.modules, {"privacy_check": SimpleNamespace(findings=findings)}),
+          patch.object(scan_public_image, "EXCEPTIONS", exceptions)):
+        for files, later, value, expected in (
+            (good, removed, "clean", 0),
+            (good, removed, marker, 1),
+            ({**good, "removed.txt": upstream}, removed, "clean", 1),
+            ({**good, installed: upstream + b" changed"}, removed, "clean", 1),
+            ({installed: upstream}, removed, "clean", 1),
+            (good, {installed: upstream}, "clean", 1),
+            ({**good, excepted: upstream + b" changed"}, removed, "clean", 1),
+            ({**good, "new.bin": upstream}, removed, "clean", 1),
+        ):
+            image_id = make_image(files, later, value=value)
+            assert scan_public_image.main(image, base_config, image_id) == expected
             result = capsys.readouterr()
             assert marker not in result.out + result.err
-            assert result.out.splitlines() == (
-                ["test-pattern: 2", "Image privacy scan: 2 hits"] if expected else ["Image privacy scan: 0 hits"]
-            )
-        image.write_bytes(tar({"manifest.json": json.dumps(manifest).encode()}))
-        assert scan_public_image.main(image) == 2
+            assert f"Image privacy scan: {expected} hits" in result.out
+            if not expected:
+                assert f"skipped_files=2 skipped_bytes={2 * len(upstream)} excepted_hits=1" in result.out
+        for changes in ({"changed_base": True}, {"missing_config": True}):
+            image_id = make_image(good, removed, **changes)
+            assert scan_public_image.main(image, base_config, image_id) == 2
+        image_id = make_image(good, removed)
+        assert scan_public_image.main(image, base_config, digest(b"wrong cfg")) == 2
+        base_config.write_text(json.dumps(config([digest(b"wrong base")])))
+        assert scan_public_image.main(image, base_config, image_id) == 2
 
 
 if __name__ == "__main__":

@@ -81,14 +81,21 @@ jobs:
         set -euo pipefail
         image="ghcr.io/${GITHUB_REPOSITORY,,}-public"
         tag="dev-${COMMIT:0:12}"
-        docker buildx build --file infra/Dockerfile --load --provenance=false --tag "$image:$tag" \
+        base=$(sed -n 's/^ARG PYTHON_IMAGE=//p' infra/Dockerfile)
+        [[ "$base" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || { echo "No pinned runtime base"; exit 1; }
+        base_config="$RUNNER_TEMP/public-base.json"
+        docker buildx imagetools inspect --format '{{json (index .Image "linux/amd64")}}' "$base" > "$base_config"
+        docker buildx build --file infra/Dockerfile --load --provenance=false --platform linux/amd64 --tag "$image:$tag" \
+          --build-arg PUBLIC_IMAGE=1 \
           --build-arg ROTA_BUILD_COMMIT="$COMMIT" \
           --build-arg ROTA_BUILD_DATE="$(git log -1 --format=%cI "$COMMIT")" \
           --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
           --label org.opencontainers.image.revision="$COMMIT" .
         archive="$RUNNER_TEMP/public-image.tar"
+        image_id=$(docker image inspect --format '{{.Id}}' "$image:$tag")
         docker image save --output "$archive" "$image:$tag"
-        python3 scripts/scan_public_image.py "$archive"
+        python3 scripts/scan_public_image.py "$archive" "$base_config" "$image_id"
+        echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
         echo "image=$image" >> "$GITHUB_OUTPUT"
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
     - name: Log in to the public image registry
@@ -104,11 +111,13 @@ jobs:
       env:
         IMAGE: ${{ steps.public_scan.outputs.image }}
         TAG: ${{ steps.public_scan.outputs.tag }}
+        IMAGE_ID: ${{ steps.public_scan.outputs.image-id }}
       run: |
         set -euo pipefail
         digest=$(docker push "$IMAGE:$TAG" | awk -v tag="$TAG:" '$1 == tag && $2 == "digest:" { print $3 }')
         [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "No public image digest"; exit 1; }
-        docker buildx imagetools inspect "$IMAGE@$digest" >/dev/null
+        config_digest=$(docker buildx imagetools inspect --raw "$IMAGE@$digest" | jq -er '.config.digest')
+        [[ "$config_digest" == "$IMAGE_ID" ]] || { echo "Public image config differs from scan"; exit 1; }
         echo "digest=$digest" >> "$GITHUB_OUTPUT"
         echo "Public image \`$IMAGE@$digest\`" >> "$GITHUB_STEP_SUMMARY"
     - name: Attest the public image digest
