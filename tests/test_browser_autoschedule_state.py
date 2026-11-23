@@ -318,6 +318,39 @@ def test_a_finished_undo_check_clears_the_footer_and_stops_polling(browser, cp_s
         context.close()
 
 
+@pytest.mark.parametrize('from_dialog', [False, True], ids=['panel', 'dialog'])
+def test_apply_updates_the_run_and_grid_before_follow_up_reads(browser, cp_server, h, from_dialog):
+    w = h.shift(h.workspace('Apply reviewed result'), people=[])['workspace']
+    context, page = sign_in(browser, cp_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        open_rota(page, w['id'])
+        pick_view(page, 'Week')
+        open_scheduling(page)
+        panel = page.locator('#auto-panel')
+        _proposal(page, h, panel)
+        expect(page.get_by_role('columnheader', name=re.compile(r'0 of 1 places filled'))).to_be_visible()
+        apply = panel.get_by_role('button', name='Apply 1 change', exact=True)
+        if from_dialog:
+            panel.get_by_role('button', name='Review latest result', exact=True).click()
+            dialog = page.get_by_role('dialog', name='Auto-schedule results')
+            apply = dialog.get_by_role('button', name='Apply the change', exact=True)
+
+        # The command can finish; none of the reads that could redraw the rota or job can answer.
+        page.route('**/api/**', lambda route: None if route.request.method == 'GET' else route.continue_())
+        with page.expect_response(lambda r: r.url.endswith('/api/commands')
+                                  and (r.request.post_data_json or {}).get('kind') == 'generation.apply') as saved:
+            apply.click()
+        assert saved.value.ok and saved.value.json()['reconciliation']['status'] == 'applied'
+        expect(panel.get_by_text('Assignments added to draft', exact=True)).to_be_visible()
+        expect(panel.locator('.run-list .badge').filter(has_text=re.compile(r'^Applied$'))).to_be_visible()
+        expect(panel.get_by_role('button', name='Apply 1 change', exact=True)).to_have_count(0)
+        expect(page.get_by_role('dialog', name='Auto-schedule results')).to_have_count(0)
+        expect(page.get_by_role('columnheader', name=re.compile(r'1 of 1 places filled'))).to_be_visible()
+        expect(page.locator('.toast').filter(has_text='Suggestions applied')).to_be_visible()
+    finally:
+        context.close()
+
+
 def test_an_unrelated_message_during_a_slow_refresh_cannot_take_a_draft_edits_undo(browser, cp_server, h):
     """Review #586: Apply suggestions, the refresh after it is held, then Account › Notifications › Turn off (tab alerts). The applied
     suggestions keep their own Undo; "Desktop alerts are off." offers none (its Undo would have removed the rota edit)."""
@@ -330,8 +363,17 @@ def test_an_unrelated_message_during_a_slow_refresh_cannot_take_a_draft_edits_un
         open_scheduling(page)
         panel = page.locator('#auto-panel')
         _proposal(page, h, panel)
+
+        def without_delta(route):
+            if (route.request.post_data_json or {}).get('kind') != 'generation.apply':
+                return route.continue_()
+            reply = route.fetch()
+            route.fulfill(response=reply, json={**reply.json(), 'delta': None})
+
         # Account › Notifications reads this device's alert state; only that read passes the hold.
         page.route('**/api/**', lambda route: held.append(route) if route.request.method == 'GET' and '/api/me/push' not in route.request.url else route.continue_())
+        # An older reply requires the slow draft read this test exercises.
+        page.route('**/api/commands', without_delta)
         panel.get_by_role('button', name='Apply 1 change', exact=True).click()
         wait_held(page, held)  # the refresh after the edit is waiting on the server
         applied = page.locator('.toast').filter(has_text='Suggestions applied')

@@ -767,7 +767,8 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                        previous_validation, result, scope=locals().get('delta_scope'),
                        current_fingerprint=current_fingerprint,
                        current_input_revision=current_organisation.get('input_revision'),
-                       current_availability_revision=current_organisation.get('availability_revision'))
+                       current_availability_revision=current_organisation.get('availability_revision'),
+                       bounded=not generation_apply)
     workspace_record = record(workspace, exclude=("validation",))
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
@@ -807,13 +808,12 @@ def health(workspace, *, validation=None, summary=None):
 
 
 def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_validation, validation, *, scope=None,
-               current_fingerprint='', current_input_revision=None, current_availability_revision=None):
+               current_fingerprint='', current_input_revision=None, current_availability_revision=None, bounded=True):
     """Build the bounded patch consumed by the planner after a draft edit.
 
-    The command already has both sides of D65's scoped check.  Project only
-    changed sessions, affected findings and their coverage; a broad operation
-    deliberately returns ``None`` so the caller can use the authoritative full
-    read.  This keeps the reply proportional to the edit rather than the rota.
+    Project changed sessions, affected findings and their coverage. A broad
+    edit normally falls back to a full read. Applying a reviewed run includes
+    the patch in the command reply so the grid can update from it.
     """
     from packages.domain.coverage import coverage_rows
     from .issues import issue_key
@@ -876,7 +876,9 @@ def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_vali
     coverage = [row for row in coverage_rows(validation or {})
                 if row.get('shift_id') in touched_shifts]
     limits = s.EDIT_DELTA_LIMITS
-    if (len(shifts) > limits['shifts'] or len(removed) > limits['shifts']
+    # Apply already returns the changed sessions. Include their check data even for a large run.
+    # Live changes validate against DraftEditDelta and fall back to a read above those limits.
+    if bounded and (len(shifts) > limits['shifts'] or len(removed) > limits['shifts']
             or len(touched_shifts) > limits['coverage'] or len(touched_people) > limits['coverage']
             or len(findings) > limits['findings'] or len(coverage) > limits['coverage']):
         return None
