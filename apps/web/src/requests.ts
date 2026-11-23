@@ -27,7 +27,7 @@ import {leaveTypeName} from './findings.js';
 import type {Row} from './types.js';
 import {mayDecide} from './independence.js';
 import {absenceWords} from './published_changes_api.js';
-import {moreWords,markFields,weekdayNames,dayRange} from './dom.js';  // the one "+N" and its words (UX › controls S9)
+import {moreWords,markFields,weekdayNames,dayRange,selfApprovedBadge} from './dom.js';  // the one "+N" and its words (UX › controls S9)
 
 /** What the page needs from the shell: the address query, a way to change it, and the published rota at a day. */
 export interface RequestHooks{query:URLSearchParams;setQuery:(q:URLSearchParams)=>void;showDay:(day:string,personId:string)=>void}
@@ -516,8 +516,6 @@ function overtimeWords(ctx:Context,r:Row){
 /** The kind without its leave type ("Approve leave", not "Approve annual"). */
 const kindTitle=(r:Row)=>title({...r,leave_type_id:null});
 const panelSub=(r:Row,own=false)=>[kindWord(r),own?'':r.person_name||r.calendar_entry_name].filter(x=>x&&x!==title(r)).join(' · ');
-/** The mark a self-approved decision wears, the same as a rota's (governance.ts) and the audit log's. */
-const selfApprovedBadge=()=>badge('Self-approved','warn','audit-self');
 /** The reader's own request (not a swap, which always has two people). */
 const ownRequest=(ctx:Context,r:Row)=>r.source!=='swap'&&!!ctx.me.person_id&&r.person_id===ctx.me.person_id;
 function title(r:Row){

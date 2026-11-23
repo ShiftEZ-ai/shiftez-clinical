@@ -140,24 +140,31 @@ console.log(JSON.stringify([await read(),await read('selected'),await read('',tr
 def test_the_auto_schedule_panel_starts_from_the_settings_captured_with_the_rota(client_modules):
     """The set-up panel's defaults are the ones the rota's job list returns (captured with the draft), over the
     engine's; only a reply without them falls back to the department's current values. A baseline capture or refresh,
-    or a department settings save, drops the jobs read, so the panel never keeps old run settings."""
+    or a department settings save, drops the jobs read. Apply updates the run already held."""
     source = (client_modules / 'app.js').read_text(encoding='utf-8')
     defaults = cut(source, r'\n\s*(const defaults = \{ \.\.\.capability\.default_options, .*?\};)\n')
-    drop = cut(source, r"\n\s*(if \(kind === 'generation\.apply'.*?\n\s*lastJobs = null;)\n")
+    patch_jobs = cut(source, r"\n\s*(if \(kind === 'generation\.apply'\).*?)\n\s*const id = r\?")
     got = node(r"""
 const me={department:{generation_defaults:{search_minutes:6,max_search_minutes:30}}};
 const capability={default_options:{search_minutes:5,max_search_minutes:60,mode:'fill_gaps'}};
 const panel=initialJobs=>{""" + defaults + r"""return defaults;};
-const dropped=kind=>{let lastJobs={};""" + drop + r"""return lastJobs===null;};
+const old={id:'run',workspace_id:'draft',status:'succeeded',revision:2};
+const job={...old,status:'applied',revision:3};
+const applyWrote=reply=>reply?.reconciliation?.status==='applied';
+let generationApplyEpoch=0;
+const seenActivity=4;
+const patched=(kind,r={})=>{let lastJobs={id:'draft',activity:4,jobs:{jobs:[old]}};""" + patch_jobs + r"""return lastJobs;};
 console.log(JSON.stringify({
   captured:panel({generation_defaults:{search_minutes:4}}),
   none:panel({generation_defaults:{}}),
   older:panel({jobs:[]}),
-  drops:['workspace.baseline.capture','workspace.baseline.refresh.apply','department.settings','generation.apply','shift.update'].map(dropped)}));""")
+  drops:['workspace.baseline.capture','workspace.baseline.refresh.apply','department.settings','generation.apply','shift.update'].map(kind=>patched(kind)===null),
+  applied:patched('generation.apply',{reconciliation:{status:'applied'},job}).jobs.jobs[0].status}));""")
     assert got['captured'] == {'search_minutes': 4, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
     assert got['none'] == {'search_minutes': 5, 'max_search_minutes': 60, 'mode': 'fill_gaps'}
     assert got['older'] == {'search_minutes': 6, 'max_search_minutes': 30, 'mode': 'fill_gaps'}
     assert got['drops'] == [True, True, True, True, False]
+    assert got['applied'] == 'applied'
 
 
 def test_a_failed_refresh_toasts_only_when_the_page_shows_nothing_of_its_own(client_modules):

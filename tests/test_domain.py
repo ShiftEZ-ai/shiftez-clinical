@@ -84,6 +84,23 @@ def test_time_varying_requirement_uses_each_boundary_not_day_headcount(h):
     assert gaps[0]["detail"]=={"required":2,"available":1}
 
 
+def test_partial_protected_time_creates_a_mandatory_gap_only_during_the_overlap(h):
+    data, result = prepared(h, {'requirements': [{'minimum': 1}]})
+    departure, return_time = '2026-10-04T06:00:00+00:00', '2026-10-04T07:00:00+00:00'
+    data['availability'] = [{'id': 'meeting', 'person_id': h.seed['people'][0], 'kind': 'protected_time',
+        'start': departure, 'end': return_time}]
+    checked = evaluate(data)
+    conflict, = [row for row in checked['findings'] if row['code'] == 'UNAVAILABLE']
+    assert (conflict['shift_id'], conflict['person_id'], conflict['severity']) == (
+        result['shift_id'], h.seed['people'][0], 'error')
+    assert not checked['valid']
+    assert [(row['start'], row['end'], row['available_eligible']) for row in checked['coverage']] == [
+        ('2026-10-04T05:00:00+00:00', departure, 1), (departure, return_time, 0),
+        (return_time, '2026-10-04T09:00:00+00:00', 1)]
+    gap, = conflict['detail']['derived_findings']
+    assert (gap['code'], gap['severity']) == ('COVERAGE_GAP', 'error')
+
+
 def test_capability_co_counting_vs_distinct_people(h):
     definition={"requirements":[{"capabilities":[{"capability_id":h.seed["capability"],"minimum":1},{"capability_id":h.seed["supervisor_capability"],"minimum":1}]}]}
     data,result=prepared(h,definition)
