@@ -89,13 +89,43 @@ def test_nonleave_approval_does_not_invent_absence_or_publish(h, kind):
                          request['id'], request['revision'])['record']
     assert decision['status'] == 'approved'
     assert decision['kind'] == kind
-    assert not h.get('staff', '/api/availability')['availability']
+    availability = h.get('staff', '/api/availability')['availability']
+    expected = [('protected_time', request['id'])] if kind == 'meeting' else []
+    assert [(row['kind'], row['request_id']) for row in availability] == expected
     assert not h.get('staff', '/api/publications')['publications']
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_approved_meeting_opens_cover_in_a_reloaded_draft(request, database):
+    h = request.getfixturevalue(database)
+    person = h.seed['people'][0]
+    duty = h.shift(h.workspace())
+    url = f"/api/workspaces/{duty['workspace']['id']}"
+    meeting = h.command('staff', 'request.create', {'person_id': person, 'kind': 'meeting',
+        'start': '2026-10-04T09:00:00+03:00', 'end': '2026-10-04T10:00:00+03:00',
+        'private_reason': 'Synthetic meeting'})['record']
+    before = h.get('coordinator', url + '/summary')
+    assert before['places_open'] == 0 and before['issues']['blocking'] == 0
+
+    approved = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Approved meeting'},
+                         meeting['id'], meeting['revision'])['record']
+    summary = h.get('coordinator', url + '/summary')
+    assert (summary['places_filled'], summary['places_open']) == (0, 1)
+    assert summary['sessions'][0]['person_ids'] == [person]
+    conflict, = [row for row in summary['findings'] if row['code'] == 'UNAVAILABLE']
+    assert (conflict['person_id'], conflict['shift_id'], conflict['severity']) == (person, duty['shift_id'], 'error')
+    fix = h.get('coordinator', url + '/fix-list')
+    assert fix['summary']['must'] > 0
+    assert not h.get('staff', '/api/publications')['publications']
+
+    h.command('approver', 'request.undo', {'reason': 'Undo meeting approval'}, approved['id'], approved['revision'])
+    restored = h.get('coordinator', url + '/summary')
+    assert restored['places_open'] == 0 and restored['issues']['blocking'] == 0
 
 
 def test_request_rota_link_is_scoped_reviewed_traceability(h):
     request = h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': 'meeting',
-        'start': '2026-10-04T09:00:00+03:00', 'end': '2026-10-04T10:00:00+03:00',
+        'start': '2026-10-05T09:00:00+03:00', 'end': '2026-10-05T10:00:00+03:00',
         'private_reason': 'Fictional team meeting'})['record']
     workspace = h.shift(h.workspace())['workspace']
     payload = {'workspace_id': workspace['id'], 'reason': 'Meeting scheduled in reviewed rota'}

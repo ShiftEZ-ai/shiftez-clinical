@@ -22,6 +22,7 @@ from .conditional_reads import revision_etag
 UPDATE_FIELDS = ('kind', 'start', 'end', 'leave_type_id')
 UPDATE_SNAPSHOT_FIELDS = (*UPDATE_FIELDS, 'counts_as_unavailable', 'leave_type', 'manual_type_override', 'revision')
 RECORDED_FACT_KINDS = frozenset({'actual_absence', 'external_commitment', 'off_duty'})
+REQUEST_AVAILABILITY_KINDS = frozenset({'leave', 'absence_report', 'meeting'})
 
 
 def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, request_ids=()):
@@ -559,17 +560,19 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             from .training import apply_change
             affected += apply_change(db, actor, row, value.reason)
             inputs_changed = True
-        if value.decision == "approve" and row.kind in {"leave", "absence_report"}:
+        if value.decision == "approve" and row.kind in REQUEST_AVAILABILITY_KINDS:
             restored = _restore_undo_absences(db, actor, row, conflicts)
-            if not restored:
+            meeting = row.kind == 'meeting'
+            if not restored and not meeting:
                 conflicts.extend(rotation_leave_conflicts(db, actor, absence=record(row)))
                 require_rotation_leave(conflicts)
             if restored is None:
+                kind = 'protected_time' if meeting else (row.details or {}).get('availability_kind', 'approved_leave')
                 absence = m.Availability(department_id=actor.department_id, person_id=row.person_id,
-                                         start=row.start, end=row.end, kind=(row.details or {}).get('availability_kind', 'approved_leave'),
+                                         start=row.start, end=row.end, kind=kind,
                                          leave_type=(row.details or {}).get('leave_type', ''),
                                          leave_type_id=row.leave_type_id, counts_as_unavailable=row.counts_as_unavailable,
-                                         private_reason='' if row.kind == 'absence_report' else row.private_reason,
+                                         private_reason='' if meeting or row.kind == 'absence_report' else row.private_reason,
                                          recorded_by=actor.identity_id, request_id=row.id)
                 db.add(absence)
             affected += 1 if restored is None else restored
@@ -617,7 +620,7 @@ def require_request_undo(db, actor, row):
 
 def undo_decision(db, actor, command, *, batch=False):
     """Undo a request decision or withdrawal: it waits for a decision again. Only whoever made it may, only while the
-    request is not linked to a rota (a rota may already act on it), and an approved leave's absence is retracted with it."""
+    request is not linked to a rota (a rota may already act on it), and any linked availability is retracted with it."""
     value = s.RequestUndo.model_validate(command.payload)
     row = scoped(db, m.RequestRecord, command.target_id, actor)
     require_request_undo(db, actor, row)
@@ -696,7 +699,7 @@ def undo_decision(db, actor, command, *, batch=False):
            "request_status": row.status, "request_kind": row.kind},
            undo_of=f"request-decision:{row.id}" + (f":{command.expected_revision}" if command.expected_revision > 2 else ""))
     item = absence_report_record(row, actor, db)
-    details = {"retracted_availability": retracted_availability} if row.kind in {"leave", "absence_report"} and was_approved else {}
+    details = {"retracted_availability": retracted_availability} if row.kind in REQUEST_AVAILABILITY_KINDS and was_approved else {}
     if batch:
         return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected, **details}
     return {"record": leave_types.names(db, actor.department_id, [item])[0], "affected_count": affected, **details,
