@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from apps.api import models as m
-from apps.api.db import transaction
+from apps.api.db import bump_snapshot_input_revisions, transaction
 from apps.api.settings import quota_policy_limit
 from packages.contracts import schemas as s
 from packages.domain.input_manifest import digest, toolchain
@@ -78,12 +78,11 @@ def stored_publication(h, *, stale=None, findings=None):
     with transaction(h.app.state.engine, write=True) as db:
         org = db.get(m.Organisation, h.seed['organisation_id'])
         workspace = m.Workspace(department_id=h.seed['department_id'], name='Synthetic stored timeline check',
-            starts_on=START, ends_on=END, created_by=h.seed['identities']['coordinator'],
+            starts_on=START, ends_on=END, status='published', created_by=h.seed['identities']['coordinator'],
             last_edited_by=h.seed['identities']['coordinator'])
         db.add(workspace); db.flush()
-        # Stamp the publication transition before capturing the stored hint.
-        workspace.status = 'published'
-        db.flush()
+        # Reserve the publication insert's stamp before sealing its immutable evidence.
+        bump_snapshot_input_revisions(db, [org.id])
         dirty = {'input_revision': org.input_revision, 'availability_revision': org.availability_revision,
                  'content_revision': workspace.content_revision}
         manifest = {'dirty_hint': dirty, 'components': {'toolchain': digest(toolchain(quota_policy_limit()))}}

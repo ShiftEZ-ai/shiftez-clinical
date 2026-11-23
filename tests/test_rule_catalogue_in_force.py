@@ -1,4 +1,5 @@
 """The Rules read retains every department policy the checker resolves today."""
+from collections import OrderedDict
 from datetime import date
 import copy
 import uuid
@@ -153,6 +154,9 @@ def test_counts_only_rules_in_force_invalidates_after_activate_and_retire(h):
 def test_counts_only_rules_in_force_reuses_stamp_projection(h, monkeypatch):
     h.workspace('Projection anchor')
     from apps.api.services import rule_catalogue
+
+    # Each cloned test database starts with the same department identity.
+    monkeypatch.setattr(rule_catalogue, '_catalogue_cache', OrderedDict())
     calls = []
     original = rule_catalogue._in_force
 
@@ -164,6 +168,11 @@ def test_counts_only_rules_in_force_reuses_stamp_projection(h, monkeypatch):
     first = h.get('auditor', '/api/catalogues?counts_only=true')['rules_in_force']
     second = h.get('auditor', '/api/catalogues?counts_only=true')['rules_in_force']
     assert first == second and len(calls) == 1
+
+
+@pytest.mark.postgres
+def test_counts_only_rules_in_force_reuses_stamp_projection_postgres(pg, monkeypatch):
+    test_counts_only_rules_in_force_reuses_stamp_projection(pg, monkeypatch)
 
 
 def test_counts_only_rules_in_force_has_a_conditional_etag(h):
