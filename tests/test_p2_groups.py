@@ -808,15 +808,19 @@ def test_authority_cache_binds_actor_and_is_discarded_on_preview_rollback(h):
             h.client('coordinator').cookies['rota_csrf'], write=True)
         row = db.get(m.Workspace, workspace['id'])
         before = planning.workspace_content(db, row)
+        planning_groups.require_change_authority(db, coordinator, row, before)
+        assert db.info['_planning_group_authority_contexts'][row.id][1] == coordinator.identity_id
+        # Design decision: unrestricted authority (here the Rota Coordinator) is re-checked live on every call
+        # and is never retained, so another actor's call drops the scoped context instead of inheriting it.
         planning_groups.require_change_authority(db, admin, row, before)
-        assert db.info['_planning_group_authority_contexts'][row.id][1] == admin.identity_id
+        assert row.id not in db.info['_planning_group_authority_contexts']
         row.content_revision += 1
         fresh = deepcopy(before)
-        planning_groups.require_change_authority(db, admin, row, fresh)
+        planning_groups.require_change_authority(db, coordinator, row, fresh)
         assert db.info['_planning_group_authority_contexts'][row.id][0] is fresh
         changed = deepcopy(fresh)
         changed['shifts'][0]['participants'] = []
-        planning_groups.require_change_authority(db, admin, row, changed)
+        planning_groups.require_change_authority(db, coordinator, row, changed)
         assert db.info['_planning_group_authority_contexts'][row.id][0] is changed
         planning_groups.require_change_authority(db, coordinator, row, before)
         assert db.info['_planning_group_authority_contexts'][row.id][1] == coordinator.identity_id
@@ -913,7 +917,9 @@ def test_refused_admission_clears_previous_authority_context(h, monkeypatch, fai
         row = db.get(m.Workspace, workspace['id'])
         before = planning.workspace_content(db, row)
         planning.admit_assignment_change(db, actor, row, before, 'EDIT_INVALID')
-        assert row.id in db.info['_planning_group_authority_contexts']
+        # Design decision: this coordinator is unrestricted on a rota that is not integrated. Unrestricted
+        # authority is re-checked live on every call and never retained, so an admission keeps no context.
+        assert row.id not in db.info['_planning_group_authority_contexts']
 
         def refuse(*args, **kwargs):
             status, code = (403, 'GROUP_EDIT_AUTHORITY') if failure_stage == 'authority' else (422, 'EDIT_INVALID')

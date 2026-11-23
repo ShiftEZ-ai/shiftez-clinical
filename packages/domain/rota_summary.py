@@ -843,7 +843,7 @@ def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False, 
     Issues count findings, rather than affected sessions or people.
     """
     if cache is not None:
-        from copy import deepcopy
+        import pickle
         from .input_manifest import digest
         from .validation import INTERNAL_CHECK_KEYS
         value = {key: item for key, item in (validation or {}).items()
@@ -851,8 +851,9 @@ def rota_summary(validation, shifts=None, accepted_issues=(), *, compact=False, 
         accepted = sorted(accepted_issues) if isinstance(accepted_issues, (set, frozenset)) else accepted_issues
         key = digest([bool(validation), value, shifts, accepted, compact])
         if key not in cache:
-            cache[key] = rota_summary(validation, shifts, accepted_issues, compact=compact)
-        return deepcopy(cache[key])
+            cache[key] = pickle.dumps(rota_summary(validation, shifts, accepted_issues, compact=compact),
+                                      protocol=pickle.HIGHEST_PROTOCOL)
+        return pickle.loads(cache[key])
     check = normalized_check(validation) or {}
     from .validation import finding_observations
     sessions, deficits, legacy_open = {}, {}, {}

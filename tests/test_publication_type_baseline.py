@@ -303,9 +303,13 @@ def test_operational_type_source_preserves_draft_preview_and_published_context(s
     assert 'effective_type_definitions' not in cache
     cached = effective_type_definition(data, shift)
     assert cached == effective
-    assert effective_type_definition(data, shift) is cached
+    assert effective_type_definition(data, shift) == cached
+    assert effective_type_definition(data, shift) is not cached
     assert any(entry[0] is issued and entry[1] is latest
                for entry in cache['effective_type_definitions'].values())
+    cached['requirements'][0]['minimum'] += 9
+    assert effective_type_definition(data, shift) == effective
+    assert (issued['requirements'][0]['minimum'], latest['requirements'][0]['minimum']) == (1, 3)
     for source in (shift['type_snapshot'], data['types']['type']):
         source['definition'] = deepcopy(source['definition'])
         source['definition']['requirements'][0]['minimum'] += 4
@@ -324,8 +328,11 @@ def test_effective_definition_cache_normalizes_empty_sources_without_aliasing(so
     shift = {'type_snapshot': {'definition': source}}
     cached = effective_type_definition(data, shift)
     assert cached == effective_type_definition({**data, '_line_index_cache': None}, shift) == {'requirements': []}
-    assert effective_type_definition(data, shift) is cached
+    assert effective_type_definition(data, shift) == cached
+    assert effective_type_definition(data, shift) is not cached
     assert cached is not source
+    cached['requirements'].append({'minimum': 1})
+    assert effective_type_definition(data, shift) == {'requirements': []}
 
 
 
@@ -475,6 +482,7 @@ def _replace_definition_readers(monkeypatch, original, replacement):
 def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg, monkeypatch, mode, request):
     from hashlib import sha256
     import json
+    import pickle
     # Load module-level helper aliases before switching implementations.
     from packages.domain import candidate_evidence, cp_sat, cp_sat_goals, generation, validation
     from packages.domain.score import schedule_score
@@ -526,20 +534,25 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
         expected_score = schedule_score(data, expected)
     assert data == original_data
 
-    observed, memos, sources = {}, {}, {}
+    observed, memos, sources, memo_values = {}, {}, {}, {}
     used_memos = set()
 
     def checked(context, shift):
         cache = context.get('_line_index_cache')
+        size = 0
         if cache is not None:
             # Fair share can wrap the line index while keeping the same memo.
             memo = cache.get('effective_type_definitions')
             assert memo is None or id(memo) in memos
+            size = len(memo) if memo is not None else 0
         result = memoised(context, shift)
         if cache is not None:
             memo = cache['effective_type_definitions']
             memos[id(memo)] = memo
             used_memos.add(id(memo))
+            if len(memo) > size:
+                assert len(memo) == size + 1
+                memo_values[id(memo), next(reversed(memo))] = deepcopy(result)
         if cache is not None and id(result) not in observed:
             observed[id(result)] = result, deepcopy(result)
             for source in (shift['type_snapshot']['definition'],
@@ -554,8 +567,8 @@ def test_effective_definition_cache_preserves_postgres_outputs_and_run_inputs(pg
         assert all(value == before for value, before in observed.values())
         assert all(value == before for value, before in sources.values())
         for memo in memos.values():
-            for issued, current, value in memo.values():
-                assert value == observed[id(value)][1]
+            for key, (_, _, encoded) in memo.items():
+                assert pickle.loads(encoded) == memo_values[id(memo), key]
 
     _replace_definition_readers(monkeypatch, memoised, checked)
     actual = evaluate(data)
