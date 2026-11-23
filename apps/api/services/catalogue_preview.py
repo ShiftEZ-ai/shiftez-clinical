@@ -1,12 +1,13 @@
 """Exact-change-bound, rollback-only catalogue impact using the shared evaluator."""
 from .workspace_access import shared_clause
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 from apps.api import models as m
 from apps.api.auth import require_role
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
-from apps.api.snapshots import domain_snapshot, snapshot_hash, snapshot_inputs, tag_data
+from apps.api.snapshots import domain_snapshot, prepared_event_currency_matches, snapshot_hash, snapshot_inputs, tag_data
 from packages.contracts.schemas import CATALOGUE_SCHEMAS, PersonInput
 from packages.domain.time import local_midnight
 from packages.domain.validation import evaluate
@@ -17,6 +18,13 @@ from .schedule import LIVE
 
 KINDS = {"catalogue.create", "catalogue.update"}
 CONTACT_FIELDS = {"title", "work_phone", "work_extension", "pager", "directory_section", "directory_order"}
+
+
+@dataclass(frozen=True)
+class BeforeCapture:
+    currency: tuple
+    snapshots: dict
+    event_windows: list
 
 
 def contact_update(command, payload, before):
@@ -43,11 +51,11 @@ def operational_day(db, actor):
     return m.now().astimezone(ZoneInfo(org.timezone)).date()
 
 
-def _candidate_query(db, actor):
+def _candidate_query(actor, day):
     current = select(m.Publication.workspace_id).where(m.Publication.department_id == actor.department_id,
                                                       m.Publication.current.is_(True))
     return select(m.Workspace).where(shared_clause(), m.Workspace.department_id == actor.department_id,
-        m.Workspace.ends_on > operational_day(db, actor),
+        m.Workspace.ends_on > day,
         or_(and_(m.Workspace.archived_at.is_(None), m.Workspace.status.in_(LIVE)), m.Workspace.id.in_(current)))
 
 
@@ -58,7 +66,7 @@ def limits(db):
     return settings.catalogue_preview_max_workspaces, settings.catalogue_preview_max_sessions
 
 
-def scope(db, actor):
+def scope(db, actor, *, day=None):
     """Exact SQL totals for the forward scope, and the workspaces to evaluate when it fits the bounds.
 
     Sessions are counted from the organisation-local day onwards: those are what a configuration change can reach.
@@ -66,15 +74,17 @@ def scope(db, actor):
     """
     # shortcut: the evaluator still snapshots each candidate's whole period; scope it to upcoming sessions if
     # long-running current publications make a fitting preview slow.
-    query = _candidate_query(db, actor).subquery()
+    day = day or operational_day(db, actor)
+    candidate_query = _candidate_query(actor, day)
+    query = candidate_query.subquery()
     zone = db.get(m.Organisation, actor.organisation_id).timezone
     workspace_count = db.scalar(select(func.count()).select_from(query)) or 0
     session_count = db.scalar(select(func.count()).select_from(m.Shift).where(
         m.Shift.workspace_id.in_(select(query.c.id)),
-        m.Shift.start >= local_midnight(operational_day(db, actor), zone))) or 0
+        m.Shift.start >= local_midnight(day, zone))) or 0
     max_workspaces, max_sessions = limits(db)
     partial = workspace_count > max_workspaces or session_count > max_sessions
-    rows = [] if partial else list(db.scalars(_candidate_query(db, actor).order_by(m.Workspace.id)))
+    rows = [] if partial else list(db.scalars(candidate_query.order_by(m.Workspace.id)))
     return rows, {"workspace_count": workspace_count, "session_count": session_count, "partial": partial}
 
 
@@ -83,34 +93,38 @@ def candidates(db, actor):
     return scope(db, actor)[0]
 
 
-def _fingerprint_rows(db, actor):
-    query = _candidate_query(db, actor).with_only_columns(
+def _fingerprint_rows(db, actor, day):
+    query = _candidate_query(actor, day).with_only_columns(
         m.Workspace.id, m.Workspace.revision, m.Workspace.content_revision,
         m.Workspace.status, m.Workspace.base_publication_id).order_by(m.Workspace.id)
     return [dict(row._mapping) for row in db.execute(query)]
 
 
-def source_fingerprint(db, actor, command):
+def source_fingerprint(db, actor, command, *, day=None):
     """Bind both current inputs and the exact proposed content/reason/target."""
     org = db.get(m.Organisation, actor.organisation_id)
-    rows = _fingerprint_rows(db, actor)
+    day = day or operational_day(db, actor)
+    rows = _fingerprint_rows(db, actor, day)
     change = command.model_dump(mode="json", exclude={"expected_fingerprint"})
     if change['payload'].get('catalogue') == 'recurring_series':
         change['payload'].pop('overlap_acknowledgement', None)
     return snapshot_hash({"contract": "catalogue-impact-v1", "department_id": actor.department_id,
-        "scope_starts_on": operational_day(db, actor).isoformat(),
+        "scope_starts_on": day.isoformat(),
         "input_revision": org.input_revision, "availability_revision": org.availability_revision,
         "workspaces": rows,
         "change": change})
 
 
-def assert_precondition(db, actor, command):
-    require(source_fingerprint(db, actor, command) == command.expected_fingerprint,
+def _require_current(condition):
+    require(condition,
             "STALE_PREVIEW", "The proposed change, reason, active workspaces or current inputs changed. Recalculate configuration impact.", 409)
 
 
-def prepare_preview(db, actor, command):
-    """Capture detached inputs under the write lock, then roll back the proposed change before returning."""
+def assert_precondition(db, actor, command):
+    _require_current(source_fingerprint(db, actor, command) == command.expected_fingerprint)
+
+
+def _preview_source(db, actor, command):
     from apps.api.commands import command_roles
     require(command.kind in KINDS, "PREVIEW_UNSUPPORTED", "This preview supports catalogue create/update only")
     require_role(actor, *command_roles(command))
@@ -123,14 +137,59 @@ def prepare_preview(db, actor, command):
         if payload.catalogue != "programmes":
             programme_write_access(db, actor, payload.catalogue,
                                    CATALOGUE_SCHEMAS[payload.catalogue].model_validate(payload.value))
-    before_record = record(source) if source is not None else None
+    return payload, record(source) if source is not None else None
+
+
+def _preview_token(db, actor, command, day):
+    token = source_fingerprint(db, actor, command, day=day)
     if command.expected_fingerprint:
-        assert_precondition(db, actor, command)
-    token = source_fingerprint(db, actor, command)
+        _require_current(token == command.expected_fingerprint)
+    return token
+
+
+def _capture_currency(db, actor, token):
+    # The public token covers input and workspace revisions. Department display and
+    # catalogue revisions also appear in snapshots and can change independently.
+    org = db.get(m.Organisation, actor.organisation_id)
+    departments = tuple(db.execute(select(m.Department.id, m.Department.revision, m.Department.catalogue_revision)
+        .where(m.Department.organisation_id == org.id).order_by(m.Department.id)))
+    return actor, token, org.revision, departments
+
+
+def capture_before(db, actor, command, *, skip_contact_snapshots):
+    """Read the fresh operational baseline from one consistent read transaction."""
+    payload, before_record = _preview_source(db, actor, command)
+    day = operational_day(db, actor)
+    token = _preview_token(db, actor, command, day)
+    if payload.catalogue == 'recurring_series' or (
+            skip_contact_snapshots and contact_update(command, payload, before_record)):
+        return None
+    currency = _capture_currency(db, actor, token)
+    rows, _ = scope(db, actor, day=day)
+    shared = snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id)) if rows else None
+    snapshots, event_windows = {}, []
+    for row in rows:
+        event_window = []
+        snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared, _event_currency=event_window)
+        if event_window:
+            event_windows.append(event_window)
+    return BeforeCapture(currency, snapshots, event_windows)
+
+
+def prepare_preview(db, actor, command, before):
+    """Verify the baseline and capture proposed inputs before rolling back the trial write."""
+    payload, before_record = _preview_source(db, actor, command)
+    day = operational_day(db, actor)
+    token = _preview_token(db, actor, command, day)
+    if before is not None:
+        _require_current(before.currency == _capture_currency(db, actor, token) and
+                         all(prepared_event_currency_matches(db, window) for window in before.event_windows))
     # Pattern versions do not alter materialised duties. Applying/reconciling the
     # pattern has its own draft preview and validator; avoid rechecking every rota.
     rows, totals = (([], {"workspace_count": 0, "session_count": 0, "partial": False})
-                    if payload.catalogue == "recurring_series" else scope(db, actor))
+                    if payload.catalogue == "recurring_series" else scope(db, actor, day=day))
+    if before is not None:
+        _require_current(before.snapshots.keys() == {row.id for row in rows})
     metadata_only = False
     if contact_update(command, payload, before_record):
         original = contact_inputs(db, actor, before_record)
@@ -142,11 +201,9 @@ def prepare_preview(db, actor, command):
             savepoint.rollback()
     captured = []
     if not metadata_only:
-        # Tag reconciliation may change clinical inputs. The trial has rolled back, so these are the true before
-        # snapshots; run the same checked writer again rather than reconstructing any scheduling inputs.
+        if before is None and rows:
+            return None
         org = db.get(m.Organisation, actor.organisation_id)
-        shared = snapshot_inputs(db, org) if rows else None
-        before = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in rows}
         savepoint = db.begin_nested()
         try:
             result = write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True)
@@ -155,15 +212,16 @@ def prepare_preview(db, actor, command):
             after = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in rows}
             # No ORM rows or session escape: validation needs only these bounded, plain snapshots.
             captured = [{"workspace_id": w.id, "name": w.name, "status": w.status,
-                         "before": before[w.id], "after": after[w.id],
-                         "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False) if w.status in LIVE else None} for w in rows]
+                         "before": before.snapshots[w.id], "after": after[w.id],
+                         "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False,
+                                                  reuse_writer_snapshot=False) if w.status in LIVE else None} for w in rows]
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",
         **({key: result[key] for key in ('conflicts', 'conflict_token')} if payload.catalogue == 'recurring_series' else {}),
         "source_fingerprint": token, "before": before_record, "proposed": result["record"],
         **totals,
-        "scope_starts_on": operational_day(db, actor).isoformat(),
+        "scope_starts_on": day.isoformat(),
         "scope": "Ongoing/future workspaces and current publications in this department (period end after the organisation-local date). Completed periods, discarded drafts and other departments are outside this forward operational preview. Historical issued snapshots remain unchanged.",
         "inventory_only": payload.catalogue in {"cohorts", "recurring_series"},
         "message": "Contact details checked. Scheduling inputs are unchanged; no rota validation is needed. Nothing saved or approved." if metadata_only else

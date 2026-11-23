@@ -1,11 +1,11 @@
 """Small exact-impact oracles and deterministic work guards; no host timing or scale fixture."""
 from copy import deepcopy
 import json
-import re
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, text
 
+from apps.api import snapshots
 from apps.api.services import catalogue_preview as preview_service
 from apps.api.serialization import json_value
 from packages.domain import finding_causes
@@ -99,9 +99,7 @@ def test_comparisons_preserve_explained_contract_and_bound_explanation_work(caus
                       'comparison_checks': 2, 'explained_checks': full_checks}))
 
 
-DEPARTMENT_ROW = re.compile(r'FROM departments\s+WHERE departments\.id = ')
-
-
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 @pytest.mark.parametrize('published', [False, True])
 @pytest.mark.parametrize('operation', ['create', 'archive'])
 def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation):
@@ -117,10 +115,24 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
                    'display_name': 'Fictional new person', 'tags': ['New clinical tag']}, 'reason': 'Preview only'}})
     real_inputs, real_snapshot = preview_service.snapshot_inputs, preview_service.domain_snapshot
     phase_inputs, reads, reading, captures = [], {'shared': [], 'fresh': []}, [], []
+    capture_phases = []
+    catalogue_reads = {'shared': 0, 'fresh': 0}
+    project_catalogue = snapshots._snapshot_inputs
+    projecting_catalogue = False
 
     def sql_read(conn, cursor, statement, parameters, context, executemany):
         if reading and statement.lstrip().upper().startswith('SELECT'):
             reads[reading[-1]].append(statement)
+            if projecting_catalogue:
+                catalogue_reads[reading[-1]] += 1
+
+    def project(db, org):
+        nonlocal projecting_catalogue
+        projecting_catalogue = True
+        try:
+            return project_catalogue(db, org)
+        finally:
+            projecting_catalogue = False
 
     def inputs(db, org):
         reading.append('shared')
@@ -132,6 +144,14 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
         return result
 
     def snapshot(db, workspace, **kwargs):
+        under_writer = bool(db.connection().info.get('rota_write'))
+        capture_phases.append((under_writer, db.in_nested_transaction()))
+        if not under_writer:
+            if db.get_bind().dialect.name == 'postgresql':
+                assert db.scalar(text('SHOW transaction_read_only')) == 'on'
+                assert db.scalar(text('SHOW transaction_isolation')) == 'repeatable read'
+            else:
+                assert db.connection().connection.driver_connection.in_transaction
         shared_before = deepcopy(kwargs['shared_inputs'])
         reading.append('shared')
         try:
@@ -140,7 +160,8 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
             reading.pop()
         reading.append('fresh')
         try:
-            fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items() if k != 'shared_inputs'})
+            fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items()
+                                                     if k not in {'shared_inputs', '_event_currency'}})
         finally:
             reading.pop()
         assert result == fresh and kwargs['shared_inputs'] == shared_before
@@ -157,6 +178,7 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
     monkeypatch.setattr(preview_service, 'snapshot_inputs', inputs)
     monkeypatch.setattr(preview_service, 'domain_snapshot', snapshot)
     monkeypatch.setattr(preview_service, 'evaluate_preview', compare)
+    monkeypatch.setattr(snapshots, '_snapshot_inputs', project)
     event.listen(h.app.state.engine, 'before_cursor_execute', sql_read)
     try:
         result = preview(h, command)
@@ -174,13 +196,15 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
         assert phase_inputs[0]['tags'] != phase_inputs[1]['tags']
     assert phase_inputs[1]['organisation']['input_revision'] == phase_inputs[0]['organisation']['input_revision'] + 1
     assert len(captures) == (5 if published else 6)
+    assert capture_phases == [(False, False)] * 2 + [(True, True)] * (len(captures) - 2)
     assert result['workspace_count'] == len(result['impacts']) == 2
     assert state(h) == unchanged and person(h) == row
     # Each catalogue table is scanned once per phase, independently of the workspace count.
     scans = {mode: sum('FROM people' in sql for sql in statements) for mode, statements in reads.items()}
     assert scans == {'shared': 2, 'fresh': len(captures)}
-    # Department rows retained by the request serve both paths alike, so compare the catalogue reads only.
-    catalogue = {mode: [sql for sql in statements if not DEPARTMENT_ROW.search(sql)] for mode, statements in reads.items()}
-    assert len(catalogue['shared']) < len(catalogue['fresh'])
+    # The fresh oracle uses the same sessions after the real snapshots, so its
+    # baseline and other session-local reads are already warm. Count catalogue projection work.
+    assert catalogue_reads['shared'] < catalogue_reads['fresh']
     print(json.dumps({'operation': operation, 'published': published, 'people_scans': scans,
+                      'catalogue_selects': catalogue_reads,
                       'selects': {mode: len(statements) for mode, statements in reads.items()}}))

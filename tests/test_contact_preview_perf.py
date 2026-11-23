@@ -236,6 +236,8 @@ def test_contact_preview_keeps_schema_role_revision_and_fingerprint_checks(h):
     preview(h, cmd, role='staff', status=403)
     preview(h, {**cmd, 'expected_revision': row['revision'] + 1}, status=409)
     checked = preview(h, cmd)
+    invalid = {**change(row, work_phone='x' * 81), 'expected_fingerprint': checked['source_fingerprint']}
+    assert preview(h, invalid, status=409)['error']['code'] == 'STALE_PREVIEW'
     changed = change(row, work_phone='5550101')
     assert preview(h, {**changed, 'expected_fingerprint': checked['source_fingerprint']}, status=409)['error']['code'] == 'STALE_PREVIEW'
     assert state(h) == before and person(h) == row

@@ -1,11 +1,17 @@
 """Slow pure preview evaluation cannot block real commands or turn a stale preview into authority."""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import Event
 
 import pytest
+from sqlalchemy import select
 
+from apps.api import main, models as m
+from apps.api.db import transaction
 from apps.api.services import catalogue_preview
+from .clock_support import freeze_clock
 from .test_catalogue_preview import apply, change, preview, state
+from .test_events import event, event_type, repeat
 from .test_resources_calendars import pool, typ
 
 
@@ -22,6 +28,47 @@ def setup_preview(h):
     h.client("admin")
     h.client("coordinator")
     return resource, workspace, change(resource, capacity=1)
+
+
+def test_changed_workspace_between_snapshot_and_writer_refuses_preview(both, monkeypatch):
+    h = both
+    resource, workspace, command = setup_preview(h)
+    retry_write = main.retry_write
+
+    def archive_then_acquire(engine, operation, **kwargs):
+        archived = h.command("coordinator", "workspace.archive", {"reason": "Concurrent cleanup"},
+                             workspace["id"], workspace["revision"])["workspace"]
+        assert archived["archived_at"]
+        return retry_write(engine, operation, **kwargs)
+
+    monkeypatch.setattr(main, "retry_write", archive_then_acquire)
+    result = preview(h, command, status=409)
+    assert result["error"]["code"] == "STALE_PREVIEW"
+    stored = next(r for r in h.get("admin", "/api/catalogues")["resource_pools"] if r["id"] == resource["id"])
+    assert stored["capacity"] == 2
+
+
+def test_expired_projected_blocking_event_refuses_baseline_on_same_day(both, monkeypatch):
+    h = both
+    _, _, command = setup_preview(h)
+    series = event(h, event_type(h, blocks_duties=True), repeat=repeat(), repeat_until='2026-10-05')
+    with transaction(h.app.state.engine, write=True) as db:
+        occurrence = db.scalars(select(m.EventOccurrence).where(m.EventOccurrence.event_id == series['id'])).one()
+        db.delete(occurrence)  # A missing occurrence is projected until its ending instant.
+    now = [datetime(2026, 10, 4, 6, 30, tzinfo=timezone.utc)]
+    freeze_clock(monkeypatch, lambda: now[0])
+    # Use sessions issued at the pinned clock so the only change is the projected event.
+    h.clients.pop('admin').close()
+    h.client('admin')
+    assert preview(h, command)["impacts"]
+    retry_write = main.retry_write
+
+    def advance_clock_then_acquire(engine, operation, **kwargs):
+        now[0] = datetime(2026, 10, 4, 7, 1, tzinfo=timezone.utc)
+        return retry_write(engine, operation, **kwargs)
+
+    monkeypatch.setattr(main, "retry_write", advance_clock_then_acquire)
+    assert preview(h, command, status=409)["error"]["code"] == "STALE_PREVIEW"
 
 
 def test_commands_progress_while_preview_evaluates_and_old_fingerprint_cannot_apply(both, monkeypatch):
