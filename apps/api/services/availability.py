@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from packages.contracts import schemas as s
 from packages.domain.time import aware
-from packages.domain.validation import rotation_leave_findings
+from packages.domain.validation import ROTATION_LEAVE_KINDS, rotation_leave_findings
 from apps.api import models as m
 from apps.api.auth import require_role, person_access
 from apps.api.db import current_request_parent
@@ -22,7 +22,8 @@ from .conditional_reads import revision_etag
 UPDATE_FIELDS = ('kind', 'start', 'end', 'leave_type_id')
 UPDATE_SNAPSHOT_FIELDS = (*UPDATE_FIELDS, 'counts_as_unavailable', 'leave_type', 'manual_type_override', 'revision')
 RECORDED_FACT_KINDS = frozenset({'actual_absence', 'external_commitment', 'off_duty'})
-REQUEST_AVAILABILITY_KINDS = frozenset({'leave', 'absence_report', 'meeting'})
+LEAVE_APPROVAL_REQUEST_KINDS = frozenset({'leave', 'absence_report'})
+REQUEST_AVAILABILITY_KINDS = LEAVE_APPROVAL_REQUEST_KINDS | {'meeting'}
 
 
 def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, request_ids=()):
@@ -44,6 +45,10 @@ def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, 
 
 def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation_context=None):
     """Project relational records once; the shared domain evaluator owns the rule itself."""
+    source = rotation if rotation is not None else absence
+    candidate = json_value(source if isinstance(source, dict) else source.model_dump())
+    if rotation is None and candidate.get('kind') not in ROTATION_LEAVE_KINDS:
+        return []
     cache = rotation_context if rotation_context is not None else {}
     if 'leave_timezone' not in cache:
         scope = db.execute(select(m.Organisation.timezone, m.Department.id).join(
@@ -54,7 +59,6 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     zone = cache['leave_timezone']
     departments = cache['leave_department_ids']
     if rotation is not None:
-        candidate = json_value(rotation if isinstance(rotation, dict) else rotation.model_dump())
         people = {pid for pid, _ in rotation_context['memberships']} if rotation_context is not None else {candidate['person_id']}
         if 'leave_records' not in cache:
             rows = list(db.scalars(select(m.Availability).where(m.Availability.department_id.in_(departments),
@@ -72,7 +76,6 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
                    and aware(row['start']) < wall_end and aware(row['end']) > wall_start]
         rotations = [candidate]
     else:
-        candidate = json_value(absence if isinstance(absence, dict) else absence.model_dump())
         query = select(m.Rotation).where(m.Rotation.department_id.in_(departments),
             m.Rotation.person_id == candidate['person_id'])
         try:
@@ -121,6 +124,7 @@ def _require_record_approval(db, row, values, findings):
         return
     request = db.get(m.RequestRecord, row.request_id) if row.request_id else None
     require(not findings or request is not None and request.status == 'approved'
+            and request.kind in LEAVE_APPROVAL_REQUEST_KINDS
             and request.person_id == row.person_id and request.department_id == row.department_id
             and aware(request.start) == aware(values['start']) and aware(request.end) == aware(values['end'])
             and values['kind'] == (request.details or {}).get('availability_kind', 'approved_leave')
@@ -562,11 +566,11 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             inputs_changed = True
         if value.decision == "approve" and row.kind in REQUEST_AVAILABILITY_KINDS:
             restored = _restore_undo_absences(db, actor, row, conflicts)
-            meeting = row.kind == 'meeting'
-            if not restored and not meeting:
+            if not restored:
                 conflicts.extend(rotation_leave_conflicts(db, actor, absence=record(row)))
                 require_rotation_leave(conflicts)
             if restored is None:
+                meeting = row.kind == 'meeting'
                 kind = 'protected_time' if meeting else (row.details or {}).get('availability_kind', 'approved_leave')
                 absence = m.Availability(department_id=actor.department_id, person_id=row.person_id,
                                          start=row.start, end=row.end, kind=kind,

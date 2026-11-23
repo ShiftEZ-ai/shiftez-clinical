@@ -83,7 +83,7 @@ def test_rotation_leave_policy_postgres_request_approval_and_snapshot(pg):
     assert actual['conflicts'][0]['severity'] == 'error' and not actual.get('approval_required')
 
 
-@pytest.mark.parametrize('kind', ['protected_time', 'academic', 'academic_time', 'overtime_offer', 'weekly_unavailable'])
+@pytest.mark.parametrize('kind', ['protected_time', 'meeting', 'academic', 'academic_time', 'overtime_offer', 'weekly_unavailable'])
 def test_protected_and_academic_time_never_conflict(kind):
     assert rotation_leave_findings(domain_data(kind=kind)) == []
 
@@ -176,6 +176,28 @@ def test_needs_approval_routes_planned_leave_record_and_undoes(h):
     retracted = h.get('coordinator', '/api/availability')['availability'][0]
     assert h.command('coordinator', 'availability.restore', {'reason': REASON}, retracted['id'], retracted['revision'],
                      status=409)['error']['code'] == 'ROTATION_LEAVE_APPROVAL_REQUIRED'
+
+
+@pytest.mark.postgres
+def test_meeting_approval_cannot_authorize_leave_during_a_rotation(pg):
+    h = pg
+    resident(h, 'needs_approval')
+    meeting = h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': 'meeting',
+        'start': START, 'end': END, 'private_reason': REASON})['record']
+    approved = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': REASON},
+                         meeting['id'], meeting['revision'])
+    assert approved['conflicts'] == []
+    protected, = h.get('coordinator', '/api/availability')['availability']
+    assert (protected['kind'], protected['request_id']) == ('protected_time', meeting['id'])
+
+    # Exercise the request kind guard even when the stored leave type matches the edit.
+    leave_type = h.configure('leave_types', {'name': 'Synthetic leave type', 'short_code': 'TST'})['record']['id']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.RequestRecord, meeting['id']).leave_type_id = leave_type
+    refused = h.command('coordinator', 'availability.update', {'kind': 'approved_leave',
+        'leave_type_id': leave_type, 'reason': REASON}, protected['id'], protected['revision'], status=409)
+    assert refused['error']['code'] == 'ROTATION_LEAVE_APPROVAL_REQUIRED'
+    assert h.get('coordinator', '/api/availability')['availability'] == [protected]
 
 
 @pytest.mark.parametrize('policy,severity', [('not_allowed', 'error'), ('needs_approval', 'warning')])
