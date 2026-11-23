@@ -335,7 +335,8 @@ def test_apply_updates_the_run_and_grid_before_follow_up_reads(browser, cp_serve
             dialog = page.get_by_role('dialog', name='Auto-schedule results')
             apply = dialog.get_by_role('button', name='Apply the change', exact=True)
 
-        # The command can finish; none of the reads that could redraw the rota or job can answer.
+        # Let the review finish loading before holding reads that could redraw the saved result.
+        expect(apply).to_be_enabled()
         page.route('**/api/**', lambda route: None if route.request.method == 'GET' else route.continue_())
         with page.expect_response(lambda r: r.url.endswith('/api/commands')
                                   and (r.request.post_data_json or {}).get('kind') == 'generation.apply') as saved:
