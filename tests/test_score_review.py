@@ -70,6 +70,134 @@ def test_score_review_reuses_current_validation_without_changing_payload(h, monk
     assert h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review") == expected.model_dump(mode='json')
 
 
+def save_department_options(h, options):
+    account = h.get('admin', '/api/me')
+    department, organisation = account['department'], account['organisation']
+    h.command('admin', 'department.settings', {
+        'department_name': department['name'], 'department_revision': department['revision'],
+        'organisation_name': organisation['name'], 'timezone': organisation['timezone'],
+        'week_start': organisation['week_start'], 'generation_defaults': options,
+        'reason': 'Calibrate department scoring defaults'}, department['id'], organisation['revision'])
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_score_review_caches_then_reuses_check_after_defaults_are_saved(h, monkeypatch):
+    from apps.api.services import score_review as service
+    from packages.contracts.schemas import GenerationOptions
+
+    workspace = h.shift(h.workspace('Saved defaults review'), people=[h.seed['people'][0]])['workspace']
+    save_department_options(h, GenerationOptions().model_dump(mode='json'))
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Workspace, workspace['id']).validation = None
+    url = f"/api/workspaces/{workspace['id']}/score-review"
+    calls = []
+    evaluate = service.evaluate
+
+    def counted(*args, **kwargs):
+        calls.append('evaluate')
+        return evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(service, 'evaluate', counted)
+    assert h.get('admin', url) == h.get('coordinator', url)
+    assert calls == ['evaluate']
+    workspace = h.command('coordinator', 'workspace.validate', {'reason': 'Retain current check after saving defaults'},
+                          workspace['id'], workspace['revision'])['workspace']
+    assert workspace['validation']['fingerprint'] == h.snapshot(workspace)['fingerprint']
+    monkeypatch.setattr(service, 'evaluate', lambda *args, **kwargs: pytest.fail('unchanged check must reuse after defaults save'))
+    monkeypatch.setattr(service, 'schedule_score', lambda *args, **kwargs: pytest.fail('unchanged check must not rescore'))
+    responses = [h.get(role, f"/api/workspaces/{workspace['id']}/score-review")
+                 for role in ('admin', 'coordinator') for _ in range(3)]
+    assert all(response == responses[0] for response in responses)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_score_review_reads_current_department_weights_without_captured_options(h, monkeypatch):
+    from copy import deepcopy
+    from datetime import timedelta
+    from apps.api import models as m
+    from apps.api.db import transaction
+    from apps.api.services import score_review as service
+    from packages.contracts.schemas import GenerationOptions
+
+    created = h.command('coordinator', 'workspace.create', {
+        'name': 'Current score weights', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+        'baseline': {'mode': 'custom', 'sources': ['display', 'rules', 'duties', 'people', 'calendars']}})
+    assert {'score', 'auto'} <= set(created['baseline']['omitted_sources'])
+    workspace = h.shift(created['workspace'], people=[h.seed['people'][0]])['workspace']
+    assert not h.snapshot(workspace)['generation_options']
+    h.command('coordinator', 'workspace.validate', {'reason': 'Retain original draft check'},
+              workspace['id'], workspace['revision'])
+    with transaction(h.app.state.engine) as db:
+        stored_check = deepcopy(db.get(m.Workspace, workspace['id']).validation)
+    options = GenerationOptions().model_dump(mode='json')
+    options['scoring']['weights']['coverage'] = 36
+    save_department_options(h, options)
+    assert h.snapshot(workspace)['generation_options'] == options
+    calls = []
+    original = service.evaluate
+
+    def evaluate(*args, **kwargs):
+        calls.append('evaluate')
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, 'evaluate', evaluate)
+    for role in ('admin', 'admin', 'coordinator', 'coordinator'):
+        result = h.get(role, f"/api/workspaces/{workspace['id']}/score-review")
+        assert result['score']['settings']['weights']['coverage'] == 36
+    assert calls == ['evaluate']
+    options['scoring']['weights']['coverage'] = 37
+    save_department_options(h, options)
+    result = h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review")
+    assert result['score']['settings']['weights']['coverage'] == 37
+    assert calls == ['evaluate', 'evaluate']
+    previous_fingerprint = result['fingerprint']
+    shift_id = h.snapshot(workspace)['shifts'][0]['id']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Shift, shift_id).end += timedelta(minutes=5)
+    result = h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review")
+    assert result['fingerprint'] != previous_fingerprint
+    assert calls == ['evaluate', 'evaluate', 'evaluate']
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Workspace, workspace['id']).validation == stored_check
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_score_review_projection_refreshes_person_labels(h, monkeypatch):
+    from apps.api.services import score_review as service
+
+    person_id = h.seed['people'][0]
+    h.command('staff', 'wish.create', {'person_id': person_id, 'kind': 'prefer_off',
+        'first_day': '2026-10-04', 'last_day': '2026-10-04', 'points': 1})
+    workspace = h.shift(h.workspace('Score review labels'), people=[person_id])['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Workspace, workspace['id']).validation = None
+    url = f"/api/workspaces/{workspace['id']}/score-review"
+    calls = []
+    evaluate = service.evaluate
+
+    def counted(*args, **kwargs):
+        calls.append('evaluate')
+        return evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(service, 'evaluate', counted)
+    first = h.get('coordinator', url)
+    assert first == h.get('admin', url)
+
+    with transaction(h.app.state.engine, write=True) as db:
+        person = db.get(m.Person, person_id)
+        previous_name = person.display_name
+        person.display_name = db.get(m.Person, h.seed['people'][1]).display_name
+        current_name = person.display_name
+    assert previous_name != current_name
+    current = h.get('coordinator', url)
+    assert current['fingerprint'] == first['fingerprint']
+    assert current['score']['score'] == first['score']['score']
+    before, after = (result['score']['people'][person_id]['issues'] for result in (first, current))
+    assert any(issue['text'].startswith(previous_name) for issue in before)
+    assert any(issue['text'].startswith(current_name) for issue in after)
+    assert calls == ['evaluate', 'evaluate']
+
+
 @pytest.mark.parametrize('snapshot_kind', ['dict', 'domain_snapshot'])
 def test_retired_score_review_context_cache_preserves_payload_and_bounds_calls(monkeypatch, snapshot_kind):
     from copy import deepcopy
