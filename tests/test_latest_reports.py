@@ -324,11 +324,12 @@ def test_ci_downloads_checks_artifacts_and_selects_reports_before_verdict():
                             names.add(prefix)
                             assert name == prefix + attempt
     assert names == {"ci-plan-", "ci-dependencies-", "ci-browser-", "ci-web-"}
-    steps = ci["result"]["steps"]
+    steps = ci["ci-gate"]["steps"]
     downloads = {step["with"]["pattern"]: step for step in steps if "pattern" in step.get("with", {})}
     assert downloads["ci-test-*"]["with"]["merge-multiple"] == "false"
-    assert downloads["ci-test-*"]["if"] == "steps.reports.outputs.mixed_attempts == 'true'"
-    assert downloads["ci-test-${{ github.run_attempt }}-*"]["if"] == "steps.reports.outputs.mixed_attempts != 'true'"
+    run_verdict = "steps.producers.outputs.run_verdict == 'true'"
+    assert downloads["ci-test-*"]["if"] == f"{run_verdict} && steps.reports.outputs.mixed_attempts == 'true'"
+    assert downloads["ci-test-${{ github.run_attempt }}-*"]["if"] == f"{run_verdict} && steps.reports.outputs.mixed_attempts != 'true'"
     detect = next(step["run"] for step in steps if step.get("id") == "reports")
     assert "test -f .trusted-verdict/.github/scripts/latest_reports.py" in detect
     verdict = next(step["run"] for step in steps if "trusted_verdict.py" in step.get("run", ""))

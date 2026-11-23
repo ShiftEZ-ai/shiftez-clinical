@@ -12,7 +12,6 @@ import subprocess
 import types
 import unittest
 from unittest.mock import Mock, patch
-from urllib.error import HTTPError
 
 HELPERS = Path(__file__).resolve().parents[1] / ".github/scripts"
 if not HELPERS.is_dir():
@@ -28,10 +27,14 @@ import canary_evidence as canaries
 import re
 import xml.etree.ElementTree as ET
 
-# The refusal only the pre-code-owner guard had; it must not come back.
+# The audited-maintenance-route refusal of an earlier guard; it must not come back.
 LEGACY_ROUTE = "Tier 1 control changes require the audited maintenance route"
 
 import pytest
+
+
+def git_bash():
+    return 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else 'bash'
 
 
 class PolicyTests(unittest.TestCase):
@@ -335,10 +338,7 @@ def pytest_runtest_makereport(item, call):
 
     def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False,
                   kind="pull_request", after_removed=None, after_python=None, preview_probe=None,
-                  before_codeowners=(b"/.github/ @ShiftEZ-ai/maintainers\n/ci/ @ShiftEZ-ai/maintainers\n"
-                                     b"/tests/quarantine.py @ShiftEZ-ai/maintainers\n"
-                                     b"/tests/quarantine.json @ShiftEZ-ai/maintainers\n"),
-                  after_codeowners=None, candidate_helpers=None, http=None, token="synthetic-token", files=None,
+                  candidate_helpers=None, files=None,
                   real_inventory=False, default="dev", accepted=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
@@ -380,10 +380,6 @@ def pytest_runtest_makereport(item, call):
                 return value if value is None or isinstance(value, bytes) else json.dumps(value).encode()
             if name == policy.QUARANTINE_RETIRED:
                 return b"[]"
-            if name == ".github/CODEOWNERS":
-                if rev == candidate and after_codeowners is not None:
-                    return after_codeowners
-                return before_codeowners if rev == base else None
             if name=='ci/removed-tests.json':
                 return json.dumps(after_removed if rev==candidate and after_removed is not None else {'schema':2,'removed':[],'removed_nodes':[]}).encode()
             if name == policy.KNOWN:
@@ -407,60 +403,9 @@ def pytest_runtest_makereport(item, call):
             for name, value in mocks.items():
                 stack.enter_context(patch.object(policy, name, value))
             stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_EVENT_NAME": kind, "TRUSTED_BOOTSTRAP": "false"}))
-            stack.enter_context(patch.dict(policy.os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "",
-                                                              "GITHUB_TOKEN": token}))
-            stack.enter_context(patch.object(policy, "urlopen", http if http is not None else self.review_response()))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             policy.guard()
         return report
-
-    @staticmethod
-    def review_response(*, rules=None, **overrides):
-        flags = dict.fromkeys(policy.REVIEW_FLAGS, True) | overrides
-        payload = [{"type": "pull_request", "parameters": flags}] if rules is None else rules
-        return Mock(return_value=contextlib.closing(io.BytesIO(json.dumps(payload).encode())))
-
-    def test_guard_checks_active_reviews_on_both_targets_and_events(self):
-        for branch in ("dev", "main"):
-            for kind in ("pull_request", "merge_group"):
-                with self.subTest(branch=branch, kind=kind):
-                    http = self.review_response()
-                    self.run_guard(".github/workflows/ci.yml", branch=branch, kind=kind, http=http)
-                    http.assert_called_once()
-                    request = http.call_args.args[0]
-                    self.assertEqual(request.full_url, f"https://api.github.com/repos/owner/repo/rules/branches/{branch}")
-                    self.assertEqual(request.get_method(), "GET")
-                    self.assertEqual(request.get_header("Authorization"), "Bearer synthetic-token")
-        http = Mock()
-        self.run_guard("apps/example.py", http=http, token="")
-        http.assert_not_called()
-
-    def test_guard_refuses_disabled_review_flags(self):
-        for flag in policy.REVIEW_FLAGS:
-            with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, "Active branch rules must require"):
-                self.run_guard(".github/workflows/ci.yml", http=self.review_response(**{flag: False}))
-
-    def test_guard_requires_only_code_owner_review_and_stale_dismissal(self):
-        self.assertEqual(policy.REVIEW_FLAGS, ("require_code_owner_review", "dismiss_stale_reviews_on_push"))
-        for last_push in (False, True):
-            with self.subTest(last_push=last_push):
-                http = self.review_response(require_last_push_approval=last_push)
-                self.run_guard(".github/workflows/ci.yml", http=http)
-                http.assert_called_once()
-
-    def test_guard_refuses_review_api_errors_or_malformed_responses(self):
-        http = Mock(side_effect=HTTPError("", 403, "", None, None))
-        with self.assertRaisesRegex(ValueError, "Could not read active branch review rules"):
-            self.run_guard(".github/workflows/ci.yml", http=http)
-        for rules in ({}, [None], [{"type": "pull_request", "parameters": {}}]):
-            with self.subTest(rules=rules), self.assertRaisesRegex(ValueError, "Unexpected active branch"):
-                self.run_guard(".github/workflows/ci.yml", http=self.review_response(rules=rules))
-
-    def test_guard_refuses_missing_review_token_without_calling_api(self):
-        http = Mock()
-        with self.assertRaisesRegex(ValueError, "require a read-only GitHub token"):
-            self.run_guard(".github/workflows/ci.yml", http=http, token="")
-        http.assert_not_called()
 
     def test_guard_checks_privacy_of_every_candidate_workflow_blob(self):
         safe = b"on: [pull_request, merge_group]\n"
@@ -513,12 +458,12 @@ def pytest_runtest_makereport(item, call):
             (Path(trusted) / ".github/scripts/working_policy.py").write_text(guard_source, encoding="utf-8")
             env = {key: value for key, value in os.environ.items() if key != "TRUSTED_BOOTSTRAP"}
             env.update(GITHUB_STEP_SUMMARY=str(Path(trusted) / "summary"), STUB_BRANCH=branch, STUB_TIER1=tier1_path)
-            return subprocess.run(["bash", "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
+            return subprocess.run([git_bash(), "-e", "-c", script], cwd=trusted, env=env, capture_output=True, text=True)
 
-    def test_checks_runs_the_code_owner_guard_once_dev_has_it(self):
-        new_guard = "import sys\nprint('code-owner guard', sys.argv[1:])\n"
+    def test_checks_runs_the_working_policy_guard_from_dev(self):
+        new_guard = "import sys\nprint('working policy guard', sys.argv[1:])\n"
         result = self.run_checks_guard_step(new_guard)
-        self.assertEqual((result.returncode, result.stdout), (0, "code-owner guard ['guard']\n"), result.stderr)
+        self.assertEqual((result.returncode, result.stdout), (0, "working policy guard ['guard']\n"), result.stderr)
         # Once this change lands, dev's guard is this tree's guard, so the wrapper branch can never run again.
         self.assertNotIn(LEGACY_ROUTE, (HELPERS / "working_policy.py").read_text(encoding="utf-8"))
 
@@ -527,7 +472,7 @@ def pytest_runtest_makereport(item, call):
         addition["fails"].append({**addition["fails"][0], "node": "tests/test_new.py::test_case"})
         cases = [
             (policy.KNOWN, {"after_known": addition}, "Known-failures changes"),
-            ("AGENTS.md", {}, "private agent instructions"),
+            ("docs/AGENTS.md", {}, "private agent instructions"),
             ("apps/example.py", {"after_python": b"x = ("}, "syntax error"),
             (".github/workflows/ci.yml", {"preview_history": True}, "Preview merge history"),
         ]
@@ -535,7 +480,7 @@ def pytest_runtest_makereport(item, call):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, message):
                 self.run_guard(path, **options)
 
-    def test_guard_allows_changes_in_owned_tier1_paths(self):
+    def test_guard_allows_changes_in_tier1_paths(self):
         clean = self.run_guard("apps/example.py")
         self.assertEqual(clean["tier1"], [])
         for kind in ("pull_request", "merge_group"):
@@ -544,33 +489,21 @@ def pytest_runtest_makereport(item, call):
                 self.assertEqual([row["path"] for row in report["tier1"]], [".github/workflows/ci.yml"])
                 self.assertEqual(report["candidate_sha"], "b" * 40 if kind == "merge_group" else None)
 
-    def test_guard_refuses_unowned_tier1_path(self):
-        with self.assertRaisesRegex(ValueError, "Add a CODEOWNERS rule for scripts/build[.]py"):
-            self.run_guard("scripts/build.py")
-
-    def test_guard_refuses_new_workflow_helper_without_base_owner(self):
-        with self.assertRaisesRegex(ValueError, "Add a CODEOWNERS rule for scripts/check[.]py"):
-            self.run_guard(".github/workflows/ci.yml\0scripts/check.py", candidate_helpers={"scripts/check.py"})
-
-    def test_guard_refuses_tier1_mechanisms_outside_owned_paths(self):
+    def test_guard_accepts_and_flags_tier1_paths_outside_github_and_ci(self):
         cases = (
-            ("apps/example.py", b"def pytest_configure(config): pass\n"),
-            ("apps/sitecustomize.py", b"x=2\n"),
+            ("scripts/build.py", {}, ["scripts/build.py"]),
+            (".github/workflows/ci.yml\0scripts/check.py", {"candidate_helpers": {"scripts/check.py"}},
+             [".github/workflows/ci.yml", "scripts/check.py"]),
+            ("apps/example.py", {"after_python": b"def pytest_configure(config): pass\n"}, ["apps/example.py"]),
+            ("apps/sitecustomize.py", {"after_python": b"x=2\n"}, ["apps/sitecustomize.py"]),
+            (".github/CODEOWNERS\0scripts/build.py", {"files": {".github/CODEOWNERS": (b"/.github/ @team\n", None)}},
+             [".github/CODEOWNERS", "scripts/build.py"]),
         )
-        for path, raw in cases:
-            with self.subTest(path=path, raw=raw), self.assertRaisesRegex(ValueError, "Move the Tier 1 mechanism"):
-                self.run_guard(path, after_python=raw)
-
-    def test_guard_uses_codeowners_from_the_base_for_each_event(self):
         for kind in ("pull_request", "merge_group"):
-            changed = ".github/CODEOWNERS\0scripts/build.py"
-            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "Add a CODEOWNERS rule for scripts/build"):
-                self.run_guard(changed, kind=kind,
-                               after_codeowners=b"/.github/ @ShiftEZ-ai/maintainers\n/scripts/ @ShiftEZ-ai/maintainers\n")
-            report = self.run_guard(changed, kind=kind,
-                                    before_codeowners=b"/.github/ @ShiftEZ-ai/maintainers\n/scripts/ @ShiftEZ-ai/maintainers\n",
-                                    after_codeowners=b"/.github/ @team\n")
-            self.assertEqual([row["path"] for row in report["tier1"]], [".github/CODEOWNERS", "scripts/build.py"])
+            for changed, options, tier1 in cases:
+                with self.subTest(kind=kind, changed=changed):
+                    report = self.run_guard(changed, kind=kind, **options)
+                    self.assertEqual([row["path"] for row in report["tier1"]], tier1)
 
     def test_review_required_patterns_cover_tracked_or_reserved_paths(self):
         root = HELPERS.parents[1]
@@ -594,9 +527,9 @@ def pytest_runtest_makereport(item, call):
         with self.assertRaisesRegex(ValueError,'Unsupported policy event'):
             self.run_guard('apps/example.py',kind='pull_request_target')
 
-    def test_guard_keeps_owned_tier1_and_tier2_findings(self):
-        owned = self.run_guard("tests/quarantine.py")
-        self.assertEqual(owned["tier1"][0]["path"], "tests/quarantine.py")
+    def test_guard_keeps_tier1_and_tier2_findings(self):
+        flagged = self.run_guard("tests/quarantine.py")
+        self.assertEqual(flagged["tier1"][0]["path"], "tests/quarantine.py")
         report = self.run_guard("requirements/test.lock")
         self.assertEqual(report["tier2"][0]["path"], "requirements/test.lock")
         self.assertEqual(report["tier1"], [])
@@ -625,10 +558,7 @@ def pytest_runtest_makereport(item, call):
                 with self.subTest(default=default, kind=kind):
                     self.assertEqual(self.run_guard("apps/example.py", branch=default, kind=kind, default=default)["branch"],
                                      default)
-                    http = self.review_response()
-                    self.run_guard(".github/workflows/ci.yml", branch=default, kind=kind, default=default, http=http)
-                    self.assertEqual(http.call_args.args[0].full_url,
-                                     f"https://api.github.com/repos/owner/repo/rules/branches/{default}")
+                    self.run_guard(".github/workflows/ci.yml", branch=default, kind=kind, default=default)
                     with self.assertRaisesRegex(ValueError, "Preview merge history"):
                         self.run_guard("apps/example.py", branch=default, kind=kind, default=default, preview_history=True)
 
@@ -925,17 +855,13 @@ def pytest_runtest_makereport(item, call):
                     with self.assertRaisesRegex(ValueError, "retired list is missing"):
                         self.run_guard("apps/ordinary.py", branch=branch, kind=kind, files=files)
 
-    def test_unowned_known_failures_still_allow_only_removals(self):
-        # The base CODEOWNERS leaves ci/known-failures.json without an owner; the guard keeps it removal-only.
-        codeowners = (b"/.github/ @ShiftEZ-ai/maintainers\n/ci/ @ShiftEZ-ai/maintainers\n"
-                      b"/tests/quarantine.py @ShiftEZ-ai/maintainers\n/tests/quarantine.json @ShiftEZ-ai/maintainers\n"
-                      b"/ci/known-failures.json\n")
+    def test_known_failures_still_allow_only_removals(self):
         known, kept = self.known_lists("tests/test_a.py::test_a", "tests/test_b.py::test_b"), self.known_lists("tests/test_a.py::test_a")
-        report = self.run_guard(policy.KNOWN, files={policy.KNOWN: (known, kept)}, before_codeowners=codeowners)
+        report = self.run_guard(policy.KNOWN, files={policy.KNOWN: (known, kept)})
         self.assertEqual(report["tier1"], [])
         added = self.known_lists("tests/test_a.py::test_a", "tests/test_b.py::test_b", "tests/test_c.py::test_c")
         with self.assertRaisesRegex(ValueError, "^Known-failures changes must only remove existing entries$"):
-            self.run_guard(policy.KNOWN, files={policy.KNOWN: (known, added)}, before_codeowners=codeowners)
+            self.run_guard(policy.KNOWN, files={policy.KNOWN: (known, added)})
 
     def test_known_failures_stay_removal_only_beside_a_quarantine_move(self):
         other = "tests/test_c.py::test_c"
@@ -1348,12 +1274,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
 
 class BootstrapControlTests(unittest.TestCase):
     def test_workflow_fallback_is_only_for_missing_controls(self):
-        import shutil
         import yaml
         workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
-        bash = shutil.which('bash')
-        if os.name == 'nt':
-            bash = 'C:/Program Files/Git/bin/bash.exe'
+        bash = git_bash()
         count = 0
         for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml'):
             doc = yaml.load((workflows / name).read_text(), Loader=yaml.BaseLoader)
@@ -1368,9 +1291,8 @@ class BootstrapControlTests(unittest.TestCase):
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
                 plan, upload = checks[context_index + 1:context_index + 3]
                 self.assertEqual(plan['id'], 'plan')
-                cache_only_push = "(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))"
-                self.assertEqual(plan['if'], cache_only_push)
-                self.assertEqual(upload['if'], cache_only_push)
+                self.assertNotIn('if', plan)
+                self.assertNotIn('if', upload)
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
                 self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
                 for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',

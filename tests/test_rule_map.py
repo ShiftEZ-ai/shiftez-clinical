@@ -56,6 +56,20 @@ def mapped(data, *rules, originals=None):
     return rule_map(data, originals)
 
 
+def test_assignment_reach_matches_the_display_map(h):
+    _, data = base(h)
+    data['policies'] = [
+        rule(data, 'Person rule', HOURS, {'person_id': h.seed['people'][0]}),
+        rule(data, 'Clinic rule', HOURS, {'service_ids': [h.seed['services'][1]]}),
+        rule(data, 'Weekend restriction', {'kind': 'restriction', 'weekdays': [6]}),
+    ]
+
+    def reach(result):
+        return [(set(row['sessions']), set(row['people']), set(row['days'])) for row in result['rules']]
+
+    assert reach(rule_map(data, reach_only=True)) == reach(rule_map(data))
+
+
 # Who and what ----------------------------------------------------------------------------------------------------------
 
 def test_person_and_everyone_rules(h):

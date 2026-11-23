@@ -238,6 +238,23 @@ def test_existing_team_lead_gap_does_not_block_building_the_draft(h):
     assert detail['shifts'][0]['participants'][0]['person_id'] == h.seed['people'][0]
     assert any(f['code'] == 'LEAD_GAP' and f['shift_id'] == shift['id']
                for f in detail['workspace']['validation']['findings'])
+    w = result['workspace']
+    fix_list = h.get('coordinator', f"/api/workspaces/{w['id']}/fix-list")
+    cause = next(c for c in fix_list['causes'] if any(
+        f['code'] == 'LEAD_GAP' and f['shift_id'] == shift['id'] and f['severity'] == 'error' for f in c['evidence']))
+    assert cause['level'] == 'must' and cause['safety'] is True and cause['acknowledgeable'] is False
+    assert fix_list['summary']['submit_blocked'] is True
+    before = state(h, w)
+    submit = {'kind': 'workspace.submit', 'target_id': w['id'], 'expected_revision': w['revision'],
+              'payload': {'reason': 'Review the missing team lead'}}
+    assert post(h, submit, status=422)['error']['code'] == 'VALIDATION_FAILED'
+    assert state(h, w) == before
+    submit['payload']['acknowledgements'] = [{'cause_id': cause['id'], 'reason': 'Try to acknowledge the safety gap'}]
+    assert post(h, submit, status=409)['error']['code'] == 'SAFETY_RULE'
+    after, counts = state(h, w)
+    assert after == before[0] and after['workspace']['status'] == 'draft'
+    changes, audit, receipts, outbox = before[1]
+    assert counts == (changes, audit + 1, receipts, outbox)
 
 
 def test_move_refuses_full_lead_gap_target_as_no_open_place(h):

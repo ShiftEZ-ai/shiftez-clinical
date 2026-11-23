@@ -178,7 +178,7 @@ def main():
     partial = "selection" in plan
     scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), candidate)
              if partial and kind == "pull_request" else None)
-    config = settings()
+    config = settings(plan=plan)
     selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
                                       {suite: config[suite + "_shards"] for suite in ("unit", "browser")}, scope)
     if policy.bootstrap(data, kind, base):

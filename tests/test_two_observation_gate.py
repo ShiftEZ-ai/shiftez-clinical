@@ -236,6 +236,7 @@ class TwoObservationGateTests(unittest.TestCase):
         owned = "apps/api/quick_fixture.py"
         shared = "apps/api/models.py"
         shared_owner = "tests/test_shared_owner.py"
+        browser_owners = {"tests/test_browser_shared_owner.py", "tests/test_browser_model_owner.py"}
         indirect_owner = "tests/test_indirect_owner.py"
         fixture = "tests/fixtures/test_sample.py"
         nested_conftest = "tests/fixtures/conftest.py"
@@ -244,9 +245,17 @@ class TwoObservationGateTests(unittest.TestCase):
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
         guarded_tests = {fixture, "tests/test_product_helper.py", "tests/test_runner_hook.py",
                          "tests/test_existing_hook.py", "tests/test_legacy_encoding.py"}
-        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | unrelated | guarded_tests
-        durations = {"suites": {suite: {"files": dict.fromkeys(files, 1)} for suite in ("unit", "browser")}}
+        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | browser_owners | unrelated | guarded_tests
+        weights = {path: 120 + index for index, path in enumerate(sorted(files))}
+        durations = {"suites": {suite: {"files": weights} for suite in ("unit", "browser")}}
+        settings_path = ROOT / "ci/bootstrap-settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings.update(unit_shards=3, browser_shards=2, merge_group_shards={"unit_shards": 4, "browser_shards": 3})
+        candidate_settings = self.folder / settings_path.relative_to(ROOT)
+        candidate_settings.parent.mkdir()
+        candidate_settings.write_text(json.dumps(settings), encoding="utf-8")
         sources = dict.fromkeys(files, "def test_a(): pass\n")
+        sources.update(dict.fromkeys(browser_owners, "from apps.api.models import value\n"))
         sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
                         shared: "value = 1\n", shared_owner: "from apps.api.models import value\n",
                         "apps/api/consumer.py": "from apps.api.models import value\n",
@@ -264,7 +273,7 @@ class TwoObservationGateTests(unittest.TestCase):
             added = "tests/test_new_product_case.py"
             with patch.object(trusted_ci, "TRUSTED", self.folder):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
-                                 trusted_ci.PR_SMOKE | {shared_owner, added})
+                                 trusted_ci.PR_SMOKE | {shared_owner, added} | browser_owners)
             full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
                           "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
                           "tests/conftest.py", nested_conftest, fixture, "apps/api/conftest.py",
@@ -286,7 +295,6 @@ class TwoObservationGateTests(unittest.TestCase):
                        ("pull_request", shared, [], "main", False, True, "main"),
                        ("pull_request", owned, [], "dev", False, False, "main")]
             events.append(("pull_request", owned, [], "dev", False, False, "dev"))
-            events = [case for case in events if case[0] != "merge_group"]
             for index, (event, path, labels, branch, deleted, partial, default) in enumerate(events):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
@@ -318,7 +326,6 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false"}), \
                      patch.object(maker, "at_revision", return_value=self.current), \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
-                     patch.object(trusted_ci, "settings", return_value={"unit_shards": 3, "browser_shards": 2}), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
                      patch.object(trusted_ci.subprocess, "check_output", return_value=head), \
                      patch.object(trusted_ci.policy, "git", side_effect=event_git), \
@@ -328,7 +335,7 @@ class TwoObservationGateTests(unittest.TestCase):
                          "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
-                    replicas = [1] if event == "pull_request" else [1, 2]
+                    replicas = [1] if event in ("pull_request", "merge_group") else [1, 2]
                     self.assertEqual(maker.context(base)["replicas"], replicas)
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["sha"], candidate)
@@ -336,12 +343,17 @@ class TwoObservationGateTests(unittest.TestCase):
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
-                        expected = {shared_owner, owner} if path == shared else {owner}
+                        expected = {shared_owner, owner} | browser_owners if path == shared else {owner}
                         self.assertEqual(actual, trusted_ci.PR_SMOKE | expected)
                         self.assertEqual(trusted_ci.census_files(plan, files), actual)
                     else:
                         self.assertNotIn("selection", plan)
                         self.assertEqual(actual, files)
+                    counts = settings["merge_group_shards"] if not partial and event in ("pull_request", "merge_group") else settings
+                    for suite, row in plan["suites"].items():
+                        selected = [p for p in actual if Path(p).name.startswith("test_browser") == (suite == "browser")]
+                        expected_shards = min(counts[suite + "_shards"], len(selected))
+                        self.assertEqual(row["shards"], trusted_ci.hosted.balance(selected, weights, expected_shards))
 
     def test_retry_reads_the_quarantine_the_verdict_reads(self):
         import trusted_ci
@@ -363,7 +375,7 @@ class TwoObservationGateTests(unittest.TestCase):
 
         config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
-        for producer in ("static", "result"):
+        for producer in ("static", "ci-gate"):
             self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
                           [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
         event = self.folder / "schedule.json"

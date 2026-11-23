@@ -34,7 +34,7 @@ def bounded_assignment_scope(data, before, after):
     scope = assignment_scope(data, before, after)
     try:
         from .rule_map import rule_map
-        mapped = rule_map(data)
+        mapped = rule_map(data, reach_only=True)
         rows = data['shifts']
         focused = set(data.get('focus_ids') or ())
         by_index = {index: row['id'] for index, row in enumerate(rows)

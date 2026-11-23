@@ -1810,6 +1810,21 @@
     "blocker": false
   },
   {
+    "nodeid": "tests/test_browser_uiux_polling.py::test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_count",
+    "reason": "unstable: Browser startup synchronization failed in runs 45073711886, 45069177859, 45056480905 and 45045088917. Three recovered on the second observation.",
+    "owner": "maintainers",
+    "added": "2026-11-22",
+    "expires": "2026-12-06",
+    "issue": 1237,
+    "milestone": "v0.2.0",
+    "blocker": false,
+    "recovered_runs": [
+      "45073711886",
+      "45069177859",
+      "45045088917"
+    ]
+  },
+  {
     "nodeid": "tests/test_browser_ux_review_blockers.py::test_a_failed_page_read_keeps_the_banner_and_its_time_through_a_healthy_pulse",
     "reason": "unstable: Different measured outcomes between replicas in run 44114266718, attempt 1.",
     "owner": "maintainers",

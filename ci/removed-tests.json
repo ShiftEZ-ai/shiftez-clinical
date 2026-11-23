@@ -68,6 +68,111 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_codeowners.py::test_an_ownerless_rule_unowns_its_paths",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_code_owners_are_one_team_never_personal_logins",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_codeowner_glob_matches_only_within_one_path_component",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_every_path_the_policy_guard_treats_as_tier_one_has_a_code_owner",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_known_failures_alone_in_ci_is_unowned",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_local_actions_directory_is_explicitly_owned",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_ordinary_product_paths_need_no_code_owner",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-cobckmpkmkeameaebakilobpednkljickpnepiadhaenfjjcmgkblbhflbpiinde]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-fbjcjelobmokkokodkdalbjfokokoefdoajjgennnnekpplnhekelfclflangkio]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-hameempbbjfimlnfhfbimcecpfkdefgchcaneialkifpbfllbgnnhjbmfehoobea]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-jieaeedijimbbmefgohjoeinajegilhmmkmlhdplmlhngieikaaagbcipeopkhfo]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-jnjmnjgplmecbkbgohahdgfaebapmgkibccmcpoondieihkkclkhaeompbbnpfkp]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-lbnckdclmajmiilfoniaenkdcemholbgnkagmfaicpaiapcbmfiiihmpkinkpfjc]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-oeeboeblfkegllfcmhdhooaklhdmihbjcgkglpaeeomopdhdgejdmmijfjngfegl]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-ommlhbmbnmpnalgecbkpnklhfchmdccdaioiebldccnhmaappmfaphccmlcjnfim]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_refuses_unsupported_codeowner_rules[case-pgamhfalaijhagpaimojjhgfmiajnoodaabfongoapikjbmjilcpbjcgcgdpfgjm]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_requires_the_exact_team_as_the_only_owner[case-bephpinnpdkdofojdpamgacgeeihhmljndhhkailjnpjgagcldmbfiokohhojohl]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_requires_the_exact_team_as_the_only_owner[case-bgboddpaficaabfpebejnloooehomnmejdofamhhmcimdjognbdcckaojmchgjdo]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_owned_requires_the_exact_team_as_the_only_owner[case-mcjoejhjeddeiionklinlgnainchgmgpfkpcdfdjhhgoglpmplmnlmlcpoboflnb]",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_policy_guard_tests_have_a_code_owner",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
+      "node": "tests/test_codeowners.py::test_the_guards_and_dependency_files_have_a_code_owner",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
+    },
+    {
       "node": "tests/test_engine_restriction_boundaries.py::test_unrelated_midnight_membership_does_not_multiply_advisory_restriction_cost",
       "owner": "maintainer",
       "reason": "Renamed to test_unrelated_midnight_membership_does_not_multiply_advisory_workload_cost. Restrictions are always mandatory. The advisory workload limit keeps the assignment, score parity and stable cost assertions."
@@ -116,6 +221,11 @@
       "node": "tests/test_planning_groups_drafts.py::test_generation_rejects_broader_populations_and_accepts_owned_conditions",
       "owner": "maintainer",
       "reason": "The same assertions now run for SQLite and PostgreSQL, with additional queue refusal and job persistence checks."
+    },
+    {
+      "node": "tests/test_planning_incremental.py::test_department_assignment_check_closes_over_global_rules_and_matches_full_evaluation",
+      "owner": "maintainer",
+      "reason": "Renamed to test_department_assignment_check_limits_global_rules_to_edited_people_and_matches_full_evaluation: saved checks reuse the prior complete check for unedited people instead of closing over every session a global rule reaches; the equality with the full evaluation is kept."
     },
     {
       "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
@@ -673,14 +783,79 @@
       "reason": "Dev now runs the code-owner guard, so the Checks step's transitional branch for dev's old wrapper is removed; the step runs the guard directly, asserted in test_checks_runs_the_trusted_guard_before_fan_out and test_checks_runs_the_code_owner_guard_once_dev_has_it."
     },
     {
+      "node": "tests/test_working_policy.py::PolicyTests::test_checks_runs_the_code_owner_guard_once_dev_has_it",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. Renamed to test_checks_runs_the_working_policy_guard_from_dev (the step runs the working policy guard, not a code-owner guard); every assertion remains."
+    },
+    {
       "node": "tests/test_working_policy.py::PolicyTests::test_checks_stops_on_other_policy_refusals_before_fan_out",
       "owner": "maintainer",
       "reason": "The Checks-step wrapper that ran the guard for the audited Tier 1 route is removed with that route; the same four refusals (known-failures addition, agent file, syntax error, preview history) are asserted directly against the guard in test_guard_keeps_other_policy_refusals."
     },
     {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_allows_changes_in_owned_tier1_paths",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. Renamed to test_guard_allows_changes_in_tier1_paths; every assertion remains."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_checks_active_reviews_on_both_targets_and_events",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The guard no longer reads the branch review rules, so the request assertions are retired; Tier 1 changes passing on dev and main for both events stay asserted in test_guard_allows_changes_in_tier1_paths and test_guard_integration_target_is_the_default_branch_under_either_name."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_keeps_owned_tier1_and_tier2_findings",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. Renamed to test_guard_keeps_tier1_and_tier2_findings; every assertion remains."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_disabled_review_flags",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The guard no longer requires review flags in the branch rules."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_missing_review_token_without_calling_api",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The guard no longer needs a token for the branch rules API."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_new_workflow_helper_without_base_owner",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. A new workflow helper without a code owner is no longer refused; test_guard_accepts_and_flags_tier1_paths_outside_github_and_ci asserts it passes and is flagged Tier 1."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_review_api_errors_or_malformed_responses",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The guard no longer calls the branch rules API."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_tier1_mechanisms_outside_owned_paths",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. A Tier 1 mechanism outside code-owned files is no longer refused; test_guard_accepts_and_flags_tier1_paths_outside_github_and_ci asserts both cases pass and are flagged Tier 1."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_refuses_unowned_tier1_path",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. A Tier 1 path without a code owner is no longer refused; test_guard_accepts_and_flags_tier1_paths_outside_github_and_ci asserts it passes and is flagged Tier 1."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_requires_only_code_owner_review_and_stale_dismissal",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The review-flag list is deleted with that check."
+    },
+    {
       "node": "tests/test_working_policy.py::PolicyTests::test_guard_tier1_attack_refused_tier2_flagged",
       "owner": "maintainer",
       "reason": "A change to an owned Tier 1 path is no longer refused; it passes the guard and is flagged for code-owner review. The Tier 1 and Tier 2 findings are asserted in test_guard_keeps_owned_tier1_and_tier2_findings."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_guard_uses_codeowners_from_the_base_for_each_event",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. The guard reads no CODEOWNERS file; the Tier 1 findings for a CODEOWNERS change beside a helper change are asserted in test_guard_accepts_and_flags_tier1_paths_outside_github_and_ci."
+    },
+    {
+      "node": "tests/test_working_policy.py::PolicyTests::test_unowned_known_failures_still_allow_only_removals",
+      "owner": "maintainer",
+      "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. Renamed to test_known_failures_still_allow_only_removals without the synthetic CODEOWNERS input; the removal-accepted and addition-refused assertions remain."
     }
   ]
 }

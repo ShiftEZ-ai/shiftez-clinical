@@ -825,7 +825,6 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                      actor.department_id, workspace_check[3])})
 
     workspace_check = None
-    submission_check = None
     checked_decisions = None
     if command.kind in {'workspace.validate', 'workspace.submit', 'workspace.approve', 'workspace.publish'}:
         # Freeze a coherent read snapshot without taking the application writer lock.
@@ -848,10 +847,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
                 if command.kind != 'workspace.publish':
                     if command.kind == 'workspace.submit':
-                        submission_check = planning.review_gate_check(db, workspace, reuse=True)
-                        checked, data, current = submission_check
-                        if current is not None:
-                            checked, data = current
+                        checked, data = planning.review_gate_check(db, workspace, reuse=True)
                     else:
                         captured = []
                         checked = planning.revalidate(db, workspace, store=False, data_out=captured,
@@ -1029,6 +1025,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     continue
                 raise
 
+    if planning_plan is not None and command.kind == 'shift.update':
+        planning_preparation.restore_replay(planning_plan)
+
     changed_department = []
 
     def operation(db):
@@ -1083,7 +1082,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     'Review decisions were recorded during the check; the completed check is retained here.', 409,
                     {'current_revision': workspace.revision, 'validation': workspace_check[1], 'recoverable': True})
             reply = planning.lifecycle(db, actor, command, validation=(workspace_check[1]
-                if command.kind == 'workspace.validate' else submission_check or (workspace_check[1], workspace_check[2])))
+                if command.kind == 'workspace.validate' else (workspace_check[1], workspace_check[2])))
         else:
             reply = dispatch(db, actor, command, settings, github_check=github_check, github_export=github_export)
         if planning_plan is not None:
@@ -1256,8 +1255,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
-                    current_data = planning.domain_snapshot(db, workspace, mandatory_rules=submission_check is None,
-                                                            current_mandatory=submission_check is not None)
+                    current_data = planning.domain_snapshot(db, workspace,
+                                                            current_mandatory=command.kind == 'workspace.submit')
                     check_context(db, actor, workspace, current_data, revisions_changed=True)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})
