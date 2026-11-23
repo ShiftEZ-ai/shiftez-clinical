@@ -435,8 +435,8 @@ and a desktop window narrowed below it gets the same rule at once.
   **A legend is always BELOW the content it explains and ONE line only, on every page; never above, never multi-line**.
   The one `legend()` component draws a single line under its grid, schedule or table. What does not fit (the last first; the first entry
   always stays) goes behind the key's own "+N" (`overflowMore`, the shared "+N"), which lists every entry. The footer's
-  "? +N" (below) is a separate button that lists status items only; no legend entry ever goes there. "+N" opens the shared popover on hover, focus, click and
-  tap. The popover lists every item, one per line, as symbol and meaning. "Always visible" means this one-line strip
+  "? +N" (below) is a separate button that lists status items only; no legend entry ever goes there. "+N" is a button: a click, tap or Enter opens the
+  shared popover, and hover or focus shows only its tip. The popover lists every item, one per line, as symbol and meaning. "Always visible" means this one-line strip
   plus +N. Exports cannot hover, so a PNG or PDF prints the full list at the bottom of the page instead of +N
   (nothing hidden). Every
   status item shows inline while it fits; as the width shrinks the ones that no longer fit (the last first) go behind
