@@ -31,15 +31,18 @@ def migration_url(request, tmp_path):
 def test_candidate_evidence_migration_is_additive(migration_url):
     path = safety.VERSIONS / '0151_job_candidate_evidence.py'
     assert safety.classification(path) == 'additive'
-    assert manage.check_migrations(migration_url)[-1] == safety.revision(path)
+    new = safety.VERSIONS / '0152_feasibility_results.py'
+    assert safety.classification(new) == 'additive'
+    assert manage.check_migrations(migration_url)[-2:] == [safety.revision(path), safety.revision(new)]
     config = manage.alembic_config(migration_url)
     command.upgrade(config, '0148_bulk_analyze')
-    assert manage.check_migrations(migration_url) == ['0150_person_inactive_from', safety.revision(path)]
+    assert manage.check_migrations(migration_url) == [
+        '0150_person_inactive_from', safety.revision(path), safety.revision(new)]
     command.upgrade(config, '0150_person_inactive_from')
     engine = make_engine(migration_url)
     try:
         before = set(inspect(engine).get_table_names())
-        command.upgrade(config, 'head')
+        command.upgrade(config, safety.revision(path))
         schema = inspect(engine)
         assert set(schema.get_table_names()) - before == {'job_candidate_evidence'}
         assert before <= set(schema.get_table_names())
@@ -50,6 +53,15 @@ def test_candidate_evidence_migration_is_additive(migration_url):
         assert owner['constrained_columns'] == ['job_id'] and owner['referred_table'] == 'jobs'
         with engine.connect() as connection:
             assert not connection.execute(select(m.JobCandidateEvidence)).first()
+        before = set(schema.get_table_names())
+        command.upgrade(config, 'head')
+        schema = inspect(engine)
+        assert set(schema.get_table_names()) == before | {'job_feasibility_results'}
+        assert schema.get_pk_constraint('job_feasibility_results')['constrained_columns'] == ['job_id', 'attempt']
+        [owner] = schema.get_foreign_keys('job_feasibility_results')
+        assert owner['constrained_columns'] == ['job_id'] and owner['referred_table'] == 'jobs'
+        with engine.connect() as connection:
+            assert not connection.execute(select(m.JobFeasibilityResult)).first()
     finally:
         engine.dispose()
 
