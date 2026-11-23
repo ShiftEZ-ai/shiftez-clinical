@@ -200,6 +200,21 @@ def test_meeting_approval_cannot_authorize_leave_during_a_rotation(pg):
     assert h.get('coordinator', '/api/availability')['availability'] == [protected]
 
 
+@pytest.mark.postgres
+def test_protected_time_rejects_dates_outside_the_local_range(pg):
+    # The end fits in UTC but falls past the final day in the fixture's local timezone.
+    start, end = '9999-12-31T20:00:00Z', '9999-12-31T21:00:00Z'
+    refused = record_away(pg, 'protected_time', start=start, end=end, status=422)
+    assert refused['error']['code'] == 'INTERVAL_DATES'
+    assert pg.get('coordinator', '/api/availability')['availability'] == []
+
+    protected = record_away(pg, 'protected_time')['record']
+    refused = pg.command('coordinator', 'availability.update', {'start': start, 'end': end, 'reason': REASON},
+                         protected['id'], protected['revision'], status=422)
+    assert refused['error']['code'] == 'INTERVAL_DATES'
+    assert pg.get('coordinator', '/api/availability')['availability'] == [protected]
+
+
 @pytest.mark.parametrize('policy,severity', [('not_allowed', 'error'), ('needs_approval', 'warning')])
 @pytest.mark.parametrize('kind', ['actual_absence', 'external_commitment', 'off_duty'])
 def test_actual_facts_record_update_restore_and_undo_without_approval(h, policy, severity, kind):

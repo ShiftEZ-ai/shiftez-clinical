@@ -47,18 +47,17 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     """Project relational records once; the shared domain evaluator owns the rule itself."""
     source = rotation if rotation is not None else absence
     candidate = json_value(source if isinstance(source, dict) else source.model_dump())
-    if rotation is None and candidate.get('kind') not in ROTATION_LEAVE_KINDS:
-        return []
+    check_leave = rotation is not None or candidate.get('kind') in ROTATION_LEAVE_KINDS
     cache = rotation_context if rotation_context is not None else {}
-    if 'leave_timezone' not in cache:
+    if check_leave and 'leave_timezone' not in cache:
         scope = db.execute(select(m.Organisation.timezone, m.Department.id).join(
             m.Department, m.Department.organisation_id == m.Organisation.id).where(
                 m.Organisation.id == actor.organisation_id)).all()
         cache['leave_timezone'] = scope[0][0]
         cache['leave_department_ids'] = {row[1] for row in scope}
-    zone = cache['leave_timezone']
-    departments = cache['leave_department_ids']
+    zone = cache['leave_timezone'] if check_leave else db.get(m.Organisation, actor.organisation_id).timezone
     if rotation is not None:
+        departments = cache['leave_department_ids']
         people = {pid for pid, _ in rotation_context['memberships']} if rotation_context is not None else {candidate['person_id']}
         if 'leave_records' not in cache:
             rows = list(db.scalars(select(m.Availability).where(m.Availability.department_id.in_(departments),
@@ -76,13 +75,14 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
                    and aware(row['start']) < wall_end and aware(row['end']) > wall_start]
         rotations = [candidate]
     else:
-        query = select(m.Rotation).where(m.Rotation.department_id.in_(departments),
-            m.Rotation.person_id == candidate['person_id'])
         try:
-            first = aware(candidate['start']).astimezone(ZoneInfo(zone)).date()
-            last = aware(candidate['end']).astimezone(ZoneInfo(zone)).date()
-            query = query.where(m.Rotation.ends_on > first)
-            query = query.where(m.Rotation.starts_on <= last)
+            tz = ZoneInfo(zone)
+            first = aware(candidate['start']).astimezone(tz).date()
+            last = aware(candidate['end']).astimezone(tz).date()
+            if not check_leave:
+                return []
+            query = select(m.Rotation).where(m.Rotation.department_id.in_(cache['leave_department_ids']),
+                m.Rotation.person_id == candidate['person_id'], m.Rotation.ends_on > first, m.Rotation.starts_on <= last)
             rotations = [record(row) for row in db.scalars(query)]
         except (ValueError, OverflowError):
             require(False, 'INTERVAL_DATES', 'The interval exceeds the supported local date range')
@@ -94,7 +94,7 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     missing = ids - types.keys()
     if missing:
         types.update({row.id: record(row) for row in db.scalars(select(m.RotationType).where(
-            m.RotationType.department_id.in_(departments), m.RotationType.id.in_(missing)))})
+            m.RotationType.department_id.in_(cache['leave_department_ids']), m.RotationType.id.in_(missing)))})
     require(ids <= types.keys(), 'NOT_FOUND', 'Record not found', 404)
     if rotation is not None:
         require(all(types[ident]['department_id'] == actor.department_id for ident in ids), 'NOT_FOUND', 'Record not found', 404)
