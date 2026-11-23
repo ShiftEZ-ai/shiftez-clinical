@@ -2,8 +2,7 @@ name: Image
 permissions:
   contents: read
 concurrency:
-  # A pending build for one commit must survive a push of a different commit.
-  group: image-${{ github.ref }}-${{ github.sha }}
+  group: image-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   publish:
