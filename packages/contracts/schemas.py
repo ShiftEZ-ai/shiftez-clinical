@@ -1945,7 +1945,7 @@ class AuditPage(Schema):
 
 class PersonInput(Schema):
     """On update, send the required display name and any fields to change. Omitted fields keep their stored
-    values. Explicit empty or null values clear fields that allow them. Activity and its date are set together."""
+    values. Explicit empty or null values clear fields that allow them. A new deactivation with no date starts today."""
 
     display_name: Name = Field(json_schema_extra={"bulk": True})
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
@@ -5728,8 +5728,9 @@ class CatalogueUpdating(Schema):
 
 class RuleProposalInput(Decision):
     """Propose the first version of a catalogue rule or amend the active policy ID and revision the editor read.
-    An amendment keeps omitted rule fields. Sending settings or lines replaces the whole field, including with
-    an empty object or list. Ordered overrides need no acknowledgement."""
+    An amendment keeps omitted rule fields. The catalogue version also follows department authoring rules.
+    Sending settings or lines replaces the whole field, including with an empty object or list.
+    Ordered overrides need no acknowledgement."""
     legacy_lead_conversion: LegacyLeadConversion | None = None
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 1

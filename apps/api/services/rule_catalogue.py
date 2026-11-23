@@ -1522,10 +1522,14 @@ def propose(db, actor, command):
     inherited = omitted_update_fields(value, {
         **current_rule, 'balance_between_people': current_definition.get('balance_between_people', True),
     }) if current else {}
+    version = inherited.get('catalogue_version', value.catalogue_version)
+    if version == 2 and value.catalogue_id != 'team_leads' and department_version(db, actor.department_id) != 2:
+        # A stored v2 default can coexist with legacy rules. Keep the legacy entry for callers omitting the version.
+        require('catalogue_version' in inherited and catalogue_entry(value.catalogue_id, value.catalogue_version) is not None,
+                'DEPARTMENT_CONVERSION_REQUIRED', 'Convert the department through one reviewed proposal before authoring v2 rules', 409)
+        inherited.pop('catalogue_version')
     if inherited:
         value = s.RuleProposalInput.model_validate({**inherited, **command.payload})
-    require(value.catalogue_id == 'team_leads' or value.catalogue_version != 2 or department_version(db, actor.department_id) == 2, 'DEPARTMENT_CONVERSION_REQUIRED',
-            'Convert the department through one reviewed proposal before authoring v2 rules', 409)
     require(waiting_proposal(db, actor, value.catalogue_id) is None, "PROPOSAL_WAITING",
             "A change to this rule is already waiting for approval; approve or decline it first", 409)
     from .leadership import proposal_conversion

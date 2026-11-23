@@ -355,8 +355,11 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
             saved = {key: getattr(row, key) for key in s.PersonInput.model_fields}
             value = value.model_copy(update=omitted_update_fields(value, saved))
         if not row or {'active', 'inactive_from'} & supplied:
+            inactive_from = value.inactive_from
+            if row and row.active and 'inactive_from' not in supplied:
+                inactive_from = None
             value = value.model_copy(update={'inactive_from': person_inactive_from_transition(
-                db, actor, row, value.active, value.inactive_from)})
+                db, actor, row, value.active, inactive_from)})
     if kind == 'event_types' and row and 'also_email' not in payload.value:
         value = value.model_copy(update={'also_email': row.also_email})
     if kind == 'rotation_types' and row and 'leave_policy' not in payload.value:

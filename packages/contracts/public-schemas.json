@@ -27412,7 +27412,7 @@
   },
   "PersonInput": {
     "additionalProperties": false,
-    "description": "On update, send the required display name and any fields to change. Omitted fields keep their stored\nvalues. Explicit empty or null values clear fields that allow them. Activity and its date are set together.",
+    "description": "On update, send the required display name and any fields to change. Omitted fields keep their stored\nvalues. Explicit empty or null values clear fields that allow them. A new deactivation with no date starts today.",
     "properties": {
       "display_name": {
         "bulk": true,
@@ -30970,7 +30970,7 @@
       }
     },
     "additionalProperties": false,
-    "description": "Propose the first version of a catalogue rule or amend the active policy ID and revision the editor read.\nAn amendment keeps omitted rule fields. Sending settings or lines replaces the whole field, including with\nan empty object or list. Ordered overrides need no acknowledgement.",
+    "description": "Propose the first version of a catalogue rule or amend the active policy ID and revision the editor read.\nAn amendment keeps omitted rule fields. The catalogue version also follows department authoring rules.\nSending settings or lines replaces the whole field, including with an empty object or list.\nOrdered overrides need no acknowledgement.",
     "properties": {
       "reason": {
         "maxLength": 500,
