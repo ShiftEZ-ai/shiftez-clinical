@@ -18,7 +18,7 @@ def snapshot(shift_ids=('s1', 's2'), people=('p1', 'p2')):
 
 def test_rule_map_closure_bounds_changed_sessions_people_and_dates(monkeypatch):
     data = snapshot()
-    monkeypatch.setattr('packages.domain.rule_map.rule_map', lambda _: {'rules': [
+    monkeypatch.setattr('packages.domain.rule_map.rule_map', lambda _, *, reach_only: {'rules': [
         {'id': 'near', 'sessions': [0], 'people': {'p1': [[0, 3]]}, 'days': [0, 1]},
         {'id': 'far', 'sessions': [1], 'people': {'p2': [[2, 3]]}, 'days': [2]},
     ]})

@@ -458,13 +458,16 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
     def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
             base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
             base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False,
-            browser_shards=1, merge_group_shards=None):
+            browser_shards=1, merge_group_shards=None, default="dev", replicas=None, missing_browser=False):
         sources = historical_verdict_sources
         folder = tmp_path / label
         base, head = "a" * 40, "c" * 40
-        replicas = (1, 2) if event == "push" else (1,)
+        if replicas is None:
+            replicas = (1, 2) if event == "push" and (old or branch != default) else (1,)
         plan = reports(folder / "reports", replicas=replicas, red_suites=(), unit_node=node, unit_outcome=outcome,
                        unit_retry=retry, base_sha=base, run_id="1", browser_shards=browser_shards)
+        if missing_browser:
+            (folder / "reports/ci-test-1-browser-1-1").rename(folder / "missing-browser")
         candidate = plan["sha"]
         output = folder / "verdict"
         plan_path = folder / "plan.json"
@@ -544,7 +547,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
         data = {"before": base,
                 "pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
                 "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
-                "repository": {"full_name": "fixture/project", "default_branch": "dev"}}
+                "repository": {"full_name": "fixture/project", "default_branch": default}}
         step_summary = folder / "step-summary.md"
         with monkeypatch.context() as patch:
             patch.setattr(sys, "path", sys.path.copy())
@@ -608,6 +611,25 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
 def quarantine_row(node=RED, kind="baseline"):
     return {"nodeid": node, "reason": kind + ": Reviewed", "owner": "maintainers", "issue": 1, "blocker": False,
             "added": "2026-11-19", "expires": "2026-12-19"}
+
+
+@pytest.mark.parametrize(("replicas", "outcome", "missing_browser", "refusal"), [
+    ((1,), "passed", False, None),
+    ((1,), "passed", True, "Missing or unexpected shard artifacts: browser-1-1"),
+    ((1,), "failed", False, "Trusted known-failure comparison refused the evidence"),
+    ((1, 2), "passed", False, "Replica count differs from the trusted reader context"),
+])
+def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, refusal):
+    (error, verdict), _ = trusted_result("push", branch="main", default="main", event="push",
+                                        replicas=replicas, outcome=outcome, missing_browser=missing_browser)
+    assert error == refusal
+    if refusal is None:
+        assert verdict["passed"] is True
+    elif outcome == "failed":
+        assert verdict["passed"] is False
+        assert "New failures outside the known-failure list" in verdict["reason"]
+    else:
+        assert verdict is None
 
 
 @pytest.mark.parametrize("browser_shards", [2, 1])

@@ -228,6 +228,11 @@
       "reason": "The same assertions now run for SQLite and PostgreSQL, with additional queue refusal and job persistence checks."
     },
     {
+      "node": "tests/test_planning_incremental.py::test_department_assignment_check_closes_over_global_rules_and_matches_full_evaluation",
+      "owner": "maintainer",
+      "reason": "Renamed to test_department_assignment_check_limits_global_rules_to_edited_people_and_matches_full_evaluation: saved checks reuse the prior complete check for unedited people instead of closing over every session a global rule reaches; the equality with the full evaluation is kept."
+    },
+    {
       "node": "tests/test_policy_importer_v32.py::PublicV32Cases::test_ordinary_pull_request_uses_two_replicas",
       "owner": "maintainer",
       "reason": "Renamed for the single replica on ordinary pull requests. The two-replica bootstrap assertion remains."

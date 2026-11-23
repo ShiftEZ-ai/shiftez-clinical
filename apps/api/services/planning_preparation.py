@@ -35,7 +35,6 @@ def bind(db, plan, *, replay=False):
                                        'inputs': plan.setdefault('inputs', {}),
                                        'input_tokens': plan.setdefault('input_tokens', {}),
                                        'validation_baselines': plan.setdefault('validation_baselines', {}),
-                                       'validation_scopes': plan.setdefault('validation_scopes', {}),
                                        'prepared_snapshots': plan.setdefault('prepared_snapshots', {}),
                                        'summary_cache': plan.setdefault('summary_cache', {}),
                                        'next_snapshot': 0,
@@ -44,6 +43,15 @@ def bind(db, plan, *, replay=False):
         if isinstance(row, m.Workspace) and row.id is None:
             row.id = command_id(db)
     event.listen(db, 'after_attach', assign_id)
+
+
+def restore_replay(plan):
+    # A replay attempt owns each restored graph. If the transaction retries,
+    # consumed entries fall back to the original detached bytes.
+    plan['restored_snapshots'] = {index: pickle.loads(entry[1])
+                                  for index, entry in plan.get('prepared_snapshots', {}).items()}
+    plan['restored_checks'] = {index: pickle.loads(result)
+                               for index, (_, result) in enumerate(plan['checks'])}
 
 
 def command_compute(db, kind, data, compute, *, options=None, final=False, input_token=None, defer=False,
@@ -70,7 +78,10 @@ def command_compute(db, kind, data, compute, *, options=None, final=False, input
             'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again', 409,
             {'recoverable': True})
     computed = state['checks'][index][1]
-    return pickle.loads(computed) if state.get('kind') == 'shift.update' else deepcopy(computed)
+    if state.get('kind') == 'shift.update':
+        restored = state.get('restored_checks') or {}
+        return restored.pop(index) if index in restored else pickle.loads(computed)
+    return deepcopy(computed)
 
 
 def command_evaluate(db, data, **kwargs):

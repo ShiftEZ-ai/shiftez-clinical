@@ -8,8 +8,9 @@ import pytest
 
 from apps.api.services import planning
 from packages.domain import validation
+from packages.domain.finding_causes import DIAGNOSTIC_VERSION
 from packages.domain.input_manifest import manifest
-from packages.domain.rota_summary import normalized_check
+from packages.domain.rota_summary import fix_list_context, normalized_check
 from packages.domain.score import schedule_score
 from tests.test_schedule_score_scale import department
 
@@ -147,13 +148,16 @@ def department_assignment_check(monkeypatch, request):
         policy.update(starts_on='2026-10-01', ends_on='2026-10-02')
         policy['definition']['scope']['service_ids'] = data['shifts'][0]['service_ids']
         data['policies'] = [policy]
-    data['fingerprint'] = 'synthetic-month'
     data['input_manifest'] = manifest(data)
+    data['fingerprint'] = data['input_manifest']['token']
     previous = validation.evaluate(data, session_parts=True)
-    previous['input_manifest'] = data['input_manifest']
+    previous.update(input_manifest=data['input_manifest'], evaluated_at='2026-10-01T00:00:00+00:00',
+                    diagnostic_version=DIAGNOSTIC_VERSION, fix_list_context=fix_list_context(data))
     before = {'workspace': copy.deepcopy(data['workspace']), 'shifts': copy.deepcopy(data['shifts'])}
     data['shifts'][0]['participants'].pop()
+    data['workspace']['content_revision'] += 1
     data['input_manifest'] = manifest(data)
+    data['fingerprint'] = data['input_manifest']['token']
     workspace = SimpleNamespace(department_id=data['workspace']['department_id'], status='draft', validation=previous,
                                 accepted_issues=[])
     db = SimpleNamespace(info={}, flush=lambda: None, get=lambda *args: SimpleNamespace(generation_defaults={}))
@@ -161,34 +165,47 @@ def department_assignment_check(monkeypatch, request):
     started = time.process_time()
     full = planning.revalidate(db, workspace)
     full_cpu = time.process_time() - started
-    calls, evaluate = [], planning.evaluate
+    calls, setups, evaluate = [], [], planning.evaluate
+    setup = validation.validate_session_setup
+
     def counted(snapshot, **kwargs):
         calls.append(snapshot.get('_partial'))
         return evaluate(snapshot, **kwargs)
+
+    def counted_setup(snapshot, shift, *args):
+        setups.append(shift['id'])
+        return setup(snapshot, shift, *args)
+
     monkeypatch.setattr(planning, 'evaluate', counted)
+    monkeypatch.setattr(validation, 'validate_session_setup', counted_setup)
     started = time.process_time()
     result = planning.revalidate(db, workspace, _incremental=(before, previous))
     partial_cpu = time.process_time() - started
-    return full, result, calls, full_cpu, partial_cpu
+    return full, result, calls, full_cpu, partial_cpu, setups
 
 
 @pytest.mark.parametrize('department_assignment_check', ['bounded'], indirect=True)
 def test_department_assignment_check_reuses_sessions_and_matches_full_evaluation(department_assignment_check):
-    full, result, calls, _, _ = department_assignment_check
-    assert calls[-1] and len(calls[-1]['shifts']) < 10
+    full, result, calls, _, _, setups = department_assignment_check
+    assert calls[-1] and 0 < len(setups) == len(calls[-1]['shifts']) < 10
     assert canonical(result) == canonical(full)
 
 
-def test_department_assignment_check_closes_over_global_rules_and_matches_full_evaluation(department_assignment_check):
-    full, result, calls, _, _ = department_assignment_check
-    assert calls[-1] and len(calls[-1]['shifts']) == 450
+def test_department_assignment_check_limits_global_rules_to_edited_people_and_matches_full_evaluation(
+        department_assignment_check):
+    full, result, calls, _, _, setups = department_assignment_check
+    # Design decision: incremental_edit_scope replaces the rule-map closure for saved checks. A rule that reaches
+    # all 450 sessions re-evaluates only the edited people and overlapping sessions; the rest comes from the prior
+    # complete check, and the result must still equal the full evaluation.
+    assert calls[-1] and 0 < len(calls[-1]['people']) < 10
+    assert 0 < len(setups) == len(calls[-1]['shifts']) < 10
     assert canonical(result) == canonical(full)
 
 
 @pytest.mark.cpu_budget
 def test_department_assignment_check_cpu_budget(department_assignment_check, record_property):
     import coverage
-    _, _, _, full_cpu, partial_cpu = department_assignment_check
+    _, _, _, full_cpu, partial_cpu, _ = department_assignment_check
     record_property('full_cpu_seconds', full_cpu)
     record_property('partial_cpu_seconds', partial_cpu)
     print(f'150 people / 450 sessions edit: full={full_cpu:.3f} CPU s; partial={partial_cpu:.3f} CPU s')
