@@ -1748,7 +1748,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/catalogue/preview")
     def catalogue_preview(command: s.Command, request: Request):
-        from .services.catalogue_preview import capture_before, prepare_preview, evaluate_preview
+        from .services.catalogue_preview import build_preview, capture_before, prepare_preview, evaluate_preview
         postgres = engine.dialect.name == 'postgresql'
         reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
 
@@ -1765,7 +1765,7 @@ def create_app(settings: Settings | None = None, engine=None):
         if prepared is None:
             # The contact trial changed a scheduling input. Capture its baseline after releasing the writer.
             prepared = capture_and_trial(skip_contact_snapshots=False)
-        return evaluate_preview(prepared)
+        return evaluate_preview(build_preview(engine, prepared))
 
     @app.get("/api/catalogues/{kind}/{object_id}/history")
     def catalogue_history(kind: str, object_id: str, request: Request):

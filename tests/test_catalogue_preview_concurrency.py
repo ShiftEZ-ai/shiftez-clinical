@@ -11,6 +11,7 @@ from apps.api.db import transaction
 from apps.api.services import catalogue_preview
 from .clock_support import freeze_clock
 from .test_catalogue_preview import apply, change, preview, state
+from .test_contact_preview_perf import change as person_change, person
 from .test_events import event, event_type, repeat
 from .test_resources_calendars import pool, typ
 
@@ -121,3 +122,33 @@ def test_failed_pure_evaluation_keeps_proposal_rolled_back_and_commands_availabl
     archived = h.command("coordinator", "workspace.archive", {"reason": "Cleanup after failed preview"},
                          workspace["id"], workspace["revision"])["workspace"]
     assert archived["archived_at"]
+
+
+def test_other_workspace_save_completes_during_proposed_person_snapshot_build(both, monkeypatch):
+    h = both
+    first = h.shift(h.workspace())['workspace']
+    other = h.workspace('Another rota')
+    row = person(h)
+    command = person_change(row, active=False)
+    original, entered, release = catalogue_preview.domain_snapshot, Event(), Event()
+
+    def build(db, workspace, **kwargs):
+        if kwargs.get('operational') and '_event_currency' not in kwargs and not entered.is_set():
+            entered.set()
+            assert release.wait(15)
+        return original(db, workspace, **kwargs)
+
+    monkeypatch.setattr(catalogue_preview, 'domain_snapshot', build)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pending = executor.submit(preview, h, command, 'coordinator')
+        try:
+            assert entered.wait(15)
+            saved = executor.submit(h.shift, other, people=[]).result(timeout=8)
+            assert saved['workspace']['revision'] > other['revision']
+        finally:
+            release.set()
+        result = pending.result(timeout=15)
+    impact = next(item for item in result['impacts'] if item['workspace_id'] == first['id'])
+    assert impact['after_error_count'] > impact['before_error_count']
+    assert person(h) == row
+    assert apply(h, command, result['source_fingerprint'], status=409)['error']['code'] == 'STALE_PREVIEW'

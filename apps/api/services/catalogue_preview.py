@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 from apps.api import models as m
 from apps.api.auth import require_role
+from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, catalogue_source_reader
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import domain_snapshot, prepared_event_currency_matches, snapshot_hash, snapshot_inputs, tag_data
@@ -46,9 +47,9 @@ def contact_inputs(db, actor, person):
             "tags": tag_data(db, [actor.department_id])}
 
 
-def operational_day(db, actor):
+def operational_day(db, actor, *, now=None):
     org = db.get(m.Organisation, actor.organisation_id)
-    return m.now().astimezone(ZoneInfo(org.timezone)).date()
+    return (now or m.now()).astimezone(ZoneInfo(org.timezone)).date()
 
 
 def _candidate_query(actor, day):
@@ -179,11 +180,12 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
 def prepare_preview(db, actor, command, before):
     """Verify the baseline and capture proposed inputs before rolling back the trial write."""
     payload, before_record = _preview_source(db, actor, command)
-    day = operational_day(db, actor)
+    captured_at = m.now()
+    day = operational_day(db, actor, now=captured_at)
     token = _preview_token(db, actor, command, day)
     if before is not None:
         _require_current(before.currency == _capture_currency(db, actor, token) and
-                         all(prepared_event_currency_matches(db, window) for window in before.event_windows))
+                         all(prepared_event_currency_matches(db, window, now=captured_at) for window in before.event_windows))
     # Pattern versions do not alter materialised duties. Applying/reconciling the
     # pattern has its own draft preview and validator; avoid rechecking every rota.
     rows, totals = (([], {"workspace_count": 0, "session_count": 0, "partial": False})
@@ -199,22 +201,15 @@ def prepare_preview(db, actor, command, before):
             metadata_only = original == contact_inputs(db, actor, result["record"])
         finally:
             savepoint.rollback()
-    captured = []
+    captured = None
     if not metadata_only:
         if before is None and rows:
             return None
-        org = db.get(m.Organisation, actor.organisation_id)
         savepoint = db.begin_nested()
         try:
             result = write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True)
-            # The checked writer can reconcile tags and advance inputs: capture a fresh, separate phase.
-            shared = snapshot_inputs(db, org) if rows else None
-            after = {w.id: domain_snapshot(db, w, operational=True, shared_inputs=shared) for w in rows}
-            # No ORM rows or session escape: validation needs only these bounded, plain snapshots.
-            captured = [{"workspace_id": w.id, "name": w.name, "status": w.status,
-                         "before": before.snapshots[w.id], "after": after[w.id],
-                         "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False,
-                                                  reuse_writer_snapshot=False) if w.status in LIVE else None} for w in rows]
+            if rows:
+                captured = capture_catalogue_sources(db, actor.organisation_id, rows, captured_at=captured_at)
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",
@@ -230,7 +225,27 @@ def prepare_preview(db, actor, command, before):
              "Nothing saved or approved. Current-compliance comparison uses the proposed definitions; frozen sessions/publications are not rewritten. Draft type changes still require explicit refresh.")}
     from .leave_disclosure import overlap_labels
     from .contacts import redact_reply
-    return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)), "workspaces": captured}
+    return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)),
+            "actor": actor, "before": before, "captured": captured}
+
+
+def build_preview(engine, prepared):
+    """Build the proposed and saved drafts using only the captured trial data."""
+    captured = prepared.pop("captured")
+    actor, before = prepared.pop("actor"), prepared.pop("before")
+    workspaces = prepared["workspaces"] = []
+    if captured is None:
+        return prepared
+    with catalogue_source_reader(engine, captured, actor) as (db, captured_at):
+        shared = snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
+        for ident, previous in before.snapshots.items():
+            w = db.get(m.Workspace, ident)
+            _require_current(w is not None)
+            workspaces.append({"workspace_id": w.id, "name": w.name, "status": w.status, "before": previous,
+                "after": domain_snapshot(db, w, operational=True, shared_inputs=shared, _event_now=captured_at),
+                "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False, _event_now=captured_at)
+                if w.status in LIVE else None})
+    return prepared
 
 
 def evaluate_preview(prepared):
