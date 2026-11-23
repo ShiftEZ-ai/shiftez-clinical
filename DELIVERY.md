@@ -128,6 +128,7 @@ contract in DESIGN.md.
 - Build once: a release tag promotes the exact tested image. The published build contains public code only.
 - A release carries exactly a tree already accepted on `main`, reruns the full checks with no allowance for failed or
   skipped tests, and is then tagged.
+- Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
