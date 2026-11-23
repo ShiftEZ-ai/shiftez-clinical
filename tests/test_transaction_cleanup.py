@@ -200,7 +200,11 @@ def test_write_budget_expires_during_pure_checks_and_rolls_back(cleanup_harness,
     original = getattr(owner, name)
 
     def expire_inside_compute(data, *args, **kwargs):
-        assert ("_partial" in data) == (stage == "pairing")
+        if stage == "score":
+            assert "_partial" not in data
+        else:
+            partial = data.get("_partial")
+            assert (partial is not None and not partial.get("complete", False)) == (stage == "pairing")
         check = data["_check_budget"]
 
         def checkpoint():
