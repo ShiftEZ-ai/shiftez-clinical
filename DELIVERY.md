@@ -200,8 +200,9 @@ contract in DESIGN.md.
 - Every free GitHub security feature is on and stays on; nothing paid is enabled without the owner's yes.
 - Secrets never enter the repository, its variables or its environments.
 - The public image build scans the config and the files in all added layers with the privacy check's deny inputs
-  before publishing. It verifies pinned base layer digests and hashes from installed wheel RECORDs. The exception
-  table binds findings in package-manager metadata and historical wheel bytecode to a path, class and SHA-256.
+  before publishing. It verifies pinned base layer digests and hashes from installed wheel RECORDs. A finding in
+  package-manager metadata is allowed when its line is byte-identical to a line at the same path in the verified
+  base layers. The exception table binds historical wheel bytecode findings to a path, class and SHA-256.
   New public builds disable wheel bytecode generation. Any other finding blocks the public push.
 - Security reports go through GitHub's private vulnerability reporting.
 

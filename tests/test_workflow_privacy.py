@@ -313,7 +313,11 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
     base_config = tmp_path / "base.json"
     exceptions = tmp_path / "exceptions.json"
     upstream = marker.encode()
-    base_layer = tar({"base.txt": upstream})
+    dpkg_status = "var/lib/dpkg/status"
+    dpkg_line = b"Depends: " + upstream + b"\xff"
+    base_status = b"Version: 1\n" + dpkg_line + b"\n"
+    base_layer = tar({"base.txt": upstream, dpkg_status: base_status})
+    upgraded_status = b"Version: 2\n" + dpkg_line + b"\n\nPackage: extra\nVersion: 1\n"
     root = "usr/local/lib/python3.13/site-packages"
     installed = f"{root}/module.py"
     record = f"{root}/module.dist-info/RECORD"
@@ -345,10 +349,10 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
         return digest(content)
 
     def findings(text):
-        return [(1, "test-pattern")] if marker in text else []
+        return [(number, "test-pattern") for number, line in enumerate(text.split("\n"), 1) if marker in line]
 
     base_config.write_text(json.dumps(config([digest(base_layer)])))
-    good = {installed: upstream, record: wheel_record, excepted: upstream}
+    good = {installed: upstream, record: wheel_record, excepted: upstream, dpkg_status: upgraded_status}
     removed = {".wh.removed.txt": b""}
     with (patch.dict(sys.modules, {"privacy_check": SimpleNamespace(findings=findings)}),
           patch.object(scan_public_image, "EXCEPTIONS", exceptions)):
@@ -361,6 +365,9 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
             (good, {installed: upstream}, "clean", 1),
             ({**good, excepted: upstream + b" changed"}, removed, "clean", 1),
             ({**good, "new.bin": upstream}, removed, "clean", 1),
+            ({**good, dpkg_status: upgraded_status + upstream + b"\n"}, removed, "clean", 1),
+            ({**good, dpkg_status: upgraded_status.replace(b"\xff", b"\xfe")}, removed, "clean", 1),
+            ({**good, "var/lib/dpkg/status-old": dpkg_line}, removed, "clean", 1),
         ):
             image_id = make_image(files, later, value=value)
             assert scan_public_image.main(image, base_config, image_id) == expected
@@ -368,7 +375,7 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
             assert marker not in result.out + result.err
             assert f"Image privacy scan: {expected} hits" in result.out
             if not expected:
-                assert f"skipped_files=2 skipped_bytes={2 * len(upstream)} excepted_hits=1" in result.out
+                assert f"skipped_files=3 skipped_bytes={2 * len(upstream) + len(base_status)} excepted_hits=2" in result.out
         for changes in ({"changed_base": True}, {"missing_config": True}):
             image_id = make_image(good, removed, **changes)
             assert scan_public_image.main(image, base_config, image_id) == 2

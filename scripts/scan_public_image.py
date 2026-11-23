@@ -55,11 +55,13 @@ def installed_wheel_hashes(layer, members):
 def scan_image(path, base, image_id, findings, exceptions):
     hits = Counter()
     totals = Counter()
+    base_dpkg_lines = defaultdict(set)
 
-    def scan(text, allowed=()):
-        for _, pattern in findings(text):
-            hits[pattern] += pattern not in allowed
-            totals["excepted_hits"] += pattern in allowed
+    def scan(text, allowed=(), upstream_lines=()):
+        for number, pattern in findings(text):
+            excepted = pattern in allowed or number in upstream_lines
+            hits[pattern] += not excepted
+            totals["excepted_hits"] += excepted
 
     base_ids = diff_ids(base)
     with tarfile.open(path) as image:
@@ -98,6 +100,10 @@ def scan_image(path, base, image_id, findings, exceptions):
                     for member in members:
                         if member.isfile():
                             totals.update(skipped_files=1, skipped_bytes=member.size)
+                            name = member.name.removeprefix("./")
+                            if name.startswith("var/lib/dpkg/"):
+                                with layer.extractfile(member) as content:
+                                    base_dpkg_lines[name].update(content.read().split(b"\n"))
                     continue
 
                 # RECORDs from an install layer cannot exempt changes added by a later layer.
@@ -117,7 +123,12 @@ def scan_image(path, base, image_id, findings, exceptions):
                         totals.update(skipped_files=1, skipped_bytes=len(data))
                         continue
                     allowed = exceptions.get(name, {}).get(digest.hexdigest(), ())
-                    scan(data.decode("utf-8", "replace"), allowed)
+                    upstream_lines = ()
+                    if name in base_dpkg_lines:
+                        # Compare raw lines before decoding, using the privacy check's LF boundary.
+                        upstream_lines = {number for number, line in enumerate(data.split(b"\n"), 1)
+                                          if line in base_dpkg_lines[name]}
+                    scan(data.decode("utf-8", "replace"), allowed, upstream_lines)
                     totals.update(scanned_files=1, scanned_bytes=len(data))
     return +hits, totals
 
