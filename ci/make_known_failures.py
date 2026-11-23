@@ -35,9 +35,16 @@ def listed_nodes(current):
     return set().union(*classes(current).values()) if current else set()
 
 
+def single_replica_event():
+    kind = os.getenv("GITHUB_EVENT_NAME")
+    if kind == "push" and (ref := os.getenv("GITHUB_REF")):
+        import working_policy as policy
+        return ref == "refs/heads/" + policy.default_branch(policy.event())
+    return kind in {"pull_request", "merge_group"}
+
+
 def retry_run(plan):
-    return (os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "pull_request"}
-            and plan["replicas"] == [1] and not plan.get("smoke"))
+    return plan["replicas"] == [1] and not plan.get("smoke") and single_replica_event()
 
 
 def retry_nodes(cases, listed):
@@ -133,13 +140,8 @@ def at_revision(revision):
 def context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
-    kind = os.getenv("GITHUB_EVENT_NAME")
-    single_replica = kind in {"pull_request", "merge_group"}
-    if base is not None and kind == "push" and (ref := os.getenv("GITHUB_REF")):
-        import working_policy as policy
-        single_replica = ref == "refs/heads/" + policy.default_branch(policy.event())
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1] if base is not None and single_replica else [1, 2]}
+            "replicas": [1] if base is not None and single_replica_event() else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -815,9 +817,12 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
             comparison_list = release_failure_list(ctx["current"], quarantine) if release and quarantine else ctx["current"]
             require_root_binding(comparison_list, root_evidence, root_sha)
-            report_outside(comparison_list, runs, args.output, exceptions, recovered,
-                           reruns=evidence.reruns, unobserved=evidence.unobserved,
-                           quarantined=() if release else quarantined)
+            outside_unstable = report_outside(comparison_list, runs, args.output, exceptions, recovered,
+                                               reruns=evidence.reruns, unobserved=evidence.unobserved,
+                                               quarantined=() if release else quarantined)
+            if retry and os.getenv("GITHUB_EVENT_NAME") == "push" and outside_unstable:
+                raise ValueError("UNSTABLE outside-list nodes: "
+                                 + ", ".join(row["node"] for row in outside_unstable))
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,

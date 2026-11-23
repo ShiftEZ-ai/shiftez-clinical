@@ -344,6 +344,7 @@ class TwoObservationGateTests(unittest.TestCase):
                     plan = trusted_ci.plan(base, False)
                     self.assertEqual(plan["sha"], candidate)
                     self.assertEqual(plan["replicas"], replicas)
+                    self.assertEqual(maker.retry_run(plan), single)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
