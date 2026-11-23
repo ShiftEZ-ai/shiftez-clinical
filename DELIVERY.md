@@ -35,7 +35,7 @@ contract in DESIGN.md.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff can reach, proven by hiding a change on purpose.
-  Merge groups and pushes to the default branch run static checks and one complete replica of the unit and browser suites.
+  Merge groups and pushes to the default branch run static checks and the full unit and browser suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
   reports. If the nightly capacity check defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
@@ -146,9 +146,8 @@ contract in DESIGN.md.
   section at the end, and a change after approval is disclosed the same day.
 
 ## Deploys
-- A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
-  No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
-  Nothing in the repository names or reveals where the product runs.
+- A hosted job builds the image and publishes it by digest. No workflow connects to a host, no host is a runner and
+  no host holds a credential for the repository. Nothing in the repository names or reveals where the product runs.
 - Main images published to the public package carry a provenance attestation signed by `image.yml` on
   `refs/heads/main`. The dev slot verifies it offline and pins the signer workflow and ref. Staging and production
   images do not carry this attestation yet.
