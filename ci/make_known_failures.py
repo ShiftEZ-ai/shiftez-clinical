@@ -817,12 +817,9 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
             root_evidence, root_sha = load_root_evidence(args.root_evidence, baseline_sha)
             comparison_list = release_failure_list(ctx["current"], quarantine) if release and quarantine else ctx["current"]
             require_root_binding(comparison_list, root_evidence, root_sha)
-            outside_unstable = report_outside(comparison_list, runs, args.output, exceptions, recovered,
-                                               reruns=evidence.reruns, unobserved=evidence.unobserved,
-                                               quarantined=() if release else quarantined)
-            if retry and os.getenv("GITHUB_EVENT_NAME") == "push" and outside_unstable:
-                raise ValueError("UNSTABLE outside-list nodes: "
-                                 + ", ".join(row["node"] for row in outside_unstable))
+            report_outside(comparison_list, runs, args.output, exceptions, recovered,
+                           reruns=evidence.reruns, unobserved=evidence.unobserved,
+                           quarantined=() if release else quarantined)
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,

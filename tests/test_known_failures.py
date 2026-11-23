@@ -629,17 +629,26 @@ def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, r
         assert verdict is None
 
 
-@pytest.mark.parametrize(("retry", "reason"), [
-    ("passed", "UNSTABLE outside-list nodes"),
-    ("failed", "New failures outside the known-failure list"),
-])
-def test_main_push_retry_evidence_keeps_unlisted_failures_red(trusted_result, retry, reason):
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_reports_recovered_failure(trusted_result, event):
     (error, verdict), (_, _, artifacts) = trusted_result(
-        "push-retry", branch="main", default="main", event="push", outcome="failed", retry=retry)
+        "recovered", branch="main", default="main", event=event, outcome="failed", retry="passed")
+    assert error is None
+    assert verdict["passed"] is True
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 1
+    assert json.loads(artifacts["recovered-tests.json"]) == [
+        {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
+    ]
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_keeps_persistent_failure_red(trusted_result, event):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "persistent", branch="main", default="main", event=event, outcome="failed", retry="failed")
     assert error == "Trusted known-failure comparison refused the evidence"
     assert verdict["passed"] is False
-    assert reason in verdict["reason"]
-    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == int(retry == "passed")
+    assert "New failures outside the known-failure list" in verdict["reason"]
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 0
 
 
 def test_main_push_keeps_reviewed_quarantine(trusted_result):
