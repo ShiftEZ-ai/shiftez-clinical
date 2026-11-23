@@ -238,7 +238,7 @@ def test_manual_pairing_partial_checks_reject_the_same_new_errors_as_whole_check
 
     def checked(data, **kwargs):
         result = evaluate(data, **kwargs)
-        if '_partial' in data:
+        if '_partial' in data and not data['_partial'].get('complete'):
             whole = evaluate({key: value for key, value in data.items() if key not in ('_partial', 'quota_subjects')})
             partial = {'findings': [*result['session_findings'], *result['person_findings']]}
             if not baseline:
