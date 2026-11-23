@@ -13,7 +13,8 @@ from apps.api import models as m
 from apps.api.auth import _local_today, require_permission, require_role, person_access
 from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, Problem, require
 from apps.api.serialization import record, json_value
-from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped, expected, bump_inputs, history, history_many, range_overlaps, batch_input_invalidations
+from .common import (CATALOGUES, PROGRAMME_CATALOGUES, scoped, expected, bump_inputs, history, history_many,
+                     range_overlaps, batch_input_invalidations, omitted_update_fields)
 from . import independence, announcements, tags
 
 
@@ -348,15 +349,14 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
     if row and kind in {'tags', 'rotation_types', 'leave_types', 'categories'}:
         fields = ('sort_order',) if kind == 'categories' else ('short_name',)
         value = value.model_copy(update={key: getattr(row, key) for key in fields if key not in payload.value})
-    if kind == 'people' and row:
-        value = value.model_copy(update={key: getattr(row, key) for key in ('rota_name', 'rota_aliases', 'work_email', 'work_phone', 'work_extension', 'pager', 'given_name', 'family_name')
-                                        if key not in payload.value})
     if kind == 'people':
-        inactive_from = value.inactive_from
-        if row and not row.active and 'inactive_from' not in payload.value:
-            inactive_from = row.inactive_from
-        value = value.model_copy(update={'inactive_from': person_inactive_from_transition(
-            db, actor, row, value.active, inactive_from)})
+        supplied = value.model_fields_set
+        if row:
+            saved = {key: getattr(row, key) for key in s.PersonInput.model_fields}
+            value = value.model_copy(update=omitted_update_fields(value, saved))
+        if not row or {'active', 'inactive_from'} & supplied:
+            value = value.model_copy(update={'inactive_from': person_inactive_from_transition(
+                db, actor, row, value.active, value.inactive_from)})
     if kind == 'event_types' and row and 'also_email' not in payload.value:
         value = value.model_copy(update={'also_email': row.also_email})
     if kind == 'rotation_types' and row and 'leave_policy' not in payload.value:
@@ -416,7 +416,7 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
                 m.Category.department_id == actor.department_id, m.Category.id != (row.id if row else '')))
                 if rank_code(record(other)) == code), None)
             require(clash is None, 'RANK_CODE_TAKEN', f'Rank short code {code} is already used in this department', 422)
-    if kind == "people" and value.short_code:
+    if kind == "people" and value.short_code and (not row or 'short_code' in supplied):
         candidates = list(db.scalars(select(m.Person).where(m.Person.organisation_id == actor.organisation_id,
             m.Person.short_code == value.short_code, m.Person.id != (row.id if row else ""))))
         if db.info.get('bulk'):
