@@ -2206,11 +2206,11 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                         all_limits = [policy for policy in counted_policies
                                       if policy['definition']['rule']['kind'] == 'supervision_limit'
                                       and policy_applies(data, policy, supervisor_id, shift, a, b)]
-                        applicable = [policy['definition']['rule'] for policy in all_limits
-                                      if policy['definition']['rule'].get('mode') == 'capacity']
-                        if applicable:
+                        capacity_limits = [policy['definition']['rule'] for policy in all_limits
+                                           if policy['definition']['rule'].get('mode') == 'capacity']
+                        if capacity_limits:
                             capacities[supervisor_id] = min(
-                                [capacities[supervisor_id]] + [rule['maximum'] for rule in applicable
+                                [capacities[supervisor_id]] + [rule['maximum'] for rule in capacity_limits
                                                                if rule.get('maximum') is not None
                                                                and (not rule.get('trainee_category_ids')
                                                                     or all(set(rule['trainee_category_ids']).intersection(

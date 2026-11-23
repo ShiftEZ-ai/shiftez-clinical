@@ -139,6 +139,16 @@ def compile_scenario(command, spec, *, read, committed, work=None):
         if record:
             records[row['key']] = record
             ids[row['key']] = record['id']
+        if names := row.get('bulk_records'):
+            items = reply['items']
+            if len(items) != len(names):
+                raise ValueError('Incomplete golden bulk result')
+            for index, (name, item) in enumerate(zip(names, items)):
+                if item['index'] != index or item['result'] != 'changed':
+                    raise ValueError('Golden bulk result did not create every record')
+                saved = item['results'][0]['record']
+                records[name] = saved
+                ids[name] = saved['id']
         if row.get('target') and 'record' in reply:
             records[row['target'][1:]] = reply['record']
     digest = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
