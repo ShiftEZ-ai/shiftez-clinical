@@ -80,7 +80,7 @@ def test_request_duplicate_identity_keeps_person_kind_and_resolved_leave_type_di
     assert len({original['id'], *(r['record']['id'] for r in replies)}) == 4
 
 
-@pytest.mark.parametrize('kind', ['clinic_change', 'meeting', 'administrative'])
+@pytest.mark.parametrize('kind', ['clinic_change', 'administrative'])
 def test_nonleave_approval_does_not_invent_absence_or_publish(h, kind):
     request = h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': kind,
         'start': '2026-10-04T09:00:00+03:00', 'end': '2026-10-04T10:00:00+03:00',
@@ -93,9 +93,87 @@ def test_nonleave_approval_does_not_invent_absence_or_publish(h, kind):
     assert not h.get('staff', '/api/publications')['publications']
 
 
+def meeting_request(h, hour=9):
+    return h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': 'meeting',
+        'start': f'2026-10-04T{hour:02}:00:00+03:00', 'end': f'2026-10-04T{hour + 1:02}:00:00+03:00',
+        'private_reason': 'Synthetic meeting'})['record']
+
+
+def approve_meeting(h, meeting):
+    return h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Approved meeting'},
+                     meeting['id'], meeting['revision'])['record']
+
+
+@pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_approved_meeting_opens_cover_in_a_reloaded_draft(request, database):
+    h = request.getfixturevalue(database)
+    person = h.seed['people'][0]
+    duty = h.shift(h.workspace())
+    url = f"/api/workspaces/{duty['workspace']['id']}"
+    meeting = meeting_request(h)
+    before = h.get('coordinator', url + '/summary')
+    assert before['places_open'] == 0 and before['issues']['blocking'] == 0
+
+    approved = approve_meeting(h, meeting)
+    assert (approved['status'], approved['kind']) == ('approved', 'meeting')
+    first, = h.get('staff', '/api/availability')['availability']
+    assert (first['kind'], first['request_id']) == ('protected_time', meeting['id'])
+    summary = h.get('coordinator', url + '/summary')
+    assert (summary['places_filled'], summary['places_open']) == (0, 1)
+    assert summary['sessions'][0]['person_ids'] == [person]
+    conflict, = [row for row in summary['findings'] if row['code'] == 'UNAVAILABLE']
+    assert (conflict['person_id'], conflict['shift_id'], conflict['severity']) == (person, duty['shift_id'], 'error')
+    fix = h.get('coordinator', url + '/fix-list')
+    assert fix['summary']['must'] > 0
+    assert not h.get('staff', '/api/publications')['publications']
+
+    waiting = h.command('approver', 'request.undo', {'reason': 'Undo meeting approval'},
+                        approved['id'], approved['revision'])['record']
+    restored = h.get('coordinator', url + '/summary')
+    assert restored['places_open'] == 0 and restored['issues']['blocking'] == 0
+    assert waiting['status'] == 'submitted'
+    assert approve_meeting(h, waiting)['status'] == 'approved'
+    reapproved = h.get('coordinator', url + '/summary')
+    assert reapproved['places_open'] == 1
+    assert [row['person_id'] for row in reapproved['findings'] if row['code'] == 'UNAVAILABLE'] == [person]
+    rows = h.get('staff', '/api/availability')['availability']
+    assert len(rows) == 2 and all(row['request_id'] == meeting['id'] and row['kind'] == 'protected_time' for row in rows)
+    assert [(row['id'], row['retracted']) for row in rows if row['id'] == first['id']] == [(first['id'], True)]
+    assert sum(not row['retracted'] for row in rows) == 1
+
+
+@pytest.mark.postgres
+def test_approved_meeting_at_duty_end_keeps_cover(pg):
+    h = pg
+    duty = h.shift(h.workspace())
+    approve_meeting(h, meeting_request(h, hour=12))
+    summary = h.get('coordinator', f"/api/workspaces/{duty['workspace']['id']}/summary")
+    assert (summary['places_filled'], summary['places_open']) == (1, 0)
+    assert all(row['code'] != 'UNAVAILABLE' for row in summary['findings'])
+
+
+@pytest.mark.postgres
+def test_approved_meeting_flags_published_duty_and_preserves_issued_evidence(pg):
+    h = pg
+    duty = h.shift(h.workspace())
+    publication_id = h.publish(duty['workspace'])['publication_id']
+    with transaction(h.app.state.engine) as db:
+        issued = db.get(m.Publication, publication_id)
+        before = (issued.snapshot, issued.validation, issued.fingerprint, issued.current)
+
+    approve_meeting(h, meeting_request(h))
+    after = h.get('coordinator', f'/api/publications/{publication_id}')
+    warning, = after['operational']['warnings']
+    assert (warning['shift_id'], warning['person_id']) == (duty['shift_id'], h.seed['people'][0])
+    assert warning['action']['key'] == 'amend_publication'
+    with transaction(h.app.state.engine) as db:
+        issued = db.get(m.Publication, publication_id)
+        assert (issued.snapshot, issued.validation, issued.fingerprint, issued.current) == before
+
+
 def test_request_rota_link_is_scoped_reviewed_traceability(h):
     request = h.command('staff', 'request.create', {'person_id': h.seed['people'][0], 'kind': 'meeting',
-        'start': '2026-10-04T09:00:00+03:00', 'end': '2026-10-04T10:00:00+03:00',
+        'start': '2026-10-05T09:00:00+03:00', 'end': '2026-10-05T10:00:00+03:00',
         'private_reason': 'Fictional team meeting'})['record']
     workspace = h.shift(h.workspace())['workspace']
     payload = {'workspace_id': workspace['id'], 'reason': 'Meeting scheduled in reviewed rota'}

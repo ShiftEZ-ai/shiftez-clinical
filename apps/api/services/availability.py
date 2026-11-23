@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from packages.contracts import schemas as s
 from packages.domain.time import aware
-from packages.domain.validation import rotation_leave_findings
+from packages.domain.validation import ROTATION_LEAVE_KINDS, rotation_leave_findings
 from apps.api import models as m
 from apps.api.auth import require_role, person_access
 from apps.api.db import current_request_parent
@@ -22,6 +22,8 @@ from .conditional_reads import revision_etag
 UPDATE_FIELDS = ('kind', 'start', 'end', 'leave_type_id')
 UPDATE_SNAPSHOT_FIELDS = (*UPDATE_FIELDS, 'counts_as_unavailable', 'leave_type', 'manual_type_override', 'revision')
 RECORDED_FACT_KINDS = frozenset({'actual_absence', 'external_commitment', 'off_duty'})
+LEAVE_APPROVAL_REQUEST_KINDS = frozenset({'leave', 'absence_report'})
+REQUEST_AVAILABILITY_KINDS = LEAVE_APPROVAL_REQUEST_KINDS | {'meeting'}
 
 
 def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, request_ids=()):
@@ -43,17 +45,19 @@ def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, 
 
 def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation_context=None):
     """Project relational records once; the shared domain evaluator owns the rule itself."""
+    source = rotation if rotation is not None else absence
+    candidate = json_value(source if isinstance(source, dict) else source.model_dump())
+    check_leave = rotation is not None or candidate.get('kind') in ROTATION_LEAVE_KINDS
     cache = rotation_context if rotation_context is not None else {}
-    if 'leave_timezone' not in cache:
+    if check_leave and 'leave_timezone' not in cache:
         scope = db.execute(select(m.Organisation.timezone, m.Department.id).join(
             m.Department, m.Department.organisation_id == m.Organisation.id).where(
                 m.Organisation.id == actor.organisation_id)).all()
         cache['leave_timezone'] = scope[0][0]
         cache['leave_department_ids'] = {row[1] for row in scope}
-    zone = cache['leave_timezone']
-    departments = cache['leave_department_ids']
+    zone = cache['leave_timezone'] if check_leave else db.get(m.Organisation, actor.organisation_id).timezone
     if rotation is not None:
-        candidate = json_value(rotation if isinstance(rotation, dict) else rotation.model_dump())
+        departments = cache['leave_department_ids']
         people = {pid for pid, _ in rotation_context['memberships']} if rotation_context is not None else {candidate['person_id']}
         if 'leave_records' not in cache:
             rows = list(db.scalars(select(m.Availability).where(m.Availability.department_id.in_(departments),
@@ -71,14 +75,14 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
                    and aware(row['start']) < wall_end and aware(row['end']) > wall_start]
         rotations = [candidate]
     else:
-        candidate = json_value(absence if isinstance(absence, dict) else absence.model_dump())
-        query = select(m.Rotation).where(m.Rotation.department_id.in_(departments),
-            m.Rotation.person_id == candidate['person_id'])
         try:
-            first = aware(candidate['start']).astimezone(ZoneInfo(zone)).date()
-            last = aware(candidate['end']).astimezone(ZoneInfo(zone)).date()
-            query = query.where(m.Rotation.ends_on > first)
-            query = query.where(m.Rotation.starts_on <= last)
+            tz = ZoneInfo(zone)
+            first = aware(candidate['start']).astimezone(tz).date()
+            last = aware(candidate['end']).astimezone(tz).date()
+            if not check_leave:
+                return []
+            query = select(m.Rotation).where(m.Rotation.department_id.in_(cache['leave_department_ids']),
+                m.Rotation.person_id == candidate['person_id'], m.Rotation.ends_on > first, m.Rotation.starts_on <= last)
             rotations = [record(row) for row in db.scalars(query)]
         except (ValueError, OverflowError):
             require(False, 'INTERVAL_DATES', 'The interval exceeds the supported local date range')
@@ -90,7 +94,7 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     missing = ids - types.keys()
     if missing:
         types.update({row.id: record(row) for row in db.scalars(select(m.RotationType).where(
-            m.RotationType.department_id.in_(departments), m.RotationType.id.in_(missing)))})
+            m.RotationType.department_id.in_(cache['leave_department_ids']), m.RotationType.id.in_(missing)))})
     require(ids <= types.keys(), 'NOT_FOUND', 'Record not found', 404)
     if rotation is not None:
         require(all(types[ident]['department_id'] == actor.department_id for ident in ids), 'NOT_FOUND', 'Record not found', 404)
@@ -120,6 +124,7 @@ def _require_record_approval(db, row, values, findings):
         return
     request = db.get(m.RequestRecord, row.request_id) if row.request_id else None
     require(not findings or request is not None and request.status == 'approved'
+            and request.kind in LEAVE_APPROVAL_REQUEST_KINDS
             and request.person_id == row.person_id and request.department_id == row.department_id
             and aware(request.start) == aware(values['start']) and aware(request.end) == aware(values['end'])
             and values['kind'] == (request.details or {}).get('availability_kind', 'approved_leave')
@@ -559,17 +564,19 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             from .training import apply_change
             affected += apply_change(db, actor, row, value.reason)
             inputs_changed = True
-        if value.decision == "approve" and row.kind in {"leave", "absence_report"}:
+        if value.decision == "approve" and row.kind in REQUEST_AVAILABILITY_KINDS:
             restored = _restore_undo_absences(db, actor, row, conflicts)
             if not restored:
                 conflicts.extend(rotation_leave_conflicts(db, actor, absence=record(row)))
                 require_rotation_leave(conflicts)
             if restored is None:
+                meeting = row.kind == 'meeting'
+                kind = 'protected_time' if meeting else (row.details or {}).get('availability_kind', 'approved_leave')
                 absence = m.Availability(department_id=actor.department_id, person_id=row.person_id,
-                                         start=row.start, end=row.end, kind=(row.details or {}).get('availability_kind', 'approved_leave'),
+                                         start=row.start, end=row.end, kind=kind,
                                          leave_type=(row.details or {}).get('leave_type', ''),
                                          leave_type_id=row.leave_type_id, counts_as_unavailable=row.counts_as_unavailable,
-                                         private_reason='' if row.kind == 'absence_report' else row.private_reason,
+                                         private_reason='' if meeting or row.kind == 'absence_report' else row.private_reason,
                                          recorded_by=actor.identity_id, request_id=row.id)
                 db.add(absence)
             affected += 1 if restored is None else restored
@@ -617,7 +624,7 @@ def require_request_undo(db, actor, row):
 
 def undo_decision(db, actor, command, *, batch=False):
     """Undo a request decision or withdrawal: it waits for a decision again. Only whoever made it may, only while the
-    request is not linked to a rota (a rota may already act on it), and an approved leave's absence is retracted with it."""
+    request is not linked to a rota (a rota may already act on it), and any linked availability is retracted with it."""
     value = s.RequestUndo.model_validate(command.payload)
     row = scoped(db, m.RequestRecord, command.target_id, actor)
     require_request_undo(db, actor, row)
@@ -696,7 +703,7 @@ def undo_decision(db, actor, command, *, batch=False):
            "request_status": row.status, "request_kind": row.kind},
            undo_of=f"request-decision:{row.id}" + (f":{command.expected_revision}" if command.expected_revision > 2 else ""))
     item = absence_report_record(row, actor, db)
-    details = {"retracted_availability": retracted_availability} if row.kind in {"leave", "absence_report"} and was_approved else {}
+    details = {"retracted_availability": retracted_availability} if row.kind in REQUEST_AVAILABILITY_KINDS and was_approved else {}
     if batch:
         return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected, **details}
     return {"record": leave_types.names(db, actor.department_id, [item])[0], "affected_count": affected, **details,

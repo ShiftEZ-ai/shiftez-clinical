@@ -755,14 +755,17 @@ def available_for_coverage(data, pid, a, b):
     return not facts
 
 
+ROTATION_LEAVE_KINDS = frozenset({
+    'leave', 'recorded_leave', 'approved_leave', 'actual_absence', 'external_commitment', 'off_duty',
+})
+
+
 def rotation_leave_findings(data):
     """The same dated rotation/leave rule for timeline previews, writes and rota checks."""
     zone = data['organisation']['timezone']
     away = defaultdict(list)
     for row in data.get('rotation_leave_availability', data.get('availability', [])):
-        if row.get('retracted') or row.get('kind') not in {
-                'leave', 'recorded_leave', 'approved_leave', 'actual_absence',
-                'external_commitment', 'off_duty'}:
+        if row.get('retracted') or row.get('kind') not in ROTATION_LEAVE_KINDS:
             continue
         away[row['person_id']].append(row)
     workspace = data.get('workspace')
