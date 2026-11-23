@@ -26,7 +26,7 @@ TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
 
 
-def settings():
+def settings(*, full_pr=False):
     data = policy.decode((TRUSTED / "ci/bootstrap-settings.json").read_bytes())
     group_shards = data.pop("merge_group_shards", None)
     if (set(data) != {"schema", "unit_shards", "browser_shards", "unstable_limit", "unstable_issue",
@@ -37,7 +37,7 @@ def settings():
         if (not isinstance(group_shards, dict) or set(group_shards) != {"unit_shards", "browser_shards"}
                 or any(type(n) is not int or n < 1 for n in group_shards.values())):
             raise ValueError("Protected merge-group shard counts are invalid")
-        if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+        if full_pr or os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
             data.update(group_shards)
     return data
 
@@ -149,7 +149,6 @@ def affected_files(changed, files):
 
 
 def plan(base, measurement):
-    config = settings()
     candidate = hosted.git("rev-parse", "HEAD")
     candidate_tree = hosted.git("rev-parse", "HEAD^{tree}")
     if measurement:
@@ -171,8 +170,8 @@ def plan(base, measurement):
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
     selected_files = None
-    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
-            and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
+    pull_request = not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+    if pull_request and os.getenv("TRUSTED_BOOTSTRAP") != "true":
         event = policy.event()
         require_pr_merge(event, policy.git, candidate)
         if not context["bootstrap"]:
@@ -183,6 +182,7 @@ def plan(base, measurement):
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)
+    config = settings(full_pr=pull_request and selected_files is None)
     for suite in ("unit", "browser"):
         selected = [p for p in files if Path(p).name.startswith("test_browser") == (suite == "browser")]
         seconds = data["suites"][suite]["files"]
