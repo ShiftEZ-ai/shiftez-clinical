@@ -705,6 +705,16 @@ def test_auto_schedule_steps_review_issues_show_apply_and_undo(browser, cp_serve
 
 @pytest.mark.parametrize('width, elapsed, duration', [(1440, 0.2, '< 1 s'), (390, 2.3, '2 s')])
 def test_auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, width, elapsed, duration):
+    _auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, width, elapsed, duration)
+
+
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('width, elapsed, duration', [(1440, 0.2, '< 1 s'), (390, 2.5, '3 s')])
+def test_postgres_auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, width, elapsed, duration):
+    _auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, width, elapsed, duration)
+
+
+def _auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, width, elapsed, duration):
     w = h.shift(h.workspace('FM nothing needs you'), people=[])['workspace']
     context, page = sign_in(browser, cp_server, 'admin', {'width': width, 'height': 1000 if width == 1440 else 844})
     def timed_result(route):
@@ -775,6 +785,16 @@ def test_auto_schedule_empty_review_and_a_refused_range(browser, cp_server, h, w
         panel.get_by_role('button', name='Review latest result', exact=True).click()
         details = page.get_by_role('dialog', name='Auto-schedule results', exact=True)
         details.locator('details.auto-run-details > summary').click()
+        metrics = details.locator('.run-metrics')
+        expect(metrics).to_contain_text(f'Scheduling: {duration} ·')
+        shown = next(part.removeprefix('Scheduling: ') for part in metrics.inner_text().split(' · ')
+                     if part.startswith('Scheduling: '))
+        assert shown == duration
+        if elapsed < 1:
+            assert shown == '< 1 s'
+        else:
+            seconds = re.fullmatch(r'(\d+) s', shown)
+            assert seconds and abs(int(seconds[1]) - elapsed) <= 0.501
         expect(details.locator('.run-phases')).not_to_contain_text('0.0s')
         expect(details.locator('.run-phases')).to_contain_text('< 1 s')
         details.get_by_role('button', name='Close dialog', exact=True).click()
