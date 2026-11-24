@@ -29,7 +29,9 @@ TEMPORARY_SCRATCH = '<temporary scratch table>'
 
 
 def temporary_table(node):
-    return isinstance(node, ast.Call) and getattr(node.func, 'id', getattr(node.func, 'attr', None)) == 'Table' and any(
+    # A schema= table still names the real schema in its DML, whatever its CREATE prefix.
+    return isinstance(node, ast.Call) and getattr(node.func, 'id', getattr(node.func, 'attr', None)) == 'Table' and not any(
+        keyword.arg == 'schema' for keyword in node.keywords) and any(
         keyword.arg == 'prefixes' and isinstance(keyword.value, (ast.List, ast.Tuple)) and any(
             isinstance(item, ast.Constant) and str(item.value).upper() in {'TEMPORARY', 'TEMP'}
             for item in keyword.value.elts) for keyword in node.keywords)
@@ -171,6 +173,8 @@ def test_application_input_dml_cannot_bypass_the_session_events():
     'db.bulk_save_objects([m.Availability()])',
     'table = Table("availability", metadata)\nconnection.execute(table.insert(), rows)',
     'table = Table("availability", metadata, prefixes=["TEMPORARY"])\ntable = m.Availability.__table__\n'
+    'connection.execute(table.insert(), rows)',
+    'table = Table("availability", metadata, schema="public", prefixes=["TEMPORARY"])\n'
     'connection.execute(table.insert(), rows)',
 ])
 def test_guard_rejects_core_and_legacy_bulk_bypasses(source):
