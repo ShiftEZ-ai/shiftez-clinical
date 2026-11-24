@@ -52,7 +52,8 @@ def test_author_changes_waiting_request_and_undo_restores_it(h):
         'selection': {'collection': 'requests', 'where': {'filters': {'private_undo_note': [original['private_reason']]}}}})
     assert filtered.status_code == 422, filtered.text
 
-    restored = h.command('staff', **reply['undo'])['record']
+    undo = reply['undo']
+    restored = h.command('staff', undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'])['record']
     detail = h.get('staff', detail_url)
     for field in ('start', 'end', 'kind', 'private_reason'):
         assert detail['item'][field] == before[field]
