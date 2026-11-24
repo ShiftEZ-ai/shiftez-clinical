@@ -296,6 +296,10 @@ class TwoObservationGateTests(unittest.TestCase):
             events += [("pull_request", owned, [], "main", False, True, "main"),
                        ("pull_request", shared, [], "main", False, True, "main"),
                        ("pull_request", owned, [], "dev", False, False, "main")]
+            events += [("pull_request", owned, [], "release/v1.2.3", False, True, "main"),
+                       ("pull_request", owned, ["full-ci"], "release/v1.2.3", False, False, "main"),
+                       ("merge_group", owned, [], "release/v1.2.3", False, False, "main"),
+                       ("push", owned, [], "release/v1.2.3", False, False, "main")]
             events.append(("pull_request", owned, [], "dev", False, False, "dev"))
             for index, (event, path, labels, branch, deleted, partial, default) in enumerate(events):
                 if index == len(events) - 1:
@@ -323,6 +327,10 @@ class TwoObservationGateTests(unittest.TestCase):
                     if name == "tests/test_legacy_encoding.py":
                         return b"# coding: latin-1\nvalue = '\xe9'\n"
                     return b"x = 1\n"
+                def control_inventory(revision):
+                    self.assertEqual(revision, base if branch.startswith("release/") else head)
+                    return {"helpers": {"tools/control.py"},
+                            "product_imports": {shared, "tests/test_product_helper.py"}}
                 with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index,
                                   default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
@@ -334,8 +342,7 @@ class TwoObservationGateTests(unittest.TestCase):
                      patch.object(trusted_ci.policy, "git", side_effect=event_git), \
                      patch.object(trusted_ci.policy, "event", return_value=payload), \
                      patch.object(trusted_ci.policy, "read_file", side_effect=file_at), \
-                     patch.object(trusted_ci.policy, "control_inventory", return_value={
-                         "helpers": {"tools/control.py"}, "product_imports": {shared, "tests/test_product_helper.py"}}), \
+                     patch.object(trusted_ci.policy, "control_inventory", side_effect=control_inventory), \
                      patch.object(trusted_ci.hosted, "load_durations", return_value=durations), \
                      patch.object(trusted_ci.canaries, "sha", return_value="b" * 64):
                     single = event in ("pull_request", "merge_group") or (event == "push" and branch == default)
@@ -364,7 +371,7 @@ class TwoObservationGateTests(unittest.TestCase):
         import trusted_ci
         # main is the release branch only while it is not the default; after the rename it is integration.
         cases = {("main", "dev"): "base", ("dev", "dev"): "candidate", ("main", "main"): "candidate",
-                 ("dev", "main"): "candidate"}
+                 ("dev", "main"): "candidate", ("release/v1.2.3", "main"): "candidate"}
         for (branch, default), expected in cases.items():
             with self.subTest(branch=branch, default=default):
                 self.assertEqual(trusted_ci.quarantine_revision(branch, default, "base", "candidate"), expected)
