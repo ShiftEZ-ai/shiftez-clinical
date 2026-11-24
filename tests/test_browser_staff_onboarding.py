@@ -58,12 +58,13 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         for n in (1, 2):
             panel.get_by_role("checkbox", name=f"Select Onboard Staff {n}", exact=True).check()
         bulk(panel).get_by_role("button", name="Preview", exact=True).click()
-        expect(panel.get_by_role("status")).to_contain_text("2 to create")
+        # The batch summary, not the result table's own row count (also a status).
+        expect(panel.get_by_role("status").filter(has_text=re.compile(r"^2 to create$"))).to_be_visible()
         expect(panel.get_by_text("Select up to", exact=False)).to_have_count(0)
         create = panel.get_by_role("button", name="Create 2 accounts", exact=True)
         create.focus()
         page.keyboard.press("Enter")  # armed: the first press asks, the same button confirms
-        expect(panel.get_by_role("button", name="Confirm?", exact=True)).to_be_focused()
+        expect(panel.get_by_role("button", name="Confirm? Create 2 accounts", exact=True)).to_be_focused()
         with page.expect_download() as pending:
             page.keyboard.press("Enter")
         saved = pending.value
@@ -71,9 +72,11 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         rows = list(csv.reader(io.StringIO(Path(saved.path()).read_text(encoding="utf-8-sig"))))
         assert rows[0] == ["Person", "One-time link"]
         assert sorted(r[0] for r in rows[1:]) == ["Onboard Staff 1", "Onboard Staff 2"]
-        assert all(re.fullmatch(re.escape(live_server) + r"/invite/[A-Za-z0-9_-]{43}", r[1]) for r in rows[1:])
+        tokens = {r[0]: re.fullmatch(r"\S+/invite/([A-Za-z0-9_-]{43})", r[1]).group(1) for r in rows[1:]}
+        live = lambda token: context.request.get(live_server + "/api/account-links/" + token).status  # noqa: E731
+        assert [live(t) for t in tokens.values()] == [200, 200]
         expect(panel.get_by_text("Links downloaded for 2 people.", exact=True)).to_be_visible()
-        expect(panel.get_by_role("status")).to_contain_text("2 created")
+        expect(panel.get_by_role("status").filter(has_text=re.compile(r"^2 created$"))).to_be_visible()
         # The links are only in the file: never on the page, in storage, or offered for a second download.
         for _, link in rows[1:]:
             assert link not in page.content()
@@ -82,11 +85,14 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         panel.get_by_role("button", name="Done", exact=True).click()
         expect(panel).to_be_hidden()
 
-        # The existing per-person Resend gives that one person a new link.
+        # The existing per-person Resend gives that one person a new link and retires the downloaded one.
         _account_action(page, "Onboard Staff 1", "Resend invitation")
-        shown = page.get_by_role("dialog").filter(has_text="Invitation link")
-        expect(shown.get_by_label("One-time link", exact=True)).to_have_value(re.compile(r"/invite/[A-Za-z0-9_-]{43}$"))
-        assert shown.get_by_label("One-time link", exact=True).input_value() not in {r[1] for r in rows[1:]}
+        shown = page.get_by_role("dialog", name="Invitation link", exact=True)
+        resent = shown.get_by_label("One-time link", exact=True)
+        expect(resent).to_have_value(re.compile(r"/invite/[A-Za-z0-9_-]{43}$"))
+        token = resent.input_value().rsplit("/", 1)[1]
+        assert token not in tokens.values()
+        assert [live(token), live(tokens["Onboard Staff 1"]), live(tokens["Onboard Staff 2"])] == [200, 404, 200]
     finally:
         context.close()
 
