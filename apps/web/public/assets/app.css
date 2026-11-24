@@ -4599,7 +4599,7 @@ tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
 .rc-lp-tools{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin:-28px 0 8px}
 .rc-lp-tools:empty{display:none}  /* read-only: nothing pulled up over the section title */
 .rc-lp-list{list-style:none;margin:0;padding:0;display:grid}
-.rc-lp-list li{display:flex;align-items:center;gap:10px;min-height:30px;border-bottom:1px solid var(--line-soft)}
+.rc-lp-list>li{display:flex;align-items:center;gap:10px;min-height:30px;border-bottom:1px solid var(--line-soft)}
 .rc-lp-n{min-width:16px;text-align:right;font:500 11.5px/1 var(--mono);color:var(--muted)}
 .rc-lp-x{margin-left:auto}
 .rc-lp-more{border-bottom:0!important}
@@ -5946,9 +5946,9 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rc-says.is-warn .rc-relation{border-top-color:var(--warn-line);color:var(--warn-text)}
 .rc-says.is-warn .rc-relation>.icon{color:var(--warn)}
 /* B3–B5 effect lines: one row per overlapping draft, its outcome as a toned badge or elapsed "Checking · 0:14". */
-.rc-effect li{justify-content:space-between;font-size:13px;padding:4px 0}
-.rc-effect li{gap:8px}
-.rc-effect li>.rc-effect-what{min-width:0;flex:1;display:flex;flex-direction:column}
+.rc-effect>li{justify-content:space-between;font-size:13px;padding:4px 0;gap:8px}
+.rc-effect>li:has(details[open]){align-items:flex-start}
+.rc-effect>li>.rc-effect-what{min-width:0;flex:1;display:flex;flex-direction:column}
 .rc-effect .rc-effect-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rc-effect .rc-effect-summary{overflow-wrap:anywhere}
 .rc-effect .badge{flex:none;display:inline-flex;align-items:center;gap:4px}

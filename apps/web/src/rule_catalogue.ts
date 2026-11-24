@@ -1128,18 +1128,23 @@ function effectRows(rows:Effect[],none='No rota being planned overlaps its dates
     if(w?.tone==='ok')end.prepend(icon('check'));if(!w)end.id=`rc-effect-wait-${i}`;
     const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
       :x.summary&&x.summary!==w?.text?x.summary:'';
-    const problems=x.new_or_worse_count&&x.job_id?button('View problems',()=>showDialog(`Problems added or worsened in ${x.name}`,'',body=>{
-      const load=async()=>{body.replaceChildren(working('Loading problems…'));
-        try{const {job}=await get(`/api/jobs/${encodeURIComponent(x.job_id!)}`);
+    let problems:Child='';
+    if(x.new_or_worse_count&&x.job_id){
+      const jobId=x.job_id,content=el('div',{});
+      const details=el('details',{},el('summary',{'aria-label':`View problems for ${x.name}`},'View problems'),content);
+      const load=async()=>{const body=el('div',{},skeleton('lines','Loading problems…'));content.replaceChildren(body);
+        try{const {job}=await get(`/api/jobs/${encodeURIComponent(jobId)}`);
           const findings=(job.result?.new_or_worse_findings||[]) as Row[];
           if(job.check_stale||job.result?.comparison_complete!==true||!findings.length){body.replaceChildren(note('Reopen the review for a fresh check.','warning'));return;}
           const zone=departmentTimeZone();
           body.replaceChildren(el('ul',{class:'review-findings'},...findings.map(f=>el('li',{class:'review-finding'},
             el('span',{},String(f.message),f.start&&typeof f.start==='string'?` · ${spanLabel(f.start,f.end,zone)}`:'')))));}
         catch(err){body.replaceChildren(readFailed('the problems',err,()=>void load()));}};
-      void load();}),'',{class:'link-button','aria-label':`View problems for ${x.name}`}):'';
-    return el('li',{},el('span',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),
-      more?el('small',{class:'muted rc-effect-summary'},more):'',problems?el('span',{},problems):''),end);});
+      details.addEventListener('toggle',()=>{if(details.open)void load();});
+      problems=details;
+    }
+    return el('li',{},el('div',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),
+      more?el('small',{class:'muted rc-effect-summary'},more):'',problems),end);});
 }
 /** One of a rule's units ("1 duty", "1 person"). */
 const ONE:Record<string,string>={people:'person',duties:'duty',hours:'hour',days:'day',weekends:'weekend',minutes:'minute',trainees:'trainee',units:'unit'};
@@ -1807,8 +1812,13 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         try{await command('bulk.apply',{item_kind:'job.cancel',reason:'Stopped the rule check',
           items:rows.filter(effectRunning).filter(x=>x.job_id).map(x=>({target_id:String(x.job_id)}))});await reread();}
         catch(err){reportError(err);}finally{await done();}},'secondary small'):null;
+      let paintedEffects='';
       const paint=()=>{if(!review){approve.disabled=true;recheck.hidden=true;if(stop)stop.hidden=true;return;}
-        list.replaceChildren(...effectRows(rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x),review.summary||undefined));const wait=list.querySelector('[id^="rc-effect-wait"]');
+        const effects=rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x);
+        // Keep the evidence open when only the acknowledgement controls repaint.
+        const effectKey=JSON.stringify([effects,review.summary]);
+        if(effectKey!==paintedEffects){list.replaceChildren(...effectRows(effects,review.summary||undefined));paintedEffects=effectKey;}
+        const wait=list.querySelector('[id^="rc-effect-wait"]');
         const fresh=rows.some(x=>x.status==='not_checked'&&!started.has(x.workspace_id));
         recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(x=>x.status!=='ready');
         if(stop)stop.hidden=!rows.some(effectRunning);
