@@ -1120,12 +1120,12 @@ export function keepSame(box:HTMLElement,kids:(Node|string)[]){
 /** One row per overlapping draft: its name and the outcome as a toned badge, or "Waiting to check · 0:14" / "Checking · 0:14" (elapsed, no ETA). */
 function effectRows(rows:Effect[],none='No rota being planned overlaps its dates'):HTMLElement[]{
   if(!rows.length)return [el('li',{class:'muted'},none)];
-  return rows.map((x,i)=>{const w=effectWords(x);
+  return rows.map(x=>{const w=effectWords(x);
     // A check that has not started (a job in the queue, or one this panel has just asked for: started_at is the asking)
     // says it waits, timed from then; only a running one reads Checking.
     const since=x.started_at||x.created_at;
     const end=w?badge(w.text,w.tone):elapsed(waitingWord(x.status)||'Checking',since?Date.parse(since):Date.now());
-    if(w?.tone==='ok')end.prepend(icon('check'));if(!w||x.activation_blocker)end.id=`rc-effect-why-${i}`;
+    if(w?.tone==='ok')end.prepend(icon('check'));
     const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
       :x.summary&&x.summary!==w?.text?x.summary:'';
     let problems:Child='';
@@ -1819,8 +1819,6 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         // Keep the evidence open when only the acknowledgement controls repaint.
         const effectKey=JSON.stringify([effects,review.summary]);
         if(effectKey!==paintedEffects){list.replaceChildren(...effectRows(effects,review.summary||undefined));paintedEffects=effectKey;}
-        // What Approve waits for, or the finished check that refuses it, is its description.
-        const wait=list.querySelector('[id^="rc-effect-why"]');
         const fresh=rows.some(needsFirstCheck);
         recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(effectRecheckable);
         if(stop)stop.hidden=!rows.some(effectRunning);
@@ -1833,11 +1831,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
         why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
-        if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');
-        // Disabled, it says why in words beside it (the shared reason), all the while the drafts' checks run.
-        const blocker=rows.find(x=>x.activation_blocker)?.activation_blocker;
-        disabledWhy(approve,checking()?waitsWhy:!decidable?(blocker==='RULE_INTRODUCES_CONFLICT'?'This change makes a draft impossible to fill'
-          :blocker==='RULE_CHECK_UNRESOLVED'?'A safety rule needs a complete check of every draft':'A draft’s check failed; check it again')
+        const blocker=rows.find(x=>x.activation_blocker);
+        const blockedWhy=blocker?.activation_blocker==='RULE_CHECK_UNRESOLVED'?'A safety rule needs a complete check of every draft'
+          :blocker&&effectWords(blocker)?.text;
+        disabledWhy(approve,checking()?waitsWhy:!decidable?(blockedWhy||'A draft’s check failed; check it again')
           :ask&&!understood.input.checked?'Tick the box above first':ask&&why.input.value.trim().length<3?'Give a reason (3 characters or more)':'',[],approveWhy);};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
@@ -1864,7 +1861,8 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
         proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
-            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');delete approve.dataset.tip;paint();void load();},
+            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');
+            approve.removeAttribute('aria-describedby');delete approve.dataset.tip;paint();void load();},
           async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};

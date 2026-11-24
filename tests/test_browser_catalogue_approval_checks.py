@@ -264,6 +264,9 @@ def test_catalogue_approval_says_why_a_finished_check_refuses_activation(browser
         expect(effect.get_by_text('Adds 1 problem', exact=True)).to_have_count(0)
         approve = review.get_by_role('button', name='Approve and activate', exact=True)
         expect(approve).to_be_disabled()
+        reason = review.locator('.rc-lp-foot .why-unavailable')
+        expect(reason).to_be_visible()
+        expect(reason).to_have_text(words)
         expect(approve).to_have_accessible_description(words)
         again = review.get_by_role('button', name='Check again', exact=True)
         if blocker == 'RULE_INTRODUCES_CONFLICT':
