@@ -62,5 +62,6 @@
   "tests/test_rule_simplification_phase2.py::test_rules_under_different_names_that_are_one_rule_become_one",
   "tests/test_golden_coverage.py::test_golden_coverage",
   "tests/test_shared_search.py::test_selected_reference_is_scoped_and_does_not_depend_on_query_label",
+  "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]",
   "tests/test_generation_department.py::test_repeat_supervisor_limit_blocks_manual_and_guides_allocation"
 ]

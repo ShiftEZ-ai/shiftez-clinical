@@ -1,7 +1,7 @@
 """Proposal review work stays bounded as draft count grows."""
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import delete, event, select
@@ -9,6 +9,65 @@ from sqlalchemy import delete, event, select
 from apps.api import models as m, snapshots
 from apps.api.db import transaction
 from tests.test_approval_completeness import checked_approval
+
+
+@pytest.mark.parametrize('current_check', [True, False])
+def test_unsaved_workload_effect_matches_full_check(h, monkeypatch, current_check):
+    from apps.api.services import rule_effects
+    from apps.api.services.planning import revalidate
+    from apps.api.serialization import record
+    from packages.domain.rule_effects import observed_effect
+    from packages.domain.validation import evaluate
+
+    monkeypatch.setattr(m, 'clock_now', lambda: datetime(2026, 10, 4, 5, tzinfo=timezone.utc))
+    target, outside = h.seed['people'][:2]
+    draft = h.workspace('Line effect draft')
+    for day, person in ((4, target), (5, target), (6, outside), (7, outside)):
+        draft = h.shift(draft, f'2026-10-0{day}T08:00:00+03:00',
+                        f'2026-10-0{day}T12:00:00+03:00', people=[person])['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Workspace, draft['id'])
+        revalidate(db, row, mandatory_rules=False)
+        if not current_check:
+            row.validation = {**row.validation, 'fingerprint': 'stale', 'findings': []}
+        saved = deepcopy(row.validation)
+
+    selected, builds, checks = [], [], []
+    affected = rule_effects.affected_workspaces
+    def capture(db, actor, policies):
+        selected.extend(record(policy) for policy in policies)
+        return affected(db, actor, policies)
+
+    def snapshot(*args, **kwargs):
+        builds.append(True)
+        return snapshots.domain_snapshot(*args, **kwargs)
+
+    def checked(data, **kwargs):
+        checks.append(data.get('_partial'))
+        return evaluate(data, **kwargs)
+
+    monkeypatch.setattr(rule_effects, 'affected_workspaces', capture)
+    monkeypatch.setattr(rule_effects, 'domain_snapshot', snapshot)
+    monkeypatch.setattr(rule_effects, 'evaluate', checked)
+    line_id = m.uid()
+    response = h.client('coordinator').post('/api/rules/catalogue/workload_limit/effect', json={
+        'catalogue_version': 2, 'line': {'id': line_id, 'measure': 'duties', 'period': {'kind': 'calendar_week'},
+            'who': {'conditions': [{'field': 'person_ids', 'values': [target]}]},
+            'numbers': {'max': {'value': 1, 'level': 'mandatory'}}}})
+    assert response.status_code == 200, response.text
+    with transaction(h.app.state.engine) as db:
+        row = db.get(m.Workspace, draft['id'])
+        before = snapshots.domain_snapshot(db, row, mandatory_rules=False)
+        after = snapshots.domain_snapshot(db, row, mandatory_rules=False, policy_overrides=selected)
+        assert row.validation == saved
+    effect = observed_effect(evaluate(before), evaluate(after))
+    assert effect['adds'] == 1
+    assert len(builds) == 1
+    assert len(checks) == (1 if current_check else 2)
+    assert checks[-1]['people'] == {target} and checks[-1]['shifts'] == set()
+    assert response.json() == {'effects': {line_id: [{'workspace_id': draft['id'], 'name': draft['name'],
+        'effect': {key: effect[key] for key in ('status', 'clears', 'adds', 'effect')}}]}}
+    assert len(response.content) < 350
 
 
 def _add_drafts(h, count, *, offset=0):
