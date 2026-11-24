@@ -596,7 +596,7 @@ def supervision_eligible(data, policy, people):
     return found
 
 
-def supervisable_partners(data, policy, shift, supervisor, participants):
+def supervisable_partners(data, policy, shift, supervisor, participants, *, trainee_attendance=None):
     """Trainee attendance that makes this supervisor's session an opportunity (once per session).
 
     The report and compiler share the same dated clinical qualification and presence predicates;
@@ -604,12 +604,17 @@ def supervisable_partners(data, policy, shift, supervisor, participants):
     """
     from .validation import effective_type_definition, trainee_intervals, presence_intervals, qualified_supervisor
     pid = supervisor['person_id']
-    for trainee in participants:
+    if trainee_attendance is None:
+        trainee_attendance = {}
+    for index, trainee in enumerate(participants):
         if trainee['person_id'] == pid:
             continue
-        intervals = trainee_intervals(data, shift, trainee)
-        if not intervals and not effective_type_definition(data, shift).get('supervision') and trainee['participation'] == 'trainee':
-            intervals = presence_intervals(trainee)
+        if index not in trainee_attendance:
+            intervals = trainee_intervals(data, shift, trainee)
+            if not intervals and not effective_type_definition(data, shift).get('supervision') and trainee['participation'] == 'trainee':
+                intervals = presence_intervals(trainee)
+            trainee_attendance[index] = intervals
+        intervals = trainee_attendance[index]
         if any(lo < hi and qualified_supervisor(data, shift, supervisor, lo, hi)
                and goal_applies(data, policy, pid, shift, lo, hi)
                for a, b in intervals for c, d in presence_intervals(supervisor)
@@ -627,12 +632,15 @@ def supervisable_amounts(data, policy, people, *, shifts=None, windows=None):
     for shift in shifts:
         if inactive(shift):
             continue
-        for supervisor in shift['participants']:
+        participants = shift['participants']
+        trainee_attendance = {}
+        for supervisor in participants:
             pid = supervisor['person_id']
             day = local_day(supervisor['start'], data['organisation']['timezone'])
             if pid not in amounts or windows is not None and not windows[pid][0] <= day < windows[pid][1]:
                 continue
-            if next(supervisable_partners(context, policy, shift, supervisor, shift['participants']), None) is not None:
+            if next(supervisable_partners(context, policy, shift, supervisor, participants,
+                                         trainee_attendance=trainee_attendance), None) is not None:
                 amounts[pid] += 1
     return amounts
 

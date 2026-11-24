@@ -70,6 +70,46 @@ def test_assignment_reach_matches_the_display_map(h):
     assert reach(rule_map(data, reach_only=True)) == reach(rule_map(data))
 
 
+def test_line_check_reuses_independent_sibling_findings(h):
+    from packages.domain.rule_map import line_check_scope
+    from packages.domain.validation import evaluate
+    from .test_rule_lines import line as catalogue_line, person, rule as catalogue_rule
+
+    _, data = base(h)
+    target, sibling = h.seed['people'][:2]
+    catalogue = catalogue_rule('hours_per_week',
+        catalogue_line(who=person(target), numbers={'max': {'value': 8, 'level': 'mandatory'}}),
+        catalogue_line(who=person(sibling), numbers={'max': {'value': 2, 'level': 'mandatory'}}))
+    catalogue['department_id'] = data['workspace']['department_id']
+    edited = copy.deepcopy(catalogue)
+    edited['definition']['rule']['lines'][0]['numbers']['max']['value'] = 2
+    before, after = ({**data, 'policies': [p]} for p in (catalogue, edited))
+    previous = evaluate(before, session_parts=True)
+    assert any(f['person_id'] == sibling and f['code'] == 'MAX_HOURS' for f in previous['findings'])
+    scope = line_check_scope(before, after, previous, catalogue['id'])
+    assert scope['people'] == {target} and scope['shifts'] == set()
+    assert evaluate({**after, '_partial': scope}) == evaluate(after)
+
+
+@pytest.mark.parametrize('definition,code', [
+    ({'kind': 'minimum_cover', 'minimum': 2}, 'SCOPED_COVERAGE_GAP'),
+    ({'kind': 'restriction', 'weekdays': [0]}, 'RESTRICTION'),
+])
+def test_line_check_bounds_session_rules_to_matching_sessions(h, definition, code):
+    from packages.domain.rule_map import line_check_scope
+    from packages.domain.validation import evaluate
+
+    _, data = base(h)
+    policy = rule(data, 'Session rule', definition, {'service_ids': [h.seed['services'][1]]})
+    before, after = ({**data, 'policies': policies} for policies in ([], [policy]))
+    previous = evaluate(before, session_parts=True)
+    scope = line_check_scope(before, after, previous, policy['id'])
+    assert scope['shifts'] == {data['shifts'][1]['id']} and scope['people'] == set()
+    whole = evaluate(after)
+    assert any(f['code'] == code for f in whole['findings'])
+    assert evaluate({**after, '_partial': scope}) == whole
+
+
 # Who and what ----------------------------------------------------------------------------------------------------------
 
 def test_person_and_everyone_rules(h):

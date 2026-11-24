@@ -2252,7 +2252,7 @@ function openRotaPanel(rotaId:string,ruleId=''){
   if(openRotaRulesFor(rotaId,ruleId))return;
   workspaceId=rotaId;draftNone=false;void navigate(routeHash('schedule',[schedView,planDay],{edit:rotaId}).slice(1));
 }
-type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
+type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean;mandatory?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
 const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>();
 /** A draft's baseline against current department changes: the one call for the bar's count and the review dialog. */
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
