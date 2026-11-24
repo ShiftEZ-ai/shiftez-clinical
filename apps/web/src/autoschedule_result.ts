@@ -1,5 +1,7 @@
 import {el,button,icon,badge,plural,formatDay,formatTime,departmentTimeZone,formDialog,field,area,type Child,needText,needCount,needRow,legend,disabledWhy,helpButton} from './dom.js';
 import {fixRow,type FixCause,type FixSummary,type FixHooks} from './fix_list.js';
+import {issueList,type Issue} from './issue_marker.js';
+import {issueKey} from './findings.js';
 import {command,applyWrote} from './api.js';
 import {relaxSeed as readRelax,previewAdjustment,applyAdjustment,type Adjustment,type RankedFit} from './rule_check_api.js';
 import {GENERATION_STOP_REASONS} from './generated.js';
@@ -27,7 +29,7 @@ import type {Row} from './types.js';
  *  the strict phase's history; `strict_status` is kept as evidence only. */
 export type GenerationOutcome={status:'OPTIMAL'|'FEASIBLE'|'INFEASIBLE'|'UNKNOWN';candidate:'valid'|'with_gaps'|'none';strict_status:'INFEASIBLE'|null;optimality_proven:boolean};
 export interface RunFacts{scoreDelta:number|null;before:FixSummary|null;after:FixSummary|null;beforeCauses:FixCause[];afterCauses:FixCause[];changesByCause:Row[];
-  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null;/** The server's words when the run's Fix list was not prepared. */fixListMissing:string}
+  conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null;keptAbsence?:Row;/** The server's words when the run's Fix list was not prepared. */fixListMissing:string}
 export function runFacts(job:Row):RunFacts{
   const r:Row=job.result||{},s:Row=r.summary||{};
   type Listed={summary?:FixSummary;causes?:FixCause[]};
@@ -36,10 +38,13 @@ export function runFacts(job:Row):RunFacts{
   // rota's list into both sides, so the run's own Fix list is unknown: no before/after, never "nothing must be fixed".
   const missing=typeof r.fix_list_fallback==='string'?r.fix_list_fallback:'';
   const before=missing?null:list(r.fix_list_before??s.fix_list_before),after=missing?null:list(r.fix_list_after??s.fix_list_after);
+  const afterCauses=after?.causes||[],first=afterCauses.find(c=>c.level==='must');
+  const absence=(r.issues as Row[]|undefined)?.find(f=>f.protected&&f.code==='UNAVAILABLE'&&f.shift_id&&f.person_id);
+  const keptAbsence=absence&&!(first?.action?.scope?.classification==='duties_during_approved_leave'&&first.finding_keys?.includes(issueKey(absence)))?absence:undefined;
   const conflict=r.conflict??((r.diagnostics||[]) as Row[]).find(d=>d?.strict_status==='INFEASIBLE')??null;
   // maintenance: open places and the uncapped score change travel beside the Fix lists.
   const num=(x:unknown)=>x==null?undefined:Number(x),ob=num(r.open_places_before),oa=num(r.open_places_after);
-  return {scoreDelta:r.score_delta??null,before:before?.summary?{...before.summary,...(ob!=null?{places_open:ob}:{})}:null,after:after?.summary?{...after.summary,...(oa!=null?{places_open:oa}:{})}:null,beforeCauses:(before?.causes||[]) as FixCause[],afterCauses:(after?.causes||[]) as FixCause[],
+  return {scoreDelta:r.score_delta??null,before:before?.summary?{...before.summary,...(ob!=null?{places_open:ob}:{})}:null,after:after?.summary?{...after.summary,...(oa!=null?{places_open:oa}:{})}:null,beforeCauses:(before?.causes||[]) as FixCause[],afterCauses,keptAbsence,
     changesByCause:!missing&&Array.isArray(r.changes_by_cause??s.changes_by_cause)?(r.changes_by_cause??s.changes_by_cause):[],
     conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null,fixListMissing:missing};
 }
@@ -208,9 +213,9 @@ const scoreChangeWords=(d:number)=>{const r=round(d);return r?`${r>0?'+':'−'}$
  *  `worse`: a new must-fix cause, so Discard becomes the primary. `optimality`: the run's proven-or-not words
  *  (candidateOptimality), given only for a strictly current, valid, non-diagnostic candidate: without them a run never
  *  says it is ready to submit, whatever its Must fix count; with them they are the third node, after the numbers. */
-export function resultHead(f:RunFacts,o:{changes:number;scoreDelta:number|null;stale?:boolean;optimality?:string;/** Not strictly current: no number that compares the run with the rota now. */strict?:boolean}):{nodes:HTMLElement[];worse:boolean}|null{
+export function resultHead(f:RunFacts,o:{changes:number;scoreDelta:number|null;stale?:boolean;optimality?:string;nextIssue?:string;/** Not strictly current: no number that compares the run with the rota now. */strict?:boolean}):{nodes:HTMLElement[];worse:boolean}|null{
   const a=f.after,b=f.before;if(!a)return null;
-  const clash=isClash(f),open=a.places_open,first=f.afterCauses.find(c=>c.level==='must');
+  const clash=isClash(f),open=a.places_open,first=o.nextIssue||f.afterCauses.find(c=>c.level==='must')?.sentence;
   const cleared=b?Math.max(0,b.must-a.must):0,worse=!!b&&a.must>b.must;
   type Said=[tone:'ok'|'warn'|'err'|'neutral',title:string,...next:Child[]];
   const said:Said=clash?['err',policies(f.conflict!.causes?.[0]).length===2?'Two rules can’t both be met':f.conflict!.proven?'These rules can’t all be met':'The rules can’t all be met',
@@ -219,7 +224,7 @@ export function resultHead(f:RunFacts,o:{changes:number;scoreDelta:number|null;s
     // Nothing proposed and nothing to fix: never "once applied" when there is nothing to apply.
     :!o.changes&&!a.must?['ok','Nothing to change',open?`${plural(open,'open place')} left; nothing must be fixed.`:'Every place is filled and every mandatory rule is met.']
     :!a.must?[o.optimality?'ok':'neutral',b?.must?`Better: all ${plural(b.must,'must-fix cause')} cleared`:'Nothing must be fixed',o.optimality?'Ready to submit once applied.':'']
-    :cleared?['ok',`Better: ${cleared} of ${plural(b!.must,'must-fix cause')} cleared`,a.must===1&&first?`Still to fix: ${first.sentence.replace(/\.$/,'')}.`:`${a.must} still need you.`]
+    :cleared?['ok',`Better: ${cleared} of ${plural(b!.must,'must-fix cause')} cleared`,a.must===1&&first?`Still to fix: ${first.replace(/\.$/,'')}.`:`${a.must} still need you.`]
     :['neutral','No must-fix cause cleared',`${plural(a.must,'cause')} still need${a.must===1?'s':''} you.`];
   // The rota changed since the run (driftNote says so above): the outcome is the run's, never "ready once applied".
   const box=o.stale&&!clash?outcome('neutral','When it ran: '+said[1].replace(/^(Better|Worse): /,'').replace(/^./,c=>c.toLowerCase())):outcome(...said);
@@ -235,10 +240,13 @@ export function resultHead(f:RunFacts,o:{changes:number;scoreDelta:number|null;s
 
 /** "Still to fix": the one next step (D76), the top must-fix cause left after this run as its Fix-list row with its one
  *  action; the rest are counted, with the way to them. */
-export function stillToFix(f:RunFacts,h:FixHooks,more?:()=>void):HTMLElement|string{
-  const must=f.afterCauses.filter(c=>c.level==='must');if(!must.length)return '';
-  const rest=must.length-1,own=h.key?null:legend('Key');  // the row's level mark, in a shared key (every mark has one)
-  return el('section',{class:'auto-still','aria-label':'Still to fix'},el('h3',{},'Still to fix'),el('ul',{class:'fix-list'},fixRow(must[0],own?{...h,key:own}:h,{detail:false})),own?own.root:'',
+export function stillToFix(f:RunFacts,h:FixHooks,more?:()=>void,issue?:Issue):HTMLElement|string{
+  const must=f.afterCauses.filter(c=>c.level==='must');if(!must.length&&!issue)return '';
+  const key=f.keptAbsence&&issueKey(f.keptAbsence);
+  const rest=must.length-Number(!issue||must.some(c=>key&&c.finding_keys?.includes(key)));
+  const own=h.key||issue?null:legend('Key');
+  return el('section',{class:'auto-still','aria-label':'Still to fix'},el('h3',{},'Still to fix'),
+    issue?issueList([{...issue,key:undefined}]):el('ul',{class:'fix-list'},fixRow(must[0],own?{...h,key:own}:h,{detail:false})),own?own.root:'',
     rest&&more?el('p',{class:'hint'},button(`${plural(rest,'more cause')} in the Fix list`,more,'link-button')):'');
 }
 /** The changes grouped by the cause each works on (maintenance changes_by_cause: {cause_id, changes}). SW-04: each row is named
