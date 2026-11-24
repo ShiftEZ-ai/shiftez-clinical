@@ -106,7 +106,6 @@ def test_comparisons_preserve_explained_contract_and_bound_explanation_work(caus
                       'comparison_checks': 2, 'explained_checks': full_checks}))
 
 
-@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 @pytest.mark.parametrize('published', [False, True])
 @pytest.mark.parametrize('operation', ['create', 'archive'])
 def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation):
@@ -235,6 +234,14 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
     print(json.dumps({'operation': operation, 'published': published, 'people_scans': scans,
                       'catalogue_selects': catalogue_reads,
                       'selects': {mode: len(statements) for mode, statements in reads.items()}}))
+
+
+# The default fixture keeps the original SQLite node ids; this runs the same assertions on PostgreSQL.
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('operation', ['create', 'archive'])
+def test_phase_batched_inputs_match_fresh_snapshots_on_postgresql(h, monkeypatch, published, operation):
+    test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation)
 
 
 def spread_department(h):
