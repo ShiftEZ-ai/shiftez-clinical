@@ -62,9 +62,11 @@ def test_review_serializes_counter_writer_before_stamping(h, action, monkeypatch
         if postgres:
             pid = writer_pid.result(timeout=10)
             deadline = monotonic() + 10
-            while not db.scalar(text('SELECT pg_backend_pid() = ANY(pg_blocking_pids(:pid))'), {'pid': pid}):
-                assert not writer.done(), 'Counter writer finished before review committed'
-                assert monotonic() < deadline, 'Counter writer never waited for the review lock'
+            blocked_by_review = False
+            while not blocked_by_review and not writer.done() and monotonic() < deadline:
+                blocked_by_review = db.scalar(
+                    text('SELECT pg_backend_pid() = ANY(pg_blocking_pids(:pid))'), {'pid': pid})
+            assert blocked_by_review, 'PostgreSQL did not report the review transaction blocking the counter writer'
         else:
             assert sqlite_busy.wait(10), 'Counter writer did not report SQLite contention'
         assert not writer.done()
