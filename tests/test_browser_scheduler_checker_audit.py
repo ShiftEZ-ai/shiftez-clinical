@@ -381,6 +381,8 @@ def test_historical_candidate_stays_read_only_when_its_rota_inputs_change(browse
         open_scheduling(page)
         panel = page.locator('#auto-panel')
         auto_result(panel)
+        if change == 'archive':
+            expect(panel.get_by_role('button', name='Run auto-schedule', exact=True)).to_be_disabled()
         if change == 'inputs':
             # A4/BE-1 (268b5e8ef): a proposal the rota changed under stays reviewable, and Apply checks it against the
             # current rota first; it is never applied unchecked.

@@ -2417,7 +2417,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const reading=partial(draftData),hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
   let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
-  const draft=!!w&&w.status==='draft'&&!w.archived_at&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
+  const draftAccess=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id);
+  const draft=draftAccess&&!w!.archived_at,fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
   // The server says a check job exists (a provisional check): join it, so the status shown is that job's own.
   if(draft&&whole&&(!fresh||serverChecking(w!.validation)))autoCheck(whole);
@@ -2580,13 +2581,13 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // is the footer's too; the rota list's summary only until one is held.
     const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=()=>{const first=resolveQueue(draftData!)[0];startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;if(first)toCalendar(first.shift);renderPage();};
-    // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
+    // Archived drafts can show saved runs. Only a live draft can capture a baseline or run.
     const missingBaseline=draft&&!w.baseline;
-    auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
+    auto=draftAccess?(missingBaseline
       ?hold(button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'}))
       :el('button',{type:'button',class:'button secondary auto-button'+(whole&&proposalShown(whole)?' has-proposal':''),
         // D59: whole-rota work waits for the whole rota: held in place, focusable, saying why (notYet).
-        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':'Auto-schedule · fill open places using your rules'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':draft?'Auto-schedule · fill open places using your rules':'Auto-schedule · view saved runs'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
     if(auto&&!whole)notYet(auto,WHOLE_LOADING);
     side.hidden=!autoOpen;
     // Help reads the views that draw sessions; Year and Month (day health) have their own key.
@@ -2690,8 +2691,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // ---- Body: the view, the auto-schedule panel beside it, rules in context ----
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
-  if(auto&&w?.baseline&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto&&w?.baseline)auto.addEventListener('click',()=>unpin(()=>{
+  if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
+  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -7355,7 +7356,7 @@ function proposalPill(data:WorkspaceData){
   const b=el('button',{type:'button',class:'health-pill info proposal-pill','aria-label':'Auto-schedule proposal ready · review it','data-ctip':'Proposal ready · review it'},icon('sparkle'),el('span',{class:'label'},' Proposal ready'));
   footerAct(b,'proposal',()=>reviewProposal(data));return b;
 }
-const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
+const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
 /** After the jobs are read: the button's mark and the footer pill follow them (the bar was drawn before the read). */
 function markProposal(data:WorkspaceData){
   const waiting=proposalShown(data),b=document.querySelector<HTMLButtonElement>('.auto-button'),pills=document.querySelector('.app-footer .health-pills');
