@@ -83,7 +83,7 @@ import {issuesPage,issueKey,type IssuesHooks} from './issues.js';
 import {setIssueNav,issueList,sessionChips,dayLabels,findingIssue as findingItem,type Issue,type SessionChip} from './issue_marker.js';
 import {ASSIGN_KINDS,actionLabel,deltaWords,fixListPage,fixPanelNodes,lastFixList,applyFixDelta,fixDeltaOf,fixPills,fixGate,fixRow,fixLevel,mustWords,couldWords,reviewItemsOf,reviewedWithRota,fixSummaryOf,readFixList,heldFixList,type FixCause,type FixHooks,type FixList,type FixSummary,type FixStep} from './fix_list.js';
 import {scoreReview} from './score_review.js';
-import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt} from './autoschedule_result.js';
+import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
 import {scoreCheckPage,scoreCheckTitle,type Step as ScoreStep} from './score_check.js';
 import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
@@ -7178,6 +7178,8 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
   // Support detail (timing, evidence, the whole rota check) is one disclosure at the end: the result comes first.
   const details=el('details',{class:'auto-run-details'},el('summary',{},'Run details'),el('p',{class:'run-metrics'},jobTiming(result)));
   const r:Row|null=result.result;
+  const outsideGroup=outsideGroupLine(result);
+  if(outsideGroup)body.append(outsideGroup);
   if(r?.phase_timings){
     const stages=generationPhaseTimings(r.phase_timings,runSeconds);
     if(r.first_solution_seconds!=null)stages.push(`first candidate after ${runSeconds(Number(r.first_solution_seconds))}`);
@@ -7942,6 +7944,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       sub.textContent=w.name||'';
       const receipt=latest.kind==='generation'&&result?solverReceipt(latest):null;
       if(receipt)feedback.append(receipt);
+      const outsideGroup=outsideGroupLine(latest);
+      if(outsideGroup)feedback.append(outsideGroup);
       // A result that still applies (not stale, discarded or applied) opens on Review; otherwise What to fill.
       if(!st().step)st().step=reviewable||(latest.status==='succeeded'&&!stale&&!discarded)?3:1;
       staleNote=stale?text:'';
