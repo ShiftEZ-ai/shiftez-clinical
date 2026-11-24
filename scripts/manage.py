@@ -43,9 +43,9 @@ def migrate(url):
 def check_duplicate_prechecks(db, pending, fresh):
     """DUPLICATE_PRECHECKS contains literal SELECTs that return a row on conflict."""
     for step in pending:
-        required = []
+        indexes = []
         source = Path(step.path).read_text(encoding='utf-8')
-        analyzer = Analyzer(source, {'tables': {}, 'record_duplicate_precheck': required.append})
+        analyzer = Analyzer(source, {'tables': {}, 'record_duplicate_precheck': indexes.append})
         analyzer.run()
         declared = assigned(analyzer.tree, 'DUPLICATE_PRECHECKS')
         if 'DUPLICATE_PRECHECKS' not in analyzer.globals:
@@ -53,14 +53,21 @@ def check_duplicate_prechecks(db, pending, fresh):
         try:
             if not isinstance(declared, (list, tuple)) or not all(isinstance(query, str) for query in declared):
                 raise ValueError('DUPLICATE_PRECHECKS must be a literal sequence of queries')
-            declared_tokens = {duplicate_precheck_tokens(query) for query in declared}
-            if any(duplicate_precheck_tokens(query) not in declared_tokens for query in required):
+            # A newly created table is empty only when the revision is proven additive.
+            allow_empty = any(new for _, new in indexes) and safety.analyze(step.path)['class'] == 'additive'
+            required, empty = set(), set()
+            for query, new_table in indexes:
+                (empty if new_table and allow_empty else required).add(duplicate_precheck_tokens(query))
+            queries = [(duplicate_precheck_tokens(query), query) for query in declared]
+            if required - {tokens for tokens, _ in queries}:
                 raise ValueError('missing duplicate pre-check matching the unique expression index')
         except ValueError as exc:
             raise SystemExit(f'Refusing migration {step.revision}: {exc}') from None
         if fresh:
             continue  # There are no retained rows to check on a fresh database.
-        for query in declared:
+        for tokens, query in queries:
+            if tokens in empty and tokens not in required:
+                continue
             try:
                 with db.exec_driver_sql(query) as result:
                     duplicate = result.fetchone() is not None

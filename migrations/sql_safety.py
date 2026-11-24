@@ -409,7 +409,7 @@ def _immutable_index_key(tokens):
             and _immutable_index_key(parts[0]))
 
 
-def _index(tokens, record_precheck=None):
+def _index(tokens, schema=None):
     if tokens[:2] not in (['CREATE', 'INDEX'], ['CREATE', 'UNIQUE']):
         return False
     tail = tokens[2:] if tokens[1] == 'INDEX' else tokens[3:] if tokens[2:3] == ['INDEX'] else []
@@ -462,13 +462,15 @@ def _index(tokens, record_precheck=None):
     if immutable:
         if not all(_immutable_index_key(key) for key in keys):
             return False
-        if record_precheck is not None:
+        if record_precheck := (schema or {}).get('record_duplicate_precheck'):
             table_sql = ' '.join(relation[:len(relation) - len(tail)])
             key_sql = [' '.join(key) for key in keys]
             predicates = ['(' + ' '.join(suffix[1:]) + ')'] if suffix else []
             predicates += [f'({key}) IS NOT NULL' for key in key_sql]
-            record_precheck(f'SELECT 1 FROM {table_sql} WHERE {" AND ".join(predicates)} '
-                            f'GROUP BY {", ".join(key_sql)} HAVING count(*) > 1')
+            query = (f'SELECT 1 FROM {table_sql} WHERE {" AND ".join(predicates)} '
+                     f'GROUP BY {", ".join(key_sql)} HAVING count(*) > 1')
+            new_table = table in schema.get('new_sql_tables', ()) or bool(_guard_table(table, schema))
+            record_precheck((query, new_table))
     return True
 
 
@@ -492,7 +494,7 @@ def _schema_statement(tokens, schema):
         return True
     if tokens[:2] == ['CREATE', 'SEQUENCE']:
         return _create_sequence(tokens)
-    if _index(tokens, schema.get('record_duplicate_precheck')):
+    if _index(tokens, schema):
         return True
     if tokens[:2] == ['ALTER', 'TABLE']:
         table, tail = _name(tokens[2:])
@@ -867,7 +869,7 @@ def preserves_schema(sql):
 def analyze_sql(sql, *, schema=None):
     """Return a proven class and actionable uncertainty; unknown SQL always needs approval."""
     try:
-        statements = _statements(_tokens(sql))
+        statements = iter(_statements(_tokens(sql)))
         result = 'additive'
         proof = schema if schema is not None else {}
         for tokens in statements:
@@ -884,6 +886,10 @@ def analyze_sql(sql, *, schema=None):
                 result = 'fill_only'
                 continue
             clear_execution_proofs(proof)
+            # Preflight must still find an index after a statement that needs ancestor facts.
+            if record_precheck := proof.get('record_duplicate_precheck'):
+                for later in statements:
+                    _index(later, {'record_duplicate_precheck': record_precheck})
             return {'class': 'destructive', 'findings': ['SQL is destructive or not statically proven safe: ' + ' '.join(tokens[:6])]}
         return {'class': result, 'findings': []}
     except (ValueError, IndexError, RecursionError):

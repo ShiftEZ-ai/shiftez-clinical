@@ -316,6 +316,10 @@ def test_read_only_aggregate_select_preserves_schema():
                  'dEfAuLt "pg_catalog"."nextval"(\'"ItemKeys"\'::regclass)', 'additive', id='nextval-quoted'),
     pytest.param('ALTER TABLE new_items ADD COLUMN key INT DEFAULT nextval(\'item_keys\')',
                  'additive', id='nextval-analyzer-new-table'),
+    pytest.param("CREATE TABLE entries (id INT DEFAULT nextval('item_keys'))",
+                 'additive', id='nextval-inline'),
+    pytest.param("CREATE TABLE entries (id INT); ALTER TABLE entries ADD COLUMN key INT "
+                 "DEFAULT nextval('item_keys'::regclass)", 'additive', id='nextval-regclass'),
     pytest.param('CREATE TABLE entries (id INT); ALTER TABLE entries ADD COLUMN key BIGINT '
                  'GENERATED ALWAYS AS IDENTITY', 'additive', id='identity-new'),
     pytest.param('cReAtE tAbLe "Entries" ("Id" INT); aLtEr tAbLe "Entries" aDd "Key" INT '
@@ -326,6 +330,20 @@ def test_read_only_aggregate_select_preserves_schema():
                  'additive', id='unique-expression'),
     pytest.param('cReAtE uNiQuE iNdEx "UniqueLabel" On "Entries" ("Scope", "lower"(bTrIm("Label")))',
                  'additive', id='unique-expression-quoted'),
+    pytest.param("CREATE UNIQUE INDEX uq_entries ON entries (btrim(label, '-'))",
+                 'additive', id='btrim-literal'),
+    pytest.param('CREATE UNIQUE INDEX uq_entries ON entries (pg_catalog.lower(label))',
+                 'additive', id='qualified-lower'),
+    pytest.param('CREATE UNIQUE INDEX uq_entries ON entries (pg_catalog.btrim(label))',
+                 'additive', id='qualified-btrim'),
+    pytest.param('CREATE UNIQUE INDEX uq_entries ON entries (btrim(label, other))',
+                 'destructive', id='btrim-column'),
+    pytest.param("CREATE UNIQUE INDEX uq_entries ON entries (btrim(label, E'-'))",
+                 'destructive', id='btrim-escaped-literal'),
+    pytest.param('CREATE UNIQUE INDEX uq_entries ON entries (lower(label, other))',
+                 'destructive', id='lower-extra-argument'),
+    pytest.param('CREATE TABLE entries (id INT); ALTER TABLE entries ADD COLUMN key INT '
+                 'GENERATED ALWAYS AS IDENTITY (START WITH 5)', 'destructive', id='identity-options'),
     pytest.param("ALTER TABLE items ADD COLUMN key INT DEFAULT nextval('item_keys')",
                  'destructive', id='nextval-existing'),
     pytest.param('ALTER TABLE items ADD COLUMN key INT GENERATED ALWAYS AS IDENTITY',
