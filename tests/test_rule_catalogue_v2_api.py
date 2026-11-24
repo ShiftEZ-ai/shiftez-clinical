@@ -197,7 +197,7 @@ def test_v2_authorable_metadata_and_expiry_filter(h):
 
 def test_v2_migration_preview_exposes_source_census_and_retained_audit_refs(h):
     source = h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
-    plan = preview(h, proof=False)
+    plan = h.get('coordinator', '/api/rules/catalogue/migration?version=2&proof=false&details=true')
     row = next(item for item in plan['census']['sources'] if item['source_policy_id'] == source['id'])
     assert row['source_revision'] == source['revision']
     assert row['source_hash'] and row['audit_refs']['definition_history_ids']
