@@ -433,6 +433,10 @@ def test_drag_lights_targets_hides_card_and_has_no_native_title(browser, live_se
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
         expect(chips).to_have_count(2)
+        chips.first.click()
+        panel = page.locator('.wk-panel')
+        expect(panel).to_be_visible()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
         expect(page.locator('button.pchip[title]')).to_have_count(0)
         chips.first.hover()
         expect(page.locator('.hovercard')).to_have_count(1)
@@ -456,6 +460,9 @@ def test_drop_shows_the_preview_before_the_reason(browser, live_server, h):
     try:
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
+        chips.first.evaluate("c => c.dispatchEvent(new DragEvent('dragstart', {bubbles: true, cancelable: true, dataTransfer: new DataTransfer()}))")
+        expect(page.locator('.toast.info')).to_contain_text('Whole rota loaded · drag again')
+        expect(page.get_by_role('dialog', name='Exchange two assignments')).to_have_count(0)
         chips.first.drag_to(chips.nth(1))
         dialog = page.get_by_role('dialog', name='Exchange two assignments')
         expect(dialog.get_by_text('Not saved yet', exact=False)).to_be_visible(timeout=20000)
@@ -474,6 +481,10 @@ def test_names_carry_no_drag_listeners_of_their_own(browser, live_server, h):
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
         expect(chips).to_have_count(2)
+        chips.first.click()
+        panel = page.locator('.wk-panel')
+        expect(panel).to_be_visible()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
         cdp = context.new_cdp_session(page)
         chip = cdp.send('Runtime.evaluate', {'expression': "document.querySelector('.wk-grid button.pchip.draggable')"})['result']
         own = {x['type'] for x in cdp.send('DOMDebugger.getEventListeners', {'objectId': chip['objectId']})['listeners']}

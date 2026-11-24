@@ -1196,6 +1196,11 @@ export function dropHoverCard(){
 }
 /** Data the open card was waiting for has arrived (e.g. the planner's rule map): build its content again in place. */
 export function refreshHoverCard(){if(hoverNode?.isConnected)hoverRedraw?.();}
+/** The element whose card is open now (hover or focus); null when none is (a dismissed card is not open). */
+export function openCardTarget():HTMLElement|null{return hoverNode?.isConnected?hoverTarget:null;}
+/** The card of an element drawn anew while its old one was still open (the planner drawn whole): shown again on it, as a
+ *  focus card when it holds focus, else as a hover card. Focus is not moved. */
+export function showHoverOn(target:HTMLElement){const c=hoverContent(target);if(!c)return;dismissedHover=null;showHover(c,target===document.activeElement);}
 /** Hover/focus card for dense grids. Content is built lazily; never steals focus. */
 export function hoverCard(target:HTMLElement,build:()=>Node[],delay=280){
   hoverCards.set(target,{build,delay});
