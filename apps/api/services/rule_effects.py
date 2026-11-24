@@ -11,7 +11,7 @@ from apps.api import models as m
 from apps.api.auth import require_role, person_access
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
-from apps.api.snapshots import domain_snapshot, input_current
+from apps.api.snapshots import domain_snapshot, input_current, line_trial_snapshot, snapshot_inputs
 from packages.contracts import schemas as s
 from packages.domain.rule_lines import named_people, unconditional_people, when
 from packages.domain.solver_rules import COMPILER_VERSION
@@ -146,10 +146,13 @@ def adjustment_effect(db, actor, workspace_id, value):
 
 
 def draft_line_effect(db, actor, catalogue_id, value):
-    """Replace one unsaved line in memory, using saved-rule admission and the shared effect projection."""
+    """Compare an admitted, unsaved line with the draft's current saved assignments."""
+    from packages.domain.rule_effects import observed_effect
+    from packages.domain.rule_map import line_check_scope
     from .rule_catalogue import catalogue_version, check
     from .common import expected
     from .independence import today
+    from .planning import complete_check
     require_role(actor, 'coordinator', 'approver')
     current = catalogue_version(db, actor, catalogue_id, 'active')
     require((current.id if current else None) == value.expected_policy_id,
@@ -179,14 +182,28 @@ def draft_line_effect(db, actor, catalogue_id, value):
             'rule': {'kind': 'catalogue', 'id': catalogue_id, 'catalogue_version': value.catalogue_version,
                 'on': original.get('on', True), 'settings': original.get('settings') or {}, 'lines': checked['lines']}})
     effects = []
-    for workspace in affected_workspaces(db, actor, [candidate]):
-        before = domain_snapshot(db, workspace, mandatory_rules=False)
-        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)], mandatory_rules=False)
-        effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
-            'starts_on': str(workspace.starts_on), 'ends_on': str(workspace.ends_on),
-            **effect_projection(before, evaluate(before), after, evaluate(after))})
-    return {'line_id': line['id'], 'preview': True, 'committed': False,
-            'effects': {line['id']: effects}, 'relations': checked.get('relations', {})}
+    proposed_policy = record(candidate)
+    workspaces = affected_workspaces(db, actor, [candidate])
+    if not workspaces:
+        return {'effects': {line['id']: effects}}
+    department = db.get(m.Department, actor.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    shared = snapshot_inputs(db, organisation)
+    for workspace in workspaces:
+        before = domain_snapshot(db, workspace, mandatory_rules=False, shared_inputs=shared)
+        previous = workspace.validation
+        if not complete_check(previous, before, before['department'].get('generation_defaults')):
+            previous = evaluate(before, session_parts=True)
+        after = line_trial_snapshot(before, workspace, proposed_policy, organisation.timezone)
+        if after is None:
+            after = domain_snapshot(db, workspace, policy_overrides=[proposed_policy], mandatory_rules=False,
+                                    include_manifest=False, shared_inputs=shared)
+        elif scope := line_check_scope(before, after, previous, candidate.id):
+            after['_partial'] = scope
+        effect = observed_effect(previous, evaluate(after))
+        effects.append({'workspace_id': workspace.id, 'name': workspace.name,
+                        'effect': {key: effect[key] for key in ('status', 'clears', 'adds', 'effect')}})
+    return {'effects': {line['id']: effects}}
 
 
 # SW3-B-19: a check job's frozen input (~20 MB) and full result (~90 MB at department scale, mostly candidate
@@ -221,6 +238,11 @@ def checked_effect(result):
     return {**effect, 'status': 'unresolved',
             'summary': ('Time limit reached; the effect comparison is incomplete.' if timed_out else
                         'Effect comparison incomplete; full findings, candidate and quota evidence was not established.')}
+
+
+def no_new_problems(result):
+    return (result.get('comparison_complete') is True and result.get('no_new_problems') is True
+            and result.get('new_or_worse_findings') == [])
 
 
 def predecessor_rows(db, actor, policies):
@@ -429,7 +451,8 @@ def review(db, actor, policy_id):
         blocker = context_check_blocker(result or {}) if matching and matching.status == 'succeeded' else None
         if workspace.id in contradictions:
             blocker = 'RULE_INTRODUCES_CONFLICT'
-        complete = bool(matching and matching.status == 'succeeded' and (result or {}).get('comparison_complete') is True)
+        completed_result = (result or {}) if matching and matching.status == 'succeeded' else {}
+        complete = completed_result.get('comparison_complete') is True
         if not blocker and s.safety_rule(policy.definition) and not complete:
             blocker = 'RULE_CHECK_UNRESOLVED'
         effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
@@ -438,7 +461,8 @@ def review(db, actor, policy_id):
             'created_at': json_value(matching.created_at) if matching else None,
             'comparison_complete': complete,
             'activation_blocker': blocker, **effect,
-            'requires_acknowledgement': effect['status'] != 'ready',
+            'new_or_worse_count': len(completed_result.get('new_or_worse_findings') or []) if complete else 0,
+            'requires_acknowledgement': effect['status'] != 'ready' or not no_new_problems(completed_result),
             'summary': effect.get('summary') or 'Effect not established; an approver may decide with a recorded reason.'})
     relations = {}
     if policy.kind == 'catalogue':

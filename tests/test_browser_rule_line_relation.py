@@ -108,7 +108,7 @@ def test_line_relation_effect_reach_and_inactive_clinics(browser, live_server, h
         if width == 1440:
             expect(main.locator(f'tr[data-line="{broad["id"]}"].is-pointed')).to_have_count(1)
         effect = panel.locator('.rc-effect')
-        expect(effect.locator('li').nth(0)).to_contain_text('Clears 1 check')
+        expect(effect.locator('li').nth(0)).to_contain_text('Clears 1 problem')
         assert effects[-1]['line']['id'] == mine['id'] and effects[-1]['expected_policy_id'] == rule['id']
         expect(panel.get_by_role('button', name='Only drafts whose dates overlap Sun 4 Oct – Sat 10 Oct 2026 are checked. Other drafts are not affected.')).to_have_count(1)
         shot(page, 'b3-rule-line-editor', 'warn', width, theme)
@@ -203,7 +203,7 @@ def test_relax_for_a_person_applies_to_this_rota_with_a_justification(browser, l
                                   and response.request.post_data_json.get('adjustment', {}).get('amount') == 7):
             panel.get_by_label('Maximum', exact=True).fill('7')
         expect(panel.locator('.rc-effect')).to_contain_text('Relax rota')
-        expect(panel.locator('.rc-effect')).to_contain_text('Clears 1 check')
+        expect(panel.locator('.rc-effect')).to_contain_text('Clears 1 problem')
         assert any(e['adjustment']['amount'] == 7 and e['expected_revision'] == w['revision'] for e in effects), effects
         apply.click()
         assert not sent, 'A justification is required first'
@@ -332,7 +332,7 @@ def test_approver_sees_the_effect_and_approves_and_activates_in_one_step(browser
         # The effect is read again until it is known; then Approve and activate is one step, with no checkbox.
         review['effect'] = [{**effect, 'status': 'ready', 'clears': 1, 'adds': 0, 'effect': 'clears'}]
         review['ready'] = True
-        expect(panel.locator('.rc-effect')).to_contain_text('Clears 1 check', timeout=15000)
+        expect(panel.locator('.rc-effect')).to_contain_text('Clears 1 problem', timeout=15000)
         expect(approve).to_be_enabled()
         expect(panel.get_by_role('checkbox')).to_have_count(0)
         shot(page, 'b5-approve-rule-line', 'checked', width, theme)

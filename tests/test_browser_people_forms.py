@@ -5,6 +5,7 @@ import pytest
 from playwright.sync_api import expect
 from apps.api import models as m
 from apps.api.db import transaction
+from packages.contracts import schemas as s
 from .governance_support import identity
 from .test_browser import browser, live_server, sign_in, navigate, close_popover, expect_loaded  # noqa: F401
 from .test_browser_people_merged import row
@@ -159,6 +160,41 @@ def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, 
         expect_loaded(page, "people")
         panel = open_person(page, p)
         expect(panel).to_contain_text("4321")
+        panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
+        extension = form.get_by_label("Office extension", exact=True)
+        expect(extension).to_have_value("4321")
+        extension.fill("")
+        form.get_by_role("button", name="Save version", exact=True).click()
+        expect(form).to_have_count(0)
+        assert not person(h).get("work_extension")
+    finally:
+        context.close()
+
+
+def test_editing_job_title_preserves_contacts_omitted_from_people_list(browser, live_server, h):
+    p = person(h, 1)
+    numbers = {"work_phone": "555018811", "work_extension": "4321", "pager": "551122"}
+    h.configure("people", {"display_name": p["display_name"], **numbers}, p["id"], p["revision"])
+    for typ in h.get("admin", "/api/contact-types")["contact_types"]:
+        if typ["legacy_field"] in numbers:
+            value = {**{key: typ[key] for key in s.ContactTypeInput.model_fields}, "visibility": {"mode": "self_and_admins"}}
+            h.configure("contact_types", value, typ["id"], typ["revision"])
+    assert not numbers.keys() & person(h, 1).keys()
+
+    context, page = sign_in(browser, live_server, "coordinator")
+    try:
+        panel = open_person(page, p)
+        panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
+        form = page.get_by_role("dialog", name="Edit person", exact=True)
+        for label in ("Hospital phone", "Office extension", "Pager number"):
+            expect(form.get_by_label(label, exact=True)).to_have_value("")
+        form.get_by_label("Job title", exact=True).fill("Updated title")
+        form.get_by_role("button", name="Save version", exact=True).click()
+        expect(form).to_have_count(0)
+
+        saved = next(row for row in h.get("admin", "/api/catalogues?include=people")["people"] if row["id"] == p["id"])
+        assert saved["title"] == "Updated title"
+        assert {key: saved.get(key) for key in numbers} == numbers
     finally:
         context.close()
 

@@ -99,7 +99,9 @@ def quarantine_revision(branch, default, base, candidate):
 
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
-    if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
+    branch = pr["base"]["ref"]
+    if ((branch != policy.default_branch(data) and not policy.release_branch(branch))
+            or any(label["name"] == "full-ci" for label in pr["labels"])):
         return None
     base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
@@ -107,7 +109,7 @@ def pr_scope(data, git, trusted_sha, candidate):
            or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
            for path in changed):
         return None
-    inventory = policy.control_inventory(trusted_sha)
+    inventory = policy.control_inventory(base if policy.release_branch(branch) else trusted_sha)
     for path in sorted(changed):
         before, after = policy.read_file(base, path), policy.read_file(candidate, path)
         tier, _ = policy.tier(path, before, after, inventory)
@@ -407,8 +409,13 @@ def main():
     listed = frozenset()
     if maker.retry_run(candidate):
         event = policy.event()
-        branch = (event["pull_request"]["base"]["ref"] if os.environ["GITHUB_EVENT_NAME"] == "pull_request"
-                  else event["merge_group"]["base_ref"].removeprefix("refs/heads/"))
+        kind = os.environ["GITHUB_EVENT_NAME"]
+        if kind == "pull_request":
+            branch = event["pull_request"]["base"]["ref"]
+        elif kind == "merge_group":
+            branch = event["merge_group"]["base_ref"].removeprefix("refs/heads/")
+        else:
+            branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
         base = candidate["base_sha"]
         current = policy.read_file(candidate["sha"], policy.KNOWN)
         old = policy.read_file(base, policy.KNOWN)

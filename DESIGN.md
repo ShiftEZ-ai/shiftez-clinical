@@ -1,6 +1,6 @@
 # Design
 
-Owned by the Design Lead; changed only through a reviewed PR. Engineering rules are in AGENTS.md, delivery rules in DELIVERY.md.
+The Design Lead owns this file, and edits land through a PR on green CI without review under the review policy in AGENTS.md.
 Mockup names and numbers are illustrative only; nothing from them is seeded into the application.
 
 ## Visual contract
