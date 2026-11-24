@@ -5,7 +5,6 @@ import uuid
 
 from apps.api import models as m
 from apps.api.db import transaction
-from apps.api.services.job_reads import full_job_result
 from .governance_support import identity
 from .test_availability_patterns import pattern
 from .test_staff_wishes import wish
@@ -206,7 +205,7 @@ def test_real_advisory_findings_already_allow_single_and_bulk_activation(h, mode
     assert 'findings' not in checked['result']['checks']['proposed']
     result = h.get('approver', '/api/jobs/' + checked['id'] + '?full=true')['job']['result']
     with transaction(h.app.state.engine) as db:
-        stored = full_job_result(db, db.get(m.Job, checked['id']))
+        stored = db.get(m.Job, checked['id']).result
     assert result['checks']['proposed']['findings'] == stored['checks']['proposed']['findings']
     assert any(f["code"] == "MAX_DUTIES" and f["severity"] == "warning"
                for f in result["checks"]["proposed"]["findings"])
@@ -219,7 +218,7 @@ def test_real_advisory_findings_already_allow_single_and_bulk_activation(h, mode
         assert h.command('approver', 'bulk.apply', activation_payload(policy, checked))['count'] == 1
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Policy, policy['id']).status == 'active'
-        assert full_job_result(db, db.get(m.Job, checked['id'])) == stored
+        assert db.get(m.Job, checked['id']).result == stored
         audit = db.scalar(select(m.AuditEvent).where(m.AuditEvent.action == 'policy.activate',
                                                     m.AuditEvent.target_id == policy['id']))
         evidence = audit.detail['context_check_evidence'][0]
@@ -232,7 +231,7 @@ def test_advisory_receipt_acknowledgement_offers_resolution_and_records_finding_
     policy, checked = checked_rule_review(h, "advisory")
     with transaction(h.app.state.engine, write=True) as db:
         job = db.get(m.Job, checked["id"])
-        result = deepcopy(full_job_result(db, job))
+        result = deepcopy(job.result)
         # Exercise a receipt requiring advisory acknowledgement; the current worker excludes warnings from comparison.
         result["new_or_worse_findings"] = [f for f in result["checks"]["proposed"]["findings"]
                                           if f["rule_id"] == policy["id"]]
@@ -272,7 +271,7 @@ def test_mandatory_or_unknown_findings_never_offer_apply_anyway(h, case):
     if case != "mandatory":
         with transaction(h.app.state.engine, write=True) as db:
             job = db.get(m.Job, checked["id"])
-            result = deepcopy(full_job_result(db, job))
+            result = deepcopy(job.result)
             findings = [f for f in result["checks"]["proposed"]["findings"] if f["rule_id"] == policy["id"]]
             result.update(no_new_problems=False, new_or_worse_findings=findings)
             if case == "unknown":

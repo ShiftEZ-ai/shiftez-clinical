@@ -679,10 +679,5 @@
     "class": "additive",
     "sha256": "333896cba437ee34a83da6920f9d42e38841d017e3727ad2ab20f0e9730d938c",
     "review": "Adds job-owned candidate evidence storage and a lookup index while preserving all existing rows."
-  },
-  "0152_feasibility_results": {
-    "class": "additive",
-    "sha256": "5fb845220111eee7d31d8f261c5d9f661284731ebb023ed18b70bd9e25b6a591",
-    "review": "Adds a per-attempt feasibility result table keyed to jobs and preserves all existing rows."
   }
 }

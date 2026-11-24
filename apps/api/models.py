@@ -1895,13 +1895,6 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
                 job.read_metadata = metadata
 
 
-class JobFeasibilityResult(Base):
-    __tablename__ = 'job_feasibility_results'
-    job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id'), primary_key=True)
-    attempt: Mapped[int] = mapped_column(Integer, primary_key=True)
-    payload: Mapped[dict] = mapped_column(JSON)
-
-
 class JobCandidateEvidence(Base):
     __tablename__ = 'job_candidate_evidence'
     job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id'), primary_key=True)

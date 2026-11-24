@@ -6,7 +6,6 @@ from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
-from apps.api.services.job_reads import full_job_result
 from apps.api.snapshots import currency_hint, currency_match, feasibility_fingerprints
 from apps.worker.main import process_one
 from packages.domain import feasibility
@@ -85,7 +84,7 @@ def test_temporary_binding_is_rejected_by_review_and_activation(approval_receipt
     h, _, policy, job = approval_receipt
     with transaction(h.app.state.engine, write=True) as db:
         receipt = db.get(m.Job, job['id'])
-        result = deepcopy(full_job_result(db, receipt))
+        result = deepcopy(receipt.result)
         # Keep the hashes current so this isolates the temporary-change guard in both consumers.
         result['bindings'][0]['temporary_change'] = True
         receipt.result = result
@@ -173,7 +172,7 @@ def test_safety_cannot_acknowledge_missing_or_incomplete_receipt(backend, with_r
         assert process_one(h.app.state.engine)
         with transaction(h.app.state.engine, write=True) as db:
             row = db.get(m.Job, job['id'])
-            row.result = {**deepcopy(full_job_result(db, row)), 'comparison_complete': False}
+            row.result = {**deepcopy(row.result), 'comparison_complete': False}
         ids = [job['id']]
     review = h.get('approver', f"/api/policies/{policy['id']}/review")
     assert not review['can_decide']
