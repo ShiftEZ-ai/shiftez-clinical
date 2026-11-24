@@ -81799,7 +81799,7 @@
         "additionalProperties": {
           "$ref": "#/$defs/PwaEventChannels"
         },
-        "maxProperties": 14,
+        "maxProperties": 15,
         "title": "Event Defaults",
         "type": "object"
       },
@@ -81900,7 +81900,7 @@
         "additionalProperties": {
           "$ref": "#/$defs/PwaEventChannels"
         },
-        "maxProperties": 14,
+        "maxProperties": 15,
         "title": "Event Overrides",
         "type": "object"
       },
