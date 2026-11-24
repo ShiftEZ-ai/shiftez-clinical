@@ -2468,7 +2468,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
-  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  const liveCheck=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive:null;
+  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,liveCheck?stagedCoverage(liveCheck.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
   if(!draftData&&(permits(CAPABILITY.PUBLICATIONS_READ_TEAM)||permits(CAPABILITY.STAFF))&&layer&&!source)void loadLiveCoverage(layer);
@@ -2864,6 +2865,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
+  viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
   // The window on screen until the whole rota lands (wholeRota): read-only, its writes held; then the page draws it whole.
   // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it is read,
