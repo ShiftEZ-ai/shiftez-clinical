@@ -5,6 +5,7 @@ VALUE_INVALID_MESSAGE = "A value is not valid for this request"
 
 PROBLEM_DETAIL_LIMIT = 50
 _PUBLIC_PROBLEM_DETAIL_FIELDS = ('rule_id', 'rule_revision', 'field', 'code', 'message')
+_INPUT_ECHOING = {'value_error', 'assertion_error', 'union_tag_invalid', 'no_such_attribute'}
 
 
 class Problem(Exception):
@@ -42,3 +43,13 @@ def safe_message(text: str) -> str:
     a union tag), so anything quoted (not an apostrophe inside a word), bracketed or escaped becomes a generic message."""
     risky = re.search(r"[\x00-\x1f\"`\\<>{}\[\]]|(?<![A-Za-z])'|'(?![A-Za-z])", text or "")
     return VALUE_INVALID_MESSAGE if not text or risky else text[:300]
+
+
+def validation_issues(errors):
+    """Keep the field, error code and screened message from a schema failure."""
+    return [{
+        'field': '.'.join(str(part) for part in error['loc'])[:200],
+        'code': error['type'],
+        'message': (safe_message(error['msg']) if error['type'] in _INPUT_ECHOING
+                    or 'error' in (error.get('ctx') or {}) else error['msg'][:300]),
+    } for error in errors[:PROBLEM_DETAIL_LIMIT]]
