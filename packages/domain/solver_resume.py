@@ -11,11 +11,11 @@ from ortools.sat.python import cp_model
 from .solver_rules import COMPILER_VERSION
 
 
-PREPARATION_FORMAT = 11
+PREPARATION_FORMAT = 12
 # Private keys are transient unless they carry rule semantics or approved source provenance.
 SEMANTIC_PREPARATION_KEYS = frozenset({
     '_allocation_strengths', '_catalogue_v2_materialized', '_catalogue_sources',
-    '_count_scope', '_quota_full_window', '_protected_interval',
+    '_count_scope', '_draft_type_safety', '_quota_full_window', '_protected_interval',
     '_live_zero', '_live_zero_line_ids', '_live_mandatory_recheck',
     '_legacy_shadow_rows', '_legacy_own_lines',
     '_quota_line_indices', '_quota_template_people', '_zero_max_projection',

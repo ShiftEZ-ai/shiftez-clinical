@@ -151,10 +151,12 @@ def test_fresh_type_change_shows_operational_and_explicit_refresh_consequences(h
     t=next(t for t in h.get('admin','/api/catalogues')['assignment_types'] if t['id']==h.seed['type'])
     definition=copy.deepcopy(t['definition']);definition['requirements'][0]['minimum']=3
     cmd={'kind':'catalogue.update','target_id':t['id'],'expected_revision':t['revision'],
-        'payload':{'catalogue':'assignment_types','value':{'name':t['name'],'starts_on':t['starts_on'],'definition':definition},'reason':'New staffing level'}}
+        'payload':{'catalogue':'assignment_types','value':{'name':t['name'],'description':t['description'],'starts_on':t['starts_on'],'definition':definition},'reason':'New staffing level'}}
     p=preview(h,cmd);impact=p['impacts'][0]
     assert 'COVERAGE_GAP' in {f['code'] for f in impact['introduced']}
-    assert 'TYPE_VERSION_CHANGED' in {f['code'] for f in impact['saved_draft_validation']['findings']}
+    findings = impact['saved_draft_validation']['findings']
+    assert any(f['code'] == 'COVERAGE_GAP' and f['detail']['required'] == 3 for f in findings)
+    assert 'TYPE_VERSION_CHANGED' not in {f['code'] for f in findings}
     assert h.detail(w)['workspace']['revision']==w['revision']
 
 
