@@ -66,6 +66,30 @@ def upgrade():
         assert safety.needs_confirmation(path) is (kind == 'destructive')
 
 
+@pytest.mark.parametrize('split', [False, True], ids=['single-alter', 'adjacent-calls'])
+def test_postgres_check_widening_can_use_a_definition_in_the_upgrade(tmp_path, split):
+    old = "CREATE TABLE items (role VARCHAR(32) CONSTRAINT role_check CHECK (role IN ('one', 'two')))"
+    drop = 'ALTER TABLE items DROP CONSTRAINT role_check'
+    new = "role IN ('one', 'two', 'three')"
+    if split:
+        replacement = f"op.execute({drop!r})\n        op.create_check_constraint('role_check', 'items', {new!r})"
+    else:
+        sql = drop + f', ADD CONSTRAINT role_check CHECK ({new})'
+        replacement = f'op.execute({sql!r})'
+    path = tmp_path / 'current.py'
+    path.write_text(f'''from alembic import op
+revision = 'current'
+down_revision = None
+SAFETY_CLASS = 'additive'
+def upgrade():
+    op.execute({old!r})
+    if op.get_bind().dialect.name == 'postgresql':
+        {replacement}
+''', encoding='utf-8')
+    assert not safety.declaration_errors(path)
+    assert not safety.needs_confirmation(path)
+
+
 def test_oidc_department_choice_migration_preserves_existing_flows_and_all_data(session_limits_database):
     from .migration_support import historical_seed
     url = session_limits_database

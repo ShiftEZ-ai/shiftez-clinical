@@ -4,7 +4,10 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
-from migrations.sql_safety import CURRENT_SCHEMA, analyze_sql, clear_execution_proofs, schema_template
+from migrations.sql_safety import (
+    CURRENT_SCHEMA, analyze_sql, check_definition, check_replacement, clear_execution_proofs,
+    forget_checks, schema_template,
+)
 
 
 CLASSES = ('additive', 'fill_only', 'destructive')
@@ -87,6 +90,7 @@ class Analyzer(ast.NodeVisitor):
     def invalidate(self):
         for fact in self.schema['tables'].values():
             fact.update(columns=[], primary_key=[], added_columns=[], new=False)
+        self.schema.pop('checks', None)
         clear_execution_proofs(self.schema)
 
     def issue(self, node, reason):
@@ -298,8 +302,7 @@ class Analyzer(ast.NodeVisitor):
             for table in self.schema['tables'].values():
                 table['new'] = False
         self.env, self.function = self.globals.copy(), node.name
-        for statement in node.body:
-            self.visit(statement)
+        self.visit_block(node.body)
         self.env, self.function = before, previous
         if node.name != 'upgrade':
             self.schema.clear()
@@ -308,6 +311,26 @@ class Analyzer(ast.NodeVisitor):
 
     def visit_Expr(self, node):
         self.visit(node.value)
+
+    def visit_block(self, statements):
+        index, checks_only = 0, bool(statements)
+        while index < len(statements):
+            node = statements[index]
+            if self.function == 'upgrade':
+                sql = self.check_sql(node)
+                if sql and 'DROP' in sql.upper() and 'CONSTRAINT' in sql.upper():
+                    self.needs_schema = True
+                    if check_replacement(self.schema, sql):
+                        index += 1
+                        continue
+                    following = self.check_sql(statements[index + 1]) if index + 1 < len(statements) else None
+                    if following and check_replacement(self.schema, sql, following):
+                        index += 2
+                        continue
+            self.visit(node)
+            checks_only = False
+            index += 1
+        return checks_only
 
     def visit_Constant(self, node):
         pass
@@ -337,10 +360,10 @@ class Analyzer(ast.NodeVisitor):
         environment, dialect, dollar_free = self.env.copy(), self.dialect, self.dollar_free.copy()
         before = deepcopy(self.schema)
         baseline_rank, baseline_unproved = self.rank, self.unproved
-        self.dialect = self.value(test.comparators[0])
+        selected_dialect = self.value(test.comparators[0])
+        self.dialect = selected_dialect
         self.rank, self.unproved = 0, False
-        for statement in node.body:
-            self.visit(statement)
+        first_checks_only = self.visit_block(node.body)
         first = deepcopy(self.schema)
         first_rank, first_unproved = self.rank, self.unproved
         self.env, self.dollar_free = environment.copy(), dollar_free.copy()
@@ -348,14 +371,16 @@ class Analyzer(ast.NodeVisitor):
         self.schema.update(deepcopy(before))
         self.dialect = 'postgresql' if self.dialect == 'sqlite' else 'sqlite'
         self.rank, self.unproved = 0, False
-        for statement in node.orelse:
-            self.visit(statement)
+        self.visit_block(node.orelse)
         second_rank, second_unproved = self.rank, self.unproved
         self.rank = max(baseline_rank, first_rank, second_rank)
         self.unproved = baseline_unproved or first_unproved or second_unproved
         self.env, self.dialect, self.dollar_free = environment, dialect, dollar_free
         if self.schema['tables'] != first['tables']:
             self.issue(node, 'dialect branches have different schema proofs')
+        for table, checks in self.schema.get('checks', {}).items():
+            other = first.get('checks', {}).get(table, {})
+            self.schema['checks'][table] = {name: fact for name, fact in checks.items() if other.get(name) == fact}
         appends = self.schema.get('append_targets', set())
         guards, first_guards = self.schema.get('guard_targets', set()), first.get('guard_targets', set())
         if appends and appends == first.get('append_targets'):
@@ -363,7 +388,8 @@ class Analyzer(ast.NodeVisitor):
             guards, first_guards = ({item for item in group if item[2]} for group in (guards, first_guards))
         pure_fill_branches = (not baseline_unproved and not first_unproved and not second_unproved
                               and first_rank == second_rank == CLASSES.index('fill_only'))
-        if ((not (appends or guards) and not pure_fill_branches)
+        postgres_check_only = first_checks_only and selected_dialect == 'postgresql' and not node.orelse
+        if ((not (appends or guards) and not (pure_fill_branches or postgres_check_only))
                 or appends != first.get('append_targets') or guards != first_guards):
             self.issue(node, 'dialect branches lack matching new-table observer or guard proofs')
         clear_execution_proofs(self.schema)
@@ -467,6 +493,7 @@ class Analyzer(ast.NodeVisitor):
                 self.schema['tables'][table] = {'columns': [], 'primary_key': [], 'new': False}
             return
         if method == 'create_table':
+            forget_checks(self.schema, table)
             self.schema['tables'][table] = {'columns': [], 'primary_key': [], 'new': False}
             if any(key.arg == 'if_not_exists' and self.value(key.value) is not False for key in node.keywords):
                 return
@@ -500,17 +527,55 @@ class Analyzer(ast.NodeVisitor):
                 names = [self.value(arg) for arg in column.args]
                 if all(isinstance(item, str) for item in names):
                     fact['unique_keys'].append(names)
+            elif method == 'create_table' and kind == 'CheckConstraint':
+                name = next((self.value(key.value) for key in column.keywords if key.arg == 'name'), None)
+                self.record_check(table, name, column.args[0])
 
+    def record_check(self, table, name, expression):
+        if table and isinstance(name, str) and name:
+            self.schema.setdefault('checks', {}).setdefault(table, {})[name] = check_definition(self.value(expression))
+
+    def check_sql(self, statement):
+        if not isinstance(statement, ast.Expr) or not isinstance(node := statement.value, ast.Call):
+            return None
+        name = self.name(node.func)
+        if name == 'alembic.op.execute' or (isinstance(node.func, ast.Attribute)
+                and node.func.attr in {'execute', 'exec_driver_sql'} and self.connection(node.func.value)):
+            if len(node.args) == 1 and not node.keywords:
+                value = self.value(self.unwrap_sql(node.args[0]))
+                return value if isinstance(value, str) else None
+            return None
+        if name not in {'alembic.op.drop_constraint', 'alembic.op.create_check_constraint'}:
+            return None
+        drop = name == 'alembic.op.drop_constraint'
+        options = {key.arg: self.value(key.value) for key in node.keywords}
+        if (len(options) != len(node.keywords) or len(node.args) != (2 if drop else 3)
+                or options.keys() - ({'schema', 'type_'} if drop else {'schema'})
+                or drop and options.get('type_') not in (None, 'check')):
+            return None
+        table, constraint = self.table_name(node, 1), self.value(node.args[0])
+        if not table or not isinstance(constraint, str) or not constraint or '.' in constraint:
+            return None
+        owner = '.'.join('"' + part.replace('"', '""') + '"' for part in table.split('.'))
+        label = '"' + constraint.replace('"', '""') + '"'
+        if drop:
+            return f'ALTER TABLE {owner} DROP CONSTRAINT {label}'
+        expression = self.value(node.args[2])
+        return f'ALTER TABLE {owner} ADD CONSTRAINT {label} CHECK ({expression})' if isinstance(expression, str) else None
 
     def independent(self, node):
         return isinstance(self.value(node), (str, int, float, bool)) or isinstance(self.resolve(node), ast.Call) \
             and self.constructor(self.resolve(node)) == 'bindparam' and self.expression(node)
 
-    def statement(self, node):
+    def unwrap_sql(self, node):
         node = self.resolve(node)
         if isinstance(node, ast.Call) and self.name(node.func) == 'sqlalchemy.text' \
                 and len(node.args) == 1 and not node.keywords:
-            node = self.resolve(node.args[0])
+            return self.resolve(node.args[0])
+        return node
+
+    def statement(self, node):
+        node = self.unwrap_sql(node)
         value = self.value(node)
         template = self.template(node)
         if template is not None:
@@ -583,6 +648,9 @@ class Analyzer(ast.NodeVisitor):
             if method == 'create_check_constraint' and (len(node.args) < 3 or not self.sql_expression(node.args[2])):
                 self.issue(node, 'unproved check constraint expression')
                 return
+            if (method == 'create_check_constraint' and self.function == 'upgrade' and len(node.args) == 3
+                    and isinstance(self.parents[node], ast.Expr)):
+                self.record_check(self.table_name(node, 1), self.value(node.args[0]), node.args[2])
             if method == 'add_column':
                 column = node.args[1] if len(node.args) == 2 else None
                 keys = {key.arg: self.value(key.value) for key in column.keywords} if isinstance(column, ast.Call) else {}
