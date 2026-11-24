@@ -17,7 +17,8 @@ def check_fair_share(data, ids, spec):
     people = {ids[name]: name for name in expected['people']}
 
     def comparison(snapshot):
-        goals = [row for row in evaluate(snapshot).get('goals', []) if row['policy_id'] == rule_id]
+        goals = [row for row in evaluate(snapshot).get('goals', [])
+                 if row['policy_id'] == rule_id and row['metric'] == 'duties']
         return sorted((row['period_start'], row['period_end'],
                        sorted((people[p['person_id']], p['planned'], p['expected']) for p in row['people']))
                       for row in goals)
@@ -30,7 +31,10 @@ def check_fair_share(data, ids, spec):
 
     def variant(**updates):
         result = deepcopy(data)
-        policy(result, rule_id)['definition']['rule']['settings']['balance_goal'].update(updates)
+        for line in policy(result, rule_id)['definition']['rule']['lines']:
+            goal = line['settings']['balance_goal']
+            if goal['metric'] == 'duties':
+                goal.update(updates)
         return result
 
     pooled_count = assert_comparison(data, 'pooled')

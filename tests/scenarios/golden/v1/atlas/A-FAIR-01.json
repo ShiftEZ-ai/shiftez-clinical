@@ -1,6 +1,6 @@
 {
   "id": "A-FAIR-01",
-  "revision": 1,
+  "revision": 2,
   "title": "Pooled Fair share across a rolling month",
   "intent": "A month ending on 31 March begins on the last day of February.",
   "pressure": "Pooling two independently scoped duty types makes moving one editable duty improve equal share.",
@@ -43,7 +43,31 @@
     {"key": "second_type", "role": "admin", "kind": "catalogue.create",
      "payload": {"catalogue": "assignment_types", "value": {"name": "A-FAIR-01 second duty type", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
     {"key": "share", "role": "coordinator", "kind": "rule.propose",
-     "payload": {"catalogue_id": "fair_share", "catalogue_version": 1, "reason": "Synthetic Fair share comparison", "settings": {"balance_goal": {"metric": "duties", "comparison": "pooled", "period": "rolling", "period_months": 1, "share_by": "equal", "tolerance_percent": 0, "tolerance_units": 0}}, "lines": [{"id": "00000000-0000-4000-8000-000000000001", "where": {"conditions": [{"field": "assignment_type_ids", "op": "any", "values": ["$first_type"]}]}, "who": {"conditions": [{"field": "person_ids", "values": ["$p0", "$p1"]}]}, "numbers": {"apply": {"value": null, "level": "medium"}}}, {"id": "00000000-0000-4000-8000-000000000002", "where": {"conditions": [{"field": "assignment_type_ids", "op": "any", "values": ["$second_type"]}]}, "who": {"conditions": [{"field": "person_ids", "values": ["$p0", "$p1"]}]}, "numbers": {"apply": {"value": null, "level": "medium"}}}]}},
+     "payload": {
+       "catalogue_id": "fair_share", "catalogue_version": 1,
+       "reason": "Synthetic Fair share comparison",
+       "lines": [
+         {
+           "id": "00000000-0000-4000-8000-000000000001",
+           "where": {"conditions": [{"field": "assignment_type_ids", "op": "any", "values": ["$first_type"]}]},
+           "who": {"conditions": [{"field": "person_ids", "values": ["$p0", "$p1"]}]},
+           "numbers": {"apply": {"value": null, "level": "medium"}},
+           "settings": {"balance_goal": {
+             "metric": "duties", "comparison": "pooled", "period": "rolling", "period_months": 1,
+             "share_by": "equal", "tolerance_percent": 0, "tolerance_units": 0
+           }}
+         },
+         {
+           "id": "00000000-0000-4000-8000-000000000002",
+           "where": {"conditions": [{"field": "assignment_type_ids", "op": "any", "values": ["$second_type"]}]},
+           "who": {"conditions": [{"field": "person_ids", "values": ["$p0", "$p1"]}]},
+           "numbers": {"apply": {"value": null, "level": "medium"}},
+           "settings": {"balance_goal": {
+             "metric": "duties", "comparison": "pooled", "period": "rolling", "period_months": 1,
+             "share_by": "equal", "tolerance_percent": 0, "tolerance_units": 0
+           }}
+         }
+       ]}},
     {"key": "share_active", "role": "approver", "kind": "policy.activate", "target": "$share", "revision": "$share.revision",
      "payload": {"reason": "Independent synthetic approval"}},
     {"key": "before", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
