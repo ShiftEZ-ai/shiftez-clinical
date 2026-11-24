@@ -226,6 +226,37 @@ def test_future_inactive_date_is_recorded_and_applied_per_duty(h):
     assert not candidate_evidence(context, 'a', duties[1])['eligible_and_available']
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_departing_person_keeps_short_code_and_import_match(h, monkeypatch):
+    from tests.test_staff_import import csv_of, preview, row
+
+    with transaction(h.app.state.engine) as db:
+        zone = ZoneInfo(db.get(m.Organisation, h.seed['organisation_id']).timezone)
+    before = datetime(2026, 10, 1, 23, 58, tzinfo=zone)
+    after = before + timedelta(minutes=3)
+    freeze_clock(monkeypatch, before)
+    person = h.configure('people', {'display_name': 'Synthetic departing person', 'short_code': 'DEPART',
+                                    'staff_number': 'SYN-501'})['record']
+    cutoff = after.date().isoformat()
+    departing = h.configure('people', {'display_name': person['display_name'], 'active': False, 'inactive_from': cutoff},
+                             person['id'], person['revision'])['record']
+    sheet = csv_of(row(display_name=person['display_name'], staff_number='SYN-501', short_code='DEPART'))
+    for instant, active in ((before, True), (after, False)):
+        freeze_clock(monkeypatch, instant)
+        assert rows(h, 'people', [person['id']])[0]['active'] is active
+        refused = h.configure('people', {'display_name': 'Synthetic new person', 'short_code': 'DEPART'}, status=409)
+        assert refused['error']['code'] == 'SHORT_CODE_TAKEN'
+        matched, = preview(h, sheet)['rows']
+        assert matched['person']['id'] == person['id'] and matched['person']['by'] == 'staff_number'
+        assert not matched['errors']
+
+    reactivated = h.configure('people', {'display_name': person['display_name'], 'active': True},
+                              person['id'], departing['revision'])
+    assert reactivated['record']['short_code'] == 'DEPART' and reactivated['record']['inactive_from'] is None
+    restored = h.configure('people', reactivated['previous_value'], person['id'], reactivated['record']['revision'])['record']
+    assert restored['short_code'] == 'DEPART' and restored['inactive_from'] == cutoff
+
+
 @pytest.mark.parametrize('zone', ['UTC', 'Pacific/Auckland', 'America/New_York'])
 def test_inactive_boundary_uses_local_midnight_and_exclusive_end(zone):
     from packages.domain.time import local_midnight

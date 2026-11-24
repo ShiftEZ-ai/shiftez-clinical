@@ -1,20 +1,32 @@
-"""Enforce the live calendar, person-code and job admission invariants."""
+"""Enforce the live calendar and job admission invariants."""
 from alembic import op
 
 revision = '0153_live_uniqueness'
 down_revision = '0152_feasibility_results'
 branch_labels = depends_on = None
 SAFETY_CLASS = 'additive'
+DUPLICATE_PRECHECKS = (
+    """
+    SELECT 1 FROM calendar_feeds WHERE revoked IS FALSE
+    GROUP BY identity_id, department_id HAVING count(*) > 1
+    """,
+    """
+    SELECT 1 FROM jobs
+    WHERE kind = 'validation' AND status IN ('queued', 'running')
+      AND workspace_id IS NOT NULL AND input_snapshot ->> 'validation_request_key' IS NOT NULL
+    GROUP BY workspace_id, input_snapshot ->> 'validation_request_key' HAVING count(*) > 1
+    """,
+    """
+    SELECT 1 FROM jobs WHERE kind = 'generation' AND status IN ('queued', 'running') AND workspace_id IS NOT NULL
+    GROUP BY workspace_id HAVING count(*) > 1
+    """,
+)
 
 
 def upgrade():
     op.execute("""
         CREATE UNIQUE INDEX uq_calendar_feeds_active
         ON calendar_feeds (identity_id, department_id) WHERE revoked IS FALSE
-    """)
-    op.execute("""
-        CREATE UNIQUE INDEX uq_people_active_short_code
-        ON people (organisation_id, short_code) WHERE active IS TRUE AND short_code <> ''
     """)
     op.execute("""
         CREATE UNIQUE INDEX uq_jobs_live_validation

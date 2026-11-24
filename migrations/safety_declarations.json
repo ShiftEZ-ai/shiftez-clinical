@@ -687,7 +687,7 @@
   },
   "0153_live_uniqueness": {
     "class": "additive",
-    "sha256": "df8425ac6d74fd1269b5102b7cb91cd96529366bb685f75468d20e098604c4a1",
-    "review": "Adds partial unique indexes for active calendar feeds, active short codes, and live validation and generation jobs. Existing rows are preserved."
+    "sha256": "f86004eb9c35d9e8958c0cc3d8460071e8d44cc2f7acfbbc3369155217ef76b3",
+    "review": "Adds partial unique indexes for active calendar feeds and live validation and generation jobs. Read-only preflight checks retained duplicates and the migration preserves existing rows."
   }
 }

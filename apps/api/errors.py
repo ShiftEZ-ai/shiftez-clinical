@@ -24,7 +24,6 @@ def unique_violation(error):
 def integrity_problem(error):
     code, message = {
         'uq_calendar_feeds_active': ('INTEGRITY_CONFLICT', INTEGRITY_CONFLICT_MESSAGE),
-        'uq_people_active_short_code': ('SHORT_CODE_TAKEN', 'This short code is already used by another person'),
         'uq_jobs_live_generation': ('JOB_ALREADY_RUNNING', 'This draft already has a queued or running auto-schedule run'),
         'uq_jobs_live_validation': ('STALE_INPUTS', 'The rota check changed; queue it again'),
     }.get(unique_violation(error), ('INTEGRITY_CONFLICT', INTEGRITY_CONFLICT_MESSAGE))

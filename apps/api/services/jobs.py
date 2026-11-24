@@ -327,35 +327,39 @@ def queue_validation(db, actor, workspace, data):
     # Compare compact request currencies without loading pending snapshots.
     key_column = m.Job.input_snapshot['validation_request_key'].as_string()
     validation_jobs = select(m.Job).options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
-        m.Job.workspace_id == workspace.id, m.Job.kind == 'validation')
-    pending = db.execute(validation_jobs.add_columns(key_column).where(
-        m.Job.status.in_(['queued', 'running']))).all()
+        m.Job.workspace_id == workspace.id, m.Job.kind == 'validation', m.Job.status.in_(('queued', 'running')))
+    pending = db.execute(validation_jobs.add_columns(key_column)).all()
     for job, queued_key in pending:
         if queued_key == request_key or (not data.get('validation_basis') and job.input_fingerprint == data['fingerprint']):
             return job
         job.status, job.error_code, job.completed_at = 'failed', 'STALE_INPUTS', m.now()
         job.revision += 1
-    job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
-                kind='validation', input_fingerprint=data['fingerprint'], input_snapshot={**data, 'validation_request_key': request_key})
-    if db.get_bind().dialect.name == 'postgresql':
+    values = dict(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
+                  kind='validation', input_fingerprint=data['fingerprint'],
+                  input_snapshot={**data, 'validation_request_key': request_key})
+    if db.get_bind().dialect.name != 'postgresql':
+        job = m.Job(**values)
+        db.add(job)
+        db.flush()
+        return job
+    matching = validation_jobs.where(key_column == request_key).execution_options(populate_existing=True).limit(1)
+    for attempt in range(2):
+        job = m.Job(**values)
         try:
-            # Preserve the enclosing rota edit if an equivalent check wins the insert.
+            # An ended competitor leaves room for one fresh insert without discarding the rota edit.
             with db.begin_nested():
                 db.add(job)
                 db.flush()
         except IntegrityError as error:
             if unique_violation(error) != 'uq_jobs_live_validation':
                 raise
-            live = m.Job.status.in_(['queued', 'running'])
-            winner = db.scalar(validation_jobs.where(key_column == request_key)
-                               .order_by(live.desc(), m.Job.created_at.desc(), m.Job.id.desc()).limit(1))
-            if winner is None:
+            winner = db.scalar(matching)
+            if winner is not None:
+                return winner
+            if attempt == 1:
                 raise
-            return winner
-    else:
-        db.add(job)
-        db.flush()
-    return job
+        else:
+            return job
 
 
 def queue_current_validation(db, actor, workspace):
