@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from packages.contracts import schemas as s
 from packages.domain.time import aware
-from packages.domain.validation import rotation_leave_findings
+from packages.domain.validation import ROTATION_LEAVE_KINDS, rotation_leave_findings
 from apps.api import models as m
 from apps.api.auth import require_role, person_access
 from apps.api.db import current_request_parent
@@ -22,6 +22,8 @@ from .conditional_reads import revision_etag
 UPDATE_FIELDS = ('kind', 'start', 'end', 'leave_type_id')
 UPDATE_SNAPSHOT_FIELDS = (*UPDATE_FIELDS, 'counts_as_unavailable', 'leave_type', 'manual_type_override', 'revision')
 RECORDED_FACT_KINDS = frozenset({'actual_absence', 'external_commitment', 'off_duty'})
+LEAVE_APPROVAL_REQUEST_KINDS = frozenset({'leave', 'absence_report'})
+REQUEST_AVAILABILITY_KINDS = LEAVE_APPROVAL_REQUEST_KINDS | {'meeting'}
 
 
 def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, request_ids=()):
@@ -43,17 +45,19 @@ def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, 
 
 def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation_context=None):
     """Project relational records once; the shared domain evaluator owns the rule itself."""
+    source = rotation if rotation is not None else absence
+    candidate = json_value(source if isinstance(source, dict) else source.model_dump())
+    check_leave = rotation is not None or candidate.get('kind') in ROTATION_LEAVE_KINDS
     cache = rotation_context if rotation_context is not None else {}
-    if 'leave_timezone' not in cache:
+    if check_leave and 'leave_timezone' not in cache:
         scope = db.execute(select(m.Organisation.timezone, m.Department.id).join(
             m.Department, m.Department.organisation_id == m.Organisation.id).where(
                 m.Organisation.id == actor.organisation_id)).all()
         cache['leave_timezone'] = scope[0][0]
         cache['leave_department_ids'] = {row[1] for row in scope}
-    zone = cache['leave_timezone']
-    departments = cache['leave_department_ids']
+    zone = cache['leave_timezone'] if check_leave else db.get(m.Organisation, actor.organisation_id).timezone
     if rotation is not None:
-        candidate = json_value(rotation if isinstance(rotation, dict) else rotation.model_dump())
+        departments = cache['leave_department_ids']
         people = {pid for pid, _ in rotation_context['memberships']} if rotation_context is not None else {candidate['person_id']}
         if 'leave_records' not in cache:
             rows = list(db.scalars(select(m.Availability).where(m.Availability.department_id.in_(departments),
@@ -71,14 +75,14 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
                    and aware(row['start']) < wall_end and aware(row['end']) > wall_start]
         rotations = [candidate]
     else:
-        candidate = json_value(absence if isinstance(absence, dict) else absence.model_dump())
-        query = select(m.Rotation).where(m.Rotation.department_id.in_(departments),
-            m.Rotation.person_id == candidate['person_id'])
         try:
-            first = aware(candidate['start']).astimezone(ZoneInfo(zone)).date()
-            last = aware(candidate['end']).astimezone(ZoneInfo(zone)).date()
-            query = query.where(m.Rotation.ends_on > first)
-            query = query.where(m.Rotation.starts_on <= last)
+            tz = ZoneInfo(zone)
+            first = aware(candidate['start']).astimezone(tz).date()
+            last = aware(candidate['end']).astimezone(tz).date()
+            if not check_leave:
+                return []
+            query = select(m.Rotation).where(m.Rotation.department_id.in_(cache['leave_department_ids']),
+                m.Rotation.person_id == candidate['person_id'], m.Rotation.ends_on > first, m.Rotation.starts_on <= last)
             rotations = [record(row) for row in db.scalars(query)]
         except (ValueError, OverflowError):
             require(False, 'INTERVAL_DATES', 'The interval exceeds the supported local date range')
@@ -90,7 +94,7 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     missing = ids - types.keys()
     if missing:
         types.update({row.id: record(row) for row in db.scalars(select(m.RotationType).where(
-            m.RotationType.department_id.in_(departments), m.RotationType.id.in_(missing)))})
+            m.RotationType.department_id.in_(cache['leave_department_ids']), m.RotationType.id.in_(missing)))})
     require(ids <= types.keys(), 'NOT_FOUND', 'Record not found', 404)
     if rotation is not None:
         require(all(types[ident]['department_id'] == actor.department_id for ident in ids), 'NOT_FOUND', 'Record not found', 404)
@@ -120,6 +124,7 @@ def _require_record_approval(db, row, values, findings):
         return
     request = db.get(m.RequestRecord, row.request_id) if row.request_id else None
     require(not findings or request is not None and request.status == 'approved'
+            and request.kind in LEAVE_APPROVAL_REQUEST_KINDS
             and request.person_id == row.person_id and request.department_id == row.department_id
             and aware(request.start) == aware(values['start']) and aware(request.end) == aware(values['end'])
             and values['kind'] == (request.details or {}).get('availability_kind', 'approved_leave')
@@ -191,8 +196,8 @@ def record_availability(db, actor, command):
     value = s.AvailabilityInput.model_validate(command.payload)
     person_access(db, actor, value.person_id)
     lead_protects(db, actor, value.kind, value.person_id, value.start, value.end)
-    independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
-                        "A different coordinator must record your own absence", value.private_reason)
+    permission = independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
+        "A different coordinator must record your own absence", value.private_reason)
     values = {**value.model_dump(), **_availability_values(db, actor, value)}
     findings = rotation_leave_conflicts(db, actor, absence=value)
     require_rotation_leave(findings, record_kind=value.kind)
@@ -205,7 +210,10 @@ def record_availability(db, actor, command):
         finding['detail']['availability_id'] = row.id
     bump_inputs(db, actor, availability=True)
     outbox(db, actor, "availability:" + row.id, "availability", {"person_id": row.person_id, "availability_id": row.id}, undoable=True)
-    return {"record": leave_types.names(db, actor.department_id, [record(row, exclude=("private_reason",))])[0],
+    recorded = record(row, exclude=("private_reason",))
+    if permission is not None:
+        recorded["self_approved"] = True
+    return {"record": leave_types.names(db, actor.department_id, [recorded])[0],
             'conflicts': findings, 'warnings': [finding['message'] for finding in findings],
             **({'undo': {'kind': 'availability.undo_create', 'target_id': row.id, 'expected_revision': row.revision,
                          'payload': {'receipt_id': db.info['receipt_id'], 'reason': 'Undo creation'}}}
@@ -559,17 +567,19 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             from .training import apply_change
             affected += apply_change(db, actor, row, value.reason)
             inputs_changed = True
-        if value.decision == "approve" and row.kind in {"leave", "absence_report"}:
+        if value.decision == "approve" and row.kind in REQUEST_AVAILABILITY_KINDS:
             restored = _restore_undo_absences(db, actor, row, conflicts)
             if not restored:
                 conflicts.extend(rotation_leave_conflicts(db, actor, absence=record(row)))
                 require_rotation_leave(conflicts)
             if restored is None:
+                meeting = row.kind == 'meeting'
+                kind = 'protected_time' if meeting else (row.details or {}).get('availability_kind', 'approved_leave')
                 absence = m.Availability(department_id=actor.department_id, person_id=row.person_id,
-                                         start=row.start, end=row.end, kind=(row.details or {}).get('availability_kind', 'approved_leave'),
+                                         start=row.start, end=row.end, kind=kind,
                                          leave_type=(row.details or {}).get('leave_type', ''),
                                          leave_type_id=row.leave_type_id, counts_as_unavailable=row.counts_as_unavailable,
-                                         private_reason='' if row.kind == 'absence_report' else row.private_reason,
+                                         private_reason='' if meeting or row.kind == 'absence_report' else row.private_reason,
                                          recorded_by=actor.identity_id, request_id=row.id)
                 db.add(absence)
             affected += 1 if restored is None else restored
@@ -617,7 +627,7 @@ def require_request_undo(db, actor, row):
 
 def undo_decision(db, actor, command, *, batch=False):
     """Undo a request decision or withdrawal: it waits for a decision again. Only whoever made it may, only while the
-    request is not linked to a rota (a rota may already act on it), and an approved leave's absence is retracted with it."""
+    request is not linked to a rota (a rota may already act on it), and any linked availability is retracted with it."""
     value = s.RequestUndo.model_validate(command.payload)
     row = scoped(db, m.RequestRecord, command.target_id, actor)
     require_request_undo(db, actor, row)
@@ -696,7 +706,7 @@ def undo_decision(db, actor, command, *, batch=False):
            "request_status": row.status, "request_kind": row.kind},
            undo_of=f"request-decision:{row.id}" + (f":{command.expected_revision}" if command.expected_revision > 2 else ""))
     item = absence_report_record(row, actor, db)
-    details = {"retracted_availability": retracted_availability} if row.kind in {"leave", "absence_report"} and was_approved else {}
+    details = {"retracted_availability": retracted_availability} if row.kind in REQUEST_AVAILABILITY_KINDS and was_approved else {}
     if batch:
         return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected, **details}
     return {"record": leave_types.names(db, actor.department_id, [item])[0], "affected_count": affected, **details,
@@ -1365,15 +1375,35 @@ def _decision_time(source):
     return case((cls.status == "withdrawn", event), (cls.outcome.is_not(None), published), else_=empty)
 
 
-def _self_approved(db, department_id, ids):
-    """The requests whose latest decision was the person's own, under a self-approval permission (the audit's mark)."""
+def _untargeted_recording_events(department_id, ids):
+    """Link older self-approved recordings through their immutable command receipt."""
+    event, receipt = m.AuditEvent, m.CommandReceipt
+    recorded_id = receipt.result["record"]["id"].as_string()
+    return select(event.id, recorded_id).select_from(event).join(receipt, and_(
+        receipt.department_id == event.department_id,
+        receipt.id == event.detail["receipt_id"].as_string(),
+    )).where(event.department_id == department_id, event.action == "availability.record",
+             event.target_id.is_(None), event.detail["self_approved"].as_string().is_not(None),
+             receipt.command_kind == event.action, recorded_id.in_(ids))
+
+
+def _self_approved(db, department_id, rows):
+    """Read the audit mark for a recorded absence or the latest decision on a request."""
+    ids = [row.id for source, row in rows if source == "availability"
+           or source in ("request", "pattern") and row.decided_by]
     latest = {}
     if ids:
-        for target, detail in db.execute(select(m.AuditEvent.target_id, m.AuditEvent.detail).where(
-                m.AuditEvent.department_id == department_id, m.AuditEvent.target_id.in_(ids),
-                m.AuditEvent.action.like("%.decide")).order_by(m.AuditEvent.created_at, m.AuditEvent.seq)):
+        event = m.AuditEvent
+        for target, detail in db.execute(select(event.target_id, event.detail).where(
+                event.department_id == department_id, event.target_id.in_(ids),
+                or_(event.action == "availability.record", event.action.like("%.decide"))
+        ).order_by(event.created_at, event.seq)):
             latest[target] = bool((detail or {}).get("self_approved"))
-    return {target for target, own in latest.items() if own}
+    marked = {target for target, own in latest.items() if own}
+    recorded = [row.id for source, row in rows if source == "availability" and row.id not in marked]
+    if recorded:
+        marked.update(recorded_id for _, recorded_id in db.execute(_untargeted_recording_events(department_id, recorded)))
+    return marked
 
 
 def _decision_times(db, rows):
@@ -1460,8 +1490,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
                                 duty_cache=_duty_cache(db, [row[0]]) if source == "swap" else None,
                                 assignment_types=assignment_types)
                 item["decided_at"] = _decision_times(db, [(source, row[0])])[(source, row[0].id)]
-                if source in ("request", "pattern") and row[0].id in _self_approved(
-                        db, actor.department_id, [row[0].id] if getattr(row[0], "decided_by", None) else []):
+                if row[0].id in _self_approved(db, actor.department_id, [(source, row[0])]):
                     item["self_approved"] = True
                 if source in ('request', 'availability'):
                     leave_types.names(db, actor.department_id, [item])
@@ -1521,8 +1550,7 @@ def list_all(db, actor, types=(), stages=(), person_id=None, limit=100, offset=0
     items = [_project(db, actor, team, source, row, names, recorded_details, swap_cache,
                       rotation_names, decidable, duty_cache, assignment_types) for source, row, _ in shown]
     decisions = _decision_times(db, [(source, row) for source, row, _ in shown])
-    own = _self_approved(db, actor.department_id, [row.id for source, row, _ in shown if source in ("request", "pattern")
-                                                   and getattr(row, "decided_by", None)])
+    own = _self_approved(db, actor.department_id, [(source, row) for source, row, _ in shown])
     for item in items:
         item["decided_at"] = decisions[(item["source"], item["id"])]
         if item["id"] in own:  # only when true: every other projection of a request item stays as it was
@@ -1558,9 +1586,13 @@ def _history(db, actor, source, row, item):
     events = [{"action": "created", "at": json_value(row.created_at),
                "actor": by(item.get("created_by", item.get("proposed_by"))), "reason": ""}]
     targets = [row.id, *([item["record_id"]] if item.get("record_id") else [])]
+    linked = m.AuditEvent.target_id.in_(targets)
+    if source == "availability":
+        linked = or_(linked, m.AuditEvent.id.in_(
+            _untargeted_recording_events(row.department_id, [row.id]).with_only_columns(m.AuditEvent.id)))
     return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason,
                       **({"self_approved": True} if (e.detail or {}).get("self_approved") else {})}
                      # A refused command changed nothing: it stays in the audit trail, not in what was done to the request.
-                     for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, m.AuditEvent.target_id.in_(targets),
+                     for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
                                                                     m.AuditEvent.action != 'command.refused')
                                          .order_by(m.AuditEvent.created_at, m.AuditEvent.seq))]

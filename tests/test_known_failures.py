@@ -386,10 +386,13 @@ def test_invalid_known_file_is_refused(fault):
 
 
 def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser"), unit_node=RED,
-            unit_outcome=None, unit_retry=None, base_sha=None, run_id="fixture"):
+            unit_outcome=None, unit_retry=None, base_sha=None, run_id="fixture", browser_shards=1):
+    browser_files = ["tests/test_browser_sample.py"]
+    browser_files.extend(f"tests/test_browser_sample_{index}.py" for index in range(1, browser_shards))
     plan = {"sha": "b" * 40, "tree": TREE, "replicas": list(replicas), "suites": {
-        suite: {"shards": [{"files": [file]}]} for suite, file in (
-            ("unit", unit_node.split("::")[0]), ("browser", "tests/test_browser_sample.py"))}}
+        "unit": {"shards": [{"files": [unit_node.split("::")[0]]}]},
+        "browser": {"shards": [{"files": [file]} for file in browser_files]},
+    }}
     if base_sha is not None:
         plan.update(base_sha=base_sha, smoke=False)
 
@@ -422,19 +425,20 @@ def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser"), unit_n
                 "sha256": {file.name: hashlib.sha256(file.read_bytes()).hexdigest()
                            for file in (report, selected, deselected)}}
 
-    for suite in plan["suites"]:
-        node = unit_node if suite == "unit" else "tests/test_browser_sample.py::test_red"
+    for suite, layout in plan["suites"].items():
         outcome = unit_outcome if suite == "unit" and unit_outcome else ("failed" if suite in red_suites else "passed")
-        for replica in plan["replicas"]:
-            folder = tmp_path / f"ci-test-1-{suite}-1-{replica}"
-            folder.mkdir(parents=True)
-            evidence = invocation(folder / "junit.xml", node, outcome)
-            if suite == "unit" and unit_retry is not None:
-                evidence["retry"] = invocation(folder / "junit-retry.xml", node, unit_retry)
-            receipt = {"schema": 1, "sha": plan["sha"], "tree": TREE, "plan_sha256": ratchet.digest(plan),
-                       "suite": suite, "shard": 1, "replica": replica, "run_id": run_id, "run_attempt": "1",
-                       "reports": [evidence]}
-            (folder / "shard-receipt.json").write_text(json.dumps(receipt))
+        for shard, row in enumerate(layout["shards"], 1):
+            node = unit_node if suite == "unit" else row["files"][0] + "::test_red"
+            for replica in plan["replicas"]:
+                folder = tmp_path / f"ci-test-1-{suite}-{shard}-{replica}"
+                folder.mkdir(parents=True)
+                evidence = invocation(folder / "junit.xml", node, outcome)
+                if suite == "unit" and unit_retry is not None:
+                    evidence["retry"] = invocation(folder / "junit-retry.xml", node, unit_retry)
+                receipt = {"schema": 1, "sha": plan["sha"], "tree": TREE, "plan_sha256": ratchet.digest(plan),
+                           "suite": suite, "shard": shard, "replica": replica, "run_id": run_id, "run_attempt": "1",
+                           "reports": [evidence]}
+                (folder / "shard-receipt.json").write_text(json.dumps(receipt))
     return plan
 
 
@@ -453,13 +457,18 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
 
     def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
             base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
-            base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False):
+            base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False,
+            browser_shards=1, merge_group_shards=None, default="dev", replicas=None, missing_browser=False,
+            plan_base=None):
         sources = historical_verdict_sources
         folder = tmp_path / label
         base, head = "a" * 40, "c" * 40
-        replicas = (1, 2) if event == "push" else (1,)
+        if replicas is None:
+            replicas = (1, 2) if event == "push" and (old or branch != default) else (1,)
         plan = reports(folder / "reports", replicas=replicas, red_suites=(), unit_node=node, unit_outcome=outcome,
-                       unit_retry=retry, base_sha=base, run_id="1")
+                       unit_retry=retry, base_sha=plan_base or base, run_id="1", browser_shards=browser_shards)
+        if missing_browser:
+            (folder / "reports/ci-test-1-browser-1-1").rename(folder / "missing-browser")
         candidate = plan["sha"]
         output = folder / "verdict"
         plan_path = folder / "plan.json"
@@ -539,8 +548,14 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
         data = {"before": base,
                 "pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
                 "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
-                "repository": {"full_name": "fixture/project", "default_branch": "dev"}}
+                "repository": {"full_name": "fixture/project", "default_branch": default}}
         step_summary = folder / "step-summary.md"
+
+        def fetch(ref, expected=None):
+            if branch.startswith("release/"):
+                assert ref == expected, "Release verdicts use event commits, not the trunk ref"
+            return expected or base
+
         with monkeypatch.context() as patch:
             patch.setattr(sys, "path", sys.path.copy())
             if old:
@@ -561,14 +576,20 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             patch.setattr(target, "git", git)
             patch.setattr(target.policy, "git", git)
             patch.setattr(target.policy, "event", lambda: data)
-            patch.setattr(target.policy, "fetch", lambda ref, expected=None: expected or base)
+            patch.setattr(target.policy, "fetch", fetch)
             patch.setattr(target.policy, "accepted_dev_commit", lambda tree, tip: base)
             patch.setattr(target.policy, "read_file", read_file)
             patch.setattr(target.hardening, "load", lambda: {"canaries": False, "node_census": False})
-            patch.setattr(target, "settings", lambda: {
-                "unit_shards": 1, "browser_shards": 1, "unstable_limit": 80,
-                "unstable_issue": 1, "unstable_expires_on": "2026-12-19", "cleanup_issue": 1,
-            })
+            settings = {"unit_shards": 1, "browser_shards": 1, "unstable_limit": 80,
+                        "unstable_issue": 1, "unstable_expires_on": "2026-12-19", "cleanup_issue": 1}
+            if merge_group_shards is None:
+                patch.setattr(target, "settings", lambda **_: settings)
+            else:
+                config = folder / "ci/bootstrap-settings.json"
+                config.parent.mkdir()
+                config.write_text(json.dumps({"schema": 1, **settings, "merge_group_shards": merge_group_shards}),
+                                  encoding="utf-8")
+                patch.setattr(trusted_ci, "TRUSTED", folder)
             patch.setattr(sys, "argv", ["trusted_verdict", "--plan", str(plan_path), "--reports", str(folder / "reports"),
                                        "--output", str(output)])
             patch.delenv("GH_TOKEN", raising=False)
@@ -597,6 +618,73 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
 def quarantine_row(node=RED, kind="baseline"):
     return {"nodeid": node, "reason": kind + ": Reviewed", "owner": "maintainers", "issue": 1, "blocker": False,
             "added": "2026-11-19", "expires": "2026-12-19"}
+
+
+@pytest.mark.parametrize(("replicas", "outcome", "missing_browser", "refusal"), [
+    ((1,), "passed", False, None),
+    ((1,), "passed", True, "Missing or unexpected shard artifacts: browser-1-1"),
+    ((1,), "failed", False, "Missing push retry evidence: junit.xml"),
+    ((1, 2), "passed", False, "Replica count differs from the trusted reader context"),
+])
+def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, refusal):
+    (error, verdict), _ = trusted_result("push", branch="main", default="main", event="push",
+                                        replicas=replicas, outcome=outcome, missing_browser=missing_browser)
+    assert error == refusal
+    if refusal is None:
+        assert verdict["passed"] is True
+    else:
+        assert verdict is None
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group", "push"])
+def test_release_verdict_requires_its_base_and_all_shard_evidence(trusted_result, event):
+    options = {"branch": "release/v1.2.3", "event": event, "default": "main", "outcome": "passed"}
+    (error, verdict), _ = trusted_result("exact", **options)
+    assert error is None and verdict["passed"] is True
+    (error, verdict), _ = trusted_result("foreign", **options, plan_base="e" * 40)
+    assert error == "Evidence is not bound to the independently resolved candidate/target" and verdict is None
+    (error, verdict), _ = trusted_result("incomplete", **options, missing_browser=True)
+    assert "Missing or unexpected shard artifacts: browser-1-1" in error and verdict is None
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_reports_recovered_failure(trusted_result, event):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "recovered", branch="main", default="main", event=event, outcome="failed", retry="passed")
+    assert error is None
+    assert verdict["passed"] is True
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 1
+    assert json.loads(artifacts["recovered-tests.json"]) == [
+        {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
+    ]
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_keeps_persistent_failure_red(trusted_result, event):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "persistent", branch="main", default="main", event=event, outcome="failed", retry="failed")
+    assert error == "Trusted known-failure comparison refused the evidence"
+    assert verdict["passed"] is False
+    assert "New failures outside the known-failure list" in verdict["reason"]
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 0
+
+
+def test_main_push_keeps_reviewed_quarantine(trusted_result):
+    (error, verdict), (_, summary, _) = trusted_result(
+        "push-quarantine", branch="main", default="main", event="push",
+        outcome="quarantine-xfail", base_registry=[quarantine_row(kind="unstable")])
+    assert error is None and verdict["passed"] is True
+    assert b"quarantined and failing now: 1" in summary
+
+
+@pytest.mark.parametrize("browser_shards", [2, 1])
+def test_full_pr_verdict_checks_merge_group_shards(trusted_result, browser_shards):
+    result, _ = trusted_result("full-pr", outcome="passed", browser_shards=browser_shards,
+                               merge_group_shards={"unit_shards": 1, "browser_shards": 2})
+    if browser_shards == 2:
+        assert result[0] is None and result[1]["passed"]
+    else:
+        assert result == ("Candidate plan omits, duplicates or misclassifies committed test files", None)
 
 
 @pytest.mark.parametrize("branch", ["dev", "preview"])
@@ -924,6 +1012,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             assert observed["listed_unstable"][0]["observations"] == ["failed", "passed"]
             assert observed["listed_unstable"][0]["status"] == "PROPOSED_REMARK"
             with monkeypatch.context() as other:
+                other.delenv("GITHUB_REF", raising=False)
                 for event in ("push", "schedule"):
                     other.setenv("GITHUB_EVENT_NAME", event)
                     with pytest.raises(ValueError, match="Unexpected retry evidence"):

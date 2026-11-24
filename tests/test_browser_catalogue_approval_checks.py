@@ -10,6 +10,7 @@ from apps.worker.main import process_one
 from .test_browser import route_fetch, browser, live_server, navigate, sign_in  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot
 from .test_browser_rule_checks import adds_label, no_new_label
+from .test_catalogue_checked_activation import rest_line_proposal
 
 pytestmark = [pytest.mark.browser, pytest.mark.postgres]
 
@@ -129,7 +130,7 @@ def check_and_approve_in_panel(page, h, workspace, proposal, title):
     [row] = h.get('approver', f"/api/policies/{proposal['id']}/review")['effect']
     assert row['job_id'] == job['id'] and row['status'] == 'ready' and not row.get('adds'), row
     clears = row.get('clears') or 0
-    words = f"Clears {clears} check{'' if clears == 1 else 's'}" if clears else 'No change'
+    words = f"Clears {clears} problem{'' if clears == 1 else 's'}" if clears else 'No change'
     # The panel reads the effect again until it is known; a known effect needs no acknowledgement.
     expect(effect).to_contain_text(words, timeout=15000)
     expect(approve).to_be_enabled()
@@ -175,6 +176,55 @@ def test_catalogue_approval_checks_an_overlapping_rota_before_activation(browser
     finally:
         for context in contexts:
             context.close()
+
+
+@pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
+def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_server, h, width, scheme):
+    workspace, proposal = rest_line_proposal(h)
+    job = h.command('approver', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': proposal['id'], 'expected_revision': proposal['revision']}]},
+        revision=workspace['revision'])['job']
+    assert process_one(h.app.state.engine)
+    result = h.get('approver', f"/api/jobs/{job['id']}")['job']['result']
+    [problem] = result['new_or_worse_findings']
+    assert result['comparison_complete'] and problem['code'] == 'MIN_REST'
+
+    context, page = sign_in(browser, live_server, 'approver', viewport={'width': width, 'height': 900}, color_scheme=scheme)
+    try:
+        navigate(page, 'rules/rest_between_duties')
+        page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
+        review = page.get_by_role('region', name='Add a line for everyone · turns the rule on', exact=True)
+        expect(review.get_by_text('Adds 1 problem', exact=True)).to_be_visible()
+        approve = review.get_by_role('button', name='Approve and activate', exact=True)
+        expect(approve).to_be_disabled()
+        disclosure = review.locator('details').filter(has=page.get_by_text('View problems', exact=True))
+        open_problems = disclosure.locator('summary')
+        expect(open_problems).to_have_accessible_name(f"View problems for {workspace['name']}")
+        open_problems.press('Enter')
+        expect(open_problems).to_be_focused()
+        problems = disclosure.get_by_role('listitem')
+        expect(problems).to_contain_text(problem['message'])
+
+        acknowledgement = review.get_by_role('checkbox', name='Approve despite the added or worsened problems', exact=True)
+        expect(acknowledgement).not_to_be_checked()
+        acknowledgement.check()
+        expect(approve).to_be_disabled()
+        review.get_by_label('Reason', exact=True).fill('Reviewed the rest problem')
+        expect(problems).to_be_visible()
+        open_problems.press('Enter')
+        expect(problems).to_have_count(0)
+        expect(open_problems).to_be_focused()
+        expect(approve).to_be_enabled()
+        with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/api/commands')
+                                  and r.request.post_data_json['kind'] == 'policy.activate') as response:
+            approve.click()
+        assert response.value.status == 200
+        assert response.value.request.post_data_json['payload'] == {'check_job_ids': [job['id']],
+            'acknowledge_unresolved': True, 'reason': 'Reviewed the rest problem'}
+        expect(review).to_have_count(0)
+        assert policy(h, proposal['id'])['status'] == 'active'
+    finally:
+        context.close()
 
 
 @pytest.mark.parametrize('scope', ['person', 'rota'])
@@ -284,6 +334,59 @@ def test_pending_rules_preserve_read_only_independence_withdraw_and_decline(brow
         expect(dialog).to_have_count(0)
         assert policy(h, records[1]['id'])['status'] == 'retired'
         expect(page.locator('#toast-tray .toast', has_text='Proposal declined.').get_by_role('button', name='Undo', exact=True)).to_be_visible()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('role,width,scheme', [('approver', 1440, 'light'), ('approver', 390, 'dark'),
+                                                ('coordinator', 1440, 'dark'), ('auditor', 390, 'light')])
+def test_older_kind_proposal_is_a_row_of_waiting_for_approval_and_opens_its_review(browser, live_server, h, role, width, scheme):
+    """An older-kind proposal is a row of the built-in Waiting for approval view, labelled Older rule; its count and the
+    ⋯ badge count it once each, and its name opens the decision panel Other pending rules' Review opens, with the same
+    permissions: Activate for another approver, none for its proposer, the rule sheet for a reader."""
+    flag(h)
+    workspace = h.shift(h.workspace('Waiting view context'))['workspace']
+    title = 'Older rest proposal'
+    proposal = h.command('coordinator', 'policy.create', {'name': title, 'owner': 'Synthetic department',
+        'source': 'Waiting view regression', 'starts_on': '2026-10-01',
+        'definition': {'rule': {'kind': 'min_rest', 'hours': 12}}})['record']
+    assert proposal['status'] == 'proposed'
+    context, page = sign_in(browser, live_server, role, {'width': width, 'height': 900})
+    try:
+        page.emulate_media(color_scheme=scheme, reduced_motion='reduce')
+        navigate(page, 'rules')
+        row = page.locator(f'#main li[data-older-rule="{proposal["id"]}"]')
+        expect(pending_action(page, 1)).to_be_visible()  # the ⋯ badge still says it waits
+        page.keyboard.press('Escape')
+        expect(row).to_have_count(0)  # All rules lists catalogue rules only
+        page.locator('#main button.dt-saved').click()
+        item = page.get_by_role('menuitemradio', name=re.compile('^Waiting for approval'))
+        expect(item).to_contain_text('1')
+        item.click()
+        expect(row).to_be_visible()
+        expect(row.locator('.badge', has_text='Older rule')).to_be_visible()
+        expect(row.locator('.rt-waiting-chip')).to_have_text('Waiting for approval')
+        expect(page.locator('.app-footer .page-status .dt-count')).to_have_text(re.compile(r'^1 of \d+ rules?$|^1 rule$'))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+        shot(page, f'waiting-older-{role}-{width}-{scheme}')
+        name = row.get_by_role('button', name=title, exact=True)
+        name.focus()
+        page.keyboard.press('Enter')
+        if role == 'auditor':
+            expect(page.get_by_role('region', name=title, exact=True)).to_be_visible()  # reads only
+            return
+        review = page.get_by_role('dialog', name='Review ' + title, exact=True)
+        expect(review).to_be_visible()
+        expect(review.get_by_role('cell', name=workspace['name'], exact=True)).to_be_visible()
+        activate = review.get_by_role('button', name='Activate', exact=True)
+        if role == 'coordinator':
+            expect(activate).to_have_count(0)  # its proposer never approves it
+        else:
+            expect(activate).to_be_visible()
+            expect(review.get_by_role('button', name='Decline', exact=True)).to_be_visible()
+        review.get_by_role('button', name='Close dialog', exact=True).click()
+        expect(review).to_have_count(0)
+        assert policy(h, proposal['id'])['status'] == 'proposed'
     finally:
         context.close()
 

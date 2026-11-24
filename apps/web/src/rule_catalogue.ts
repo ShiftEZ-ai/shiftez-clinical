@@ -2,7 +2,7 @@
  *  one rule per catalogue entry, its lines saying who, where, when and the numbers. The Rules list is one database
  *  (rules_tree.ts: families › rules › lines, and Needs attention); a rule's own page (#rules/<id>) is a lines database
  *  with a line editor docked beside it. Every change goes into one local draft per rule, proposed together. */
-import {bidi,departmentTimeZone,notifyWaiting,statusTone,disabledWhy,el,icon,iconButton,menuItem,formatTime,area,badge,grants,ruleFacts,departmentToday,button,compact,check,confirmAction,multiPick,relabel,note,empty,field,footerStatus,legend,dateUnits,formatDate,formDialog,labelOf,notify,plural,popover,sectionHead,select,showDialog,statusBadge,weekOrder,armed,WEEKDAYS,type Child,CAPABILITY,typeColour} from './dom.js';
+import {bidi,departmentTimeZone,notifyWaiting,statusTone,disabledWhy,el,icon,iconButton,menuItem,formatTime,area,badge,grants,ruleFacts,departmentToday,button,compact,check,confirmAction,multiPick,relabel,note,empty,field,footerStatus,legend,dateUnits,formatDate,formDialog,labelOf,notify,plural,popover,sectionHead,select,showDialog,spanLabel,statusBadge,weekOrder,armed,WEEKDAYS,type Child,CAPABILITY,typeColour} from './dom.js';
 import {readFailed,refused,failedNote,couldntLoad} from './dom.js';  // a failed read: refused (403) or an error with Retry (maintenance)
 import {fullNameOf} from './person_label.js';
 import {dateRange,lastDayIncluded} from './date_picker.js';
@@ -1126,9 +1126,25 @@ function effectRows(rows:Effect[],none='No rota being planned overlaps its dates
     const since=x.started_at||x.created_at;
     const end=w?badge(w.text,w.tone):elapsed(waitingWord(x.status)||'Checking',since?Date.parse(since):Date.now());
     if(w?.tone==='ok')end.prepend(icon('check'));if(!w)end.id=`rc-effect-wait-${i}`;
-    // SW-11: the draft's name, then the server's summary on its own line, unless it only repeats the badge.
-    const more=x.summary&&x.summary!==w?.text?x.summary:'';
-    return el('li',{},el('span',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),more?el('small',{class:'muted rc-effect-summary'},more):''),end);});
+    const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
+      :x.summary&&x.summary!==w?.text?x.summary:'';
+    let problems:Child='';
+    if(x.new_or_worse_count&&x.job_id){
+      const jobId=x.job_id,content=el('div',{});
+      const details=el('details',{},el('summary',{'aria-label':`View problems for ${x.name}`},'View problems'),content);
+      const load=async()=>{const body=el('div',{},skeleton('lines','Loading problems…'));content.replaceChildren(body);
+        try{const {job}=await get(`/api/jobs/${encodeURIComponent(jobId)}`);
+          const findings=(job.result?.new_or_worse_findings||[]) as Row[];
+          if(job.check_stale||job.result?.comparison_complete!==true||!findings.length){body.replaceChildren(note('Reopen the review for a fresh check.','warning'));return;}
+          const zone=departmentTimeZone();
+          body.replaceChildren(el('ul',{class:'review-findings'},...findings.map(f=>el('li',{class:'review-finding'},
+            el('span',{},String(f.message),f.start&&typeof f.start==='string'?` · ${spanLabel(f.start,f.end,zone)}`:'')))));}
+        catch(err){body.replaceChildren(readFailed('the problems',err,()=>void load()));}};
+      details.addEventListener('toggle',()=>{if(details.open)void load();});
+      problems=details;
+    }
+    return el('li',{},el('div',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),
+      more?el('small',{class:'muted rc-effect-summary'},more):'',problems),end);});
 }
 /** One of a rule's units ("1 duty", "1 person"). */
 const ONE:Record<string,string>={people:'person',duties:'duty',hours:'hour',days:'day',weekends:'weekend',minutes:'minute',trainees:'trainee',units:'unit'};
@@ -1768,13 +1784,13 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
       let review:Review|null=null,rows:Effect[]=[];
-      // maintenance: an effect that could not be established is decided on explicitly: what is uncertain stays listed above,
-      // the approver ticks that they approve without it and says why (recorded with the activation).
-      const understood=check('Approve without a complete check of these drafts',false),why=area('Reason','',2);why.input.maxLength=500;
-      const uncertain=el('div',{class:'rc-ack'},understood.wrap,why.wrap);
+      const incompleteLabel='Approve without a complete check of these drafts';
+      const understood=check(incompleteLabel),why=area('Reason','',2);why.input.maxLength=500;
+      const ackLabel=understood.wrap.querySelector('.check-text>span')!;
+      const acknowledgement=el('div',{class:'rc-ack'},understood.wrap,why.wrap);
       for(const x of [understood.input,why.input])x.addEventListener(x===why.input?'input':'change',()=>paint());
       // A check still under way (running, or started here and not picked up yet) shows its elapsed time, never the
-      // acknowledgement: that is offered only once the check has ended incomplete.
+      // acknowledgement, which is offered once the checks stop and the approver can decide.
       const checking=()=>rows.some(effectRunning)||rows.some(x=>x.status==='not_checked'&&started.has(x.workspace_id));
       // SW3-B-19: Check / Check again starts the drafts' checks on request (a refused start is said, never left as a check
       // that never ends); Stop cancels a check that hangs (job.cancel: coordinators). Approving without a complete check
@@ -1790,14 +1806,19 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         await Promise.all(Array.from({length:Math.min(CHECKS_AT_ONCE,queue.length)},worker));
         for(const x of queue)started.delete(x.workspace_id);};  // closed before they were started
       const reread=async()=>{const r=await proposalReview(String(p.id));review=r;rows=r.effect||[];paint();};
-      const recheck=button('Check',async()=>{const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&x.status!=='ready'));await reread();void load();}
+      const recheck=button('Check',async()=>{understood.input.checked=false;const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&x.status!=='ready'));await reread();void load();}
         catch(err){reportError(err);}finally{await done();}},'secondary small');
       const stop=mayStop?button('Stop',async()=>{const done=busy(stop!);
         try{await command('bulk.apply',{item_kind:'job.cancel',reason:'Stopped the rule check',
           items:rows.filter(effectRunning).filter(x=>x.job_id).map(x=>({target_id:String(x.job_id)}))});await reread();}
         catch(err){reportError(err);}finally{await done();}},'secondary small'):null;
+      let paintedEffects='';
       const paint=()=>{if(!review){approve.disabled=true;recheck.hidden=true;if(stop)stop.hidden=true;return;}
-        list.replaceChildren(...effectRows(rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x),review.summary||undefined));const wait=list.querySelector('[id^="rc-effect-wait"]');
+        const effects=rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x);
+        // Keep the evidence open when only the acknowledgement controls repaint.
+        const effectKey=JSON.stringify([effects,review.summary]);
+        if(effectKey!==paintedEffects){list.replaceChildren(...effectRows(effects,review.summary||undefined));paintedEffects=effectKey;}
+        const wait=list.querySelector('[id^="rc-effect-wait"]');
         const fresh=rows.some(x=>x.status==='not_checked'&&!started.has(x.workspace_id));
         recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(x=>x.status!=='ready');
         if(stop)stop.hidden=!rows.some(effectRunning);
@@ -1805,7 +1826,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           // maintenance: a review read that fails is said, with Retry, and polling goes on (it used to stop for good while the
           // elapsed time kept counting: the sweep's "Checking · 12:51").
           ...(pollError?[(n=>{n.append(' ',button('Retry',()=>{window.clearTimeout(timer);void poll();},'secondary small'));return n;})(note(`Couldn't check · ${pollError}`,'warning'))]:[]));
-        const ask=!!review.requires_acknowledgement&&review.can_decide!==false&&!checking();uncertain.hidden=!ask;why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
+        const ask=!!review.requires_acknowledgement&&review.can_decide!==false&&!checking();acknowledgement.hidden=!ask;
+        ackLabel.textContent=rows.some(x=>x.new_or_worse_count)?(rows.some(x=>x.status!=='ready')?
+          'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
+        why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
         approve.disabled=checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
         if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');};
@@ -1834,7 +1858,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
         proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
-            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?uncertain:'');delete approve.dataset.tip;paint();void load();},
+            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');delete approve.dataset.tip;paint();void load();},
           async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
@@ -2221,11 +2245,22 @@ export function moreActions(label:string,items:Child[],pending=0):HTMLElement{
 }
 /** Rules in force that are not in the catalogue yet: they keep applying as they are (read-only here). */
 export const keptRules=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='active'&&p.kind!=='catalogue'&&!p.definition?.workspace_id);
+/** Proposals for an older rule kind (not in the catalogue): one list for the ⋯ menu's count and Waiting for approval. */
+export const olderPending=(ctx:Context)=>(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+const recordName=(ctx:Context)=>(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+/** What an older rule does, in words (its Effect in Other pending rules). */
+export const olderEffect=(ctx:Context,p:Row)=>ruleSentence(p.definition.rule,p.definition,recordName(ctx));
+/** May check an older-kind proposal against current rotas (its Review). */
+export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER);
+/** An older-kind proposal's decision panel (check, Activate, Decline): Activate for another approver, or the proposer
+ *  under a self-approval permission (mayDecide). */
+export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
+  refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{
-  const pending=(ctx.catalogues.policies||[]).filter(p=>p.status==='proposed'&&p.kind!=='catalogue');
+  const pending=olderPending(ctx);
   if(!kept.length&&!pending.length)return null;
-  const name=(kind:string,id:string)=>labelOf((ctx.catalogues[kind]||[]).find(r=>r.id===id));
+  const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
   const context=kept.length?compact(button(`Other department rules (${kept.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
     build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
@@ -2239,7 +2274,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
           {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
     'secondary'),'layers'):null;
   if(!pending.length)return context;
-  const canCheck=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
+  const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};
   // Folds to its icon beside a side panel, like the other header buttons.
   const waiting=compact(button(`Other pending rules (${pending.length})`,()=>dockPanel({key:'pending-rules',title:'Other pending rules',width:640,
@@ -2250,7 +2285,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
       columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
         {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)}],
       rowActions:p=>{const mine=p.created_by===ctx.me.identity_id;return [
-        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>ruleReview(p,canCheck,ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),changed,name,ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx)}]:[]),
+        ...(canCheck?[{label:'Review',icon:'shield' as const,run:()=>reviewOlder(ctx,p,changed)}]:[]),
         // Withdrawing your own proposal requires a recorded reason; Undo puts it back waiting.
         ...(canDecide&&mine?[{label:'Withdraw',icon:'close' as const,danger:true,run:()=>confirmAction(`Withdraw ${labelOf(p)}`,'The proposal stays in History; Undo puts it back waiting.',reason=>declineProposal(p,reason,'Proposal withdrawn.',changed),'Withdraw')}]:[]),
         ...(canDecide&&!mine?[{label:'Decline',icon:'close' as const,danger:true,run:()=>confirmAction(`Decline ${labelOf(p)}`,'The proposal is kept in History.',reason=>declineProposal(p,reason,'Proposal declined.',changed),'Decline')}]:[])];},

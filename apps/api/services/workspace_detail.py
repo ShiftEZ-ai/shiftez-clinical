@@ -5,7 +5,7 @@ from sqlalchemy.orm import load_only
 from apps.api import models as m
 from apps.api.errors import require
 from apps.api.serialization import record
-from apps.api.snapshots import fingerprints, project_series_shifts, shift_records
+from apps.api.snapshots import fingerprints, full_shifts, project_series_shifts, shift_records
 from packages.domain.time import aware
 from .common import local_date_span, visible_rota_name
 from . import reviews
@@ -13,15 +13,6 @@ from .planning import allowed_actions, redo_available
 from .planning_groups import unrestricted
 from .workspace_access import access_record
 from .workspace_reads import stored_checks
-
-
-def full_shifts(db, workspace_id):
-    shift = m.Shift
-    # Mapped columns retain workspace visibility criteria without creating Shift instances.
-    columns = [getattr(shift, key) for key in shift.__mapper__.column_attrs.keys()]
-    rows = db.execute(select(*columns).where(shift.workspace_id == workspace_id)
-                      .order_by(shift.start, shift.id)).mappings()
-    return shift_records(db, rows)
 
 
 def compact(db, actor, workspace):

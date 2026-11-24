@@ -21,6 +21,7 @@ from .common import expected, history
 from .events import invalidate_audience_inputs
 
 LINK_HOURS = {"invite": 72, "reset": 24}
+LOCAL_ISSUER = "local-development"
 PENDING = "pending:"  # subject prefix until the first sign-in through the provider binds the real subject
 
 
@@ -146,7 +147,7 @@ def invite(db, actor, value, settings):
     if value.person_id:
         person_access(db, actor, value.person_id)
     # Local passwords are independent of whichever institutional provider is configured later.
-    issuer, subject = "local-development", value.username
+    issuer, subject = LOCAL_ISSUER, value.username
     taken = db.scalar(select(m.Account).where(m.Account.username == value.username)) is not None or \
         db.scalar(select(m.Identity).where(m.Identity.issuer == issuer, m.Identity.subject == subject)) is not None
     require(not taken, "USERNAME_TAKEN", "This sign-in name is already taken", 409)
@@ -162,7 +163,8 @@ def invite(db, actor, value, settings):
         history(db, actor, "access", binding, value.reason)
     link = issue_link(db, actor, identity.id, "invite", settings)
     invalidate_audience_inputs(db, actor)
-    written(lambda: users.create(value.username, value.display_name, value.email))  # last: a failure rolls all back
+    pending_options = {"pending_for": owner} if (owner := db.info.get("staff_onboarding")) else {}
+    written(lambda: users.create(value.username, value.display_name, value.email, **pending_options))
     return {"record": record(identity, exclude=("password_hash",)), "account": record(account), "link": link}
 
 

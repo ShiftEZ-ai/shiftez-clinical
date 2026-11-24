@@ -9,6 +9,7 @@ from copy import deepcopy
 from functools import lru_cache
 from math import ceil
 import json
+import pickle
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from .participation import presence_intervals
@@ -174,13 +175,17 @@ def person_rows(data, name, person_id):
     return index[name].get(person_id, ())
 
 
-def display_only_change(snapshot, current):
-    """A duty type edit that only changes its colour is display, not a new definition: no refresh needed."""
+def display_only_change(snapshot, current, *, live_staffing=False):
+    """Ignore colour and, for drafts that enforce them live, hard staffing values."""
     if not snapshot:
         return False
     def core(r):
-        return {**{k: v for k, v in r.items() if k != "revision"},
-                "definition": {k: v for k, v in (r.get("definition") or {}).items() if k != "colour"}}
+        definition = {k: v for k, v in (r.get("definition") or {}).items() if k != "colour"}
+        if live_staffing:
+            definition["requirements"] = [(row.get("from_minute", 0), row.get("to_minute"), row["target"])
+                                          for row in definition.get("requirements") or () if row.get("target") is not None]
+            definition.pop("supervision", None)
+        return {**{k: v for k, v in r.items() if k not in ("revision", "draft_safety")}, "definition": definition}
     return core(snapshot) == core(current)
 
 
@@ -275,18 +280,67 @@ def _published_session(data, shift):
             or shift['workspace_id'] != workspace['id'])
 
 
-def effective_issued_definition(issued, current):
+def _supervision_scope(supervision):
+    return supervision["capability_id"], frozenset(supervision["trainee_category_ids"])
+
+
+def prepare_draft_type_safety(data, shifts):
+    """Prepare only duties affected by catalogue safety drift, once at snapshot assembly."""
+    types, zone = data["types"], data["organisation"]["timezone"]
+    workspace_id = data["workspace"]["id"]
+    fields = ("requirements", "supervision")
+    operational = data.get("operational")
+    prepared = {}
+    for shift in shifts:
+        if shift["workspace_id"] != workspace_id:
+            continue
+        typ = types.get(shift["assignment_type_id"])
+        if typ is None:
+            continue
+        overlay = typ.get("draft_safety")
+        if overlay is None and shift["type_revision"] == typ["revision"]:
+            continue
+        issued = shift["type_snapshot"]["definition"]
+        current = typ["definition"]
+        captured = overlay["captured"] if overlay else None
+        live = overlay["live"] if overlay else current
+        if not valid_dates(typ, aware(shift["start"]), aware(shift["end"]), zone):
+            live = None
+        sources = [source for source in (captured, live) if source is not None
+                   and any(source.get(field) != issued.get(field) for field in fields)]
+        if not sources:
+            continue
+        scopes = {_supervision_scope(source["supervision"]) for source in (issued, *sources)
+                  if source.get("supervision")}
+        effective = current if operational else issued
+        for source in ([issued] if operational else []) + sources:
+            effective = effective_issued_definition(effective, source, draft=True)
+        prepared[shift["id"]] = (effective, len(scopes) > 1)
+    return prepared
+
+
+def _prepared_draft_type(data, shift):
+    if prepared := data.get("_draft_type_safety"):
+        return prepared.get(shift.get("id"))
+
+
+def effective_issued_definition(issued, current, *, draft=False):
     """Keep issued type fields frozen while tightening its safety requirements from today."""
     effective = deepcopy(issued or {})
     current = current or {}
     effective['requirements'] = list(effective.get('requirements') or [])
     issued_requirements = effective['requirements']
     current_requirements = current.get('requirements') or []
+    if draft:
+        current_requirements = [{**row, "target": None} for row in current_requirements
+                                if row.get("minimum") or row.get("maximum") is not None or row.get("capabilities")]
     used = set()
     for row in issued_requirements:
         key = requirement_key(row)
         index = next((i for i, live in enumerate(current_requirements)
-                      if i not in used and requirement_key(live) == key), None)
+                      if i not in used and requirement_key(live) == key
+                      and (not draft or not row.get("distinct_capability_seats")
+                           or row.get("capabilities") == live.get("capabilities"))), None)
         if index is None:
             continue
         used.add(index)
@@ -306,7 +360,8 @@ def effective_issued_definition(issued, current):
     current_supervision = current.get('supervision')
     if issued_supervision is None and current_supervision is not None:
         effective['supervision'] = deepcopy(current_supervision)
-    elif issued_supervision is not None and current_supervision is not None:
+    elif (issued_supervision is not None and current_supervision is not None
+          and (not draft or _supervision_scope(issued_supervision) == _supervision_scope(current_supervision))):
         issued_supervision['trainees_per_supervisor'] = min(
             issued_supervision.get('trainees_per_supervisor', 20),
             current_supervision.get('trainees_per_supervisor', 20))
@@ -316,12 +371,14 @@ def effective_issued_definition(issued, current):
 
 
 def effective_type_definition(data, shift):
-    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values.
-    Run-cached definitions are read-only.
-    """
+    """Resolve draft and operational safety while keeping each caller's definition detached."""
     issued = shift['type_snapshot']['definition']
     operational = bool(data.get('operational'))
-    current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
+        current = prepared[0]
+    else:
+        current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
     published = _published_session(data, shift) if operational else False
     cache = data.get('_line_index_cache')
     if cache is not None:
@@ -329,16 +386,18 @@ def effective_type_definition(data, shift):
         key = id(issued), id(current), operational, published
         entry = definitions.get(key)
         if entry is not None and entry[0] is issued and entry[1] is current:
-            return entry[2]
+            return pickle.loads(entry[2])
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
-        definition = (current if operational else issued) or {}
+        definition = (current if operational or prepared else issued) or {}
         effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
-        # Retain both sources so their identities cannot be reused during this run.
-        definitions[key] = issued, current, effective
+        # Retain the sources so their identities cannot be reused during this run.
+        encoded = pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
+        definitions[key] = issued, current, encoded
+        return pickle.loads(encoded)
     return effective
 
 
@@ -752,14 +811,17 @@ def available_for_coverage(data, pid, a, b):
     return not facts
 
 
+ROTATION_LEAVE_KINDS = frozenset({
+    'leave', 'recorded_leave', 'approved_leave', 'actual_absence', 'external_commitment', 'off_duty',
+})
+
+
 def rotation_leave_findings(data):
     """The same dated rotation/leave rule for timeline previews, writes and rota checks."""
     zone = data['organisation']['timezone']
     away = defaultdict(list)
     for row in data.get('rotation_leave_availability', data.get('availability', [])):
-        if row.get('retracted') or row.get('kind') not in {
-                'leave', 'recorded_leave', 'approved_leave', 'actual_absence',
-                'external_commitment', 'off_duty'}:
+        if row.get('retracted') or row.get('kind') not in ROTATION_LEAVE_KINDS:
             continue
         away[row['person_id']].append(row)
     workspace = data.get('workspace')
@@ -1067,10 +1129,19 @@ def validate_session_setup(data, shift, shifts, definition, add):
     sid, start, end = shift['id'], aware(shift['start']), aware(shift['end'])
     typ = data["types"][shift["assignment_type_id"]]
     published = data.get('operational') and _published_session(data, shift)
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
+        authored = typ["definition"] if data.get("operational") else shift["type_snapshot"]["definition"]
+    else:
+        authored = definition
     if not valid_dates(shift['type_snapshot'] if published else typ, start, end, zone):
         add("TYPE_INACTIVE", "Assignment type is inactive or outside its effective interval", sid)
-    if (sid not in data.get("_issued_type_versions", ()) and shift["type_revision"] != typ["revision"]
-            and not display_only_change(shift.get("type_snapshot"), typ) and not published):
+    # Different supervision scopes cannot be represented by one duty-type slot.
+    if prepared and prepared[1]:
+        add("TYPE_VERSION_CHANGED", "Supervision scope changed; review and refresh the draft duty inputs", sid)
+    elif (sid not in data.get("_issued_type_versions", ()) and shift["type_revision"] != typ["revision"]
+            and not display_only_change(shift.get("type_snapshot"), typ, live_staffing=prepared is not None)
+            and not published):
         add("TYPE_VERSION_CHANGED", "Type changed; explicitly refresh the draft definition and review its impact", sid,
             severity="error")
     if sid in focus and not configured_duration_matches(definition, start, end, zone):
@@ -1081,7 +1152,9 @@ def validate_session_setup(data, shift, shifts, definition, add):
             "maximum_duration_minutes", TypeDefinition.model_fields["maximum_duration_minutes"].default):
         add("DURATION_LIMIT", "Session exceeds the assignment type's maximum duration", sid)
     try:
-        validate_attributes(TypeDefinition.model_validate(definition), shift["attributes"])
+        # Independently valid limits can conflict across versions. Validate
+        # attributes against the authored schema.
+        validate_attributes(TypeDefinition.model_validate(authored), shift["attributes"])
     except ValueError as exc:
         add("CUSTOM_FIELD_INVALID", str(exc), sid)
     if definition["purpose"] == "staffed" and not shift["service_ids"]:
@@ -1488,6 +1561,88 @@ class TrialPresence(dict):
         return dict.__getitem__(self, key)
 
 
+def incremental_edit_scope(data, before, previous, rule_sources):
+    """Reuse only a complete check of the exact pre-edit schedule and current non-edit inputs."""
+    from .finding_causes import DIAGNOSTIC_VERSION
+    from .input_manifest import FIELDS, manifest, project, shift_input
+    from .validation_scope import assignment_scope
+
+    workspace = data.get('workspace')
+    prior = before.get('workspace')
+    stamp = previous.get('input_manifest') or {}
+    current = data.get('input_manifest') or {}
+    prior_components = stamp.get('components') or {}
+    prior_sources = (previous.get('fix_list_context') or {}).get('sources')
+    if (not workspace or not prior or data.get('operational') or previous.get('scope')
+            or previous.get('engine_version') != ENGINE_VERSION or previous.get('contracts') != check_contracts()
+            or previous.get('diagnostic_version') != DIAGNOSTIC_VERSION or not previous.get('evaluated_at')
+            or not isinstance(previous.get('_session_parts'), list) or not isinstance(previous.get('_person_parts'), dict)
+            or project(prior, FIELDS['workspace']) != project(workspace, FIELDS['workspace'])
+            or stamp.get('format') != current.get('format')
+            or not prior_components or not current.get('components')
+            or any(value != prior_components.get(key)
+                   for key, value in current.get('components', {}).items() if key != 'content')
+            or previous.get('fingerprint') != stamp.get('token')
+            or prior_sources is None or list(prior_sources.items()) != list(rule_sources.items())):
+        return None
+
+    focus = set(data['focus_ids'])
+    prior_ids = {shift['id'] for shift in before['shifts']}
+    # A stored check without its coverage rows (older stored shape) cannot be merged; check in full.
+    coverage = previous.get('coverage')
+    if not isinstance(coverage, list) or {row['shift_id'] for row in coverage} != prior_ids:
+        return None
+    own = [shift for shift in data['shifts'] if shift['id'] in focus]
+    others = [shift for shift in data['shifts'] if shift['id'] not in focus]
+    old = with_series_state({**data, 'shifts': before['shifts'] + others,
+                             'workspace': prior, 'focus_ids': prior_ids})
+    if any(shift['assignment_type_id'] not in data['types'] for shift in old['shifts']):
+        return None
+    old_stamp = manifest(old)
+    if any(stamp.get(key) != old_stamp[key] for key in ('token', 'components', 'dirty_hint')):
+        return None
+
+    was = {row['id']: shift_input(row) for row in old['shifts'] if row['id'] in prior_ids}
+    now = {row['id']: shift_input(row) for row in own}
+    touched = {sid for sid in was.keys() | now.keys() if was.get(sid) != now.get(sid)}
+    changed_before = [row for row in old['shifts'] if row['id'] in touched]
+    changed_after = [row for row in own if row['id'] in touched]
+    scope = assignment_scope(data, changed_before, changed_after)
+    scope['shifts'].update(touched)
+    people = set()
+    for sid in touched:
+        old_input, new_input = was.get(sid, {}), now.get(sid, {})
+        old_people = {row['id']: row for row in old_input.get('participants', ())}
+        new_people = {row['id']: row for row in new_input.get('participants', ())}
+        fields = (old_input.keys() | new_input.keys()) - {'revision', 'participants'}
+        setup_changed = any(old_input.get(key) != new_input.get(key) for key in fields)
+        for assignment_id in old_people.keys() | new_people.keys():
+            before_row, after_row = old_people.get(assignment_id), new_people.get(assignment_id)
+            if setup_changed or before_row != after_row:
+                people.update(row['person_id'] for row in (before_row, after_row) if row is not None)
+    # Each edited person keeps their whole duty horizon for window and adjacent-duties rules.
+    scope['people'] = people
+    # A leave finding names all of the person's duties during leave, even on other dates.
+    leave_people = {row['person_id'] for row in data.get('availability', ())
+                    if row['kind'] == 'approved_leave'} & scope['people']
+    if leave_people:
+        scope['shifts'].update(row['id'] for row in own
+                               if any(p['person_id'] in leave_people for p in row['participants']))
+    return {**scope, 'previous': previous, 'complete': True}
+
+
+def _merge_session_checks(partial, shifts, findings, coverage, session_start):
+    previous = partial['previous']
+    affected = partial['shifts']
+    findings.extend(previous['findings'][index] for index in previous['_session_parts']
+                    if previous['findings'][index]['shift_id'] not in affected)
+    order = {shift['id']: index for index, shift in enumerate(shifts)}
+    findings[session_start:] = sorted(findings[session_start:], key=lambda row: order[row['shift_id']])
+    coverage.extend(row for row in previous['coverage'] if row['shift_id'] not in affected)
+    # Whole checks append inactive rows in input order after all active coverage.
+    coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order[row['shift_id']]))
+
+
 def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False, trial_cache=None) -> dict:
     """`session_cache`: private to assignment-copy trials on one otherwise immutable snapshot.
     Reuse unchanged sessions' checks; department reports remain fresh.
@@ -1784,7 +1939,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                 pid = person['person_id']
                 commitments[pid].append((shift, person, a, b))
                 presence[shift["id"], pid] = intervals or []
-                if intervals is None and shift["id"] in focus and (partial is None or shift["id"] in partial["shifts"]):
+                if intervals is None and shift["id"] in focus and (partial is None or complete_partial or shift["id"] in partial["shifts"]):
                     add("PARTICIPATION_INVALID", "Planned presence segments are invalid; no qualified cover is inferred",
                         shift["id"], pid)
 
@@ -1792,7 +1947,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         entries.sort(key=lambda row: row[2])
     overlap_groups = defaultdict(list)
     overlap_conflicts = evaluate_overlaps(data, include_unavailability=False, commitments=commitments)
-    if (overlap_witness is not None and partial is None and not data.get('skip_coverage')
+    if (overlap_witness is not None and (partial is None or complete_partial) and not data.get('skip_coverage')
             and data.get('person_rule_subjects') is None and data.get('quota_subjects') is None
             and not data.get('availability')
             and not any(not row.get('department_available', True) for row in data.get('rotations', []))
@@ -2118,11 +2273,11 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                         all_limits = [policy for policy in counted_policies
                                       if policy['definition']['rule']['kind'] == 'supervision_limit'
                                       and policy_applies(data, policy, supervisor_id, shift, a, b)]
-                        applicable = [policy['definition']['rule'] for policy in all_limits
-                                      if policy['definition']['rule'].get('mode') == 'capacity']
-                        if applicable:
+                        capacity_limits = [policy['definition']['rule'] for policy in all_limits
+                                           if policy['definition']['rule'].get('mode') == 'capacity']
+                        if capacity_limits:
                             capacities[supervisor_id] = min(
-                                [capacities[supervisor_id]] + [rule['maximum'] for rule in applicable
+                                [capacities[supervisor_id]] + [rule['maximum'] for rule in capacity_limits
                                                                if rule.get('maximum') is not None
                                                                and (not rule.get('trainee_category_ids')
                                                                     or all(set(rule['trainee_category_ids']).intersection(
@@ -2218,14 +2373,16 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
                                   session_signature, supervisor_candidates)
 
     from .rota_summary import grouped_findings
+    if partial is None or complete_partial:
+        for shift in data["shifts"]:
+            if (shift["id"] in focus and inactive(shift)
+                    and (not complete_partial or shift['id'] in partial['shifts'])):
+                coverage.append({"shift_id": shift["id"], "start": shift["start"], "end": shift["end"],
+                                 "scheduled": len(shift["participants"]), "available_eligible": 0,
+                                 "required": 0, "status": 'closed' if shift.get('closed') else 'cancelled',
+                                 "availability_basis": "known_records_not_attendance"})
     if complete_partial:
-        previous = partial['previous']
-        findings.extend(previous['findings'][index] for index in previous['_session_parts']
-                        if previous['findings'][index]['shift_id'] not in partial['shifts'])
-        coverage.extend(row for row in previous['coverage'] if row['shift_id'] not in partial['shifts'])
-        order = {shift['id']: index for index, shift in enumerate(shifts)}
-        findings[non_session_found:] = sorted(findings[non_session_found:], key=lambda f: order[f['shift_id']])
-        coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order.get(row['shift_id'], len(order))))
+        _merge_session_checks(partial, data['shifts'], findings, coverage, non_session_found)
     findings = grouped_findings(findings, coverage)
     session_keys = {tuple(f.get(key) for key in ('code', 'shift_id', 'person_id', 'rule_id', 'start'))
                     for f in findings[non_session_found:]} if session_parts else set()
@@ -2457,13 +2614,6 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     from .resources import evaluate_resources
     evaluate_resources(data, definitions, shifts, focus, add, ancestor_ids, valid_dates)
 
-    for shift in data["shifts"]:
-        if (shift["id"] in focus and inactive(shift)
-                and (not complete_partial or shift['id'] in partial['shifts'])):
-            coverage.append({"shift_id": shift["id"], "start": shift["start"], "end": shift["end"],
-                             "scheduled": len(shift["participants"]), "available_eligible": 0,
-                             "required": 0, "status": 'closed' if shift.get('closed') else 'cancelled',
-                             "availability_basis": "known_records_not_attendance"})
     findings = grouped_rule_findings(findings, data['policies'], tiers=data.get('_policy_group_tiers'))
     check()
     if '_published_session_checks' in data:

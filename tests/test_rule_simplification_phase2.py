@@ -70,12 +70,12 @@ def test_rules_under_different_names_that_are_one_rule_become_one():
                      'weekdays': [0, 1, 2, 3, 6]}, '2026-10-01', '2027-01-01')
     # One person's clinic placement per rule: person lines on an attendance level.
     placements = [rule(f'Sport Medicine longitudinal clinic placement 1 / {n}', {'kind': 'minimum_cover', 'minimum': 1},
-                       {'person_id': PERSON[who], 'service_id': clinics[3], 'programme_id': PROGRAMME['Residency']}, severity='advisory')
+                       {'person_id': PERSON[who], 'service_id': clinics[3], 'programme_id': PROGRAMME['Residency']})
                   for n, who in enumerate(('Kopofiku', 'Badr'), 1)]
     # Personal preferences: a grouped rule and single rules for other people, priorities up and down.
-    preferences = [grouped('Preferred ZZ session', {'kind': 'allocation_preference', 'priority': 1},
+    preferences = [grouped('Preferred staff session', {'kind': 'allocation_preference', 'priority': 1},
                            [{'person_id': PERSON['Carla'], 'assignment_type_ids': [TYPE['Evening shift']]}], {'service_ids': ucc}, severity='advisory'),
-                   rule('Quartz · Lower ZZ allocation priority', {'kind': 'allocation_preference', 'priority': -1},
+                   rule('Quartz · Lower staff allocation priority', {'kind': 'allocation_preference', 'priority': -1},
                         {'person_id': PERSON['Quartz'], 'service_ids': ucc}, severity='advisory'),
                    rule('Emad · Prefer weekend mornings', {'kind': 'allocation_preference', 'priority': 1},
                         {'person_id': PERSON['Emad'], 'service_ids': ucc, 'assignment_type_id': TYPE['Day shift'], 'weekdays': [4, 5]}, severity='advisory')]

@@ -221,7 +221,12 @@ def test_partial_contact_payload_cannot_hide_reset_of_clinical_fields(h):
     row = person(h)
     saved = h.configure('people', change(row, active=False)['payload']['value'], row['id'], row['revision'])['record']
     cmd = change(saved, work_phone='5550100')
-    del cmd['payload']['value']['active']  # PersonInput's default would reactivate the person.
+    cmd['payload']['value'] = {'display_name': saved['display_name'], 'work_phone': '5550100'}
+    result = preview(h, cmd)
+    assert result['impacts'] == [] and result['proposed']['active'] is False
+    assert result['proposed']['inactive_from'] == saved['inactive_from']
+
+    cmd['payload']['value']['active'] = True
     result = preview(h, cmd)
     assert len(result['impacts']) == 1 and result['proposed']['active'] is True
     assert result['impacts'][0]['after_error_count'] < result['impacts'][0]['before_error_count']
@@ -236,6 +241,8 @@ def test_contact_preview_keeps_schema_role_revision_and_fingerprint_checks(h):
     preview(h, cmd, role='staff', status=403)
     preview(h, {**cmd, 'expected_revision': row['revision'] + 1}, status=409)
     checked = preview(h, cmd)
+    invalid = {**change(row, work_phone='x' * 81), 'expected_fingerprint': checked['source_fingerprint']}
+    assert preview(h, invalid, status=409)['error']['code'] == 'STALE_PREVIEW'
     changed = change(row, work_phone='5550101')
     assert preview(h, {**changed, 'expected_fingerprint': checked['source_fingerprint']}, status=409)['error']['code'] == 'STALE_PREVIEW'
     assert state(h) == before and person(h) == row

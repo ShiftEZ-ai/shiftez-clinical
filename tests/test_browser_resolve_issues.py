@@ -4,7 +4,7 @@ each with one Undo; read-only for reviewers, closed to staff; desktop and phone 
 import re
 import pytest
 from playwright.sync_api import expect
-from .test_browser import auto_setup, route_fetch, browser, live_server, sign_in, navigate, open_scheduling, wait_held, press_escape, choose, wait_run_created  # noqa: F401
+from .test_browser import auto_setup, route_fetch, browser, live_server, sign_in, navigate, open_rota, open_scheduling, wait_held, press_escape, choose, wait_run_created  # noqa: F401
 from .test_browser_qa_planner_a2 import settled, cp_server  # noqa: F401
 
 pytestmark = pytest.mark.browser
@@ -36,6 +36,43 @@ def issues_page(page):
 
 def group(main, name):
     return main.locator('tr.dt-group').filter(has_text=name)
+
+
+def test_kept_meeting_has_the_same_cause_and_actions_in_both_result_sections(browser, cp_server, h):
+    from apps.worker.main import process_one
+
+    person = h.seed['people'][0]
+    rota = h.shift(h.workspace(), people=[person])['workspace']
+    rota = h.shift(rota, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[])['workspace']
+    meeting = h.command('coordinator', 'request.create', {'person_id': person, 'kind': 'meeting',
+        'start': '2026-10-04T09:00:00+03:00', 'end': '2026-10-04T10:00:00+03:00',
+        'private_reason': 'Synthetic meeting'})['record']
+    h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Approve synthetic meeting'},
+              meeting['id'], meeting['revision'])
+    context, page = sign_in(browser, cp_server, 'coordinator')
+    try:
+        open_rota(page, rota['id'])
+        open_scheduling(page)
+        panel = page.locator('#auto-panel')
+        auto_setup(panel)
+        panel.get_by_label('Keep existing assignments', exact=True).check()
+        panel.get_by_role('button', name='Run auto-schedule', exact=True).click()
+        wait_run_created(page)
+        process_one(h.app.state.engine)
+
+        source = panel.get_by_role('region', name='Resolve these first').locator('.issue-card').filter(
+            has=page.get_by_role('button', name=re.compile(r'^Pick someone else instead of ')))
+        expect(source).to_be_visible(timeout=15000)
+        still = panel.get_by_role('region', name='Still to fix')
+        expect(still.locator('.issue-card strong')).to_have_text(source.locator('strong').inner_text())
+        for name in (r'^Pick someone else instead of ', r'^Remove .* from this session$'):
+            expect(still.get_by_role('button', name=re.compile(name))).to_be_visible()
+        expect(still.get_by_role('button', name='Change the rule')).to_have_count(0)
+        panel.get_by_role('button', name='Review latest result', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Auto-schedule results')
+        expect(dialog.get_by_role('button', name=re.compile(r'^(Pick someone else|Remove .* from this session)'))).to_have_count(0)
+    finally:
+        context.close()
 
 
 def test_resolve_from_auto_schedule_replace_with_preview_undo_and_remove(browser, cp_server, h):

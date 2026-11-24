@@ -26,7 +26,7 @@ TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
 
 
-def settings():
+def settings(*, plan=None):
     data = policy.decode((TRUSTED / "ci/bootstrap-settings.json").read_bytes())
     group_shards = data.pop("merge_group_shards", None)
     if (set(data) != {"schema", "unit_shards", "browser_shards", "unstable_limit", "unstable_issue",
@@ -37,7 +37,8 @@ def settings():
         if (not isinstance(group_shards, dict) or set(group_shards) != {"unit_shards", "browser_shards"}
                 or any(type(n) is not int or n < 1 for n in group_shards.values())):
             raise ValueError("Protected merge-group shard counts are invalid")
-        if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
+        event = os.getenv("GITHUB_EVENT_NAME")
+        if event == "merge_group" or (event == "pull_request" and plan is not None and "selection" not in plan):
             data.update(group_shards)
     return data
 
@@ -98,7 +99,9 @@ def quarantine_revision(branch, default, base, candidate):
 
 def pr_scope(data, git, trusted_sha, candidate):
     pr = data["pull_request"]
-    if pr["base"]["ref"] != policy.default_branch(data) or any(label["name"] == "full-ci" for label in pr["labels"]):
+    branch = pr["base"]["ref"]
+    if ((branch != policy.default_branch(data) and not policy.release_branch(branch))
+            or any(label["name"] == "full-ci" for label in pr["labels"])):
         return None
     base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
@@ -106,7 +109,7 @@ def pr_scope(data, git, trusted_sha, candidate):
            or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
            for path in changed):
         return None
-    inventory = policy.control_inventory(trusted_sha)
+    inventory = policy.control_inventory(base if policy.release_branch(branch) else trusted_sha)
     for path in sorted(changed):
         before, after = policy.read_file(base, path), policy.read_file(candidate, path)
         tier, _ = policy.tier(path, before, after, inventory)
@@ -149,7 +152,6 @@ def affected_files(changed, files):
 
 
 def plan(base, measurement):
-    config = settings()
     candidate = hosted.git("rev-parse", "HEAD")
     candidate_tree = hosted.git("rev-parse", "HEAD^{tree}")
     if measurement:
@@ -171,8 +173,8 @@ def plan(base, measurement):
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
     selected_files = None
-    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
-            and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
+    pull_request = not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+    if pull_request and os.getenv("TRUSTED_BOOTSTRAP") != "true":
         event = policy.event()
         require_pr_merge(event, policy.git, candidate)
         if not context["bootstrap"]:
@@ -183,6 +185,7 @@ def plan(base, measurement):
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)
+    config = settings(plan=None if measurement else result)
     for suite in ("unit", "browser"):
         selected = [p for p in files if Path(p).name.startswith("test_browser") == (suite == "browser")]
         seconds = data["suites"][suite]["files"]
@@ -406,8 +409,13 @@ def main():
     listed = frozenset()
     if maker.retry_run(candidate):
         event = policy.event()
-        branch = (event["pull_request"]["base"]["ref"] if os.environ["GITHUB_EVENT_NAME"] == "pull_request"
-                  else event["merge_group"]["base_ref"].removeprefix("refs/heads/"))
+        kind = os.environ["GITHUB_EVENT_NAME"]
+        if kind == "pull_request":
+            branch = event["pull_request"]["base"]["ref"]
+        elif kind == "merge_group":
+            branch = event["merge_group"]["base_ref"].removeprefix("refs/heads/")
+        else:
+            branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
         base = candidate["base_sha"]
         current = policy.read_file(candidate["sha"], policy.KNOWN)
         old = policy.read_file(base, policy.KNOWN)

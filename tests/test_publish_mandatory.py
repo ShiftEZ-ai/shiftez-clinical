@@ -49,15 +49,15 @@ def review_evidence(h, workspace):
                   for cls in (m.Approval, m.ReviewDecision)))
 
 
-def submit_with_legacy_rules(h, draft, monkeypatch):
+def review_with_legacy_rules(h, workspace, monkeypatch, action='submit', role='coordinator'):
     overlay = workspace_baselines.live_safety_inputs
 
     def frozen_rules(*args, **kwargs):
-        return overlay(*args, **{**kwargs, 'include_mandatory': False})
+        return overlay(*args, **{**kwargs, 'include_mandatory': False, 'current_mandatory': False})
 
     with monkeypatch.context() as legacy:
         legacy.setattr(workspace_baselines, 'live_safety_inputs', frozen_rules)
-        return h.lifecycle(draft, 'submit')['workspace']
+        return h.lifecycle(workspace, action, role)['workspace']
 
 
 def test_submit_refuses_a_mandatory_cap_activated_after_capture(rota):
@@ -75,7 +75,7 @@ def test_publish_refuses_a_late_mandatory_cap(rota, monkeypatch, activation):
     # A zero is already live on the captured review basis.
     if activation == 'after_capture':
         cap = activate_cap(h, draft, amount=1)
-        submitted = submit_with_legacy_rules(h, draft, monkeypatch)
+        submitted = review_with_legacy_rules(h, draft, monkeypatch)
     else:
         submitted = h.lifecycle(draft, 'submit')['workspace']
     if activation == 'after_submit':
@@ -84,18 +84,18 @@ def test_publish_refuses_a_late_mandatory_cap(rota, monkeypatch, activation):
         assert stale['error']['code'] == 'STALE_INPUTS'
         # Earlier versions allowed the required resubmission without checking this cap.
         reopened = h.lifecycle(submitted, 'reopen')['workspace']
-        submitted = submit_with_legacy_rules(h, reopened, monkeypatch)
-    approved = h.lifecycle(submitted, 'approve', 'approver')['workspace']
+        submitted = review_with_legacy_rules(h, reopened, monkeypatch)
+    # Earlier versions could also approve with a captured basis that missed this cap.
+    approved = review_with_legacy_rules(h, submitted, monkeypatch, 'approve', 'approver')
     if activation == 'after_approve':
         cap = activate_cap(h, draft, amount=1)
-    assert cap['id'] not in {p['id'] for p in h.snapshot(approved)['policies']}
+    with transaction(h.app.state.engine) as db:
+        baseline = workspace_baselines.verify(workspace_baselines.latest(db, approved['id']))
+    assert cap['id'] not in {p['id'] for p in baseline['policies']}
     stored = review_evidence(h, approved)
     refused = h.lifecycle(approved, 'publish', status=422)['error']
     assert_cap_refusal(refused, cap, h.seed['people'][0])
-    if activation == 'after_approve':
-        assert refused['details']['stale_approval']['code'] == 'STALE_APPROVAL'
-    else:
-        assert 'stale_approval' not in refused['details']
+    assert refused['details']['stale_approval']['code'] == 'STALE_APPROVAL'
     assert review_evidence(h, approved) == stored
     assert h.get('coordinator', '/api/publications')['publications'] == []
 
@@ -126,7 +126,9 @@ def test_publish_with_an_unbreached_late_mandatory_cap(rota):
     assert h.lifecycle(approved, 'publish')['publication_id']
     _, stored, *_ = review_evidence(h, approved)
     assert stored['fingerprint'] == approved['submitted_fingerprint']
-    assert all(row['policy_id'] != cap['id'] for row in (stored.get('quota_report') or {}).get('rows', []))
+    # Publication retains the current limit and count that qualified this rota.
+    recorded, = [row for row in stored['quota_report']['rows'] if row['policy_id'] == cap['id']]
+    assert recorded['actual'] == recorded['amount'] == 2
 
 
 def test_publish_with_a_late_cap_and_an_approved_specific_line(rota):

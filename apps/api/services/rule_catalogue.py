@@ -1508,17 +1508,30 @@ def propose(db, actor, command):
     from packages.contracts.rule_catalogue import catalogue_entry
     from packages.domain.rule_lines import expand
     from . import independence
-    from .common import history, scoped
+    from .common import history, omitted_update_fields, scoped
     from .policies import condition_reference_rows, condition_references, policy_references
+    from .scoring_defaults import seeded_rows, seed_line_ids
     require_role(actor, "coordinator", "admin")
     value = s.RuleProposalInput.model_validate(command.payload)
     if value.catalogue_id == 'team_leads':
         db.scalar(select(m.Department).where(m.Department.id == actor.department_id).with_for_update(key_share=True))
-    require(value.catalogue_id == 'team_leads' or value.catalogue_version != 2 or department_version(db, actor.department_id) == 2, 'DEPARTMENT_CONVERSION_REQUIRED',
-            'Convert the department through one reviewed proposal before authoring v2 rules', 409)
+    current = catalogue_version(db, actor, value.catalogue_id, "active")
+    current_definition = seeded_rows(db, [record(current)])[0]['definition'] if current else {}
+    current_rule = current_definition.get('rule', {})
+    baseline = value.expected_line_ids if value.expected_line_ids is not None else [line.id for line in value.lines]
+    inherited = omitted_update_fields(value, {
+        **current_rule, 'balance_between_people': current_definition.get('balance_between_people', True),
+    }) if current else {}
+    version = inherited.get('catalogue_version', value.catalogue_version)
+    if version == 2 and value.catalogue_id != 'team_leads' and department_version(db, actor.department_id) != 2:
+        # A stored v2 default can coexist with legacy rules. Keep the legacy entry for callers omitting the version.
+        require('catalogue_version' in inherited and catalogue_entry(value.catalogue_id, value.catalogue_version) is not None,
+                'DEPARTMENT_CONVERSION_REQUIRED', 'Convert the department through one reviewed proposal before authoring v2 rules', 409)
+        inherited.pop('catalogue_version')
+    if inherited:
+        value = s.RuleProposalInput.model_validate({**inherited, **command.payload})
     require(waiting_proposal(db, actor, value.catalogue_id) is None, "PROPOSAL_WAITING",
             "A change to this rule is already waiting for approval; approve or decline it first", 409)
-    current = catalogue_version(db, actor, value.catalogue_id, "active")
     from .leadership import proposal_conversion
     conversion = proposal_conversion(db, actor, value, current)
     converted = db.scalar(select(m.CatalogueConversion.id).where(m.CatalogueConversion.department_id == actor.department_id,
@@ -1527,19 +1540,16 @@ def propose(db, actor, command):
     require(((current.id, current.revision) if current else (None, None))
             == (value.expected_policy_id, value.expected_revision), "STALE_REVISION",
             "This rule changed since you opened it; reload and try again", 409)
-    from .scoring_defaults import seeded_rows, seed_line_ids
     seeds = seed_line_ids(db, [current.id] if current else [])
-    baseline = value.expected_line_ids if value.expected_line_ids is not None else [line.id for line in value.lines]
     require(seeds <= set(baseline), 'STALE_REVISION',
             'This rule changed since you opened it; reload and try again', 409)
-    current_definition = seeded_rows(db, [record(current)])[0]['definition'] if current else {}
-    previous = {line["id"]: line for line in (current_definition.get('rule', {}).get("lines") or [])}
+    previous = {line["id"]: line for line in (current_rule.get("lines") or [])}
     stored = {ident: line.get("source_bindings") or {} for ident, line in previous.items()}
     require(all((line.model_dump(mode="json").get("source_bindings") or {}) == stored.get(line.id, {}) for line in value.lines),
             "SOURCE_BINDING_IMMUTABLE", "Only a reviewed department conversion may create or change source bindings", 409)
     require(all(not stored.get(line.id) or set(line.numbers) <= set(stored[line.id]) for line in value.lines),
             'SOURCE_NUMBER_IMMUTABLE', 'Add a new obligation on its own line; a converted source keeps its numeric slots', 409)
-    defaults = {line['id']: line.get('source_default') for line in (current_definition.get('rule', {}).get('lines') or [])}
+    defaults = {ident: line.get('source_default') for ident, line in previous.items()}
     require(all(line.model_dump(mode='json').get('source_default') == defaults.get(line.id) for line in value.lines),
             'SOURCE_BINDING_IMMUTABLE', 'Preserved source defaults cannot be changed through the line editor', 409)
     authored = [line.model_dump(mode='json') for line in value.lines]
@@ -1570,8 +1580,7 @@ def propose(db, actor, command):
             line["settings"]["allocation_overtime"].setdefault(
                 "volunteer_required", default if default is not None else prior.get(
                     line["id"], True))
-    balance = (value.balance_between_people if 'balance_between_people' in value.model_fields_set
-               else current.definition.get('balance_between_people', True) if current else True)
+    balance = value.balance_between_people
     found = check(db, actor, value.catalogue_id, {**body, 'balance_between_people': balance})
     for line, checked_line in zip(body['lines'], found.get('lines', [])):
         if line['id'] not in previous:
@@ -1586,8 +1595,9 @@ def propose(db, actor, command):
                                                     "exception_allowed": bool(current and current.definition.get("exception_allowed")
                                                                               and not s.safety_rule(current.definition))})
     definition = validated.model_dump(mode="json", exclude={"rule": {"lines"}})
-    # Keep canonical numbers while preserving unchanged authored settings, dates and metadata.
-    definition["rule"]["lines"] = [_proposal_line(line, was) for line, was in zip(validated.rule.lines, body["lines"])]
+    # Keep the saved representation when lines were omitted, including sparse historical lines.
+    definition["rule"]["lines"] = inherited["lines"] if "lines" in inherited else [
+        _proposal_line(line, was) for line, was in zip(validated.rule.lines, body["lines"])]
     _, reference_rows = condition_reference_rows(db, Line(conditions=[s.Conditions.model_validate(line[side])
         for line in definition['rule']['lines'] for side in ('who', 'where') if line.get(side)]))
     for line in definition["rule"]["lines"]:  # everything a line names belongs to this department

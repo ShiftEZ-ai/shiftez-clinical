@@ -64,6 +64,20 @@ class V33Tests(unittest.TestCase):
             for path in (name, 'x/' + name.upper()):
                 with self.subTest(path=path),self.assertRaisesRegex(ValueError,'private agent'):
                     policy.tier(path,None,b'private',self.inventory)
+    def test_only_the_root_public_agent_files_are_public(self):
+        self.assertEqual(len(policy.PUBLIC_AGENT_FILES), 2)
+        self.assertIn('AGENTS.md', policy.PUBLIC_AGENT_FILES)
+        self.assertEqual({name.casefold() for name in policy.PUBLIC_AGENT_FILES} - names.AGENT_FILES, set())
+        for path in sorted(policy.PUBLIC_AGENT_FILES):
+            with self.subTest(path=path):
+                self.assertFalse(policy.private_agent_path(path))
+                policy.tier(path, None, b'# Rules', self.inventory)
+        refused = set(names.AGENT_FILES) | {directory + '/settings.json' for directory in names.AGENT_DIRECTORIES}
+        for name in policy.PUBLIC_AGENT_FILES:
+            refused.update(('docs/' + name, 'x/' + name, './' + name, name.lower(), name.upper()))
+        for path in sorted(refused):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'private agent'):
+                policy.tier(path, None, b'private', self.inventory)
     def test_every_tracked_ignore_variant_refuses_private_patterns(self):
         patterns = set(names.AGENT_FILES) | set(names.AGENT_SPECIAL_FILES)
         patterns.update(directory + '/' for directory in names.AGENT_DIRECTORIES)
@@ -119,9 +133,10 @@ class V33Tests(unittest.TestCase):
                                 "${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', "
                                 "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(doc['on']['push']['branches'], ['dev', 'main'])
-        for job in ('unit', 'browser', 'static', 'result'):
-            self.assertIn("(github.event_name != 'push' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch))", doc['jobs'][job]['if'])
+        self.assertEqual(doc['on']['push']['branches'], ['dev', 'main', 'release/*'])
+        for job in ('unit', 'browser', 'static'):
+            self.assertEqual(doc['jobs'][job]['if'], "always() && !cancelled() && needs.checks.result == 'success'")
+        self.assertEqual(doc['jobs']['ci-gate']['if'], "always()")
 
     def test_duplicate_yaml_keys_refused(self):
         with self.assertRaisesRegex(ValueError,'Duplicate'):privacy.check('runs-on: ubuntu-24.04\nruns-on: self-hosted')

@@ -1,5 +1,6 @@
 """Completion expiry keeps only resumable decisions until a checked candidate is available."""
 from copy import deepcopy
+from math import isfinite
 from weakref import ref
 
 import pytest
@@ -114,7 +115,18 @@ def test_completed_solver_is_released_before_next_search_without_changing_result
         assert actual['status'] == expected['status'] == 'candidate_feasible'
         assert actual['validation']['valid']
         assert len(actual['additions']) == 1 and not actual['removals']
-        for key in ('additions', 'removals', 'validation', 'objectives', 'weighted_status',
+        objectives = [deepcopy(result['objectives']) for result in (actual, expected)]
+        for rows in objectives:
+            for row in rows:
+                if 'search' in row:
+                    for key in ('objective_improvement_age_seconds', 'fairness_improvement_age_seconds'):
+                        if key in row['search']:
+                            age = row['search'][key]
+                            if age is not None:
+                                assert isfinite(age) and age >= 0
+                                row['search'][key] = 0
+        assert objectives[0] == objectives[1]
+        for key in ('additions', 'removals', 'validation', 'weighted_status',
                     'optimality_proven', 'compiled_component_values', 'objective_components'):
             assert actual[key] == expected[key], key
         assert actual['summary']['score_saved'] == expected['summary']['score_saved']

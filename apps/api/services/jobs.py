@@ -11,6 +11,7 @@ from apps.api.errors import require
 from apps.api.serialization import record, job_record, job_progress_record, json_value, generation_defaults_record
 from apps.api.serialization import job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (currency_hint, currency_match, domain_snapshot, fingerprint,
+                                preparation_stamp, prepared_event_currency_matches,
                                 publication_score_baseline, snapshot_hash, workspace_content,
                                 workspace_shifts)
 from .common import scoped, expected
@@ -19,7 +20,7 @@ from .generation_resume import (clear_generation_resume, generation_created_at, 
                                 RESUMABLE_GENERATION_RESULTS, has_generation_checkpoint, generation_resume_available,
                                 generation_resume_days)
 from packages.domain.generation import assignment_fixed, keep_assignment
-from packages.domain.generation_scope import population_allows, has_population, selected_session_ids
+from packages.domain.generation_scope import population_allows, selected_session_ids
 from apps.api.workspace_baselines import baseline_reference, generation_manifest
 from .generation_scope import require_generation_sessions_in_scope
 
@@ -150,7 +151,7 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
     return {"job": job_record(job)}
 
 
-def create_job(db, actor, command, settings):
+def _job_request(db, actor, command):
     value = s.JobInput.model_validate(command.payload)
     require(value.kind != 'fill_options', 'INVALID_JOB_KIND',
             'Use the planner fill-options endpoint to queue candidate checks', 422)
@@ -167,7 +168,11 @@ def create_job(db, actor, command, settings):
         "JOB_ALREADY_RUNNING", "This draft already has a queued or running job of this kind", 409)
     require(value.kind == 'generation' or value.generation_options is None,
             'INVALID_OPTIONS', 'Scheduling options apply only to generation jobs')
-    defaults, options = None, None
+    return value, workspace
+
+
+def create_job(db, actor, command, settings):
+    value, workspace = _job_request(db, actor, command)
     if value.kind == 'generation':
         defaults, baseline = baseline_generation_context(db, workspace)
         override = value.generation_options.model_dump(exclude_unset=True) if value.generation_options else {}
@@ -231,115 +236,87 @@ def create_job(db, actor, command, settings):
         if value.automatic and current_check(db, workspace):
             return {'job': None, 'validation_current': True}
         return {'job': job_record(queue_current_validation(db, actor, workspace))}
-    snapshot = domain_snapshot(db, workspace, operational=workspace.status == 'published',
-                               wish_debt_cap=options.scoring.wish_debt_cap if options is not None else None,
-                               lead_balance=options.scoring.lead_balance if options is not None else None)
-    if value.kind == 'feasibility':
-        from .policies import check_policy
-        from packages.domain.solver_rules import COMPILER_VERSION
-        overrides, fact_overrides, bindings = [], [], []
-        for change in value.rule_changes:
-            policy = scoped(db, m.Policy, change.policy_id, actor)
-            expected(policy, change.expected_revision)
-            require(policy.status in {'proposed', 'active'}, 'WORKFLOW_STATE', 'Check a proposed or active rule')
-            definition = change.definition.model_dump(mode='json') if change.definition else policy.definition
-            checked = check_policy(db, actor, definition, preview=False)
-            require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve rule settings before checking', 422, checked['issues'])
-            candidate = {**record(policy), 'definition': definition, 'status': 'active'}
-            s.PolicyInput.model_validate({key: candidate[key] for key in s.PolicyInput.model_fields})
-            overrides.append(candidate)
-            bindings.append({'policy_id': policy.id, 'revision': policy.revision,
-                'source_hash': snapshot_hash(record(policy)), 'checked_hash': snapshot_hash(candidate),
-                'temporary_change': change.definition is not None and definition != policy.definition})
-        from packages.domain.rule_lines import fact_policy
-        for change in value.fact_changes:
-            fact = scoped(db, m.SchedulingFact, change.fact_id, actor)
-            expected(fact, change.expected_revision)
-            require(fact.status in {'proposed', 'active'}, 'WORKFLOW_STATE', 'Check a proposed or active scheduling fact')
-            require(fact.migration_proposal_id is None, 'CONVERSION_CHILD', 'Check converted facts through the department conversion', 409)
-            candidate = {**record(fact), 'status': 'active'}
-            checked = check_policy(db, actor, fact_policy(candidate)['definition'], preview=False)
-            require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve fact settings before checking', 422, checked['issues'])
-            fact_overrides.append(candidate)
-            bindings.append({'policy_id': fact.id, 'fact_id': fact.id, 'revision': fact.revision,
-                'source_hash': snapshot_hash(record(fact)), 'checked_hash': snapshot_hash(candidate), 'temporary_change': False})
-        if value.proposed_rule:
-            candidate = value.proposed_rule.model_dump(mode='json')
-            checked = check_policy(db, actor, candidate['definition'], preview=False)
-            require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve rule settings before checking', 422, checked['issues'])
-            overrides.append({**candidate, 'id': str(uuid4()), 'department_id': actor.department_id,
-                              'revision': 1, 'kind': candidate['definition']['rule']['kind'], 'status': 'active'})
-            # No persisted policy binding: this receipt cannot authorise activation.
-        proposed = domain_snapshot(db, workspace, operational=workspace.status == 'published', policy_overrides=overrides,
-                                   fact_overrides=fact_overrides)
-        from packages.domain.input_manifest import feasibility_token
-        snapshot = {'baseline': snapshot, 'proposed': proposed, 'bindings': bindings,
-            'fingerprint': feasibility_token(snapshot), 'compiler_version': COMPILER_VERSION,
-            'check_seconds': value.check_seconds or 10,
-            'second_pass_seconds': max(2 * (value.check_seconds or 10), settings.feasibility_second_pass_seconds)}
-
-    if value.kind == 'generation':
-        from apps.api.workspace_baselines import frozen_department_settings, verify
-        department = frozen_department_settings(verify(baseline), workspace.department_id, baseline.included_sources)
-        snapshot['autoschedule_animation'] = s.AutoscheduleAnimationSettings.model_validate(
-            (department.get('display_settings') or {}).get('autoschedule_animation') or {}).model_dump(mode='json')
-        snapshot['generation_options'] = options.model_dump(mode='json')
-        snapshot['generation_defaults'] = defaults.model_dump(mode='json')
-        snapshot['generation_options_overridden'] = value.generation_options is not None
-        snapshot['generation_engine'] = settings.generation_engine
-        # The earlier greedy client expressed "keep my manual edits" through its repair checkbox.
-        if (snapshot['generation_engine'] == 'legacy' and 'repair_conflicts' in value.model_fields_set
-                and not value.repair_conflicts and (value.generation_options is None
-                    or 'mode' not in value.generation_options.model_fields_set)):
-            snapshot['generation_options']['mode'] = 'fill_gaps'
-            snapshot['generation_options_overridden'] = True
-        require(not value.diagnostic_proposal or snapshot['generation_engine'] == 'cp_sat',
-                'DIAGNOSTIC_ENGINE_REQUIRED', 'Diagnostic proposals require the CP-SAT scheduler')
-        snapshot['diagnostic_proposal'] = value.diagnostic_proposal
-        if snapshot['generation_engine'] == 'cp_sat':
-            from packages.domain.solver_rules import COMPILER_VERSION
-            require_solver_compatible(snapshot)
-            snapshot['compiler_version'] = COMPILER_VERSION
+    preparation = db.info.get('_feasibility_preparation')
+    if preparation is None:
+        # Direct callers can capture within their existing transaction.
+        snapshot = _capture_feasibility(db, actor, workspace, value, settings)
+    else:
+        require(actor == preparation['actor']
+                and record(workspace, exclude=('validation',)) == preparation['workspace']
+                and currency_match(preparation['stamp'], preparation_stamp(db, workspace))
+                and all(prepared_event_currency_matches(db, events) for events in preparation['event_currencies']),
+                'STALE_INPUTS', 'The rota or its scheduling inputs changed during the check. Try again.', 409,
+                {'recoverable': True})
+        snapshot = preparation['snapshot'].copy()
     from apps.api.input_changes import watermark
     snapshot['audit_watermark'] = watermark(db, actor.department_id)
     snapshot['currency_hint'] = currency_hint(db, workspace)
-    snapshot['repair_unavailable'] = value.kind == 'generation'
-    snapshot['repair_conflicts'] = value.kind == 'generation'
-    if snapshot.get('planning_group_id') and snapshot.get('lookahead') == 'coupled':
-        require(settings.generation_engine == 'cp_sat', 'LOOKAHEAD_ENGINE_REQUIRED',
-                'Joint lookahead requires the CP-SAT scheduler', 422)
-    require(not value.session_ids or value.kind == "generation", "INVALID_SCOPE", "Session selection is only supported for automatic scheduling")
-    require_generation_sessions_in_scope(value.session_ids, db=db, workspace=workspace)
-    if value.session_ids:
-        snapshot["generation_session_ids"] = value.session_ids
-    if value.generation_scope is not None:
-        from .policies import condition_references
-        condition_references(db, actor, value.generation_scope.conditions)
-        identity = catalogue_proof_identity()
-        require(identity is not None, 'BUILD_IDENTITY_REQUIRED', 'Restart on a stable build before scheduling a selected population', 409)
-        snapshot['generation_scope_source'] = identity['source_digest']
-        snapshot['generation_scope'] = value.generation_scope.model_dump(mode='json')
-        require(has_population(snapshot), 'INVALID_SCOPE',
-                'No people match this group during the selected duties; change the population or duty selection', 422)
-    if value.kind == 'generation' and snapshot.get('generation_scope') is None and 'planning_population' not in snapshot:
-        snapshot.pop('applied_planning_population', None)
-    if value.kind == 'generation':
-        from .rota_summary import reusable_check
-        from packages.domain.rota_summary import rota_summary
-        if reusable_check(workspace.validation, fingerprint(db, workspace), defaults.model_dump(mode='json')):
-            snapshot['fix_list_before'] = rota_summary(workspace.validation,
-                accepted_issues=workspace.accepted_issues or [])['fix_list']
-        clear_generation_resume(db, workspace_id=workspace.id)
+    snapshot['repair_unavailable'] = False
+    snapshot['repair_conflicts'] = False
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
                 kind=value.kind, input_fingerprint=snapshot['fingerprint'], input_snapshot=snapshot,
-                search_control={'minutes': options.search_minutes, 'stop': False, 'spent_seconds': 0} if options else None,
-                **({'supersedes': []} if value.kind == 'generation' else {}),
-                **({'created_at': generation_created_at(db, workspace.id)} if value.kind == 'generation' else {}))
+                search_control=None)
     db.add(job)
     db.flush()
-    if value.kind == 'generation':
-        record_supersessions(db, job)
     return {"job": job_record(job)}
+
+
+def _capture_feasibility(db, actor, workspace, value, settings, baseline_events=None, proposed_events=None):
+    operational = workspace.status == 'published'
+    baseline = domain_snapshot(db, workspace, operational=operational, _event_currency=baseline_events)
+    from .policies import check_policy
+    from packages.domain.solver_rules import COMPILER_VERSION
+    overrides, fact_overrides, bindings = [], [], []
+    for change in value.rule_changes:
+        policy = scoped(db, m.Policy, change.policy_id, actor)
+        expected(policy, change.expected_revision)
+        require(policy.status in {'proposed', 'active'}, 'WORKFLOW_STATE', 'Check a proposed or active rule')
+        definition = change.definition.model_dump(mode='json') if change.definition else policy.definition
+        checked = check_policy(db, actor, definition, preview=False)
+        require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve rule settings before checking', 422, checked['issues'])
+        candidate = {**record(policy), 'definition': definition, 'status': 'active'}
+        s.PolicyInput.model_validate({key: candidate[key] for key in s.PolicyInput.model_fields})
+        overrides.append(candidate)
+        bindings.append({'policy_id': policy.id, 'revision': policy.revision,
+            'source_hash': snapshot_hash(record(policy)), 'checked_hash': snapshot_hash(candidate),
+            'temporary_change': change.definition is not None and definition != policy.definition})
+    from packages.domain.rule_lines import fact_policy
+    for change in value.fact_changes:
+        fact = scoped(db, m.SchedulingFact, change.fact_id, actor)
+        expected(fact, change.expected_revision)
+        require(fact.status in {'proposed', 'active'}, 'WORKFLOW_STATE', 'Check a proposed or active scheduling fact')
+        require(fact.migration_proposal_id is None, 'CONVERSION_CHILD', 'Check converted facts through the department conversion', 409)
+        candidate = {**record(fact), 'status': 'active'}
+        checked = check_policy(db, actor, fact_policy(candidate)['definition'], preview=False)
+        require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve fact settings before checking', 422, checked['issues'])
+        fact_overrides.append(candidate)
+        bindings.append({'policy_id': fact.id, 'fact_id': fact.id, 'revision': fact.revision,
+            'source_hash': snapshot_hash(record(fact)), 'checked_hash': snapshot_hash(candidate), 'temporary_change': False})
+    if value.proposed_rule:
+        candidate = value.proposed_rule.model_dump(mode='json')
+        checked = check_policy(db, actor, candidate['definition'], preview=False)
+        require(checked['compatible'], 'SOLVER_RULE_INCOMPATIBLE', 'Resolve rule settings before checking', 422, checked['issues'])
+        overrides.append({**candidate, 'id': str(uuid4()), 'department_id': actor.department_id,
+                          'revision': 1, 'kind': candidate['definition']['rule']['kind'], 'status': 'active'})
+        # No persisted policy binding: this receipt cannot authorise activation.
+    proposed = domain_snapshot(db, workspace, operational=operational, policy_overrides=overrides,
+                               fact_overrides=fact_overrides, _event_currency=proposed_events)
+    from packages.domain.input_manifest import feasibility_token
+    return {'baseline': baseline, 'proposed': proposed, 'bindings': bindings,
+        'fingerprint': feasibility_token(baseline), 'compiler_version': COMPILER_VERSION,
+        'check_seconds': value.check_seconds or 10,
+        'second_pass_seconds': max(2 * (value.check_seconds or 10), settings.feasibility_second_pass_seconds)}
+
+
+def prepare_feasibility(db, actor, command, settings):
+    """Capture both proof inputs from one repeatable read before entering the writer."""
+    value, workspace = _job_request(db, actor, command)
+    require(not value.automatic, 'INVALID_OPTIONS', 'Only rota checks may run automatically')
+    stamp = preparation_stamp(db, workspace)
+    baseline_events, proposed_events = [], []
+    snapshot = _capture_feasibility(db, actor, workspace, value, settings, baseline_events, proposed_events)
+    return {'actor': actor, 'workspace': record(workspace, exclude=('validation',)), 'stamp': stamp,
+            'event_currencies': (baseline_events, proposed_events), 'snapshot': snapshot}
 
 
 def queue_validation(db, actor, workspace, data):
@@ -793,6 +770,7 @@ def apply_generation(db, actor, command):
         "applied": s.GenerationApplied(addition_indexes=addition_indexes, removal_indexes=removal_indexes,
             added_count=len(additions), removed_count=len(removals)).model_dump()})
     job.revision += 1
+    result['job'] = job_record(job, include_result=False, include_progress_solution=False)
     return result
 
 

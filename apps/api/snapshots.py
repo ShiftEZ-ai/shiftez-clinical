@@ -18,7 +18,7 @@ from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.serialization import json_default
-from packages.domain.validation import ENGINE_VERSION
+from packages.domain.validation import ENGINE_VERSION, prepare_draft_type_safety
 from .settings import Settings, quota_policy_limit
 
 
@@ -179,6 +179,15 @@ def publication_score_baseline(db, workspace, rows, own_publication=None):
 def workspace_shifts(db, workspace_id: str) -> list[dict]:
     """Every session with its clinics and people, acquired in bounded batches."""
     return shift_records(db, db.scalars(select(m.Shift).where(m.Shift.workspace_id == workspace_id).order_by(m.Shift.start, m.Shift.id)))
+
+
+def full_shifts(db, workspace_id):
+    shift = m.Shift
+    # Mapped columns retain workspace visibility criteria without creating Shift instances.
+    columns = [getattr(shift, key) for key in shift.__mapper__.column_attrs.keys()]
+    rows = db.execute(select(*columns).where(shift.workspace_id == workspace_id)
+                      .order_by(shift.start, shift.id)).mappings()
+    return shift_records(db, rows)
 
 
 def shift_records(db, rows, *, include_participants=True) -> list[dict]:
@@ -363,8 +372,10 @@ def inactive_series_shift_ids(db, selected_ids):
 
 
 def workspace_content(db, workspace) -> dict:
+    # Batch commands disable autoflush. The ORM read must see pending session changes.
+    read_shifts = full_shifts if db.autoflush else workspace_shifts
     return {"workspace": record(workspace, exclude=("validation", "submitted_fingerprint")),
-            "shifts": workspace_shifts(db, workspace.id)}
+            "shifts": read_shifts(db, workspace.id)}
 
 
 def precondition_snapshot(db, workspace):
@@ -426,7 +437,10 @@ def _verified_baseline(db, workspace):
     from .workspace_baselines import baseline_rows, latest as latest_baseline, verify_in_transaction
 
     rows = baseline_rows(db)
-    row_key = (workspace.id, workspace.revision)
+    # Session edits only update their own sessions and workspace metadata. Their snapshots
+    # in this transaction share one baseline even after the workspace revision advances.
+    preparation = db.info.get('_planning_preparation') or {}
+    row_key = (workspace.id, None if preparation.get('kind') == 'shift.update' else workspace.revision)
     baseline = rows.get(row_key)
     if row_key not in rows or (baseline is not None and object_session(baseline) is not db):
         baseline = rows[row_key] = latest_baseline(db, workspace.id)
@@ -444,12 +458,16 @@ def _baseline_inputs_view(payload):
             for key, value in payload.items()}
 
 
-DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits'
+DRAFT_POLICY_BASIS = 'live_mandatory_with_resolved_zero_limits_and_catalogue_safety'
+REVIEW_POLICY_BASIS = 'current_mandatory_with_captured_and_live_catalogue_safety'
 
 
-def draft_policy_hint(workspace):
-    """Identify the draft rule basis for receipts made before the live overlay."""
-    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if getattr(workspace, 'status', None) == 'draft' else {}
+def draft_policy_hint(workspace, *, current_mandatory=False):
+    """Identify the policy basis shared by snapshots and their currency hints."""
+    status = getattr(workspace, 'status', None)
+    if status in {'submitted', 'approved'} or status == 'draft' and current_mandatory:
+        return {'draft_policy_basis': REVIEW_POLICY_BASIS}
+    return {'draft_policy_basis': DRAFT_POLICY_BASIS} if status == 'draft' else {}
 
 
 def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
@@ -1010,17 +1028,47 @@ def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, lim
     return publications, external
 
 
-def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
-                    lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
-                    current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
-                    current_goals: bool = False, current_generation_defaults: bool = False,
-                    own_shifts: list[dict] | None = None,
-                    external_snapshot: dict | None = None, shared_inputs: dict | None = None,
-                    scope_interval_cache: dict | None = None, include_fairness: bool = True,
-                    include_objectives: bool = True, include_fairness_history: bool = True,
-                    rule_map_bindings: bool = False, include_manifest: bool = True,
-                    fairness_goals_out: list[dict] | None = None) -> dict:
-    current_scheduling = current_scheduling or current_goals
+def _event_occurrence_currency(rows):
+    # Source revisions cover the audience, definitions and overrides. The clock can
+    # change which recurring occurrences project, even within the same local date.
+    return sorted((row.id, aware(row.start), aware(row.end)) for row in rows)
+
+
+def prepared_event_currency_matches(db, currency, *, now=None):
+    """Verify the clock-dependent occurrences in a captured snapshot window."""
+    if not currency:
+        return True
+    from .services import events
+    department_ids, lo, hi, recorded = currency
+    return _event_occurrence_currency(events.blocking_occurrences(db, department_ids, lo, hi, now=now)) == recorded
+
+
+def occurrences_unchanged_since(db, workspace, since, window):
+    """True when the blocking occurrences a read projected over `window` at `since` are the ones projected now.
+
+    Recurring occurrences that are not materialised follow the clock, and no revision counter moves when one ends.
+    Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
+    """
+    from datetime import datetime
+    from .services import events
+    lo, hi = (datetime.fromisoformat(value) for value in window)
+    department_ids = snapshot_department_ids(db, db.get(m.Department, workspace.department_id).organisation_id)
+    return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
+            == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
+
+
+def _draft_catalogue_refs(db, workspace):
+    own = select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)
+    refs = db.execute(own.with_only_columns(m.Shift.assignment_type_id, m.Shift.location_id).distinct()).all()
+    services = set(db.scalars(select(m.ShiftService.service_id)
+        .where(m.ShiftService.shift_id.in_(own)).distinct())) if refs else set()
+    return {row[0] for row in refs}, {row[1] for row in refs}, services
+
+
+def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_overrides,
+                      current_scheduling, mandatory_rules, current_mandatory, shared_inputs,
+                      scope_interval_cache, rule_map_bindings, current_goals=False, current_generation_defaults=False,
+                      draft_inputs=None, draft_refs=None, reuse_catalogue=False):
     if current_goals:
         from .workspace_baselines import workspace_generation_context
         department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
@@ -1031,15 +1079,16 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     else:
         department = db.get(m.Department, workspace.department_id)
         org = db.get(m.Organisation, department.organisation_id)
-    draft_rules = draft_policy_hint(workspace) if mandatory_rules and not current_scheduling else {}
-    mandatory_overlay_changed = False
+    draft_rules = (draft_policy_hint(workspace, current_mandatory=current_mandatory)
+                   if (mandatory_rules or current_mandatory) and not current_scheduling else {})
+    current_mandatory = draft_rules.get('draft_policy_basis') == REVIEW_POLICY_BASIS
     baseline = None
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
     live_inputs = shared_inputs
     if not current_scheduling:
         from .workspace_baselines import LIVE_VALIDITY_SOURCES, projection as baseline_projection
-        baseline, verified_inputs = _verified_baseline(db, workspace)
+        baseline, verified_inputs = draft_inputs or _verified_baseline(db, workspace)
         if baseline is not None:
             # Keep the verified payload memo immutable; overlay work receives
             # private top-level branch containers while json_value copies records.
@@ -1049,22 +1098,22 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
             # A draft may add a local duty after capture. Keep only the referenced
             # catalogue rows needed to interpret that local content. The captured
             # policy/configuration is the basis for the overlay below.
-            own_ids = list(db.scalars(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)))
-            if own_ids:
-                refs = db.execute(select(m.Shift.assignment_type_id, m.Shift.location_id)
-                                  .where(m.Shift.id.in_(own_ids))).all()
-                type_ids = {row[0] for row in refs}
-                location_ids = {row[1] for row in refs}
-                service_ids = set(db.scalars(select(m.ShiftService.service_id).where(m.ShiftService.shift_id.in_(own_ids))))
+            type_ids, location_ids, service_ids = draft_refs or _draft_catalogue_refs(db, workspace)
+            if type_ids or location_ids:
                 # Baselines freeze governed inputs, not only people already assigned in a draft.
                 # The prepared phase payload already contains every organisation person.
                 current_people = (live_inputs or {}).get('people') or {}
                 people_ids = set(current_people)
-                catalogue_inputs = {
-                    key: {row.id: record(row) for row in db.scalars(select(cls).where(cls.id.in_(ids)))}
-                    for key, cls, ids in (("types", m.AssignmentType, type_ids), ("locations", m.Location, location_ids),
-                                          ("services", m.Service, service_ids)) if ids
-                }
+                catalogue_inputs = {}
+                for key, cls, ids in (("types", m.AssignmentType, type_ids), ("locations", m.Location, location_ids),
+                                      ("services", m.Service, service_ids)):
+                    if not ids:
+                        continue
+                    acquired = (live_inputs or {}).get(key, {}) if reuse_catalogue else {}
+                    catalogue = {ident: acquired[ident] for ident in ids if ident in acquired}
+                    if missing := ids - catalogue.keys():
+                        catalogue.update({row.id: record(row) for row in db.scalars(select(cls).where(cls.id.in_(missing)))})
+                    catalogue_inputs[key] = catalogue
                 if people_ids and workspace.status not in {"draft", "submitted", "approved"}:
                     catalogue_inputs['people'] = {ident: json_value(row) for ident, row in current_people.items()}
                 for key, ids in (("types", type_ids), ("locations", location_ids), ("services", service_ids), ("people", people_ids)):
@@ -1077,15 +1126,16 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 shared_inputs = saved_inputs
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
-                                              include_mandatory=bool(draft_rules) or current_mandatory,
+                                              include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,
                                               validity_baseline=validity_baseline)
-            mandatory_overlay_changed = shared_inputs.pop('_mandatory_overlay_changed', False)
             if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
                 from packages.domain.rule_lines import seeded_policies
 
                 captured = seeded_policies(saved_inputs.get("policies") or [], saved_inputs.get("policy_seed_lines") or [])
                 effective = live_safety_inputs(db, workspace, saved_inputs, current=live_inputs,
-                                              include_mandatory=True, validity_baseline=validity_baseline)["policies"]
+                    include_mandatory=True,
+                    current_mandatory=draft_policy_hint(workspace).get('draft_policy_basis') == REVIEW_POLICY_BASIS,
+                    validity_baseline=validity_baseline)["policies"]
                 if captured != effective:
                     shared_inputs['_rule_map_policies'] = (captured, effective)
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
@@ -1094,8 +1144,6 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result = DomainSnapshot(result, read_quality=read_quality)
     if draft_rules:
         result['_draft_policy_basis'] = draft_rules['draft_policy_basis']
-    if current_mandatory and mandatory_overlay_changed:
-        result['_mandatory_overlay_changed'] = True
     if result['organisation']['id'] != org.id:
         raise ValueError('Snapshot inputs belong to another organisation')
     department_ids = result.pop('department_ids')
@@ -1292,6 +1340,75 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
+    return result, department_settings, org, department_ids, own_publication, baseline, live_inputs, department
+
+
+def _edit_snapshot_context(db, workspace, sources, options):
+    import pickle
+
+    if 'shared_inputs' not in sources:
+        sources['shared_inputs'] = _fingerprint_shared_inputs(db, workspace)
+    draft = _verified_baseline(db, workspace)
+    refs = _draft_catalogue_refs(db, workspace) if draft[0] is not None else None
+    refs_key = tuple(tuple(ids) for ids in refs) if refs is not None else None
+    key = refs_key, options['operational'], options['mandatory_rules'], options['current_mandatory']
+    held = sources.get('context')
+    if held is not None and held[0] == key:
+        result, department_settings = pickle.loads(held[1])
+        result['workspace'] = record(workspace, exclude=('validation',))
+        return result, department_settings, *held[2]
+    result, department_settings, *context = _snapshot_context(
+        db, workspace, **{**options, 'shared_inputs': sources['shared_inputs']},
+        draft_inputs=draft, draft_refs=refs, reuse_catalogue=True)
+    sources['context'] = key, pickle.dumps((result, department_settings), protocol=pickle.HIGHEST_PROTOCOL), context
+    return result, department_settings, *context
+
+
+def _snapshot_window_inputs(db, department_ids, people, lo, hi, availability_lo, sources):
+    from .services import availability_patterns, events
+
+    availability = {'availability': (m.Availability, m.Availability.person_id.in_(people)
+        & (m.Availability.start < hi) & (m.Availability.end > availability_lo) & m.Availability.retracted.is_(False))}
+    key = (tuple(department_ids), tuple(people), lo, hi) if sources is not None else None
+    held = sources.get('window') if sources is not None else None
+    if held is not None and held[0] == key:
+        _, common, bounded = held
+        # A historical fairness goal can widen the leave query. Keep the original query
+        # for each distinct bound while sharing patterns and events from the same read.
+        if availability_lo not in bounded:
+            bounded[availability_lo] = rows_many(db, availability)['availability']
+        return {**common, 'availability': bounded[availability_lo]}
+    values = rows_many(db, {**availability, 'patterns': availability_patterns.snapshot_source(department_ids, people),
+                           **events.blocking_sources(department_ids, lo, hi)})
+    if sources is not None:
+        sources['window'] = key, values, {availability_lo: values['availability']}
+    return values
+
+
+def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
+                    lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
+                    current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
+                    current_goals: bool = False, current_generation_defaults: bool = False,
+                    own_shifts: list[dict] | None = None,
+                    external_snapshot: dict | None = None, shared_inputs: dict | None = None,
+                    scope_interval_cache: dict | None = None, include_fairness: bool = True,
+                    include_objectives: bool = True, include_fairness_history: bool = True,
+                    rule_map_bindings: bool = False, include_manifest: bool = True,
+                    fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
+                    _event_now=None) -> dict:
+    current_scheduling = current_scheduling or current_goals
+    options = dict(operational=operational, policy_overrides=policy_overrides, fact_overrides=fact_overrides,
+                   current_scheduling=current_scheduling, mandatory_rules=mandatory_rules,
+                   current_mandatory=current_mandatory, shared_inputs=shared_inputs,
+                   scope_interval_cache=scope_interval_cache, rule_map_bindings=rule_map_bindings,
+                   current_goals=current_goals, current_generation_defaults=current_generation_defaults)
+    if _edit_sources is None:
+        context = _snapshot_context(db, workspace, **options)
+    else:
+        context = _edit_snapshot_context(db, workspace, _edit_sources, options)
+    # The department row stays referenced for the whole snapshot; the identity map holds it only weakly.
+    result, department_settings, org, department_ids, own_publication, baseline, live_inputs, _department = context
+    read_quality = result.read_quality
     lo, hi = snapshot_window(workspace, org.timezone)
     from packages.domain.quotas import applicable_policies, period_bounds, MAX_SHIFTS, MAX_ROWS
     policy_limit = result["quota_policy_limit"]
@@ -1319,11 +1436,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                 for first, _ in history_windows(result, policy, preload=True).values():
                     availability_lo = min(availability_lo, local_midnight(first, org.timezone))
     from .services import availability_patterns, events
-    window_inputs = rows_many(db, {'availability': (m.Availability,
-        m.Availability.person_id.in_(result["people"]) & (m.Availability.start < hi)
-        & (m.Availability.end > availability_lo) & m.Availability.retracted.is_(False)),
-        'patterns': availability_patterns.snapshot_source(department_ids, list(result['people'])),
-        **events.blocking_sources(department_ids, lo, hi)})
+    window_inputs = _snapshot_window_inputs(db, department_ids, list(result['people']), lo, hi,
+                                            availability_lo, _edit_sources)
     # Draft baselines freeze governed rules/configuration, but approved leave and
     # recorded absence remain current person facts and must be read at run time.
     result['rotation_leave_availability'] = [record(r, exclude=("private_reason",))
@@ -1334,7 +1448,13 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                                          acquired=window_inputs['patterns'])
     result["availability"] += weekly
     from packages.domain.rule_lines import fact_policy
-    facts = events.protected_facts(db, department_ids, list(result["people"]), lo, hi, org.timezone, acquired=window_inputs)
+    occurrences = None
+    if (_event_currency is not None or _event_now is not None) and any(row.repeat for row in window_inputs['events']):
+        occurrences = events.blocking_occurrences(db, department_ids, lo, hi, acquired=window_inputs, now=_event_now)
+        if _event_currency is not None:
+            _event_currency.extend((department_ids, lo, hi, _event_occurrence_currency(occurrences)))
+    facts = events.protected_facts(db, department_ids, list(result["people"]), lo, hi, org.timezone,
+                                   acquired=window_inputs, occurrences=occurrences)
     result["scheduling_facts"] += facts
     result["policies"] += [fact_policy(fact) for fact in facts]
     # Staff wishes on the rota's days, each weighted by its share of the points budget and any catch-up for declined wishes.
@@ -1379,6 +1499,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
     if baseline is not None:
+        from .workspace_baselines import CAPTURED_GENERATION_STATES
+        if workspace.status in CAPTURED_GENERATION_STATES:
+            if draft_safety := prepare_draft_type_safety(result, own):
+                result["_draft_type_safety"] = draft_safety
         # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
         for shift in external:
             type_id = shift['assignment_type_id']
@@ -1448,6 +1572,23 @@ def preparation_stamp(db, workspace):
             'toolchain': digest(toolchain(quota_policy_limit()))}
 
 
+def _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, options):
+    if (state['kind'] != 'shift.update' or workspace.status != 'draft'
+            or options.get('shared_inputs') is not None or not currency_match(stamp, stamp)):
+        return None
+    # A session edit changes local rows and these workspace fields. Keep their complete stamp
+    # on each replay view, and share its scheduling sources only inside this preparation transaction.
+    local_fields = {'revision', 'content_revision', 'submitted_fingerprint', 'last_edited_by'}
+    workspace_scope = {name: value for name, value in workspace_record.items() if name not in local_fields}
+    # validation_stamp ends in the workspace revisions, status and archive time.
+    source_stamp = {**stamp, 'content_revision': None, 'validation_stamp': stamp['validation_stamp'][:-4]}
+    scope = (db.get_transaction(), db.get_nested_transaction(), state['seed'], workspace_scope, source_stamp)
+    held = db.info.get('_edit_snapshot_sources')
+    if held is None or held[0] != scope:
+        held = db.info['_edit_snapshot_sources'] = scope, {}
+    return held[1]
+
+
 def domain_snapshot(db, workspace, *args, **kwargs):
     """Reuse detached preparation inputs only after checking current relational currency."""
     import pickle
@@ -1462,22 +1603,29 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         index = state['next_snapshot']
         state['next_snapshot'] += 1
         stamp = preparation_stamp(db, workspace)
-        key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
-                             'stamp': stamp})
+        workspace_record = record(workspace, exclude=('validation',))
+        key = snapshot_hash({'workspace': workspace_record, 'options': kwargs, 'stamp': stamp})
         cached = state['prepared_snapshots'].get(index)
         resolved = currency_match(stamp, stamp)
+        if cached and cached[0] == key and resolved:
+            # Recurring occurrences follow the clock; a prepared graph is current only if they still match.
+            resolved = prepared_event_currency_matches(db, cached[2])
         if state['kind'] == 'job.create':
             state['generation_snapshot_key'] = key if resolved or not state['replay'] else 'unresolved'
         if cached and cached[0] == key and resolved:
-            return pickle.loads(cached[1])
+            restored = state.get('restored_snapshots') or {}
+            return restored.pop(index) if index in restored else pickle.loads(cached[1])
         if state['replay'] and state['kind'] == 'job.create':
             return _domain_snapshot(db, workspace, *args, **kwargs)
         from .errors import require
         require(not state['replay'], 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during preparation; refresh and apply the edit again',
                 409, {'recoverable': True})
-        value = _domain_snapshot(db, workspace, *args, **kwargs)
-        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+        event_currency = []
+        sources = _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, kwargs)
+        value = _domain_snapshot(db, workspace, *args, _event_currency=event_currency, _edit_sources=sources, **kwargs)
+        state['prepared_snapshots'][index] = (key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL),
+                                              event_currency)
         return value
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)

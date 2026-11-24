@@ -334,8 +334,13 @@ function patchDraft(r:Row,kind:string):boolean{
   // A read changes no draft: the draft held stays (dropping it read the whole rota again after an edit or undo, and
   // left an issue list opened meanwhile without its Fix list).
   if(READ_ONLY_COMMANDS.has(kind))return true;
-  // The jobs read says the rota's run settings: a baseline capture or refresh, or the department's own, changes them.
-  if(kind==='generation.apply'||kind==='department.settings'||kind.startsWith('workspace.baseline.'))lastJobs=null;
+  if(kind==='generation.apply'){
+    const job=applyWrote(r)?r.job:null,kept=lastJobs;
+    if(job)generationApplyEpoch++;
+    const jobs:Row[]=kept?.jobs.jobs||[];
+    lastJobs=job&&kept&&kept.id===job.workspace_id&&kept.activity===seenActivity&&jobs.some(j=>j.id===job.id)
+      ?{...kept,jobs:{...kept.jobs,jobs:jobs.map(j=>j.id===job.id&&j.revision<=job.revision?job:j)}}:null;
+  }else if(kind==='department.settings'||kind.startsWith('workspace.baseline.'))lastJobs=null;
   const id:string=r?.workspace?.id||'',row=plannerMemo?.page.workspaces.find(x=>x.id===id),held=scheduleCache.drafts.get(id);
   // SW3-B-03: a submit or an approval answers with the rota's new state (no health): the list takes it too, so the page
   // redraws in that state reading only the rota, not the whole rota list (minutes under load, and a failed read left
@@ -356,7 +361,7 @@ function patchDraft(r:Row,kind:string):boolean{
   for(const path of [...scheduleCache.windows.keys()])if(path.includes(id))scheduleCache.windows.delete(path);
   if(kind.startsWith('job.'))lastJobs=null;
   if(plannerMemo&&!workspaceListOffset&&!plannerMemo.page.has_more){const b=scheduleBadge(plannerMemo.page.workspaces);if(b)navBadges.schedule=b;else delete navBadges.schedule;applyNavBadges();}
-  if(lastJobs?.jobs?.jobs?.some((j:Row)=>j.status==='applied'))lastJobs=null;  // an undone auto-schedule is no longer applied
+  if(kind!=='generation.apply'&&lastJobs?.jobs?.jobs?.some((j:Row)=>j.status==='applied'))lastJobs=null;  // an undone auto-schedule is no longer applied
   return true;
 }
 // People: work contacts from /api/directory for roles without the catalogues (staff); the open person's side panel.
@@ -2196,7 +2201,7 @@ function openRotaPanel(rotaId:string,ruleId=''){
   if(openRotaRulesFor(rotaId,ruleId))return;
   workspaceId=rotaId;draftNone=false;void navigate(routeHash('schedule',[schedView,planDay],{edit:rotaId}).slice(1));
 }
-type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
+type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean;mandatory?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
 const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>();
 /** A draft's baseline against current department changes: the one call for the bar's count and the review dialog. */
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
@@ -3536,7 +3541,11 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
       notify('Published · staff are told.'+(discarded?` Undo restores the ${discarded===1?'discarded draft':`${discarded} discarded drafts`}.`:'')+(stale.length?` ${stale.map(x=>x.name).join(', ')} now overlap${stale.length===1?'s':''} a published rota; open ${stale.length===1?'it':'them'} to choose how ${stale.length===1?'it fits':'they fit'}.`:''));
       await said;
     };
-  },approved?'Publish':'Submit for review');
+  },approved?'Publish':'Submit for review',(error,close)=>{
+    if(!approved&&error instanceof ApiError&&error.code==='VALIDATION_FAILED'
+      &&(error.details as {refresh_baseline?:boolean}|undefined)?.refresh_baseline)
+      return button('Refresh',()=>{close();return refreshDraftBaseline(w,refresh).catch(reportError);},'secondary small');
+  });
 }
 
 /** Compact rota health: open places, blocking issues and warnings. Each opens a list you can act on. */
@@ -4218,12 +4227,16 @@ const issueHooks=():IssuesHooks=>({name,find,rows,zone,source:referencePolicy,lo
   // The rota's job list is the Schedule's (read with its sessions); Resolve issues shows the proposal it holds.
   // Its draft read is the one the draft-edit guard (guardDraftEdits) asks about, as the Schedule's is.
   proposal:data=>{scheduleCache.drafts.set(data.workspace.id,data);return readJobs(data).then(()=>proposalNote(data));}});
+// Run results prefix older messages with the person and session, which the card already names.
+const runIssueWords=(f:Row)=>{const m=String(f.message),i=m.indexOf(': ');return f.protected&&!f.technical&&(f.shift_id||f.person_id)&&i>=0?m.slice(i+2):m;};
+function runIssueCard(data:WorkspaceData,f:Row,s:Row|undefined,done:()=>void,interactive=true):Issue{
+  const finding={...f,severity:f.severity||'error',message:runIssueWords(f)};
+  return findingCard(finding,s,interactive?findingActions(data,finding,s,done):[]);
+}
 /** Problems an auto-schedule run reported (ones it must keep and cannot start with, or ones outside its sessions), said
  *  as issue cards: one per person and session, grouped by kind with counts, the first few of each kind shown. */
 function runIssues(data:WorkspaceData,found:Row[],label:string,done:()=>void=()=>{}):HTMLElement{
   const byId=new Map(data.shifts.map(s=>[s.id,s])),FIRST=5;
-  // Run results put "<duty day time> · <person>: " before the message; the card says who and which session itself.
-  const plain=(f:Row)=>{const m=String(f.message),i=m.indexOf(': ');return f.protected&&!f.technical&&(f.shift_id||f.person_id)&&i>=0?m.slice(i+2):m;};
   const cards=new Map<string,Row[]>();
   for(const f of found){const k=f.shift_id||f.person_id?`${f.shift_id}|${f.person_id}`:`${f.code}|${f.start}|${f.message}`;cards.set(k,[...(cards.get(k)||[]),f]);}
   const kinds=new Map<string,Issue[]>(),byKey=new Map(found.map(f=>[issueKey(f),f])),grouped=new Set<string>();
@@ -4234,10 +4247,10 @@ function runIssues(data:WorkspaceData,found:Row[],label:string,done:()=>void=()=
   const total=cards.size;
   for(const k of grouped)cards.delete(k);
   for(const list of cards.values()){
-    const f:Row={...list[0],severity:list[0].severity||'error',message:plain(list[0])},s=f.shift_id?byId.get(f.shift_id):undefined;
-    const issue=findingCard(f,s,findingActions(data,f,s,done)),also=[...new Set(list.slice(1).map(plain))].filter(m=>m!==f.message);
+    const f=list[0],s=f.shift_id?byId.get(f.shift_id):undefined;
+    const issue=runIssueCard(data,f,s,done),also=[...new Set(list.slice(1).map(runIssueWords))].filter(m=>m!==runIssueWords(f));
     if(also.length)issue.detail=[issue.detail,'Also: '+also.join('; ')].filter(Boolean).join(' · ');
-    const kind=issueKind(f,f.rule_id?find('policies',f.rule_id)?.name:undefined);
+    const kind=issueKind({...f,message:runIssueWords(f)},f.rule_id?find('policies',f.rule_id)?.name:undefined);
     kinds.set(kind,[...(kinds.get(kind)||[]),issue]);
   }
   const groups=[...kinds].sort((a,b)=>b[1].length-a[1].length);
@@ -7077,7 +7090,9 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   const notApplied=((r.not_applied||[]) as Row[]).map(x=>String(x.message));
   // A3/A4: the run in Fix-list terms (autoschedule_result.ts) once the result carries the Fix list; the clash and a
   // rota that changed during the run are said in either layout.
-  const facts=runFacts(job),saved=s.score_saved??s.score,fixed=resultHead(facts,{changes,scoreDelta:saved?scoreDelta(s.score_before,saved):null,stale:drifted(job),optimality:o.optimality,strict:o.strict});
+  const facts=runFacts(job),saved=s.score_saved??s.score,absence=facts.keptAbsence;
+  const retained=data&&o.panel&&absence?runIssueCard(data,absence,byId.get(absence.shift_id),close,o.strict):undefined;
+  const fixed=resultHead(facts,{changes,scoreDelta:saved?scoreDelta(s.score_before,saved):null,stale:drifted(job),optimality:o.optimality,strict:o.strict,nextIssue:retained?.words});
   const clash=isClash(facts)&&data?clashCard(facts.conflict!,clashHooks(data,close)):'';
   const changed=data?inputsChanged(job,facts,{person:id=>name('people',id),session:id=>{const x=byId.get(id);return x?dayName(x.start):'';}}):null;
   const drift=driftNote(job)||'';
@@ -7093,7 +7108,7 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   const breaks=breaksNote(r);
   // The outcome leads (A3); the breaks, like the basic scheduler's fact, are the line after the numbers.
   if(fixed)return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?changed.nodes:[fixed.nodes[0]]),...fixed.nodes.slice(1),breaks,basicFact,clash,
-    data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);}):'',completionLine(job),
+    data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
   return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
@@ -7220,8 +7235,8 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
   if(total){
     const pickAdd=new Set<string>(additions.map((_:Row,i:number)=>String(i))),pickRemove=new Set<string>(removals.map((_:Row,i:number)=>'r'+i));
     const actions=el('div',{class:'actions'});
-    const applyJob=async(additionIndexes?:number[],removalIndexes?:number[])=>{const w=(await rotaMeta(result.workspace_id)).workspace;
-      const reply=await command('generation.apply',{workspace_id:w.id,job_id:result.id,reason:'Applied auto-schedule suggestions',...(additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes}:{})},undefined,w.revision).catch(e=>appliedAnyway(result.id,e)).catch(e=>supersededRun(e,w.id));
+    const applyJob=async(additionIndexes?:number[],removalIndexes?:number[])=>{
+      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined);
       // Nothing written: the dialog stays, saying so where Apply was (nothing is left to apply).
       if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...NOTHING_APPLIED));proposal=null;await refresh();return;}
       if(applyNeedsReview(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('warn',...APPLY_NOT_CONFIRMED));proposal=null;await refresh();return;}
@@ -7270,9 +7285,12 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
 // Proposals the coordinator discarded in this browser session (the job itself stays in history).
 const dismissedJobs=new Set<string>();
 // The rota's revision is the one this page last read or changed (a reply carries it); it reads it only when it holds none.
-// The reply is the draft edit's (the rota and its health), so the Schedule redraws reading just the draft (G-45).
-const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{const revision=knownRevision(job.workspace_id)??(await rotaMeta(job.workspace_id)).workspace.revision;
-  const reply=await command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id));proposal=null;
+async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]}){
+  const revision=knownRevision(job.workspace_id)??(await rotaMeta(job.workspace_id)).workspace.revision;
+  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id));
+}
+const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{
+  const reply=await sendGenerationApply(job,pick);proposal=null;
   if(nothingApplied(reply)){await refresh();throw new Error(NOTHING_APPLIED.join('. '));}
   if(applyNeedsReview(reply)){await refresh();throw new Error(APPLY_NOT_CONFIRMED.join('. '));}};
 /** SW3-A-04: an apply whose answer was lost (a gateway timeout under load, a dropped connection) may have been made all
@@ -7285,6 +7303,8 @@ async function appliedAnyway(jobId:string,e:unknown):Promise<typeof APPLY_CONFIR
   window.dispatchEvent(new CustomEvent('rota-saved',{detail:{kind:'generation.apply',result:APPLY_CONFIRMED}}));return APPLY_CONFIRMED;
 }
 let lastJobs:{id:string;jobs:Row;activity?:number|null;woke:number}|null=null;
+// A jobs read started before Apply may still say the run is ready for review.
+let generationApplyEpoch=0;
 /** The rota and revision last read again because a run was applied after the draft on screen (SW3-A-05): once each. */
 let behindRead='';
 /** The rota's latest auto-schedule run left a proposal that still fits it (not applied, discarded or out of date). */
@@ -7781,14 +7801,14 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     more.input.addEventListener('input',()=>{st().resume={job:latest.id,minutes:String(more.value())};go.textContent=`Continue for ${said()}`;});
     return {more,go};};
   const load=async(firstRead?:Row,since=panelWakes):Promise<void>=>{
-    window.clearTimeout(timer);const mine=++loads,woke=firstRead?since:panelWakes;
+    window.clearTimeout(timer);const mine=++loads,woke=firstRead?since:panelWakes,applyEpoch=generationApplyEpoch;
     // Opened before anything was read: its skeleton shows while this read is on its way.
     if(!known&&!st().step&&!target.hidden&&!body.querySelector(':scope>.loading'))drawStep();
     // A run shown live is read on its own (its progress) while it goes, not the rota's whole job list every second;
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
     const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
-    if(gone()||mine!==loads)return;
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
     // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
     // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
     if(woke!==panelWakes)return load();
@@ -7845,8 +7865,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     const generation=settled.find(j=>j.kind==='generation'),shown=generation?.outcome==='needs_more_time'&&generation.status==='succeeded'&&
       !currency(generation,data.current_fingerprint)?generation:confirmed?settled[run]:settled[0];
     const cached=!liveRunning&&shown&&proposal?.job_id===shown.id&&proposal.session===sessionKey()&&proposal.workspace_revision===w.revision&&proposal.job.revision===shown.revision&&!notCompared(proposal.job)&&proposal.job.input_fingerprint===data.current_fingerprint?proposal.job:null;
-    const latestRead:Row|null=!liveRunning&&shown?(cached||(shown.kind==='validation'?heldCheck(String(shown.id)):null)||(await get('/api/jobs/'+shown.id)).job):null;
-    if(gone()||mine!==loads)return;
+    const applied=shown?.status==='applied'&&shown.result?.applied?shown:null;
+    const latestRead:Row|null=!liveRunning&&shown?(applied||cached||(shown.kind==='validation'?heldCheck(String(shown.id)):null)||(await get('/api/jobs/'+shown.id)).job):null;
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
     // Focus inside the run's progress or result stays on the same control across this redraw (WCAG 2.4.3).
     const had=feedback.contains(document.activeElement)?document.activeElement:null,keep=had?focusSpot(feedback,had):null;
     // Keep Cancel mounted for this run so a status update cannot take away the press or its confirmation.

@@ -14,7 +14,7 @@ from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
-from sqlalchemy import delete, select, func, or_, update, text
+from sqlalchemy import delete, func, literal, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -715,13 +715,52 @@ def claim_job(db, *, recovering_worker=None):
             "search_control": job.search_control, "progress": job.progress}
 
 
-def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
+def check_inputs_unchanged(db, workspace, stamp):
+    """True when the inputs a check read are provably the writer's, so its manifest needs no rebuild.
+
+    Mirrors the API writer (commands.py): the preparation stamp (input revisions, every department's
+    counters in the organisation, compact currency) is equal under the writer, and the recurring
+    projections over the window the check's token covers are the same at the check's start and now.
+    Anything else takes the full rebuild.
+    """
+    if stamp is None or stamp[2] is None:
+        return False
+    from apps.api.snapshots import currency_match, occurrences_unchanged_since, preparation_stamp
+    since, recorded, window = stamp
+    if not currency_match(preparation_stamp(db, workspace), recorded):
+        return False
+    # The snapshot widens its window to block-quota periods; its manifest recorded the window it read.
+    # Always compare: the hint drops the local date after the window ends, yet an overnight occurrence still counts.
+    return occurrences_unchanged_since(db, workspace, since, window)
+
+
+def stage_feasibility_result(db, claim, result):
+    """Write the proof on its own row so cancellation can still change the job."""
+    require_current_schema(db)
+    table = m.JobFeasibilityResult.__table__
+    insert = postgres_insert if db.bind.dialect.name == 'postgresql' else sqlite_insert
+    lease = select(m.Job.id, m.Job.attempts, literal(result, table.c.payload.type)).where(
+        m.Job.id == claim['id'], m.Job.kind == 'feasibility', m.Job.status == 'running',
+        m.Job.attempts == claim['attempt'], m.Job.worker_id == WORKER_ID,
+        m.Job.input_fingerprint == claim['input_fingerprint'],
+    )
+    db.execute(insert(table).from_select(['job_id', 'attempt', 'payload'], lease).on_conflict_do_nothing())
+
+
+def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None):
     require_current_schema(db)
     # Feasibility completion needs current authority and lease state, not the frozen department graph.
     # Other kinds load their retained evidence lazily when their stale/proposal guards require it.
     job = db.get(m.Job, claim["id"], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
     if not job or job.status != "running" or job.attempts != claim["attempt"]:
         return False
+    if job.kind == 'feasibility' and result is not None and not error:
+        raise ValueError('Feasibility proof must be staged before completion')
+    if feasibility_projection is not None:
+        payload = m.JobFeasibilityResult
+        if job.input_fingerprint != claim['input_fingerprint'] or not db.scalar(select(
+                select(payload.job_id).where(payload.job_id == job.id, payload.attempt == job.attempts).exists())):
+            return False
     if job.kind == 'generation' and validated_proposal(result, job.input_fingerprint):
         job.result = result
     identity = db.get(m.Identity, job.requested_by)
@@ -764,7 +803,9 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         if (workspace.status != 'draft' or workspace.archived_at is not None
                 or ('previous_check' in claim
                     and (workspace.validation, workspace.accepted_issues) != claim['previous_check'])
-                or (current_manifest := domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
+                or (current_manifest := result['input_manifest']
+                    if 'input_manifest' in result and check_inputs_unchanged(db, workspace, claim.get('check_stamp'))
+                    else domain_snapshot(db, workspace)['input_manifest'])['token'] != result['fingerprint']):
             error = 'STALE_INPUTS'
         else:
             # The same inputs can have newer counters after an access change.
@@ -816,7 +857,12 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
             error, result, job.status = rejected.code, None, 'failed'
     if error_detail is not None and error:
         result = {'status': 'refused', 'error': error_detail}
-    job.result, job.error_code = result, error
+    if feasibility_projection is not None and not error:
+        metadata, job.result_summary = feasibility_projection
+        job.read_metadata = {**(job.read_metadata or metadata), 'result': metadata['result']}
+    else:
+        job.result = result
+    job.error_code = error
     search_spent(job, result)
     search_spent(job, progress)
     if job.kind == 'generation':
@@ -1127,13 +1173,27 @@ def fill_supersessions(engine, *, settings=None):
     return count
 
 
+def prune_abandoned_feasibility_results(db, limit):
+    # An expired attempt or a terminal refusal can never publish its staged payload.
+    payload = m.JobFeasibilityResult.__table__
+    key = (payload.c.job_id, payload.c.attempt)
+    jobs = m.Job.__table__
+    abandoned = select(*key).join(jobs, jobs.c.id == payload.c.job_id).where(
+        or_(payload.c.attempt < jobs.c.attempts, jobs.c.status.in_(('cancelled', 'failed')))
+    ).order_by(*key).limit(limit)
+    db.execute(delete(payload).where(tuple_(*key).in_(abandoned)))
+
+
 def prune_generation_state(engine, *, settings=None):
     """Release only disposable preparation/hints; job inputs, proposals and audit remain."""
     if time.monotonic() - _generation_pruned.get(engine, -3600.0) < 600:
         return 0
     settings = settings or engine.get_execution_options().get('rota_write_settings') or Settings.from_env()
-    count = retry_write(engine, lambda db: prune_generation_resume(
-        db, days=settings.generation_resume_days, limit=settings.worker_batch_size), serialize=False)
+    def prune(db):
+        prune_abandoned_feasibility_results(db, settings.worker_batch_size)
+        return prune_generation_resume(db, days=settings.generation_resume_days, limit=settings.worker_batch_size)
+
+    count = retry_write(engine, prune, serialize=False)
     _generation_pruned[engine] = time.monotonic()
     return count
 
@@ -1647,8 +1707,16 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     db.info['_check_budget'] = check_cancelled
                     # Fix-list receipts depend on the evidence and acknowledgements seen by this check.
                     claim['previous_check'] = (workspace.validation, workspace.accepted_issues)
-                    result = revalidate(db, workspace, store=False, include_internal=True)
+                    since = m.now()
+                    read = []
+                    result = revalidate(db, workspace, store=False, include_internal=True, data_out=read)
                     check_cancelled()
+                    # Read in this same snapshot, so the finish writer can skip rebuilding unchanged inputs.
+                    from apps.api.snapshots import preparation_stamp
+                    selection = (read[0].get('input_manifest') or {}).get('selection') if read else None
+                    read.clear()  # Keep only the window, not the whole snapshot, through the finish.
+                    claim['check_stamp'] = (since, preparation_stamp(db, workspace),
+                                            selection and (selection['start'], selection['end']))
         except Exception as exc:
             error = error or (getattr(exc, 'code', type(exc).__name__)
                               if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
@@ -1667,7 +1735,13 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         computed = time.monotonic()
         log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"],
             "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2)})
+        feasibility_projection = None
+        staged_result = False
+
         def finish(db):
+            if feasibility_projection is not None:
+                return finish_job(db, claim, None, error, progress=progress,
+                                  feasibility_projection=feasibility_projection)
             if pending_checkpoint is not None:
                 checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation)
             if claim['kind'] in {'merge_preview', 'merge_apply'} and not error:
@@ -1680,9 +1754,18 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     return finish_job(db, claim, None, rejected.code, progress=progress)
             return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
         try:
+            if claim['kind'] == 'feasibility' and result is not None and not error:
+                from apps.api.serialization import job_read_metadata, job_result_projection
+                feasibility_projection = (job_read_metadata(claim['input'], result),
+                                          job_result_projection('feasibility', result))
             delay = .1
             while time.monotonic() < lease_deadline:
                 try:
+                    if feasibility_projection is not None and not staged_result:
+                        retry_write(engine, lambda db: stage_feasibility_result(db, claim, result),
+                                    deadline=lease_deadline, serialize=False,
+                                    context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "stage_result"})
+                        staged_result = True
                     if not retry_write(engine, finish, deadline=lease_deadline,
                                        context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish"}):
                         return True  # Cancellation or a newer attempt owns the job now.
@@ -1706,6 +1789,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             pending_checkpoint = None
             encoded_preparation = None
             candidate_evidence = None
+            feasibility_projection = None
             # Resume preparation can retain the same solver graph as the input.
             # All closures now see only the probe identity after durable finish.
             claim = probe_claim

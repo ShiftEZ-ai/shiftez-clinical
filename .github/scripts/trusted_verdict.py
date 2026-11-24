@@ -35,7 +35,7 @@ def policy_context(data, kind, candidate):
             raise ValueError("Nightly evidence must use the pinned dev source")
         return policy.default_branch(data), candidate
     branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
-    return branch, policy.commit(data["before"]) if kind == "push" and branch == policy.default_branch(data) else candidate
+    return branch, policy.push_base(data, branch, candidate) if kind == "push" else candidate
 
 
 def assert_inventory(plan, raw_inventory, counts, scope=None):
@@ -63,7 +63,7 @@ def assert_inventory(plan, raw_inventory, counts, scope=None):
         selected_files.update(actual)
     if partial:
         if scope is None:
-            raise ValueError("Partial selection requires an ordinary dev pull request")
+            raise ValueError("Partial selection requires an ordinary pull request targeting a working branch")
         required = PR_SMOKE | (scope & (set(selected["unit"]) | set(selected["browser"])))
         if plan["selection"] != {"reason": "affected"} or not required <= selected_files:
             raise ValueError("Partial selection disagrees with the PR scope or omits required test files")
@@ -161,15 +161,13 @@ def main():
     kind=os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") != "true":
         require_pr_merge(data, git, candidate)
-    census_base=(policy.commit(data["pull_request"]["base"]["sha"]) if kind=="pull_request" else
-                 policy.commit(data["merge_group"]["base_sha"]) if kind=="merge_group" else
-                 policy.commit(data["before"]) if kind=="push" else candidate)
+    census_base = base
     policy.fetch(census_base,census_base)
     default = policy.default_branch(data)
-    if branch not in policy.working_branches(default):
+    if not policy.working_branch(branch, default):
         raise ValueError("Unsupported branch")
     release = branch == "main" and default != "main"
-    if branch != default:
+    if release or branch == "preview":
         dev_tip = policy.fetch("refs/heads/" + default)
         base = policy.accepted_dev_commit(policy.tree(candidate), dev_tip) if release else dev_tip
     source_tree = policy.tree(candidate)
@@ -178,7 +176,7 @@ def main():
     partial = "selection" in plan
     scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), candidate)
              if partial and kind == "pull_request" else None)
-    config = settings()
+    config = settings(plan=plan)
     selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
                                       {suite: config[suite + "_shards"] for suite in ("unit", "browser")}, scope)
     if policy.bootstrap(data, kind, base):
@@ -223,13 +221,14 @@ def main():
     def candidate_git(*args):
         return git(*(candidate + a[4:] if a == "HEAD" or a.startswith(("HEAD^", "HEAD:")) else a for a in args)).decode().strip()
     maker.git = candidate_git
+    candidate_ledger_allowed = branch == default or policy.release_branch(branch)
     with tempfile.TemporaryDirectory(prefix="trusted-verdict-data-", dir=os.environ["RUNNER_TEMP"]) as scratch:
         data_root = Path(scratch).resolve()
         assert data_root.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve())
         for path in policy.LISTS:
             if path in {QUARANTINE, QUARANTINE_RETIRED}:
                 continue  # The verifier receives the effective quarantine directly.
-            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and branch==default else policy.read_file(base, path)
+            raw = current if path == policy.KNOWN else policy.read_file(candidate,path) if flags['node_census'] and path=='ci/removed-tests.json' and candidate_ledger_allowed else policy.read_file(base, path)
             if raw is not None:
                 policy.decode(raw)
                 destination = data_root / path
@@ -255,7 +254,7 @@ def main():
                     os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files))
                 ledger=policy.read_file(base,"ci/removed-tests.json")
                 if ledger is None:raise ValueError("Target node-removal ledger is missing")
-                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if branch==default else ledger
+                candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if candidate_ledger_allowed else ledger
                 allowed=node_census.allowed_removals(ledger,candidate_ledger,before_nodes,set(runs[0]),maker.SAFE_NODE.fullmatch)
                 census=node_census.compare(before_nodes,set(runs[0]),allowed)
                 node_census.emit(census,output)

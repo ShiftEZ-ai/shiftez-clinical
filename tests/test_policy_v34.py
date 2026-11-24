@@ -4,6 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -83,19 +84,20 @@ class ImporterV34Tests(unittest.TestCase):
     def test_ci_jobs_run_by_event_with_skipped_budget(self):
         workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
         jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
-        full = {'checks', 'static', 'unit', 'browser', 'result'}
+        full = {'checks', 'static', 'unit', 'browser', 'ci-gate'}
         cases = (
             ('pull request', 'pull_request', 'refs/pull/1/merge', True, {}, full),
             ('merge group', 'merge_group', 'refs/heads/queue', True, {}, full),
             ('preview push', 'push', 'refs/heads/preview', True, {}, full),
-            ('dev push', 'push', 'refs/heads/dev', True, {}, {'checks'}),
+            ('release branch push', 'push', 'refs/heads/release/v1.2.3', True, {}, full),
+            ('default branch push', 'push', 'refs/heads/dev', True, {}, full),
             ('dispatch', 'workflow_dispatch', 'refs/heads/dev', True, {}, full),
             ('admitted nightly', 'schedule', 'refs/heads/dev', True, {}, full | {'nightly-budget'}),
-            ('declined nightly', 'schedule', 'refs/heads/dev', False, {}, {'nightly-budget'}),
+            ('declined nightly', 'schedule', 'refs/heads/dev', False, {}, {'nightly-budget', 'ci-gate'}),
             ('failed budget', 'schedule', 'refs/heads/dev', True,
-             {'nightly-budget': 'failure'}, {'nightly-budget'}),
+             {'nightly-budget': 'failure'}, {'nightly-budget', 'ci-gate'}),
             ('failed checks', 'pull_request', 'refs/pull/1/merge', True,
-             {'checks': 'failure'}, {'checks', 'result'}),
+             {'checks': 'failure'}, {'checks', 'ci-gate'}),
         )
         for default, (label, event, ref, admitted, overrides, expected) in (
                 (default, case) for default in ('dev', 'main') for case in cases):
@@ -122,8 +124,6 @@ class ImporterV34Tests(unittest.TestCase):
                     values = {
                         "github.event_name == 'schedule'": event == 'schedule',
                         "github.event_name != 'schedule'": event != 'schedule',
-                        "github.event_name != 'push'": event != 'push',
-                        "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)": ref != 'refs/heads/' + default,
                         "vars.HOSTED_CI_ENABLED == 'true'": True,
                         "github.event.repository.private": False,
                         "always()": True,
@@ -131,7 +131,6 @@ class ImporterV34Tests(unittest.TestCase):
                         "needs['nightly-budget'].result == 'success'": results.get('nightly-budget') == 'success',
                         "needs['nightly-budget'].outputs.admitted == 'true'": admitted,
                         "needs.checks.result == 'success'": results.get('checks') == 'success',
-                        "needs.checks.result != 'skipped'": results.get('checks') != 'skipped',
                     }
                     for expression, value in values.items():
                         condition = condition.replace(expression, str(value))
@@ -144,6 +143,92 @@ class ImporterV34Tests(unittest.TestCase):
                 for job in jobs:
                     run(job)
                 self.assertEqual({name for name, result in results.items() if result != 'skipped'}, expected)
+
+    def test_concurrency_cancels_only_superseded_pull_requests(self):
+        workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
+        pr_only = "${{ github.event_name == 'pull_request' }}"
+        expected = {
+            'ci.yml': {'group': 'ci-${{ github.head_ref || github.run_id }}', 'cancel-in-progress': pr_only},
+            'working-policy.yml': {
+                'group': 'working-policy-${{ github.head_ref || github.run_id }}', 'cancel-in-progress': pr_only,
+            },
+            'image.yml': {'group': 'image-${{ github.ref }}-${{ github.sha }}', 'cancel-in-progress': 'false'},
+            'dependency-graph.yml': {
+                'group': 'dependency-graph-${{ github.ref }}', 'cancel-in-progress': 'false',
+            },
+        }
+        files = sorted(workflows.glob('*.yml')) + sorted(workflows.glob('*.yaml'))
+        self.assertTrue(expected.keys() <= {path.name for path in files})
+        for path in files:
+            with self.subTest(workflow=path.name):
+                doc = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+                config = doc.get('concurrency')
+                if path.name in expected:
+                    self.assertEqual(config, expected[path.name])
+                elif isinstance(config, dict):
+                    self.assertEqual(config.get('cancel-in-progress', 'false'), 'false')
+                for job in doc['jobs'].values():
+                    config = job.get('concurrency')
+                    if isinstance(config, dict):
+                        self.assertIn(config.get('cancel-in-progress', 'false'), ('false', pr_only))
+
+    def test_ci_gate_runs_unconditionally_and_checks_actual_producer_results(self):
+        workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
+        gate = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']['ci-gate']
+        self.assertEqual(gate['name'], 'ci-gate')
+        self.assertEqual(gate['if'], 'always()')
+        producers = ('checks', 'static', 'unit', 'browser')
+        self.assertCountEqual(gate['needs'], ('nightly-budget', *producers))
+        step = next(step for step in gate['steps'] if step.get('id') == 'producers')
+        self.assertNotIn('if', step)
+        self.assertEqual(step['shell'], 'python')
+        self.assertEqual(step['env']['NEEDS_JSON'], '${{ toJSON(needs) }}')
+        for following in gate['steps'][gate['steps'].index(step) + 1:]:
+            self.assertIn("steps.producers.outputs.run_verdict == 'true'", following['if'])
+        success = dict.fromkeys(producers, 'success')
+        skipped = dict.fromkeys(producers, 'skipped')
+        cases = (
+            ('pull_request', 'skipped', None, success, True, False),
+            ('merge_group', 'skipped', None, success, True, False),
+            ('push', 'skipped', None, success, True, False),
+            ('workflow_dispatch', 'skipped', None, success, True, False),
+            ('schedule', 'success', 'true', success, True, False),
+            ('schedule', 'success', 'false', skipped, False, True),
+            ('schedule', 'success', 'true', skipped, False, False),
+            ('schedule', 'success', None, skipped, False, False),
+            ('schedule', 'success', 'false', dict(skipped, browser='cancelled'), False, False),
+            ('schedule', 'failure', None, skipped, False, False),
+            ('schedule', 'cancelled', None, skipped, False, False),
+            ('schedule', 'skipped', None, skipped, False, False),
+            ('push', 'skipped', None, skipped, False, False),
+            ('pull_request', 'skipped', None, dict(success, unit='failure'), False, False),
+            ('merge_group', 'skipped', None, dict(success, browser='cancelled'), False, False),
+            ('push', 'skipped', None, dict(success, static='skipped'), False, False),
+            ('push', 'skipped', None, dict(success, unit='failure'), False, False),
+            ('push', 'skipped', None, {'checks': 'success'}, False, False),
+        )
+        for event, budget, admitted, results, verdict, deferred in cases:
+            with self.subTest(event=event, budget=budget, admitted=admitted, results=results), \
+                 tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as directory:
+                needs = {job: {'result': result} for job, result in results.items()}
+                budget_outputs = {} if admitted is None else {'admitted': admitted}
+                all_needs = dict(needs, **{'nightly-budget': {'result': budget, 'outputs': budget_outputs}})
+                env, output, summary = (Path(directory) / name for name in ('env', 'output', 'summary'))
+                result = subprocess.run(
+                    [sys.executable, '-I', '-c', step['run']],
+                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'NEEDS_JSON': json.dumps(all_needs),
+                         'GITHUB_ENV': str(env), 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)},
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode == 0, verdict or deferred, result.stderr)
+                self.assertEqual(env.exists(), verdict)
+                self.assertEqual(output.exists(), verdict)
+                self.assertEqual(summary.exists(), deferred)
+                if verdict:
+                    self.assertEqual(output.read_text().splitlines(), ['run_verdict=true'])
+                    self.assertEqual(json.loads(env.read_text().removeprefix('NEEDS_JSON=')), needs)
+                if deferred:
+                    self.assertIn('Nightly suites deferred', summary.read_text())
 
     def test_pipeline_keeps_default_limits_until_measurement(self):
         # Lower limits require new measured runs in ci/hosted-durations.json.
@@ -173,13 +258,13 @@ class ImporterV34Tests(unittest.TestCase):
                     setup['run'].splitlines(),
                 )
             if name == 'ci.yml':
-                self.assertEqual(doc['concurrency']['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
-                self.assertIn("github.event_name == 'schedule' && 'ci-nightly'", doc['concurrency']['group'])
                 # A label added by a person must not start a new run and cancel the running one.
                 self.assertEqual(doc['on']['pull_request']['types'],
                                  ['opened', 'synchronize', 'reopened', 'ready_for_review'])
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
+                plan = next(step for step in jobs['checks']['steps'] if step.get('id') == 'plan')
+                self.assertIn('.trusted-controls/.github/scripts/trusted_ci.py" plan', plan['run'])
                 limits = {
                     'unit': "${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}",
                     'browser': "${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}",
@@ -187,6 +272,16 @@ class ImporterV34Tests(unittest.TestCase):
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')
                     self.assertEqual(jobs[shard]['strategy'].get('max-parallel'), limit)
+                    count = shard + '_count'
+                    self.assertEqual(jobs['checks']['outputs'][count],
+                                     '${{ steps.plan.outputs.' + count + ' || steps.select.outputs.' + count + ' }}')
+                    self.assertEqual(jobs['checks']['outputs'][shard + '_matrix'],
+                                     '${{ steps.plan.outputs.' + shard + '_matrix }}')
+                    self.assertEqual(jobs[shard]['strategy']['matrix']['shard'],
+                                     '${{ fromJSON(needs.checks.outputs.' + shard + '_matrix) }}')
+                    self.assertEqual(jobs['checks']['outputs']['replicas'], '${{ steps.plan.outputs.replicas }}')
+                    self.assertEqual(jobs[shard]['strategy']['matrix']['replica'],
+                                     '${{ fromJSON(needs.checks.outputs.replicas) }}')
             for job_id, job in jobs.items():
                 with self.subTest(workflow=name, job=job_id):
                     if name == 'ci.yml' and job_id in ('unit', 'browser'):

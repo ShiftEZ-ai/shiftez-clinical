@@ -1,6 +1,9 @@
 name: Working policy
 permissions:
   contents: read
+concurrency:
+  group: working-policy-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   policy:
     name: Working policy

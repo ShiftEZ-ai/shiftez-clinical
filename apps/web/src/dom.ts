@@ -489,6 +489,7 @@ export type BadgeTone=Tone|''|`duty-${string}`;
 export type BadgeOptions={icon?:IconName|null;tip?:string;as?:'button'}&Record<string,unknown>;
 export const badge=(value:string,tone:BadgeTone='',cls='',{icon:glyph,tip,as,...attrs}:BadgeOptions={})=>
   el(as||'span',{...(as?{type:'button'}:{}),...attrs,class:['badge',tone,cls].filter(Boolean).join(' '),'data-tip':tip||undefined},glyph?icon(glyph):null,value.replaceAll('_',' '));
+export const selfApprovedBadge=()=>badge('Self-approved','warn','audit-self');
 /** The Needs-you row's words (UIUX-AUDIT C9; DESIGN › Fix list: one shared row shape). */
 export function needText(title:Child|Child[],line?:Child|Child[],o:{id?:string;tip?:string;cls?:string}={}):HTMLElement{
   return el('span',{class:'home-need-text',...(o.id?{id:o.id}:{})},el('strong',{},...[title].flat()),
@@ -2225,8 +2226,9 @@ export function historyDialog(title:string,valueLabel:string,read:(offset:number
       out.replaceChildren(table(['Version','Saved','By',valueLabel,'Reason',''],rows,'No changes yet.'));more.hidden=!r.more;};
     body.append(out,more);void page().catch(failed);});
 }
-export function formDialog(title: string, description: string, build: (form:HTMLFormElement)=>()=>Promise<void>, submitLabel='Save') {
-  return showDialog(title,description,(body,close,tryClose)=>formInto(body,close,tryClose,build,submitLabel));
+type RefusalAction=(error:unknown,close:()=>void)=>HTMLButtonElement|undefined;
+export function formDialog(title: string, description: string, build: (form:HTMLFormElement)=>()=>Promise<void>, submitLabel='Save', refusalAction?:RefusalAction) {
+  return showDialog(title,description,(body,close,tryClose)=>formInto(body,close,tryClose,build,submitLabel,refusalAction));
 }
 /** A refusal in the server's own words. A schema refusal ("Review the highlighted fields") names no field this form can
  *  highlight, so it says each field's message instead (maintenance, WCAG 3.3.1). */
@@ -2275,7 +2277,7 @@ export function markFields(root:HTMLElement){
   }
 }
 /** The one form body (fields, error line, Cancel and Save, steps): in a modal dialog (formDialog) or a docked side panel. */
-export function formInto(body:HTMLElement,close:()=>void,tryClose:()=>void,build:(form:HTMLFormElement)=>()=>Promise<void>,submitLabel='Save'){
+export function formInto(body:HTMLElement,close:()=>void,tryClose:()=>void,build:(form:HTMLFormElement)=>()=>Promise<void>,submitLabel='Save',refusalAction?:RefusalAction){
     const form=el('form',{class:'form-grid'}),error=el('div',{class:'span-2','aria-live':'assertive'});
     const save=build(form),submit=el('button',{class:'button primary',type:'submit'},submitLabel);
     markFields(form);
@@ -2299,7 +2301,10 @@ export function formInto(body:HTMLElement,close:()=>void,tryClose:()=>void,build
           // D-4: a refusal the server marks recoverable (the rota moved during preparation) is one press away: Retry sends
           // this form again, with everything entered kept.
           if((e as {details?:{recoverable?:boolean}}).details?.recoverable)said.append(' ',button('Retry',()=>form.requestSubmit(),'secondary small'));
-          error.replaceChildren(said); error.scrollIntoView({block:'nearest'});}} /* an empty message: the form already shows why */ finally {await done();
+          const action=refusalAction?.(e,close);
+          if(action)said.append(' ',action);
+          error.replaceChildren(said); error.scrollIntoView({block:'nearest'});
+          if(action&&hadFocus)action.focus({preventScroll:true});}} /* an empty message: the form already shows why */ finally {await done();
         if(hadFocus&&submit.isConnected&&(!document.activeElement||document.activeElement===document.body))submit.focus({preventScroll:true});}
     });body.append(form);
 }
