@@ -21,5 +21,6 @@ def observed_effect(before, after):
             'mandatory': mandatory, 'advisory': advisory,
             'recited': mandatory_recited + advisory_recited,
             'effect': 'adds' if adds else 'clears' if clears else 'no_change',
-            'summary': (f'Clears {clears} check' + ('s' if clears != 1 else '') + (f'; adds {adds}' if adds else '')
-                        if clears else f'Adds {adds} check' + ('s' if adds != 1 else '') if adds else 'No change') if complete else 'Check incomplete'}
+            'summary': (' · '.join(f'{word} {count} problem' + ('s' if count != 1 else '')
+                                   for word, count in (('Adds', adds), ('Clears', clears)) if count)
+                        or 'No change') if complete else 'Check incomplete'}

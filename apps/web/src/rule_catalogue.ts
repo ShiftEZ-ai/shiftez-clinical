@@ -2,7 +2,7 @@
  *  one rule per catalogue entry, its lines saying who, where, when and the numbers. The Rules list is one database
  *  (rules_tree.ts: families › rules › lines, and Needs attention); a rule's own page (#rules/<id>) is a lines database
  *  with a line editor docked beside it. Every change goes into one local draft per rule, proposed together. */
-import {bidi,departmentTimeZone,notifyWaiting,statusTone,disabledWhy,el,icon,iconButton,menuItem,formatTime,area,badge,grants,ruleFacts,departmentToday,button,compact,check,confirmAction,multiPick,relabel,note,empty,field,footerStatus,legend,dateUnits,formatDate,formDialog,labelOf,notify,plural,popover,sectionHead,select,showDialog,statusBadge,weekOrder,armed,WEEKDAYS,type Child,CAPABILITY,typeColour} from './dom.js';
+import {bidi,departmentTimeZone,notifyWaiting,statusTone,disabledWhy,el,icon,iconButton,menuItem,formatTime,area,badge,grants,ruleFacts,departmentToday,button,compact,check,confirmAction,multiPick,relabel,note,empty,field,footerStatus,legend,dateUnits,formatDate,formDialog,labelOf,notify,plural,popover,sectionHead,select,showDialog,spanLabel,statusBadge,weekOrder,armed,WEEKDAYS,type Child,CAPABILITY,typeColour} from './dom.js';
 import {readFailed,refused,failedNote,couldntLoad} from './dom.js';  // a failed read: refused (403) or an error with Retry (maintenance)
 import {fullNameOf} from './person_label.js';
 import {dateRange,lastDayIncluded} from './date_picker.js';
@@ -1126,9 +1126,20 @@ function effectRows(rows:Effect[],none='No rota being planned overlaps its dates
     const since=x.started_at||x.created_at;
     const end=w?badge(w.text,w.tone):elapsed(waitingWord(x.status)||'Checking',since?Date.parse(since):Date.now());
     if(w?.tone==='ok')end.prepend(icon('check'));if(!w)end.id=`rc-effect-wait-${i}`;
-    // SW-11: the draft's name, then the server's summary on its own line, unless it only repeats the badge.
-    const more=x.summary&&x.summary!==w?.text?x.summary:'';
-    return el('li',{},el('span',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),more?el('small',{class:'muted rc-effect-summary'},more):''),end);});
+    const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
+      :x.summary&&x.summary!==w?.text?x.summary:'';
+    const problems=x.new_or_worse_count&&x.job_id?button('View problems',()=>showDialog(`Problems added or worsened in ${x.name}`,'',body=>{
+      const load=async()=>{body.replaceChildren(working('Loading problems…'));
+        try{const {job}=await get(`/api/jobs/${encodeURIComponent(x.job_id!)}`);
+          const findings=(job.result?.new_or_worse_findings||[]) as Row[];
+          if(job.check_stale||job.result?.comparison_complete!==true||!findings.length){body.replaceChildren(note('Reopen the review for a fresh check.','warning'));return;}
+          const zone=departmentTimeZone();
+          body.replaceChildren(el('ul',{class:'review-findings'},...findings.map(f=>el('li',{class:'review-finding'},
+            el('span',{},String(f.message),f.start&&typeof f.start==='string'?` · ${spanLabel(f.start,f.end,zone)}`:'')))));}
+        catch(err){body.replaceChildren(readFailed('the problems',err,()=>void load()));}};
+      void load();}),'',{class:'link-button','aria-label':`View problems for ${x.name}`}):'';
+    return el('li',{},el('span',{class:'rc-effect-what'},el('span',{class:'rc-effect-name',title:x.name},x.name),
+      more?el('small',{class:'muted rc-effect-summary'},more):'',problems?el('span',{},problems):''),end);});
 }
 /** One of a rule's units ("1 duty", "1 person"). */
 const ONE:Record<string,string>={people:'person',duties:'duty',hours:'hour',days:'day',weekends:'weekend',minutes:'minute',trainees:'trainee',units:'unit'};
@@ -1768,13 +1779,13 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
       let review:Review|null=null,rows:Effect[]=[];
-      // maintenance: an effect that could not be established is decided on explicitly: what is uncertain stays listed above,
-      // the approver ticks that they approve without it and says why (recorded with the activation).
-      const understood=check('Approve without a complete check of these drafts',false),why=area('Reason','',2);why.input.maxLength=500;
-      const uncertain=el('div',{class:'rc-ack'},understood.wrap,why.wrap);
+      const incompleteLabel='Approve without a complete check of these drafts';
+      const understood=check(incompleteLabel),why=area('Reason','',2);why.input.maxLength=500;
+      const ackLabel=understood.wrap.querySelector('.check-text>span')!;
+      const acknowledgement=el('div',{class:'rc-ack'},understood.wrap,why.wrap);
       for(const x of [understood.input,why.input])x.addEventListener(x===why.input?'input':'change',()=>paint());
       // A check still under way (running, or started here and not picked up yet) shows its elapsed time, never the
-      // acknowledgement: that is offered only once the check has ended incomplete.
+      // acknowledgement, which is offered once the checks stop and the approver can decide.
       const checking=()=>rows.some(effectRunning)||rows.some(x=>x.status==='not_checked'&&started.has(x.workspace_id));
       // SW3-B-19: Check / Check again starts the drafts' checks on request (a refused start is said, never left as a check
       // that never ends); Stop cancels a check that hangs (job.cancel: coordinators). Approving without a complete check
@@ -1790,7 +1801,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         await Promise.all(Array.from({length:Math.min(CHECKS_AT_ONCE,queue.length)},worker));
         for(const x of queue)started.delete(x.workspace_id);};  // closed before they were started
       const reread=async()=>{const r=await proposalReview(String(p.id));review=r;rows=r.effect||[];paint();};
-      const recheck=button('Check',async()=>{const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&x.status!=='ready'));await reread();void load();}
+      const recheck=button('Check',async()=>{understood.input.checked=false;const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&x.status!=='ready'));await reread();void load();}
         catch(err){reportError(err);}finally{await done();}},'secondary small');
       const stop=mayStop?button('Stop',async()=>{const done=busy(stop!);
         try{await command('bulk.apply',{item_kind:'job.cancel',reason:'Stopped the rule check',
@@ -1805,7 +1816,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           // maintenance: a review read that fails is said, with Retry, and polling goes on (it used to stop for good while the
           // elapsed time kept counting: the sweep's "Checking · 12:51").
           ...(pollError?[(n=>{n.append(' ',button('Retry',()=>{window.clearTimeout(timer);void poll();},'secondary small'));return n;})(note(`Couldn't check · ${pollError}`,'warning'))]:[]));
-        const ask=!!review.requires_acknowledgement&&review.can_decide!==false&&!checking();uncertain.hidden=!ask;why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
+        const ask=!!review.requires_acknowledgement&&review.can_decide!==false&&!checking();acknowledgement.hidden=!ask;
+        ackLabel.textContent=rows.some(x=>x.new_or_worse_count)?(rows.some(x=>x.status!=='ready')?
+          'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
+        why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
         approve.disabled=checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
         if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');};
@@ -1834,7 +1848,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
         proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
-            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?uncertain:'');delete approve.dataset.tip;paint();void load();},
+            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');delete approve.dataset.tip;paint();void load();},
           async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
