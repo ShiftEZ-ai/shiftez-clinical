@@ -180,3 +180,5 @@ def test_safety_cannot_acknowledge_missing_or_incomplete_receipt(backend, with_r
     denied = h.command('approver', 'policy.activate', {'reason': 'Safety cannot accept uncertainty',
         'acknowledge_unresolved': True, 'check_job_ids': ids}, policy['id'], policy['revision'], status=409)
     assert denied['error']['code'] == 'RULE_CHECK_UNRESOLVED'
+    if with_receipt:
+        assert denied['error']['details'] == {'workspace_id': workspace['id'], 'check_job_id': ids[0]}
