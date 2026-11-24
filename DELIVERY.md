@@ -35,7 +35,7 @@ contract in DESIGN.md.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff can reach, proven by hiding a change on purpose.
-  Merge groups and pushes to the default branch run static checks and the full unit and browser suites.
+  Merge groups and pushes to the default branch run static checks and one complete replica of the unit and browser suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
   reports. If the nightly capacity check defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
@@ -71,8 +71,9 @@ contract in DESIGN.md.
 
 ## Test policy
 - No retries to get green, no skipped or quietly removed tests. Fix causes; never re-run an unchanged failure.
-  Known exception, not policy: the trusted runner re-runs failed test nodes once in the same job on pull-request and
-  merge-queue runs (`.github/scripts/trusted_ci.py`); issue #885 removes it.
+  Until issue #885 removes the exception, the trusted runner re-runs eligible failed nodes once in the same job on
+  pull requests, merge groups and pushes to the default branch (`.github/scripts/trusted_ci.py`).
+  On default-branch pushes, a failure followed by a pass is recorded as unstable.
 - A failing test is repaired by restoring what it asserts. Never weaken, skip, delete, quarantine or
   re-parameterise away a failing assertion.
 - A replaced test keeps every assertion, or says for each retired one which design decision made it untrue.
@@ -146,8 +147,9 @@ contract in DESIGN.md.
   section at the end, and a change after approval is disclosed the same day.
 
 ## Deploys
-- A hosted job builds the image and publishes it by digest. No workflow connects to a host, no host is a runner and
-  no host holds a credential for the repository. Nothing in the repository names or reveals where the product runs.
+- A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
+  No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
+  Nothing in the repository names or reveals where the product runs.
 - Main images published to the public package carry a provenance attestation signed by `image.yml` on
   `refs/heads/main`. The dev slot verifies it offline and pins the signer workflow and ref. Staging and production
   images do not carry this attestation yet.
