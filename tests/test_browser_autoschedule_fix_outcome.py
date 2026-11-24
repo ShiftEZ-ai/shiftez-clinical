@@ -52,6 +52,25 @@ def _workspace(h, name):
     return h.shift(w, start='2026-10-06T08:00:00+03:00', end='2026-10-06T12:00:00+03:00', people=[])['workspace']
 
 
+def test_receipt_labels_the_incomplete_proposal_separately_from_the_solved_model(browser, live_server, h):
+    w = _workspace(h, 'Proposal receipt')
+    context, page, panel = _open(browser, live_server, h, w, DESKTOP, 'light')
+    try:
+        _inject(page, lambda job: job['result'].update(
+            solver_status='OPTIMAL', search_stop={'reason': 'model_proven'},
+            generation_outcome={'status': 'UNKNOWN', 'candidate': 'with_gaps', 'optimality_proven': False}))
+        _run(page, h, panel)
+        receipt = panel.locator('.solver-receipt')
+        expect(receipt).to_contain_text('Proposal status: UNKNOWN')
+        expect(receipt).to_contain_text('search finished')
+        expect(receipt).not_to_contain_text('proven best')
+        expect(receipt.get_by_role('button', name='About Solver status')).to_have_attribute(
+            'data-tip', re.compile('model ended OPTIMAL'))
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
+        context.close()
+
+
 @pytest.mark.parametrize('view,scheme', FOUR)
 def test_a_better_run_says_causes_cleared_and_what_is_still_to_fix(browser, live_server, h, view, scheme):
     w = _workspace(h, 'FM better run')

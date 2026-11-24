@@ -180,9 +180,10 @@ def test_observed_effect_counts_cleared_added_and_no_change_without_solver_claim
                'detail': {'required_hours': 24, 'actual_hours': 16}}
     before = {'findings': [finding]}
     assert observed_effect(before, {'findings': []}) == {'status': 'ready', 'clears': 1, 'adds': 0,
-        'effect': 'clears', 'summary': 'Clears 1 check',
+        'effect': 'clears', 'summary': 'Clears 1 problem',
         'mandatory': {'clears': 1, 'adds': 0}, 'advisory': {'clears': 0, 'adds': 0}, 'recited': []}
-    assert observed_effect({'findings': []}, before)['adds'] == 1
+    added = observed_effect({'findings': []}, before)
+    assert added['adds'] == 1 and added['summary'] == 'Adds 1 problem'
     assert observed_effect(before, {'findings': [{**finding, 'rule_id': 'new'}]})['effect'] == 'no_change'
     assert observed_effect(before, {**before, 'quota_report': {'complete': False}})['status'] == 'unresolved'
 

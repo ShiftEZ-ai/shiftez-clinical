@@ -1034,13 +1034,13 @@ def _event_occurrence_currency(rows):
     return sorted((row.id, aware(row.start), aware(row.end)) for row in rows)
 
 
-def prepared_event_currency_matches(db, currency):
+def prepared_event_currency_matches(db, currency, *, now=None):
     """Verify the clock-dependent occurrences in a captured snapshot window."""
     if not currency:
         return True
     from .services import events
     department_ids, lo, hi, recorded = currency
-    return _event_occurrence_currency(events.blocking_occurrences(db, department_ids, lo, hi)) == recorded
+    return _event_occurrence_currency(events.blocking_occurrences(db, department_ids, lo, hi, now=now)) == recorded
 
 
 def _draft_catalogue_refs(db, workspace):
@@ -1380,7 +1380,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
-                    fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None) -> dict:
+                    fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
+                    _event_now=None) -> dict:
     current_scheduling = current_scheduling or current_goals
     options = dict(operational=operational, policy_overrides=policy_overrides, fact_overrides=fact_overrides,
                    current_scheduling=current_scheduling, mandatory_rules=mandatory_rules,
@@ -1434,9 +1435,10 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result["availability"] += weekly
     from packages.domain.rule_lines import fact_policy
     occurrences = None
-    if _event_currency is not None and any(row.repeat for row in window_inputs['events']):
-        occurrences = events.blocking_occurrences(db, department_ids, lo, hi, acquired=window_inputs)
-        _event_currency.extend((department_ids, lo, hi, _event_occurrence_currency(occurrences)))
+    if (_event_currency is not None or _event_now is not None) and any(row.repeat for row in window_inputs['events']):
+        occurrences = events.blocking_occurrences(db, department_ids, lo, hi, acquired=window_inputs, now=_event_now)
+        if _event_currency is not None:
+            _event_currency.extend((department_ids, lo, hi, _event_occurrence_currency(occurrences)))
     facts = events.protected_facts(db, department_ids, list(result["people"]), lo, hi, org.timezone,
                                    acquired=window_inputs, occurrences=occurrences)
     result["scheduling_facts"] += facts
