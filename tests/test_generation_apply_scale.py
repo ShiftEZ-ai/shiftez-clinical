@@ -198,8 +198,16 @@ def test_apply_reads_unchanged_proposal_payload_once(pg):
     assert payload_reads == [{'input_snapshot', 'result'}]
 
 
-@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
 def test_apply_refuses_addition_absent_from_frozen_shifts_without_writes(h, monkeypatch):
+    assert_apply_refuses_addition_absent_from_frozen_shifts(h, monkeypatch)
+
+
+@pytest.mark.postgres
+def test_postgres_apply_refuses_addition_absent_from_frozen_shifts_without_writes(pg, monkeypatch):
+    assert_apply_refuses_addition_absent_from_frozen_shifts(pg, monkeypatch)
+
+
+def assert_apply_refuses_addition_absent_from_frozen_shifts(h, monkeypatch):
     from apps.api.auth import authenticate
     from apps.api.services import generation_reconciliation
     from packages.contracts.schemas import Command
