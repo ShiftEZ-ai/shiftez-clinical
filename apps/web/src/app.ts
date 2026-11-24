@@ -7091,7 +7091,7 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   // A3/A4: the run in Fix-list terms (autoschedule_result.ts) once the result carries the Fix list; the clash and a
   // rota that changed during the run are said in either layout.
   const facts=runFacts(job),saved=s.score_saved??s.score,absence=facts.keptAbsence;
-  const retained=data&&absence?runIssueCard(data,absence,byId.get(absence.shift_id),close,o.strict):undefined;
+  const retained=data&&o.panel&&absence?runIssueCard(data,absence,byId.get(absence.shift_id),close,o.strict):undefined;
   const fixed=resultHead(facts,{changes,scoreDelta:saved?scoreDelta(s.score_before,saved):null,stale:drifted(job),optimality:o.optimality,strict:o.strict,nextIssue:retained?.words});
   const clash=isClash(facts)&&data?clashCard(facts.conflict!,clashHooks(data,close)):'';
   const changed=data?inputsChanged(job,facts,{person:id=>name('people',id),session:id=>{const x=byId.get(id);return x?dayName(x.start):'';}}):null;

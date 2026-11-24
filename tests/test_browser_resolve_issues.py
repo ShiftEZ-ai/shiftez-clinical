@@ -68,6 +68,9 @@ def test_kept_meeting_has_the_same_cause_and_actions_in_both_result_sections(bro
         for name in (r'^Pick someone else instead of ', r'^Remove .* from this session$'):
             expect(still.get_by_role('button', name=re.compile(name))).to_be_visible()
         expect(still.get_by_role('button', name='Change the rule')).to_have_count(0)
+        panel.get_by_role('button', name='Review latest result', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Auto-schedule results')
+        expect(dialog.get_by_role('button', name=re.compile(r'^(Pick someone else|Remove .* from this session)'))).to_have_count(0)
     finally:
         context.close()
 
