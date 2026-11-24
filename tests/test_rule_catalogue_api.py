@@ -298,8 +298,10 @@ def test_rule_amendment_keeps_each_omitted_field(h, omitted):
 
 def test_rule_amendment_stores_the_normalised_dates_of_omitted_lines(h):
     catalogue_id = 'other_counts_per_period'
-    live = approve(h, propose(h, catalogue_id, [line(numbers={'min': {'value': 2}})])['record'])
+    quota = line(numbers={'min': {'value': 2}}, settings={'block_quota': {'metric': 'session_units'}})
+    live = approve(h, propose(h, catalogue_id, [quota])['record'])
     with transaction(h.app.state.engine, write=True) as db:
+        # Simulate a historical quota saved before the counting block was written to the line.
         row = db.get(m.Policy, live['id'])
         rule = row.definition['rule']
         undated = {key: value for key, value in rule['lines'][0].items() if key not in ('starts_on', 'ends_on')}
