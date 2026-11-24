@@ -114,7 +114,9 @@ def anonymise(db, actor, command, settings):
     affected += len(deliveries)
     users = store_for(settings)
     # Stage all sign-in removals before touching the file so rollback can preserve the final recovery admin.
+    from .accounts import lock_link_account
     for identity in identities:
+        lock_link_account(db, identity.id)
         identity.disabled = True
     from .auth_configuration import protect_break_glass, remove_identity_bindings
     protect_break_glass(db, settings)
