@@ -186,22 +186,6 @@ def proposals(db, actor, workspaces):
     return found
 
 
-def completed_feasibility_payload():
-    payload = m.JobFeasibilityResult
-    return select(payload.payload).where(
-        payload.job_id == m.Job.id, payload.attempt == m.Job.attempts,
-        m.Job.kind == 'feasibility', m.Job.status == 'succeeded',
-    ).correlate(m.Job).scalar_subquery()
-
-
-def full_job_result(db, job):
-    if job.kind == 'feasibility' and job.status == 'succeeded':
-        stored = db.scalar(select(completed_feasibility_payload()).select_from(m.Job).where(m.Job.id == job.id))
-        if stored is not None:
-            return stored
-    return job.result
-
-
 def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
     path = ['checks', phase] if phase else []
     diagnostics = [*path, 'diagnostics']
@@ -234,16 +218,15 @@ def evidence_page(db, job, *, phase, diagnostic_index, shift_id, offset, limit):
     reference = m.Job.result[CANDIDATE_EVIDENCE_REF] if top_level else literal(None, JSON)
     summary = select(stats.label('stats'), fallback.label('evidence_shift'), count.label('diagnostic_count'),
                      reference.label('reference')).where(m.Job.id == job.id).cte('metadata')
-    result = func.coalesce(completed_feasibility_payload(), m.Job.result) if phase else m.Job.result
     sqlite = db.bind.dialect.name == 'sqlite'
     if sqlite:
         json_path = '$' + ''.join(f'[{part}]' if isinstance(part, int) else '.' + part for part in rows)
-        entries = func.json_each(result, json_path).table_valued('key', column('value', JSON))
+        entries = func.json_each(m.Job.result, json_path).table_valued('key', column('value', JSON))
         candidate, ordinal, first = entries.c.value, cast(entries.c.key, Integer), 0
         candidate_shift = case((func.json_type(candidate, '$.shift_id').is_(None), summary.c.evidence_shift),
                                else_=func.json_extract(candidate, '$.shift_id'))
     else:
-        entries = func.json_array_elements(func.coalesce(result[tuple(rows)], literal([], JSON))).table_valued(
+        entries = func.json_array_elements(func.coalesce(m.Job.result[tuple(rows)], literal([], JSON))).table_valued(
             column('candidate', JSON), with_ordinality='ordinal').render_derived()
         candidate, ordinal, first = entries.c.candidate, entries.c.ordinal, 1
         candidate_shift = case((func.json_typeof(candidate['shift_id']).is_(None), summary.c.evidence_shift),

@@ -1,6 +1,5 @@
 """Large retained results never cross the read boundary before projection/paging."""
 import copy
-from datetime import timedelta
 import json
 import re
 
@@ -12,11 +11,6 @@ from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.serialization import (effective_input_fingerprint, job_detail_result, job_read_metadata,
                                     job_result_projection, job_result_summary)
-from apps.api.services.job_reads import full_job_result
-from apps.worker import main as worker
-from packages.contracts.schemas import ROLE_NAMES
-from packages.domain import feasibility
-from tests.governance_support import identity
 
 
 @pytest.fixture(params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -233,113 +227,3 @@ def test_evidence_counts_and_page_share_one_read_committed_snapshot(pg, pending)
     latest = h.get('coordinator', '/api/jobs/concurrent-evidence/evidence?limit=2')
     assert latest['candidates'] == new[:2] and latest['total'] == 7 and latest['eligible'] == 0
     assert latest['reasons'] == {'RESTRICTION': 7}
-
-
-@pytest.mark.parametrize('change', ['none', 'inputs', 'cancel', 'lost', 'access'])
-def test_feasibility_staging_keeps_evidence_private_and_fences_the_attempt(both, monkeypatch, change):
-    h = both
-    workspace = h.workspace()
-    engine = h.app.state.engine
-    original_write = worker.retry_write
-    with transaction(engine, write=True) as db:
-        for row in db.scalars(select(m.Job).where(m.Job.status == 'queued')):
-            row.status = 'cancelled'
-    job = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility'},
-                    revision=workspace['revision'])['job']
-    path = '/api/jobs/' + job['id']
-    row = {'person_id': h.seed['people'][0], 'shift_id': 'candidate-duty', 'exclusions': []}
-    phase = {'status': 'candidate_feasible', 'candidate_evidence': [row],
-             'diagnostics': [{'shift_id': row['shift_id'], 'candidates': [row]}]}
-    result = {'status': 'feasible', 'checks': {'baseline': phase, 'proposed': phase},
-              'full_feasibility_established': True}
-    monkeypatch.setattr(feasibility, 'check', lambda *args, **kwargs: result)
-
-    def before_finish(engine, operation, **options):
-        if (options.get('context') or {}).get('job_phase') == 'finish':
-            with transaction(engine) as db:
-                stored = db.get(m.Job, job['id'])
-                assert stored.status == 'running' and stored.result is None and stored.result_summary is None
-                assert db.get(m.JobFeasibilityResult, (job['id'], 1)).payload == result
-            for endpoint in (path, path + '?full=true', path + '/status?events=true'):
-                running = h.get('coordinator', endpoint)['job']
-                assert running['status'] == 'running' and running['result'] is None
-            evidence = h.get('coordinator', path + '/evidence?phase=baseline')
-            assert evidence['total'] == 0 and evidence['candidates'] == []
-            h.get('coordinator', path + '/evidence?phase=baseline&diagnostic_index=0', status=404)
-            if change == 'inputs':
-                h.shift(workspace, people=[])
-            elif change == 'lost':
-                raise SystemExit('Worker stopped after staging')
-            elif change == 'cancel':
-                cancelled = h.command('coordinator', 'job.cancel', {'reason': 'Cancel the synthetic run'},
-                                      target=job['id'])['job']
-                assert cancelled['status'] == 'cancelled' and cancelled['result'] is None
-            elif change == 'access':
-                with transaction(engine, write=True) as db:
-                    db.get(m.Identity, h.seed['identities']['coordinator']).disabled = True
-        return original_write(engine, operation, **options)
-
-    monkeypatch.setattr(worker, 'retry_write', before_finish)
-    if change == 'lost':
-        with pytest.raises(SystemExit, match='after staging'):
-            worker.process_one(engine, settings=h.settings)
-        with transaction(engine, write=True) as db:
-            stored = db.get(m.Job, job['id'])
-            stored.heartbeat_at = stored.started_at - timedelta(seconds=worker.JOB_LEASE_SECONDS + 1)
-        fresh = {**result, 'status': 'inconclusive'}
-
-        def after_reclaim(engine, operation, **options):
-            if (options.get('context') or {}).get('job_phase') == 'finish':
-                assert not original_write(engine, lambda db: worker.finish_job(db,
-                    {'id': job['id'], 'attempt': 1}, result, None))
-                assert h.get('coordinator', path + '?full=true')['job']['result'] is None
-                assert h.get('coordinator', path + '/evidence?phase=baseline')['candidates'] == []
-            return original_write(engine, operation, **options)
-
-        monkeypatch.setattr(worker, 'retry_write', after_reclaim)
-        monkeypatch.setattr(feasibility, 'check', lambda *args, **kwargs: fresh)
-        assert worker.process_one(engine, settings=h.settings)
-        with transaction(engine) as db:
-            stored = db.get(m.Job, job['id'])
-            assert stored.attempts == 2 and full_job_result(db, stored) == fresh
-        assert h.get('coordinator', path)['job']['result']['status'] == 'inconclusive'
-    else:
-        assert worker.process_one(engine, settings=h.settings)
-
-    published = change in {'none', 'inputs', 'lost'}
-    with transaction(engine, write=True) as db:
-        stored = db.get(m.Job, job['id'])
-        assert stored.status == ('succeeded' if published else 'cancelled' if change == 'cancel' else 'failed')
-        assert stored.error_code == ('ACCESS_REVOKED' if change == 'access' else None)
-        worker.prune_abandoned_feasibility_results(db, limit=10)
-        assert (db.get(m.JobFeasibilityResult, (job['id'], 1)) is not None) == (change in {'none', 'inputs'})
-        assert (full_job_result(db, stored) is not None) == published
-    if change in {'none', 'inputs'}:
-        detail = h.get('coordinator', path)['job']
-        assert detail['check_stale'] is (change == 'inputs')
-        assert detail['result']['full_feasibility_established']
-        assert h.get('coordinator', path + '/evidence?phase=baseline')['candidates'] == [row]
-    if change == 'none':
-        endpoints = (path, path + '?full=true', path + '/status?events=true',
-                     path + '/evidence?phase=baseline', path + '/evidence?phase=proposed&diagnostic_index=0',
-                     '/api/jobs?workspace_id=' + workspace['id'])
-        for role in ROLE_NAMES:
-            if role not in h.seed['identities']:
-                identity(h, role, [role])
-
-        def read_responses():
-            responses = {}
-            for role in ROLE_NAMES:
-                for endpoint in endpoints:
-                    response = h.client(role).get(endpoint)
-                    payload = response.content if response.is_success else {
-                        key: value for key, value in response.json().items() if key != 'correlation_id'}
-                    responses[role, endpoint] = response.status_code, payload, response.headers.get('etag')
-            return responses
-
-        staged_responses = read_responses()
-        with transaction(engine, write=True) as db:
-            stored = db.get(m.Job, job['id'])
-            db.delete(db.get(m.JobFeasibilityResult, (job['id'], 1)))
-            stored.result = result
-        assert read_responses() == staged_responses
