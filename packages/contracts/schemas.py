@@ -5234,6 +5234,10 @@ class FillOptionsInput(Schema):
     supervisor_person_id: ID | None = None
 
 
+ASSIGNMENT_STAMP_PREFIX = 'assign:'
+AssignmentStamp = Annotated[str, StringConstraints(pattern=rf'^{ASSIGNMENT_STAMP_PREFIX}[a-f0-9]{{64}}$')]
+
+
 class FillOptionsResult(Schema):
     """A checked fill-options page or the final complete candidate result."""
     provisional_page: bool
@@ -5244,6 +5248,7 @@ class FillOptionsResult(Schema):
     replace_refusal: str | None = None
     slot: dict[str, Any]
     source_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    assignment_stamp: AssignmentStamp | None = None
     evaluated_at: datetime
     candidates: list[dict[str, Any]]
     basis: str
@@ -8169,7 +8174,7 @@ class GenerationContinue(Decision):
 
 
 class Command(Schema):
-    expected_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
+    expected_fingerprint: Annotated[str, StringConstraints(pattern=rf'^(?:{ASSIGNMENT_STAMP_PREFIX})?[a-f0-9]{{64}}$')] | None = None
     # Async planner previews bind the eventual write to the durable preview receipt.
     preview_job_id: ID | None = None
     kind: Annotated[str, StringConstraints(min_length=3, max_length=80)]

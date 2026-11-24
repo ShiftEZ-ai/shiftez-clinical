@@ -12721,6 +12721,19 @@
         "title": "Source Fingerprint",
         "type": "string"
       },
+      "assignment_stamp": {
+        "anyOf": [
+          {
+            "pattern": "^assign:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Assignment Stamp"
+      },
       "evaluated_at": {
         "format": "date-time",
         "title": "Evaluated At",
@@ -20856,7 +20869,7 @@
       "expected_fingerprint": {
         "anyOf": [
           {
-            "pattern": "^[a-f0-9]{64}$",
+            "pattern": "^(?:assign:)?[a-f0-9]{64}$",
             "type": "string"
           },
           {
@@ -47151,7 +47164,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -66193,7 +66206,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {

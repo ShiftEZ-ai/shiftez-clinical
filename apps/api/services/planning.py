@@ -401,7 +401,8 @@ def background_checks_available(db):
 
 def assignment_reply_available(db, command):
     """Choose execution strategy only; the writer repeats every admission and authority check."""
-    if command.expected_fingerprint:
+    if command.preview_job_id or (command.expected_fingerprint and not (
+            command.kind == 'shift.update' and command.expected_fingerprint.startswith(s.ASSIGNMENT_STAMP_PREFIX))):
         return False
     if command.kind in {'workspace.undo', 'workspace.redo'}:
         workspace = db.get(m.Workspace, command.target_id)
