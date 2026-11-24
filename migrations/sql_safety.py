@@ -3,12 +3,16 @@ import re
 
 MAX_BATCH = 1000
 CURRENT_SCHEMA = '__migration_current_schema__'
-EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'guard_targets', 'current_schema')
+EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'guard_targets',
+                    'current_schema', 'new_sql_tables')
 _IDENT = re.compile(r'[A-Za-z_][A-Za-z_0-9$]*\Z|"(?:[^"]|"")+"\Z')
 _NUMBER = re.compile(r'\d+(?:\.\d+)?\Z')
 _TYPES = {'VARCHAR', 'CHAR', 'TEXT', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'BOOLEAN', 'BOOL',
           'TIMESTAMP', 'TIME', 'DATE', 'JSON', 'JSONB', 'NUMERIC', 'DECIMAL', 'FLOAT', 'DOUBLE',
           'REAL', 'UUID', 'BYTEA'}
+_SEQUENCE_TYPES = {'SMALLINT', 'INT', 'INTEGER', 'BIGINT'}
+_INDEX_FUNCTIONS = {'lower', 'trim', 'btrim'}
+_PRECHECK_SYNTAX = {'WHERE', 'FROM', 'BY', 'HAVING'}
 # These are read-only SQL expressions.  Migration DML may use them when a
 # NULL-guarded fill computes a value from the row it is filling; mutating or
 # user-defined calls remain fail-closed below.
@@ -94,7 +98,7 @@ def _tokens(sql):
                 raise ValueError('unterminated SQL routine body')
             i = end + len(tag)
             tokens.append(sql[start:i])
-        elif match := re.match(r'[A-Za-z_][A-Za-z_0-9$]*|\d+(?:\.\d+)?|:[A-Za-z_][A-Za-z_0-9]*|::|<=|>=|<>|!=|\|\||[-+*/%=<>,.();?\[\]]', sql[i:]):
+        elif match := re.match(r'[A-Za-z_][A-Za-z_0-9$]*|\d+(?:\.\d+)?|:[A-Za-z_][A-Za-z_0-9]*|::|<=|>=|<>|!=|->>|->|\|\||[-+*/%=<>,.();?\[\]]', sql[i:]):
             tokens.append(match.group().upper() if _IDENT.fullmatch(match.group()) else match.group())
             i += len(match.group())
         else:
@@ -196,7 +200,7 @@ def schema_template(sql, holes):
         return False
 
 
-def _read_expression(tokens):
+def _read_expression(tokens, *, precheck=False):
     if any(token in {'DELETE', 'INSERT', 'UPDATE', 'TRUNCATE', 'DROP', 'ALTER', 'INTO', 'CALL',
                      'DO', 'EXECUTE', 'OPERATOR', 'COLLATE'} for token in tokens):
         return False
@@ -204,9 +208,13 @@ def _read_expression(tokens):
         if token == '::' and (tokens[i + 1] not in _TYPES or tokens[i + 2:i + 3] == ['.']):
             return False
         if _IDENT.fullmatch(token) and tokens[i + 1] == '(':
-            if token not in _SYNTAX_CALLS:
+            qualified = i >= 1 and tokens[i - 1] == '.'
+            if precheck and _identifier(token) in _INDEX_FUNCTIONS:
+                if not qualified or i >= 2 and _identifier(tokens[i - 2]) == 'pg_catalog':
+                    continue
+            if token not in _SYNTAX_CALLS and not (precheck and token in _PRECHECK_SYNTAX):
                 return False
-            if i >= 1 and tokens[i - 1] == '.':
+            if qualified:
                 return False
             if token == 'CAST':
                 depth = 0
@@ -315,7 +323,22 @@ def _role_grant(tokens):
     return _grant(grant) and _identifier(grant[-1]) == body[len(prefix)][1:-1]
 
 
-def _column_definition(tokens):
+def _sequence_default(tokens):
+    function, args = _name(tokens)
+    if function not in {'nextval', 'pg_catalog.nextval'} or args[:1] != ['('] or len(args) < 3:
+        return 0
+    if not args[1].startswith("'"):
+        return 0
+    end = 2
+    if args[2:3] == ['::']:
+        data_type, rest = _name(args[3:])
+        if data_type not in {'regclass', 'pg_catalog.regclass'}:
+            return 0
+        end = len(args) - len(rest)
+    return len(tokens) - len(args) + end + 1 if args[end:end + 1] == [')'] else 0
+
+
+def _column_definition(tokens, *, new_table=False):
     if len(tokens) < 2 or not _IDENT.fullmatch(tokens[0]) or tokens[1] not in _TYPES:
         return False
     tail = tokens[2:]
@@ -340,6 +363,12 @@ def _column_definition(tokens):
             tail = tail[1:]
         elif tail[:1] == ['DEFAULT'] and len(tail) >= 2 and (_literal(tail[1]) or tail[1] == 'CURRENT_TIMESTAMP'):
             default, tail = tail[1], tail[2:]
+        elif new_table and tail[:1] == ['DEFAULT'] and (end := _sequence_default(tail[1:])):
+            default, tail = 'NEXTVAL', tail[end + 1:]
+        elif new_table and tokens[1] in _SEQUENCE_TYPES and tail[:4] == ['GENERATED', 'ALWAYS', 'AS', 'IDENTITY']:
+            not_null, default, tail = True, 'IDENTITY', tail[4:]
+        elif new_table and tokens[1] in _SEQUENCE_TYPES and tail[:5] == ['GENERATED', 'BY', 'DEFAULT', 'AS', 'IDENTITY']:
+            not_null, default, tail = True, 'IDENTITY', tail[5:]
         elif tail[:1] == ['REFERENCES']:
             table, reference = _name(tail[1:])
             if not table or reference[:1] != ['('] or ')' not in reference:
@@ -364,7 +393,23 @@ def _column_definition(tokens):
     return not_null, default
 
 
-def _index(tokens):
+def _immutable_index_key(tokens):
+    if len(tokens) == 1:
+        return bool(_IDENT.fullmatch(tokens[0]))
+    if tokens[-1:] != [')']:
+        return False
+    if tokens[:1] == ['(']:
+        return _immutable_index_key(tokens[1:-1])
+    function, args = _name(tokens)
+    if function not in _INDEX_FUNCTIONS | {'pg_catalog.lower', 'pg_catalog.btrim'} or args[:1] != ['(']:
+        return False
+    parts = _parts(args[1:-1], ',')
+    return ((len(parts) == 1 or function.endswith('btrim') and len(parts) == 2
+             and len(parts[1]) == 1 and parts[1][0].startswith("'"))
+            and _immutable_index_key(parts[0]))
+
+
+def _index(tokens, record_precheck=None):
     if tokens[:2] not in (['CREATE', 'INDEX'], ['CREATE', 'UNIQUE']):
         return False
     tail = tokens[2:] if tokens[1] == 'INDEX' else tokens[3:] if tokens[2:3] == ['INDEX'] else []
@@ -373,7 +418,8 @@ def _index(tokens):
     name, tail = _name(tail)
     if not name or tail[:1] != ['ON']:
         return False
-    table, tail = _name(tail[1:])
+    relation = tail[1:]
+    table, tail = _name(relation)
     if not table or tail[:1] != ['(']:
         return False
     depth = 0
@@ -387,12 +433,17 @@ def _index(tokens):
     suffix = tail[end + 1:]
     if suffix and (suffix[:1] != ['WHERE'] or len(suffix) == 1 or not _read_expression(suffix[1:])):
         return False
+    keys, immutable = [], False
     for column in _parts(tail[1:end], ','):
         if column[-2:] in (['NULLS', 'FIRST'], ['NULLS', 'LAST']):
             column = column[:-2]
         if column[-1:] in (['ASC'], ['DESC']):
             column = column[:-1]
+        keys.append(column)
         if len(column) == 1 and _IDENT.fullmatch(column[0]):
+            continue
+        if tokens[:3] == ['CREATE', 'UNIQUE', 'INDEX'] and _immutable_index_key(column):
+            immutable = True
             continue
         expression = column[0:1] == ['(']
         if not expression or column[-1:] != [')'] or 'SELECT' in column or not _read_expression(column):
@@ -408,25 +459,48 @@ def _index(tokens):
                 break
         if last != len(column) - 1:
             return False
+    if immutable:
+        if not all(_immutable_index_key(key) for key in keys):
+            return False
+        if record_precheck is not None:
+            table_sql = ' '.join(relation[:len(relation) - len(tail)])
+            key_sql = [' '.join(key) for key in keys]
+            predicates = ['(' + ' '.join(suffix[1:]) + ')'] if suffix else []
+            predicates += [f'({key}) IS NOT NULL' for key in key_sql]
+            record_precheck(f'SELECT 1 FROM {table_sql} WHERE {" AND ".join(predicates)} '
+                            f'GROUP BY {", ".join(key_sql)} HAVING count(*) > 1')
     return True
 
 
-def _schema_statement(tokens):
+def _create_sequence(tokens):
+    name, tail = _name(tokens[2:])
+    return bool(name and (not tail or len(tail) == 2 and tail[0] == 'AS' and tail[1] in _SEQUENCE_TYPES))
+
+
+def _schema_statement(tokens, schema):
     if tokens[:2] == ['CREATE', 'TABLE']:
         tail = tokens[2:]
-        if tail[:3] == ['IF', 'NOT', 'EXISTS']:
+        new_table = tail[:3] != ['IF', 'NOT', 'EXISTS']
+        if not new_table:
             tail = tail[3:]
         name, tail = _name(tail)
-        return bool(name and tail[:1] == ['('] and tail[-1:] == [')']
-                    and all(_column_definition(part) is not False for part in _parts(tail[1:-1], ',')))
-    if _index(tokens):
+        if not (name and tail[:1] == ['('] and tail[-1:] == [')'] and all(
+                _column_definition(part, new_table=new_table) is not False for part in _parts(tail[1:-1], ','))):
+            return False
+        if new_table:
+            schema.setdefault('new_sql_tables', set()).add(name)
+        return True
+    if tokens[:2] == ['CREATE', 'SEQUENCE']:
+        return _create_sequence(tokens)
+    if _index(tokens, schema.get('record_duplicate_precheck')):
         return True
     if tokens[:2] == ['ALTER', 'TABLE']:
         table, tail = _name(tokens[2:])
         if not table or tail[:1] != ['ADD']:
             return False
         tail = tail[2:] if tail[1:2] == ['COLUMN'] else tail[1:]
-        column = _column_definition(tail)
+        new_table = table in schema.get('new_sql_tables', ()) or bool(_guard_table(table, schema))
+        column = _column_definition(tail, new_table=new_table)
         return column is not False and (not column[0] or column[1] not in (None, 'NULL'))
     return False
 
@@ -771,6 +845,7 @@ def preserves_schema(sql):
         for tokens in _statements(_tokens(sql)):
             _parts(tokens, ',')
             if (_routine(tokens) or _trigger(tokens) or _index(tokens) or _drop_routine(tokens) or _grant(tokens)
+                    or tokens[:2] == ['CREATE', 'SEQUENCE'] and _create_sequence(tokens)
                     or _role_grant(tokens) or _pure_dml(tokens)
                     or tokens[:1] == ['SELECT'] and _read_expression(tokens)
                     or tokens[:1] == ['PRAGMA'] and _pragma(tokens)):
@@ -785,7 +860,7 @@ def preserves_schema(sql):
                 continue
             return False
         return True
-    except (ValueError, IndexError):
+    except (ValueError, IndexError, RecursionError):
         return False
 
 
@@ -794,11 +869,11 @@ def analyze_sql(sql, *, schema=None):
     try:
         statements = _statements(_tokens(sql))
         result = 'additive'
+        proof = schema if schema is not None else {}
         for tokens in statements:
             _parts(tokens, ',')  # Reject malformed or injected parenthesis boundaries.
-            proof = schema if schema is not None else {}
             _forget_function(tokens, proof)
-            if (_additive_routine(tokens) or _grant(tokens) or _schema_statement(tokens)
+            if (_additive_routine(tokens) or _grant(tokens) or _schema_statement(tokens, proof)
                     or (tokens[:1] == ['SELECT'] and _read_expression(tokens))):
                 continue
             if (_guard_routine(tokens, proof) or _new_table_guard(tokens, proof)
@@ -811,7 +886,17 @@ def analyze_sql(sql, *, schema=None):
             clear_execution_proofs(proof)
             return {'class': 'destructive', 'findings': ['SQL is destructive or not statically proven safe: ' + ' '.join(tokens[:6])]}
         return {'class': result, 'findings': []}
-    except (ValueError, IndexError):
+    except (ValueError, IndexError, RecursionError):
         if schema is not None:
             clear_execution_proofs(schema)
         return {'class': 'destructive', 'findings': ['SQL cannot be statically parsed safely']}
+
+
+def duplicate_precheck_tokens(sql):
+    """Canonical tokens for a single read-only duplicate query."""
+    statements = _statements(_tokens(sql))
+    if (len(statements) != 1 or statements[0][:1] != ['SELECT'] or 'FOR' in statements[0]
+            or not _read_expression(statements[0], precheck=True)):
+        raise ValueError('duplicate pre-check must be a read-only SELECT')
+    _parts(statements[0], ',')
+    return tuple(statements[0])

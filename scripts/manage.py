@@ -14,6 +14,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import SQLAlchemyError
 from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
                                refuse_test_flags, secret_from_env)
 from apps.api.db import make_engine, transaction
@@ -22,6 +23,8 @@ from apps.api import models as m
 from apps.api.serialization import record
 from packages.contracts.schemas import TypeDefinition
 from migrations import safety
+from migrations.source_safety import Analyzer, assigned
+from migrations.sql_safety import duplicate_precheck_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +40,36 @@ def migrate(url):
     command.upgrade(alembic_config(url), "head")
 
 
+def check_duplicate_prechecks(db, pending, fresh):
+    """DUPLICATE_PRECHECKS contains literal SELECTs that return a row on conflict."""
+    for step in pending:
+        required = []
+        source = Path(step.path).read_text(encoding='utf-8')
+        analyzer = Analyzer(source, {'tables': {}, 'record_duplicate_precheck': required.append})
+        analyzer.run()
+        declared = assigned(analyzer.tree, 'DUPLICATE_PRECHECKS')
+        if 'DUPLICATE_PRECHECKS' not in analyzer.globals:
+            declared = ()
+        try:
+            if not isinstance(declared, (list, tuple)) or not all(isinstance(query, str) for query in declared):
+                raise ValueError('DUPLICATE_PRECHECKS must be a literal sequence of queries')
+            declared_tokens = {duplicate_precheck_tokens(query) for query in declared}
+            if any(duplicate_precheck_tokens(query) not in declared_tokens for query in required):
+                raise ValueError('missing duplicate pre-check matching the unique expression index')
+        except ValueError as exc:
+            raise SystemExit(f'Refusing migration {step.revision}: {exc}') from None
+        if fresh:
+            continue  # There are no retained rows to check on a fresh database.
+        for query in declared:
+            try:
+                with db.exec_driver_sql(query) as result:
+                    duplicate = result.fetchone() is not None
+            except SQLAlchemyError:
+                raise SystemExit(f'Refusing migration {step.revision}: could not run duplicate pre-check') from None
+            if duplicate:
+                raise SystemExit(f'Refusing migration {step.revision}: duplicate rows found by pre-check')
+
+
 def check_migrations(url, confirmed=()):
     """Read-only deploy gate, run before any backup, writer stop or upgrade.
 
@@ -49,10 +82,16 @@ def check_migrations(url, confirmed=()):
     engine = make_engine(url)
     try:
         with engine.connect() as db:
-            current = MigrationContext.configure(db).get_current_heads()
-            fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
+            db.exec_driver_sql('SET TRANSACTION READ ONLY' if db.dialect.name == 'postgresql'
+                               else 'PRAGMA query_only=ON')
+            return _check_pending_migrations(db, script, confirmed)
     finally:
         engine.dispose()
+
+
+def _check_pending_migrations(db, script, confirmed):
+    current = MigrationContext.configure(db).get_current_heads()
+    fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
     if len(current) > 1:
         raise SystemExit(f"Refusing: the database records several migration heads {list(current)}; repair it first")
     base = current[0] if current else None
@@ -76,6 +115,7 @@ def check_migrations(url, confirmed=()):
         raise SystemExit(f"Refusing: {missing} are reviewed DESTRUCTIVE migrations. Confirm a fresh verified backup, read "
                          f"their DESTRUCTIVE_REVIEWED notes, then rerun with --confirm-destructive {','.join(missing)} "
                          f"(deploy: FMUC_CONFIRM_DESTRUCTIVE={','.join(missing)})")
+    check_duplicate_prechecks(db, pending, fresh)
     print(f"Database head: {base or 'empty'}; image head: {script.get_current_head()}; pending: {len(pending)}")
     for r in pending:
         print(f"  {r.revision}  {safety.classification(r.path)}" +

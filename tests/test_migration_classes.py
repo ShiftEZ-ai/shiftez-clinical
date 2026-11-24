@@ -366,3 +366,46 @@ def test_null_primary_key_comparison_does_not_prove_a_bounded_fill(tmp_path):
     body = TABLE.replace('primary_key=True', 'primary_key=True, nullable=True')
     body += "op.execute(notes.update().where(notes.c.key == None, notes.c.fact.is_(None)).values(fact='known'))"
     assert safety.analyze(migration(tmp_path, body, 'destructive'))['class'] == 'destructive'
+
+@pytest.mark.parametrize('mode', ['clear', 'duplicate', 'missing', 'wrong', 'write', 'query-error', 'fresh'])
+def test_manage_checks_migration_duplicates_read_only(tmp_path, monkeypatch, mode):
+    sql = ('CREATE UNIQUE INDEX uq_label ON items (scope, lower(trim(label))) '
+           'WHERE active IS TRUE')
+    check = ('SELECT 1 FROM items WHERE (active IS TRUE) AND (scope) IS NOT NULL '
+             'AND (lower(trim(label))) IS NOT NULL GROUP BY scope, lower(trim(label)) HAVING count(*) > 1')
+    declared = {
+        'missing': (),
+        'wrong': ('SELECT 1 FROM items WHERE FALSE',),
+        'write': (check, 'DELETE FROM items'),
+        'query-error': (check, 'SELECT 1 FROM missing_table'),
+    }.get(mode, (check,))
+    path = migration(tmp_path, f'op.execute({sql!r})', prefix=f'DUPLICATE_PRECHECKS = {declared!r}\n')
+    pending = SimpleNamespace(revision='9999_classes', path=path)
+    script = SimpleNamespace(iterate_revisions=lambda *args: [pending],
+                             get_current_head=lambda: pending.revision)
+    monkeypatch.setattr(manage.ScriptDirectory, 'from_config', lambda config: script)
+    db_path = tmp_path / 'precheck.db'
+    if mode != 'fresh':
+        with closing(sqlite3.connect(db_path)) as db, db:
+            db.executescript('CREATE TABLE alembic_version (version_num TEXT); '
+                             "INSERT INTO alembic_version VALUES ('earlier'); "
+                             'CREATE TABLE items (scope INT, label TEXT, active BOOLEAN)')
+            rows = [(1, ' Ab ', True), (2, 'ab', True), (1, 'ab', False),
+                    (1, None, True), (1, None, True), (None, 'ab', True), (None, 'ab', True)]
+            if mode == 'duplicate':
+                rows.append((1, 'aB', True))
+            db.executemany('INSERT INTO items VALUES (?, ?, ?)', rows)
+
+    url = 'sqlite:///' + str(db_path)
+    failures = {'duplicate': 'duplicate rows', 'missing': 'missing duplicate pre-check',
+                'wrong': 'missing duplicate pre-check', 'write': 'must be a read-only SELECT',
+                'query-error': 'could not run duplicate pre-check'}
+    if mode in failures:
+        with pytest.raises(SystemExit, match=failures[mode]):
+            manage.check_migrations(url)
+    else:
+        assert manage.check_migrations(url) == [pending.revision]
+    if mode != 'fresh':
+        with closing(sqlite3.connect(db_path)) as db:
+            assert db.execute('SELECT scope, label, active FROM items').fetchall() == rows
+            assert not db.execute('SELECT name FROM sqlite_master WHERE type = \'index\'').fetchall()
