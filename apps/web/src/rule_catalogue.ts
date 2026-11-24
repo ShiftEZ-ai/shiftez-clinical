@@ -1688,7 +1688,7 @@ export function changeList(e:RuleCatalogueEntry,before:RuleLine[],after:RuleLine
  *  numbers, days, valid; a changed cell says what it was), the unchanged lines only on demand, the check's warnings as
  *  separate items, who proposed it and the decision. What changed is the server's diff (`proposed.diff`, by line id). */
 /** A waiting proposal's effect on the rule's switch ("Turns the rule on"), or '': said by the note and the panel title. */
-const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':''):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
+const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':'Rule stays off'):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
 function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,openTag:(tag:Row)=>void,review:()=>void,key?:RuleViewKey){
   const p=e.proposed!,rule=p.definition.rule,now=(rule.lines||[]) as RuleLine[],before=linesOf(e),mine=p.created_by===ctx.me.identity_id;
   const canDecide=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
@@ -1747,8 +1747,9 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
   const focus:Change[]=diff?.added?[...(diff.added||[]).flatMap(id=>byId.has(id)?[{kind:'added' as const,line:byId.get(id)!}]:[]),
     ...(diff.changed||[]).flatMap(id=>byId.has(id)?[{kind:'changed' as const,line:byId.get(id)!}]:[])]:lineChanges(linesOf(e),now).filter(c=>c.kind!=='removed');
   const one=focus.length===1?focus[0]:null,whom=one?countWords(one.line.who,names,'everyone'):'';
-  const turns=switchWords(e,p.definition.rule.on!==false);
-  const title=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}${turns?` · ${turns.toLowerCase()}`:''}`:`Change to ${e.name}`;
+  const on=p.definition.rule.on!==false,turns=switchWords(e,on);
+  const change=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}`:`Change to ${e.name}`;
+  const title=turns?`${change} · ${turns.toLowerCase()}`:change;
   const when=p.created_at?`${formatDate(String(p.created_at),zone)} ${formatTime(String(p.created_at),zone)}`:'';
   const canApprove=ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),canCheck=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR);
   // Checks started here, with when: shown as checking at once, before the server has queued them.
@@ -1779,7 +1780,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
-          d.close();notify(`${e.name}: the change is active.`);await refresh();};
+          d.close();notify(`${e.name}: ${on?'the change is active.':'the rule is off.'}`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
