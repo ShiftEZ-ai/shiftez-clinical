@@ -1043,6 +1043,20 @@ def prepared_event_currency_matches(db, currency, *, now=None):
     return _event_occurrence_currency(events.blocking_occurrences(db, department_ids, lo, hi, now=now)) == recorded
 
 
+def occurrences_unchanged_since(db, workspace, since, window):
+    """True when the blocking occurrences a read projected over `window` at `since` are the ones projected now.
+
+    Recurring occurrences that are not materialised follow the clock, and no revision counter moves when one ends.
+    Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
+    """
+    from datetime import datetime
+    from .services import events
+    lo, hi = (datetime.fromisoformat(value) for value in window)
+    department_ids = snapshot_department_ids(db, db.get(m.Department, workspace.department_id).organisation_id)
+    return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
+            == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
+
+
 def _draft_catalogue_refs(db, workspace):
     own = select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)
     refs = db.execute(own.with_only_columns(m.Shift.assignment_type_id, m.Shift.location_id).distinct()).all()
