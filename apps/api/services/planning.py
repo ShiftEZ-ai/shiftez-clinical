@@ -2566,14 +2566,29 @@ def validation_stamp(db, workspace):
     """Bind this request's repeatable read to its short writer, never to a cached check.
 
     Scheduling/configuration and published-context writers bump the organisation's input
-    revisions; local edits bump the workspace revision. A changed stamp is resolved from
+    revisions; local edits bump the workspace revision. A first baseline capture moves no
+    counter, so the baseline hint is part of the stamp. A changed stamp is resolved from
     canonical inputs outside the lock before any result can be stored.
     """
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    return (organisation.revision, organisation.input_revision, organisation.availability_revision,
-            department.revision, department.catalogue_revision, workspace.revision,
-            workspace.content_revision, workspace.status, workspace.archived_at)
+    # Callers drop the last four (workspace) fields to share sources across a draft's own edits.
+    return (snapshots._baseline_hint(db, workspace), organisation.revision, organisation.input_revision,
+            organisation.availability_revision, department.revision, department.catalogue_revision,
+            workspace.revision, workspace.content_revision, workspace.status, workspace.archived_at)
+
+
+def read_stamp(db, workspace, data, since):
+    """The validation stamp of a read, with the instant before it started and the window it projected events over."""
+    selection = data['input_manifest']['selection']
+    return since, validation_stamp(db, workspace), (selection['start'], selection['end'])
+
+
+def read_stamp_holds(db, workspace, stamp):
+    """True under the writer when nothing a read stamped has moved, the clock-dependent occurrences included."""
+    since, recorded, window = stamp
+    return (validation_stamp(db, workspace) == recorded
+            and snapshots.occurrences_unchanged_since(db, workspace, since, window))
 
 
 def _publication_approval(db, workspace, fp):
