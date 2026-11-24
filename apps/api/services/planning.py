@@ -2798,9 +2798,10 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         workspace.revision += 1
         snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
         if not (workspace.base_publication_id or workspace.replaces_publication_id):
-            # The draft's published state advances the input revision before the
-            # immutable row is inserted. Ordinary publication has no availability writes.
-            db.flush()
+            from apps.api.db import bump_snapshot_input_revisions
+            # The publication is an input even when the rota's status change is local.
+            # The insert listener shares this transaction's revision bump.
+            bump_snapshot_input_revisions(db, (actor.organisation_id,))
             organisation = db.get(m.Organisation, actor.organisation_id)
             manifest = result['input_manifest']
             result['input_manifest'] = {**manifest, 'dirty_hint': {

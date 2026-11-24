@@ -129,6 +129,8 @@ def test_timeline_reads_the_findings_immediately_after_publish(h, monkeypatch):
     published = h.publish(w)
     with transaction(h.app.state.engine) as db:
         check = db.get(m.Publication, published['publication_id']).validation
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        assert check['input_manifest']['dirty_hint']['input_revision'] == organisation.input_revision
         expected = [finding for finding in check['findings'] if finding.get('person_id') == person]
     assert any(finding['rule_id'] == goal['id'] and finding['code'] == 'BALANCE_GOAL' for finding in expected)
 
