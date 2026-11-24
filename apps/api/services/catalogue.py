@@ -419,13 +419,13 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
                 m.Category.department_id == actor.department_id, m.Category.id != (row.id if row else '')))
                 if rank_code(record(other)) == code), None)
             require(clash is None, 'RANK_CODE_TAKEN', f'Rank short code {code} is already used in this department', 422)
-    if kind == "people" and value.short_code and (not row or 'short_code' in supplied):
+    if kind == "people" and value.active and value.short_code and (not row or 'short_code' in supplied or not row.active):
         candidates = list(db.scalars(select(m.Person).where(m.Person.organisation_id == actor.organisation_id,
-            m.Person.short_code == value.short_code, m.Person.id != (row.id if row else ""))))
+            m.Person.active.is_(True), m.Person.short_code == value.short_code, m.Person.id != (row.id if row else ""))))
         if db.info.get('bulk'):
             candidates.extend(person for person in set(db.new) | set(db.dirty) if isinstance(person, m.Person))
         clash = next((person for person in candidates if person not in db.deleted and person is not row
-                      and person.organisation_id == actor.organisation_id and person.short_code == value.short_code), None)
+                      and person.active and person.organisation_id == actor.organisation_id and person.short_code == value.short_code), None)
         require(clash is None, "SHORT_CODE_TAKEN", f"Short code {value.short_code} is already used by another person", 409)
     if kind == "assignment_types" and value.short_code and value.active and \
             (db.get(m.Department, actor.department_id).display_settings or {}).get("avoid_duplicate_codes", True):

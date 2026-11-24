@@ -14,6 +14,23 @@ class Problem(Exception):
         self.details = details
 
 
+def unique_violation(error):
+    original = error.orig
+    if (getattr(original, 'sqlstate', None) or getattr(original, 'pgcode', None)) == '23505':
+        return getattr(getattr(original, 'diag', None), 'constraint_name', None)
+    return None
+
+
+def integrity_problem(error):
+    code, message = {
+        'uq_calendar_feeds_active': ('INTEGRITY_CONFLICT', INTEGRITY_CONFLICT_MESSAGE),
+        'uq_people_active_short_code': ('SHORT_CODE_TAKEN', 'This short code is already used by another person'),
+        'uq_jobs_live_generation': ('JOB_ALREADY_RUNNING', 'This draft already has a queued or running auto-schedule run'),
+        'uq_jobs_live_validation': ('STALE_INPUTS', 'The rota check changed; queue it again'),
+    }.get(unique_violation(error), ('INTEGRITY_CONFLICT', INTEGRITY_CONFLICT_MESSAGE))
+    return Problem(409, code, message)
+
+
 def problem_payload(problem: 'Problem', *, cap: int | None = None):
     """Build the public refusal envelope; capped job copies keep only safe issue fields."""
     payload = {'code': problem.code, 'message': problem.message, 'details': problem.details}
