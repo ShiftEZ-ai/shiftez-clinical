@@ -130,16 +130,12 @@ def at_revision(revision):
     return decode_list(git("show", revision + ":" + KNOWN)) if names else None
 
 
-def context(base_sha):
+def _read_context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
-    kind = os.getenv("GITHUB_EVENT_NAME")
-    single_replica = kind in {"pull_request", "merge_group"}
-    if base is not None and kind == "push" and (ref := os.getenv("GITHUB_REF")):
-        import working_policy as policy
-        single_replica = ref == "refs/heads/" + policy.default_branch(policy.event())
+    single_replica = base is not None and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1] if base is not None and single_replica else [1, 2]}
+            "replicas": [1] if single_replica else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):
@@ -155,6 +151,13 @@ def require_bootstrap_inputs(issue, expires_on, *, today=None):
     today = today or datetime.now(timezone.utc).date()
     if not 1 <= (expiry - today).days <= 90:
         raise ValueError(message)
+
+
+def context(base_sha):
+    result = _read_context(base_sha)
+    if not result["bootstrap"] and os.getenv("GITHUB_EVENT_NAME") == "merge_group":
+        result["replicas"] = [1]
+    return result
 
 
 def preflight(ctx, *, smoke, limit, issue, expires_on,

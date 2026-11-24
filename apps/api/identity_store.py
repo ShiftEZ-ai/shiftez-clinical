@@ -12,13 +12,16 @@ once with scripts/local-deploy/identity_volume.py.
 Passwords are hashed with argon2id using Authelia's default parameters (the parameters travel in the hash, so Authelia
 verifies them as written). Plain passwords never leave the calling function and are never logged.
 """
+import base64
+import hashlib
 import json
 import os
 import re
 import secrets
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 from argon2 import PasswordHasher, Type, extract_parameters
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -28,6 +31,7 @@ USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}$")
 # parallelism 4, key 32 bytes, salt 16 bytes.
 HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16, type=Type.ID)
 MAX_FILE_BYTES = 5_000_000
+_WINDOWS_USERS_LOCK = Lock()
 _DUMMY = HASHER.hash(secrets.token_urlsafe(16))  # unknown names cost the same as known ones
 
 
@@ -38,7 +42,8 @@ class IdentityStoreError(RuntimeError):
 class IdentityStore(Protocol):
     def get(self, username: str) -> dict | None: ...
     def has_credential(self, username: str) -> bool: ...
-    def create(self, username: str, display_name: str, email: str) -> None: ...
+    def onboarding_users(self) -> dict[str, dict]: ...
+    def create(self, username: str, display_name: str, email: str, *, pending_for: str | None = None) -> None: ...
     def set_password(self, username: str, password: str) -> None: ...
     def set_disabled(self, username: str, disabled: bool) -> None: ...
     def verify(self, username: str, password: str) -> bool: ...
@@ -54,7 +59,9 @@ def hash_password(password: str) -> str:
 @contextmanager
 def _locked(path: Path):
     """Exclusive lock across processes (and threads: each call opens its own descriptor)."""
-    with open(path.with_name(path.name + ".lock"), "a+b") as handle:
+    # Queue threads in this process before using the bounded Windows cross-process lock.
+    local_lock = _WINDOWS_USERS_LOCK if os.name == "nt" else nullcontext()
+    with local_lock, open(path.with_name(path.name + ".lock"), "a+b") as handle:
         if os.name == "nt":  # development machines only; the supported deployment is Linux
             import msvcrt
             handle.seek(0)
@@ -83,6 +90,31 @@ def validate(data) -> dict:
         if "disabled" in user and not isinstance(user["disabled"], bool):
             raise IdentityStoreError(f"Sign-in user {name!r} has an invalid 'disabled' value")
     return data
+
+
+PENDING_SALT_PREFIX = b"staff:"
+
+
+def pending_salt(owner):
+    # The password stays random and unknown. The salt in the standard password hash
+    # identifies a disabled placeholder if creation survives a database rollback.
+    return PENDING_SALT_PREFIX + hashlib.sha256(owner.encode()).digest()[:HASHER.salt_len - len(PENDING_SALT_PREFIX)]
+
+
+def encoded_salt(salt):
+    return base64.b64encode(salt).decode("ascii").rstrip("=")
+
+
+def pending_marker(user):
+    parts = user["password"].rsplit("$", 2)
+    if (user.get("disabled") is True and len(parts) == 3 and parts[0].startswith("$argon2id$")
+            and parts[1].startswith(encoded_salt(PENDING_SALT_PREFIX))):
+        return parts[1]
+    return None
+
+
+def pending_owner(user, owner):
+    return user.get("pending_marker") == encoded_salt(pending_salt(owner))
 
 
 class AutheliaUsersFile:
@@ -140,18 +172,35 @@ class AutheliaUsersFile:
         except InvalidHashError:
             return False
 
-    def create(self, username: str, display_name: str, email: str) -> None:
+    def onboarding_users(self) -> dict[str, dict]:
+        try:
+            users = self._read()["users"]
+        except IdentityStoreError:
+            raise IdentityStoreError("The sign-in store could not be read. Ask the operator.") from None
+        return {name: {"displayname": user["displayname"], "email": user.get("email"),
+                       "disabled": user.get("disabled", False), "pending_marker": pending_marker(user)}
+                for name, user in users.items()}
+
+    def create(self, username: str, display_name: str, email: str, *, pending_for: str | None = None) -> None:
         """A new user that cannot sign in yet: disabled, with the hash of a random secret nobody knows."""
         if not USERNAME.fullmatch(username):
             raise IdentityStoreError("Sign-in names use 2-63 lowercase letters, digits, '.', '_' or '-'")
-        digest = hash_password(secrets.token_urlsafe(32))
+        secret = secrets.token_urlsafe(32)
+        digest = HASHER.hash(secret, salt=pending_salt(pending_for)) if pending_for else hash_password(secret)
 
         def apply(users):
             existing = users.get(username)
-            # shortcut: a retried transaction may find its own pending user from the first attempt; the same pending
-            # (disabled) user with the same name and email is that one, anything else is someone else's account.
-            if existing is not None and not (existing.get("disabled") is True and existing.get("email") == email
-                                             and existing.get("displayname") == display_name):
+            if pending_for and any(name != username and
+                                   (name.casefold() == username or str(user.get("email") or "").casefold() == email.casefold())
+                                   for name, user in users.items()):
+                raise IdentityStoreError("This sign-in name or email address is already taken")
+            # Only a placeholder for this person may be recovered by onboarding. Legacy invites
+            # retain their existing retry behavior for unmarked pending accounts.
+            if existing is not None and not (
+                existing.get("email") == email and existing.get("displayname") == display_name
+                and existing.get("disabled") is True
+                and pending_marker(existing) == (encoded_salt(pending_salt(pending_for)) if pending_for else None)
+            ):
                 raise IdentityStoreError("This sign-in name is already taken")
             users[username] = {"displayname": display_name, "password": digest, "email": email, "groups": [], "disabled": True}
         self._change(apply)

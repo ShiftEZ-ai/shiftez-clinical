@@ -1034,7 +1034,8 @@ def _event_occurrence_currency(rows):
     return sorted((row.id, aware(row.start), aware(row.end)) for row in rows)
 
 
-def _prepared_event_currency_matches(db, currency):
+def prepared_event_currency_matches(db, currency):
+    """Verify the clock-dependent occurrences in a captured snapshot window."""
     if not currency:
         return True
     from .services import events
@@ -1592,7 +1593,7 @@ def domain_snapshot(db, workspace, *args, **kwargs):
         resolved = currency_match(stamp, stamp)
         if cached and cached[0] == key and resolved:
             # Recurring occurrences follow the clock; a prepared graph is current only if they still match.
-            resolved = _prepared_event_currency_matches(db, cached[2])
+            resolved = prepared_event_currency_matches(db, cached[2])
         if state['kind'] == 'job.create':
             state['generation_snapshot_key'] = key if resolved or not state['replay'] else 'unresolved'
         if cached and cached[0] == key and resolved:

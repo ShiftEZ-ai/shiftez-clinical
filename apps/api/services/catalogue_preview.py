@@ -20,12 +20,11 @@ CONTACT_FIELDS = {"title", "work_phone", "work_extension", "pager", "directory_s
 
 
 def contact_update(command, payload, before):
-    """Only normalized contact values may differ; defaults in a partial payload still count as changes."""
+    """Only supplied, normalized contact values may differ."""
     if command.kind != "catalogue.update" or payload.catalogue != "people":
         return False
-    current = PersonInput.model_validate({k: before[k] for k in PersonInput.model_fields if k in before}).model_dump()
-    proposed = PersonInput.model_validate(payload.value).model_dump()
-    return {k for k in proposed if proposed[k] != current[k]} <= CONTACT_FIELDS
+    supplied = PersonInput.model_validate(payload.value).model_dump(mode='json', exclude_unset=True)
+    return {key for key, value in supplied.items() if value != before.get(key)} <= CONTACT_FIELDS
 
 
 def contact_inputs(db, actor, person):
