@@ -35,9 +35,16 @@ def listed_nodes(current):
     return set().union(*classes(current).values()) if current else set()
 
 
+def single_replica_event():
+    kind = os.getenv("GITHUB_EVENT_NAME")
+    if kind == "push" and (ref := os.getenv("GITHUB_REF")):
+        import working_policy as policy
+        return ref == "refs/heads/" + policy.default_branch(policy.event())
+    return kind in {"pull_request", "merge_group"}
+
+
 def retry_run(plan):
-    return (os.getenv("GITHUB_EVENT_NAME") in {"merge_group", "pull_request"}
-            and plan["replicas"] == [1] and not plan.get("smoke"))
+    return plan["replicas"] == [1] and not plan.get("smoke") and single_replica_event()
 
 
 def retry_nodes(cases, listed):
@@ -133,13 +140,8 @@ def at_revision(revision):
 def context(base_sha):
     base_sha = base_sha or git("rev-parse", "HEAD")
     base, current = at_revision(base_sha), at_revision("HEAD")
-    kind = os.getenv("GITHUB_EVENT_NAME")
-    single_replica = kind in {"pull_request", "merge_group"}
-    if base is not None and kind == "push" and (ref := os.getenv("GITHUB_REF")):
-        import working_policy as policy
-        single_replica = ref == "refs/heads/" + policy.default_branch(policy.event())
     return {"base_sha": base_sha, "bootstrap": base is None, "base": base, "current": current,
-            "replicas": [1] if base is not None and single_replica else [1, 2]}
+            "replicas": [1] if base is not None and single_replica_event() else [1, 2]}
 
 
 def require_bootstrap_inputs(issue, expires_on, *, today=None):

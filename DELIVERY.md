@@ -71,8 +71,9 @@ contract in DESIGN.md.
 
 ## Test policy
 - No retries to get green, no skipped or quietly removed tests. Fix causes; never re-run an unchanged failure.
-  Known exception, not policy: the trusted runner re-runs failed test nodes once in the same job on pull-request and
-  merge-queue runs (`.github/scripts/trusted_ci.py`); issue #885 removes it.
+  Until issue #885 removes the exception, the trusted runner re-runs eligible failed nodes once in the same job on
+  pull requests, merge groups and pushes to the default branch (`.github/scripts/trusted_ci.py`).
+  On default-branch pushes, a failure followed by a pass is recorded as unstable.
 - A failing test is repaired by restoring what it asserts. Never weaken, skip, delete, quarantine or
   re-parameterise away a failing assertion.
 - A replaced test keeps every assertion, or says for each retired one which design decision made it untrue.

@@ -616,7 +616,7 @@ def quarantine_row(node=RED, kind="baseline"):
 @pytest.mark.parametrize(("replicas", "outcome", "missing_browser", "refusal"), [
     ((1,), "passed", False, None),
     ((1,), "passed", True, "Missing or unexpected shard artifacts: browser-1-1"),
-    ((1,), "failed", False, "Trusted known-failure comparison refused the evidence"),
+    ((1,), "failed", False, "Missing push retry evidence: junit.xml"),
     ((1, 2), "passed", False, "Replica count differs from the trusted reader context"),
 ])
 def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, refusal):
@@ -625,11 +625,38 @@ def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, r
     assert error == refusal
     if refusal is None:
         assert verdict["passed"] is True
-    elif outcome == "failed":
-        assert verdict["passed"] is False
-        assert "New failures outside the known-failure list" in verdict["reason"]
     else:
         assert verdict is None
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_reports_recovered_failure(trusted_result, event):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "recovered", branch="main", default="main", event=event, outcome="failed", retry="passed")
+    assert error is None
+    assert verdict["passed"] is True
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 1
+    assert json.loads(artifacts["recovered-tests.json"]) == [
+        {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
+    ]
+
+
+@pytest.mark.parametrize("event", ["push", "merge_group"])
+def test_default_branch_retry_evidence_keeps_persistent_failure_red(trusted_result, event):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "persistent", branch="main", default="main", event=event, outcome="failed", retry="failed")
+    assert error == "Trusted known-failure comparison refused the evidence"
+    assert verdict["passed"] is False
+    assert "New failures outside the known-failure list" in verdict["reason"]
+    assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 0
+
+
+def test_main_push_keeps_reviewed_quarantine(trusted_result):
+    (error, verdict), (_, summary, _) = trusted_result(
+        "push-quarantine", branch="main", default="main", event="push",
+        outcome="quarantine-xfail", base_registry=[quarantine_row(kind="unstable")])
+    assert error is None and verdict["passed"] is True
+    assert b"quarantined and failing now: 1" in summary
 
 
 @pytest.mark.parametrize("browser_shards", [2, 1])
@@ -967,6 +994,7 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             assert observed["listed_unstable"][0]["observations"] == ["failed", "passed"]
             assert observed["listed_unstable"][0]["status"] == "PROPOSED_REMARK"
             with monkeypatch.context() as other:
+                other.delenv("GITHUB_REF", raising=False)
                 for event in ("push", "schedule"):
                     other.setenv("GITHUB_EVENT_NAME", event)
                     with pytest.raises(ValueError, match="Unexpected retry evidence"):

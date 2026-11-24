@@ -792,7 +792,7 @@ def idempotency_hash_input(command):
     return canonical
 
 
-def _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, assignment_reply=False):
+def _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, assignment_reply=False, invite_guard=None):
     require(idempotency_key is not None and 16 <= len(idempotency_key) <= 128
             and idempotency_key.isascii() and idempotency_key.isprintable(),
             "IDEMPOTENCY_KEY_REQUIRED", "Every write requires a 16–128 character Idempotency-Key", 428)
@@ -1066,6 +1066,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if command.kind.startswith(('score_import.', 'score_check.', 'ai_provider.')):
             from .services.score_check import require_enabled
             require_enabled(db, actor.department_id)
+        if invite_guard is not None:
+            if existing_invite := invite_guard(db, actor):
+                return existing_invite
         existing = existing_receipt(db, actor)
         if existing:
             return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
@@ -1179,7 +1182,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
-            if (command.kind == 'rule.propose'
+            if (command.kind in {'account.invite', 'rule.propose'}
                     or command.kind == 'availability.record' and result['record'].get('self_approved')):
                 target_id = result['record']['id']
             elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
@@ -1298,7 +1301,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     return result
 
 
-def execute(engine, settings, token, csrf, idempotency_key, command, correlation_id):
+def execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, invite_guard=None):
     actor = None
     try:
         # Refuse obvious forbidden roles before queuing for the department writer.
@@ -1328,7 +1331,8 @@ def execute(engine, settings, token, csrf, idempotency_key, command, correlation
                 if getattr(error.orig, 'sqlstate', None) == '55P03':
                     raise Problem(409, 'CHECK_IN_PROGRESS', 'This rota is already being checked; its result will refresh here') from error
                 raise
-        return _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, assignment_reply=assignment_reply)
+        return _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id,
+                        assignment_reply=assignment_reply, invite_guard=invite_guard)
     except Problem as error:
         if error.code == 'STALE_REVISION' and command.kind.startswith(('shift.', 'workspace.', 'generation.')):
             submitted = command.model_dump(mode='json')

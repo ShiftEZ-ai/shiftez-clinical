@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.api import commands, models as m
 from apps.api.db import transaction
+from apps.api.services.job_reads import full_job_result
 from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, Problem
 from .test_bulk import people_change, preview
 from .test_bulk_context_receipts import REASON, activation, assert_waiting, checked, scenario
@@ -51,7 +52,7 @@ def test_bulk_fact_union_requires_full_feasibility_even_when_acknowledged(h):
     proof = checked(h, workspace, facts)
     with transaction(h.app.state.engine, write=True) as db:
         row = db.get(m.Job, proof["id"])
-        result = deepcopy(row.result)
+        result = deepcopy(full_job_result(db, row))
         result["full_feasibility_established"] = False
         row.result = result
     value = {"items": [activation(fact, proof) for fact in facts], "reason": REASON}
