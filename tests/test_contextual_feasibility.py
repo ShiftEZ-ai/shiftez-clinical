@@ -2,6 +2,7 @@ from apps.api import models as m
 import pytest
 from apps.api.auth import authenticate
 from apps.api.db import transaction
+from apps.api.services.job_reads import full_job_result
 from apps.api.errors import Problem
 from apps.api.services.policies import activate_policies
 from apps.worker.main import process_one
@@ -425,7 +426,7 @@ def test_invalid_receipt_cannot_gain_no_new_problems_exemption(h, invalid):
     w, policy, checked = shortage_review(h)
     with transaction(h.app.state.engine, write=True) as db:
         job = db.get(m.Job, checked['id'])
-        result = dict(job.result)
+        result = dict(full_job_result(db, job))
         if invalid == 'failed':
             job.status = 'failed'
         elif invalid == 'compiler':

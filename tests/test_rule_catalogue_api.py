@@ -235,6 +235,41 @@ def test_policy_withdrawal_requires_a_reason(h):
     assert refused['error']['code'] == 'SCHEMA_INVALID'
 
 
+def test_partial_rule_amendment_keeps_omissions_and_accepts_explicit_clears(pg):
+    catalogue_id = 'duties_per_week'
+    settings = {'max_duties': {'window': 'week'}}
+    first = propose(pg, catalogue_id, [line(numbers={'max': {'value': 3}})],
+                    on=False, settings=settings, balance_between_people=False)['record']
+    live = approve(pg, first)
+
+    def amend(base, **fields):
+        return pg.command('coordinator', 'rule.propose', {
+            'catalogue_id': catalogue_id, 'expected_policy_id': base['id'], 'expected_revision': base['revision'],
+            'reason': 'Edit synthetic rule', **fields,
+        })['record']
+
+    original = live['definition']['rule']
+    amended = amend(live, balance_between_people=True)
+    assert amended['definition']['rule'] == original
+    assert amended['definition']['balance_between_people'] is True
+    assert entry(pg, catalogue_id)['rule']['id'] == live['id']
+    current = approve(pg, amended)
+    cleared = amend(current, on=True, settings={}, lines=[])
+    assert cleared['definition']['rule'] == {**original, 'on': True, 'settings': {}, 'lines': []}
+    pg.command('coordinator', 'policy.decline', {'reason': 'Undo proposal'}, cleared['id'], cleared['revision'])
+    latest = entry(pg, catalogue_id)['rule']
+    assert latest['id'] == current['id']
+    restored = pg.command('approver', 'policy.retire', {'reason': 'Undo activation'}, latest['id'], latest['revision'])
+    assert restored['restored_ids'] == [live['id']]
+    assert entry(pg, catalogue_id)['rule']['definition']['rule'] == original
+    with transaction(pg.app.state.engine) as db:
+        for saved in (live, amended, cleared):
+            history = db.query(m.DefinitionHistory).filter_by(
+                kind='policy', object_id=saved['id'], object_revision=saved['revision']).one()
+            assert history.snapshot['definition']['rule'] == saved['definition']['rule']
+        assert db.query(m.AuditEvent).filter_by(action='rule.propose', target_id=amended['id']).count() == 1
+
+
 def test_catalogue_rules_are_not_proposed_as_plain_rules(h):
     h.command('coordinator', 'policy.create', {'name': 'Sneaky', 'owner': 'Test', 'source': 'Constructed fixture', 'starts_on': '2026-01-01',
                                                'definition': {'rule': {'kind': 'catalogue', 'id': 'keep_off', 'lines': []}}}, status=422)

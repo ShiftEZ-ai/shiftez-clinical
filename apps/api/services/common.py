@@ -30,6 +30,11 @@ PROGRAMME_CATALOGUES = frozenset({"rotation_types", "programmes", "cohorts", "ro
                                   "programme_calendar_entries", "rotation_templates"})
 
 
+def omitted_update_fields(value, saved):
+    """Carry forward stored fields that were absent from the validated request."""
+    return {key: saved[key] for key in type(value).model_fields if key in saved and key not in value.model_fields_set}
+
+
 # The swap reviewers (services/swaps.py). With the two swappers, only they read who swapped with whom.
 SWAP_NAME_READERS = ("coordinator", "approver")
 SWAP_SUFFIX = " · swap "

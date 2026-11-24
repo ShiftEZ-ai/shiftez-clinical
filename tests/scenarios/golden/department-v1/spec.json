@@ -1,0 +1,234 @@
+{
+  "revision": 1,
+  "ranks": {
+    "consultant": "Consultant",
+    "resident": "Resident",
+    "clinician": "Clinician"
+  },
+  "skills": {
+    "supervisor": "Supervision",
+    "language-skill": "Interpretation"
+  },
+  "programmes": {
+    "programme-a": "Fixture practice programme",
+    "programme-b": "Fixture training programme"
+  },
+  "rotation_types": {
+    "rotation-a": "Fixture supervised placement",
+    "rotation-b": "Fixture ambulatory placement"
+  },
+  "duty_types": {
+    "early": "Fixture early clinic",
+    "mid": "Fixture midday clinic",
+    "late": "Fixture evening clinic",
+    "teaching": "Fixture training clinic",
+    "response-am": "Fixture daytime response",
+    "response-pm": "Fixture afternoon response",
+    "night": "Fixture night response",
+    "language": "Fixture interpretation clinic"
+  },
+  "staffing": {
+    "early": [[1, 2], [2, 3], [1, 2], [2, 3], [1, 2]],
+    "mid": [[1, 2], [1, 2], [2, 2], [1, 2], [2, 2]],
+    "late": [[1, 1], [1, 2], [1, 1], [1, 2], [1, 1]],
+    "teaching": [[2, 4], [2, 3], [2, 4], [2, 3], [2, 4]]
+  },
+  "profiles": {
+    "0": {"rank": "consultant", "skills": ["supervisor"], "response": true, "clinic_priority": 1, "preferred_stream": "early"},
+    "1": {"rank": "consultant", "skills": ["supervisor"], "response": true, "clinic_priority": 2, "preferred_stream": "mid"},
+    "2": {"rank": "consultant", "skills": ["supervisor"], "response": true},
+    "3": {"rank": "consultant", "skills": ["supervisor"], "response": true, "clinic_priority": 1, "preferred_stream": "teaching"},
+    "4": {"rank": "consultant", "skills": ["supervisor"], "response": true},
+    "5": {"rank": "resident", "programme": "programme-b", "cohort": 0, "rotation": "rotation-a", "clinic_priority": 3, "preferred_stream": "mid"},
+    "6": {"rank": "resident", "programme": "programme-a", "cohort": 0, "rotation": "rotation-b", "clinic_priority": 1, "preferred_stream": "late"},
+    "7": {"rank": "resident", "programme": "programme-b", "cohort": 0, "rotation": "rotation-a"},
+    "8": {"rank": "resident", "programme": "programme-a", "cohort": 0, "rotation": "rotation-a"},
+    "9": {"rank": "resident", "programme": "programme-b", "cohort": 1, "rotation": "rotation-b"},
+    "10": {"rank": "clinician", "response": true, "clinic_priority": 2, "preferred_stream": "late"},
+    "11": {"rank": "clinician", "response": true},
+    "12": {"rank": "clinician", "response": true, "clinic_priority": 1, "preferred_stream": "early"},
+    "13": {"rank": "clinician", "response": true},
+    "14": {"rank": "clinician", "response": true},
+    "15": {"rank": "clinician", "clinic_priority": 1, "preferred_stream": "teaching"},
+    "16": {"rank": "clinician", "clinic_priority": 2, "preferred_stream": "early"},
+    "17": {"rank": "clinician", "clinic_priority": 3, "preferred_stream": "mid"},
+    "18": {"rank": "clinician", "clinic_priority": 1, "preferred_stream": "late"},
+    "19": {"rank": "clinician", "clinic_priority": 2, "preferred_stream": "teaching"}
+  },
+  "personas": {
+    "p000": {
+      "role": "Consultant",
+      "traits": "Leads a clinic and supervises trainees, with no interpretation grant."
+    },
+    "p001": {
+      "role": "Consultant",
+      "traits": "Supervises trainees, provides cover across both sites and can cover nights."
+    },
+    "p002": {
+      "role": "Consultant",
+      "traits": "Only eligible interpretation grant. On recorded leave across the interpretation clinic.",
+      "skills": [
+        "supervisor",
+        "language-skill"
+      ],
+      "availability": [
+        [
+          7,
+          13,
+          "00:00",
+          "00:00",
+          "recorded_leave"
+        ]
+      ]
+    },
+    "p003": {
+      "role": "Consultant",
+      "traits": "Works a 60% pattern with at most three duties per week and works only from Monday to Wednesday."
+    },
+    "p004": {
+      "role": "Consultant",
+      "traits": "Refuses nights. A historical allocation preference still favours this person, testing that the restriction wins.",
+      "tags": [
+        "fixture-night-refusal"
+      ],
+      "wish": "avoid_shift_type"
+    },
+    "p005": {
+      "role": "Resident",
+      "traits": "Person-specific five-duty weekly allowance against the four-duty trainee default. Shares the clinic with a peer whose placement should be separate."
+    },
+    "p006": {
+      "role": "Resident",
+      "traits": "Requires named supervision. The other resident is a separate-placement preference."
+    },
+    "p007": {
+      "role": "Resident",
+      "traits": "Second programme, first cohort and a supervised placement. Subject to the trainee weekly cap."
+    },
+    "p008": {
+      "role": "Resident",
+      "traits": "Protected teaching at the second site, recorded in availability and scoped by the teaching tag.",
+      "tags": [
+        "fixture-teaching"
+      ],
+      "availability": [
+        [
+          2,
+          2,
+          "09:00",
+          "13:00",
+          "protected_time"
+        ]
+      ]
+    },
+    "p009": {
+      "role": "Resident",
+      "traits": "Different cohort within the second programme. Counts from the date the placement starts."
+    },
+    "p010": {
+      "role": "Clinician",
+      "traits": "Seeks nights. Rest and the next-day combination still bind, with additional recovery after two nights.",
+      "tags": [
+        "fixture-night-seeker"
+      ],
+      "wish": "prefer_shift_type"
+    },
+    "p011": {
+      "role": "Clinician",
+      "traits": "Prefers two days off together and cannot work consecutive weekends."
+    },
+    "p012": {
+      "role": "Clinician",
+      "traits": "Prefers a complete weekend together."
+    },
+    "p013": {
+      "role": "Clinician",
+      "traits": "Prefers early-to-late duty order and has protected elapsed rest."
+    },
+    "p014": {
+      "role": "Clinician",
+      "traits": "Works across both sites with a travel buffer and needs a second clinician when covering interpretation."
+    },
+    "p015": {
+      "role": "Clinician",
+      "traits": "Starts after the first half of the main month, with dated membership and eligibility.",
+      "first_day": 15
+    },
+    "p016": {
+      "role": "Clinician",
+      "traits": "Leaves halfway through the main month, with a dated inactive boundary.",
+      "last_day": 16
+    }
+  },
+  "expect": {
+    "statuses": [
+      "OPTIMAL",
+      "FEASIBLE"
+    ],
+    "shortages": {
+      "language-cover": {
+        "day": 9,
+        "count": 1
+      },
+      "daily-night": {
+        "day": 8,
+        "count": 1
+      }
+    },
+    "bindings": {
+      "team_leads": [
+        "LEAD_GAP"
+      ],
+      "people_per_session": [
+        "SCOPED_PARTICIPANT_LIMIT",
+        "SCOPED_COVERAGE_GAP"
+      ],
+      "supervision": [
+        "SUPERVISOR_SCOPED_CAPACITY"
+      ],
+      "spread_evenly": [
+        "SUPERVISION_LEVEL"
+      ],
+      "workload_limit": [
+        "MAX_DUTIES",
+        "RESTRICTION"
+      ],
+      "days_in_a_row": [
+        "CONSECUTIVE_DAYS"
+      ],
+      "days_off_together": [
+        "DAYS_OFF_SHORT"
+      ],
+      "weekends_in_a_row": [
+        "CONSECUTIVE_WEEKENDS"
+      ],
+      "weekend_shape": [
+        "WEEKEND_SPLIT"
+      ],
+      "shift_order": [
+        "SHIFT_ORDER"
+      ],
+      "duty_spacing": [
+        "MIN_REST",
+        "FORBIDDEN_TRANSITION"
+      ],
+      "rest_after_series": [
+        "REST_AFTER_SERIES"
+      ],
+      "travel_between_places": [
+        "TRAVEL_BUFFER"
+      ],
+      "together_apart": [
+        "WORK_APART"
+      ],
+      "companion_cover": [
+        "SCOPED_COVERAGE_GAP"
+      ],
+      "allocation_order": [],
+      "preferences": [],
+      "fair_share": [
+        "BALANCE_GOAL"
+      ]
+    }
+  }
+}
