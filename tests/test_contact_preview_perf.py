@@ -221,7 +221,12 @@ def test_partial_contact_payload_cannot_hide_reset_of_clinical_fields(h):
     row = person(h)
     saved = h.configure('people', change(row, active=False)['payload']['value'], row['id'], row['revision'])['record']
     cmd = change(saved, work_phone='5550100')
-    del cmd['payload']['value']['active']  # PersonInput's default would reactivate the person.
+    cmd['payload']['value'] = {'display_name': saved['display_name'], 'work_phone': '5550100'}
+    result = preview(h, cmd)
+    assert result['impacts'] == [] and result['proposed']['active'] is False
+    assert result['proposed']['inactive_from'] == saved['inactive_from']
+
+    cmd['payload']['value']['active'] = True
     result = preview(h, cmd)
     assert len(result['impacts']) == 1 and result['proposed']['active'] is True
     assert result['impacts'][0]['after_error_count'] < result['impacts'][0]['before_error_count']

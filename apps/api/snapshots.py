@@ -1035,6 +1035,7 @@ def _event_occurrence_currency(rows):
 
 
 def prepared_event_currency_matches(db, currency, *, now=None):
+    """Verify the clock-dependent occurrences in a captured snapshot window."""
     if not currency:
         return True
     from .services import events
