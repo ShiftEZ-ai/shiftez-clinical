@@ -66,6 +66,39 @@ def upgrade():
         assert safety.needs_confirmation(path) is (kind == 'destructive')
 
 
+@pytest.mark.parametrize('merged', [False, True], ids=['parallel-heads', 'joined-by-merge'])
+def test_check_replacement_beside_a_parallel_branch_needs_confirmation(tmp_path, merged):
+    # Sibling a widens the CHECK to add 'four'; sibling b only sees the parent and sets 'three', which drops 'four'.
+    (tmp_path / 'parent.py').write_text('''from alembic import op
+import sqlalchemy as sa
+revision = 'parent'
+down_revision = None
+def upgrade():
+    op.create_table('items', sa.Column('role', sa.String()),
+                    sa.CheckConstraint("role IN ('one', 'two')", name='role_check'))
+''', encoding='utf-8')
+    for revision, values in [('a', "'one', 'two', 'four'"), ('b', "'one', 'two', 'three'")]:
+        (tmp_path / f'{revision}.py').write_text(f'''from alembic import op
+revision = {revision!r}
+down_revision = 'parent'
+SAFETY_CLASS = 'destructive'
+def upgrade():
+    op.drop_constraint("role_check", "items", type_="check")
+    op.create_check_constraint("role_check", "items", "role IN ({values})")
+''', encoding='utf-8')
+    if merged:
+        (tmp_path / 'merge.py').write_text('''revision = 'merge'
+down_revision = ('a', 'b')
+def upgrade():
+    pass
+''', encoding='utf-8')
+    for revision in ['a', 'b']:
+        path = tmp_path / f'{revision}.py'
+        assert safety.analyze(path)['class'] == 'destructive'
+        assert not safety.declaration_errors(path)
+        assert safety.needs_confirmation(path)
+
+
 @pytest.mark.parametrize('split', [False, True], ids=['single-alter', 'adjacent-calls'])
 def test_postgres_check_widening_can_use_a_definition_in_the_upgrade(tmp_path, split):
     old = "CREATE TABLE items (role VARCHAR(32) CONSTRAINT role_check CHECK (role IN ('one', 'two')))"

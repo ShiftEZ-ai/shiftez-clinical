@@ -687,9 +687,12 @@ def schema_at(ancestors):
 
 
 @lru_cache(maxsize=512)
-def analyze_sources(source, ancestors):
+def analyze_sources(source, ancestors, branched=False):
     # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
     schema = deepcopy(schema_at(ancestors))
+    if branched:
+        # A sibling branch may have replaced a CHECK this chain cannot see, so no recorded definition is proof.
+        schema.pop('checks', None)
     for table in schema['tables'].values():
         table['new'] = False
     return Analyzer(source, schema).run()
@@ -702,13 +705,20 @@ def analyze(path):
     if not direct['needs_schema']:
         return direct
     previous = assigned(parse(source), 'down_revision')
-    ancestors, seen = [], set()
+    ancestors, seen, children = [], set(), {}
     if previous:
-        files = {assigned(parse(item.read_text(encoding='utf-8')), 'revision'): item
-                 for item in path.parent.glob('*.py') if item.name != '__init__.py'}
+        files = {}
+        for item in path.parent.glob('*.py'):
+            if item.name != '__init__.py':
+                tree = parse(item.read_text(encoding='utf-8'))
+                files[assigned(tree, 'revision')] = item
+                parents = assigned(tree, 'down_revision')
+                for parent in parents if isinstance(parents, (tuple, list)) else [parents]:
+                    children[parent] = children.get(parent, 0) + 1
         while isinstance(previous, str) and previous not in seen and previous in files:
             seen.add(previous)
             text = files[previous].read_text(encoding='utf-8')
             ancestors.append(text)
             previous = assigned(parse(text), 'down_revision')
-    return analyze_sources(source, tuple(reversed(ancestors)))
+    branched = any(children.get(revision, 0) > 1 for revision in seen)
+    return analyze_sources(source, tuple(reversed(ancestors)), branched)
