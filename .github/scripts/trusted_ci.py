@@ -206,7 +206,7 @@ def census_files(plan, files):
     return set(files)
 
 
-def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False):
+def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False, trace=False):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -274,6 +274,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             collected = json.loads(census.read_text(encoding="utf-8"))
         # The parent retains the collection snapshot; the test process cannot change this in-memory copy.
         env.pop("TRUSTED_COLLECTION_OUTPUT")
+        env["PW_TRACE_MODE"] = "on" if trace else "off"
         code = subprocess.call([*command, "-n", workers, "--dist", "worksteal", "--hosted-deselected-output=" + str(deselected),
                                 "--junitxml=" + str(raw)], env=env)
         if flags['canaries'] and code != 1:
@@ -309,8 +310,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
 
 
 def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
-    def attempt(selected, path, options, parallelism, before, *, partial=False):
-        code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
+    def attempt(selected, path, options, parallelism, before, *, partial=False, trace=False):
+        code = invocation(selected, suite, path, options, parallelism, before, partial=partial, trace=trace)
         files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
         return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
 
@@ -320,7 +321,7 @@ def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, 
         failures = maker.retry_nodes(original, listed)
         if failures:
             path = report.with_name(report.stem + "-retry.xml")
-            first["retry"] = attempt(failures, path, [], "0", None)
+            first["retry"] = attempt(failures, path, [], "0", None, trace=suite == "browser")
             canaries.recovered_nodes(report, first, failures, allow_retry=True)
     return first
 

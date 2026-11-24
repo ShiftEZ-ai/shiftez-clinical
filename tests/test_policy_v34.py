@@ -230,6 +230,23 @@ class ImporterV34Tests(unittest.TestCase):
                 if deferred:
                     self.assertIn('Nightly suites deferred', summary.read_text())
 
+    def test_shard_workflow_keeps_browser_diagnostics_separate(self):
+        workflow = HELPERS.parent / "workflows/ci-tests.yml"
+        job = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]["tests"]
+        env = job["env"]
+        self.assertEqual(env["PW_TRACE_MODE"], "off")
+        self.assertNotEqual(env["PW_TRACE_DIR"], env["PW_SCREENSHOT_DIR"])
+        uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 2)
+        for upload in uploads:
+            paths = upload["with"]["path"].splitlines()
+            for key in ("PW_TRACE_DIR", "PW_SCREENSHOT_DIR"):
+                self.assertIn(f"candidate/{env[key]}/", paths)
+        checkout = next(step for step in job["steps"] if step.get("with", {}).get("path") == ".trusted-controls")
+        self.assertEqual(checkout["with"]["ref"], "${{ inputs.trusted_sha }}")
+        run = next(step["run"] for step in job["steps"] if step.get("name") == "Run the exact planned shard once")
+        self.assertIn('python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run', run)
+
     def test_pipeline_keeps_default_limits_until_measurement(self):
         # Lower limits require new measured runs in ci/hosted-durations.json.
         durations = Path(__file__).resolve().parents[1] / 'ci/hosted-durations.json'
