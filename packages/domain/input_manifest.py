@@ -95,7 +95,7 @@ def generation_input(value):
     return GenerationOptions.model_validate(value or {}).model_dump(mode='json', exclude=GENERATION_RUNTIME_OPTIONS)
 
 
-def manifest(data, *, content_revision=None):
+def manifest(data, *, content_revision=None, include_sources=True):
     period, zone = data['workspace'], data['organisation']['timezone']
     focus = set(data['focus_ids'])
     lo = local_midnight(date.fromisoformat(str(period['starts_on'])), zone) - timedelta(days=32)
@@ -115,22 +115,25 @@ def manifest(data, *, content_revision=None):
     first = lo.date().isoformat()
     sources, components = {}, {'content': {}, 'mandatory_inputs': {}, 'objective_inputs': {}, 'toolchain': {}}
     def add(group, kind, key, value, source=None):
+        source_key = kind + ':' + str(key)
         token = digest(value)
-        components[group][kind + ':' + str(key)] = token
+        components[group][source_key] = token
+        if not include_sources:
+            return
         row = source if source is not None else (value if isinstance(value, dict) else {})
-        sources[kind + ':' + str(key)] = {'kind': kind, 'id': str(key), 'source_id': str(row.get('standing_wish_id') or row.get('pattern_id') or row.get('event_occurrence_id') or row.get('id', key)), 'hash': token,
+        sources[source_key] = entry = {'kind': kind, 'id': str(key), 'source_id': str(row.get('standing_wish_id') or row.get('pattern_id') or row.get('event_occurrence_id') or row.get('id', key)), 'hash': token,
             **{k: row[k] for k in ('person_id', 'first_day', 'last_day', 'starts_on', 'ends_on', 'start', 'end', 'kind', 'created_by') if k in row}}
-        sources[kind + ':' + str(key)]['kind'] = kind
+        entry['kind'] = kind
         # The same explicit projection owns semantic currency and sanitized before/after values.
-        sources[kind + ':' + str(key)]['facts'] = value if isinstance(value, dict) else {'value': value}
+        entry['facts'] = value if isinstance(value, dict) else {'value': value}
         if kind == 'rule_lines':
-            sources[kind + ':' + str(key)]['source_kind'] = 'policies'
+            entry['source_kind'] = 'policies'
         if row.get('pattern_id'):
-            sources[kind + ':' + str(key)]['source_kind'] = 'availability_patterns'
+            entry['source_kind'] = 'availability_patterns'
         if row.get('event_occurrence_id'):
-            sources[kind + ':' + str(key)]['source_kind'] = 'event_occurrences'
+            entry['source_kind'] = 'event_occurrences'
         if kind == 'wishes':
-            sources[kind + ':' + str(key)]['wish_kind'] = row.get('kind')
+            entry['wish_kind'] = row.get('kind')
     for kind in ('organisation', 'department'):
         facts = project(data[kind], FIELDS[kind])
         # An explicit calendar owns working days; weekends are quota inputs only for the fallback.

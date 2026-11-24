@@ -60,5 +60,7 @@
   "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-lfgkcapmnmalfaigclmmjpahbgmhgfaiphojlpmopjdnbdhemmeeidpgcjggdmnl]",
   "tests/test_simplify_quota_dates_review.py::test_approved_listed_quota_rows_keep_independent_dates_and_settings[case-noadkecedmfmgmjbdbfkckjgngajloimldbbglaldfjmlankdcogdlhgkhabbipj]",
   "tests/test_rule_simplification_phase2.py::test_rules_under_different_names_that_are_one_rule_become_one",
-  "tests/test_golden_coverage.py::test_golden_coverage"
+  "tests/test_golden_coverage.py::test_golden_coverage",
+  "tests/test_shared_search.py::test_selected_reference_is_scoped_and_does_not_depend_on_query_label",
+  "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]"
 ]
