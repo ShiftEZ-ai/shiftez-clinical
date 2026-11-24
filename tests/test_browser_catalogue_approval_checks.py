@@ -164,7 +164,8 @@ def test_catalogue_approval_checks_an_overlapping_rota_before_activation(browser
         navigate(page, 'rules/duties_per_week')
         page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
         # The panel is named after the change: the one added or changed line, else the rule.
-        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone', 'off': 'Change to Duties per week'}[origin]
+        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone',
+                 'off': 'Change to Duties per week · turns the rule off'}[origin]
         check_and_approve_in_panel(page, h, workspace, proposal, title)
         page.reload()
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'rules')
