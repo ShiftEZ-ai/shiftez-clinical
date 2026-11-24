@@ -259,6 +259,27 @@ def _mandatory_recheck_policy(policy):
     return projected
 
 
+def _captured_safety_numbers(policy):
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+
+    definition = policy["definition"]
+    rule = definition["rule"]
+    entry = catalogue_entry(rule["id"], rule.get("catalogue_version", 1))
+    if not entry:
+        return policy
+    projected = []
+    for index, line in enumerate(rule.get("lines") or ()):
+        numbers = line["numbers"]
+        kept = {}
+        for key, number in numbers.items():
+            slot = slot_for_number(entry, key, rule, line, numbers)
+            if slot["kind"] in LIVE_SAFETY_KINDS and not slot["advisory"]:
+                kept[key] = number
+        if kept:
+            projected.append((index, _with_catalogue_numbers(line, kept)))
+    return {**policy, "definition": {**definition, "rule": {**rule, "lines": _indexed_catalogue_lines(projected)}}}
+
+
 def _overlay_zero_limits(frozen, current, safety_ids=()):
     """Overlay live zero ceilings without relaxing frozen draft obligations."""
     # shortcut: a captured zero is suppressed only when its projection or legacy scope equals live, else it binds twice (stricter, never looser); fold into one overlay after v0.1.0 (#1006)
@@ -710,9 +731,18 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                 if changed.intersection(p["definition"].get("merged_ids") or ())
                 or p["definition"].get("replaces_id") in changed})
         retained = []
+        current_by_id = {policy["id"]: policy for policy in current_policies}
         for policy in frozen_policies:
             ident = policy["id"]
             if s.safety_rule(policy["definition"]):
+                current_version = current_by_id.get(ident, policy)
+                if (policy["kind"] == "catalogue" and (current_version["status"] == "retired"
+                        or current_version.get("revision") != policy.get("revision"))):
+                    projected = _captured_safety_numbers(policy)
+                    if not projected["definition"]["rule"]["lines"]:
+                        continue
+                    if projected["definition"]["rule"]["lines"] != policy["definition"]["rule"]["lines"]:
+                        policy = _distinct_live_policy(projected)
                 retained.append(policy)
             elif ident in live:
                 retained.append(live.pop(ident))

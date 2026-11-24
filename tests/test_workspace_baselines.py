@@ -74,6 +74,43 @@ def test_draft_snapshot_overlays_live_catalogue_safety_rule_after_capture(h):
     assert policy["id"] in {row["id"] for row in snapshot["policies"]}
 
 
+def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, monkeypatch):
+    from packages.domain.conditions import active_rules
+    from packages.domain.time import aware
+    from packages.domain.validation import evaluate, finding_observations
+    from tests.clock_support import freeze_clock
+    from .test_rule_catalogue_api import approve, line, propose
+    from .test_rule_catalogue_v2_api import proposed
+
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    conversion = proposed(h)
+    h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
+              conversion['id'], conversion['revision'])
+    rota = h.workspace('Captured mixed workload')
+    for day in ('05', '06', '07'):
+        rota = h.shift(rota, start=f'2026-10-{day}T08:00:00+03:00', end=f'2026-10-{day}T12:00:00+03:00')['workspace']
+    cap = line(numbers={'max': {'value': 1}}, settings={'max_duties': {'window': 'week'}})
+    restriction = line(numbers={'apply': {}}, weekdays=[1], settings={'restriction': {}})
+    catalogue = 'workload_limit'
+    old = approve(h, propose(h, catalogue, [cap, restriction], catalogue_version=2)['record'])
+    rota = h.refresh_draft_baseline(h.detail(rota)['workspace'])
+    revised = {**cap, 'numbers': {'max': {'value': 3}}}
+    live_restriction = {**restriction, 'weekdays': [2]}
+    new = approve(h, propose(h, catalogue, [revised, live_restriction], catalogue_version=2,
+                            policy_id=old['id'], revision=old['revision'])['record'])
+
+    with transaction(h.app.state.engine) as db:
+        workspace = db.get(m.Workspace, rota['id'])
+        review = domain_snapshot(db, workspace, current_mandatory=True)
+    rules = active_rules(review)
+    assert [(rule['id'], rule['definition']['rule']['maximum']) for rule in rules if rule['kind'] == 'max_duties'] == [(new['id'], 3)]
+    kept = {tuple(rule['definition']['scope']['weekdays']) for rule in rules if rule['kind'] == 'restriction'}
+    assert kept == {(1,), (2,)}
+    findings = list(finding_observations(evaluate(review)))
+    assert any(row['code'] == 'RESTRICTION' and row['severity'] == 'error' for row in findings)
+    assert not any(row['code'] == 'MAX_DUTIES' for row in findings)
+
+
 def test_safety_catalogue_conversion_binds_once_before_and_after_draft_capture(h):
     from packages.domain.conditions import active_rules
     from .test_rule_catalogue_guard import world
