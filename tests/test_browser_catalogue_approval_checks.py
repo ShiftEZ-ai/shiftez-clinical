@@ -227,6 +227,46 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
         context.close()
 
 
+@pytest.mark.parametrize('blocker,words', [('RULE_INTRODUCES_CONFLICT', 'Makes this rota impossible'),
+                                           ('RULE_CHECK_FAILED', 'Check failed')])
+def test_catalogue_approval_says_why_a_finished_check_refuses_activation(browser, live_server, h, blocker, words):
+    """A finished check the server still refuses (rule_effects activation_blocker) says why beside the disabled
+    Approve, never "Adds 1 problem" with no way on; a failed check offers Check again, a proven conflict does not."""
+    workspace, proposal = rest_line_proposal(h)
+    h.command('approver', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': proposal['id'], 'expected_revision': proposal['revision']}]},
+        revision=workspace['revision'])
+    assert process_one(h.app.state.engine)
+
+    def blocked(route):
+        body = route_fetch(route).json()
+        body['effect'] = [{**row, 'activation_blocker': blocker} for row in body['effect']]
+        route.fulfill(json={**body, 'can_decide': False, 'ready': False})
+
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        page.route(re.compile(r'/api/policies/[^/]+/review$'), blocked)
+        navigate(page, 'rules/rest_between_duties')
+        page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
+        review = page.get_by_role('region', name='Add a line for everyone · turns the rule on', exact=True)
+        effect = review.locator('.rc-effect')
+        expect(effect.get_by_text(words, exact=True)).to_be_visible()
+        expect(effect.get_by_text('Adds 1 problem', exact=True)).to_have_count(0)
+        approve = review.get_by_role('button', name='Approve and activate', exact=True)
+        expect(approve).to_be_disabled()
+        expect(approve).to_have_accessible_description(words)
+        again = review.get_by_role('button', name='Check again', exact=True)
+        if blocker == 'RULE_INTRODUCES_CONFLICT':
+            expect(again).to_have_count(0)
+        else:
+            with page.expect_request(lambda r: r.method == 'POST' and r.url.endswith('/api/commands')
+                                     and r.post_data_json['kind'] == 'job.create') as asked:
+                again.click()
+            assert asked.value.post_data_json['payload']['workspace_id'] == workspace['id']
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('scope', ['person', 'rota'])
 def test_standalone_proposal_stays_discoverable_and_can_be_checked_in_catalogue_mode(browser, live_server, h, scope):
     flag(h)
