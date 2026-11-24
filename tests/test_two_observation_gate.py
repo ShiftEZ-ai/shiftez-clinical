@@ -232,7 +232,11 @@ class TwoObservationGateTests(unittest.TestCase):
 
     def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci
+        from tests import test_cpu_budget
+
         owner = "tests/test_quick_owner.py"
+        timing_violation = "tests/test_unmarked_timing.py"
+        timing_guard = "tests/test_cpu_budget.py"
         owned = "apps/api/quick_fixture.py"
         shared = "apps/api/models.py"
         shared_owner = "tests/test_shared_owner.py"
@@ -245,7 +249,8 @@ class TwoObservationGateTests(unittest.TestCase):
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
         guarded_tests = {fixture, "tests/test_product_helper.py", "tests/test_runner_hook.py",
                          "tests/test_existing_hook.py", "tests/test_legacy_encoding.py"}
-        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | browser_owners | unrelated | guarded_tests
+        files = (trusted_ci.PR_SMOKE | {owner, shared_owner, timing_violation, timing_guard}
+                 | browser_owners | unrelated | guarded_tests)
         weights = {path: 120 + index for index, path in enumerate(sorted(files))}
         durations = {"suites": {suite: {"files": weights} for suite in ("unit", "browser")}}
         settings_path = ROOT / "ci/bootstrap-settings.json"
@@ -257,6 +262,9 @@ class TwoObservationGateTests(unittest.TestCase):
         sources = dict.fromkeys(files, "def test_a(): pass\n")
         sources.update(dict.fromkeys(browser_owners, "from apps.api.models import value\n"))
         sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
+                        timing_violation: "from time import perf_counter\n"
+                                          "def test_sample():\n"
+                                          "    assert perf_counter() - perf_counter() < 1\n",
                         shared: "value = 1\n", shared_owner: "from apps.api.models import value\n",
                         "apps/api/consumer.py": "from apps.api.models import value\n",
                         indirect_owner: "from apps.api.consumer import value\n",
@@ -273,7 +281,12 @@ class TwoObservationGateTests(unittest.TestCase):
             added = "tests/test_new_product_case.py"
             with patch.object(trusted_ci, "TRUSTED", self.folder):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
-                                 trusted_ci.PR_SMOKE | {shared_owner, added} | browser_owners)
+                                 trusted_ci.PR_SMOKE | {shared_owner, added, timing_guard} | browser_owners)
+                self.assertIsNone(trusted_ci.affected_files({added}, (files | {added}) - {timing_guard}))
+            with patch.object(test_cpu_budget, "__file__", str(self.folder / timing_guard)):
+                modules = test_cpu_budget.parsed_test_modules.__wrapped__()
+            with self.assertRaisesRegex(AssertionError, "test_unmarked_timing.py"):
+                test_cpu_budget.test_unmarked_tests_do_not_assert_timing_budgets(modules)
             full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
                           "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
                           "tests/conftest.py", nested_conftest, fixture, "apps/api/conftest.py",
@@ -284,11 +297,13 @@ class TwoObservationGateTests(unittest.TestCase):
                           unknown, unknown_doc)
             cases = [(path, [], "dev", False, False) for path in full_paths]
             cases += [(owned, [], "dev", False, True), (shared, [], "dev", False, True), (owner, [], "dev", False, True),
+                      (timing_violation, [], "dev", False, True),
                       (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
                       (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
             events = [("pull_request", *case) for case in cases]
+            events.append(("merge_group", timing_violation, [], "dev", False, False))
             events += [(event, owned, [], "dev", False, False)
-                       for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
+                       for event in ("workflow_dispatch", "push", "schedule")]
             events = [(*case, "dev") for case in events]
             events += [("push", owned, [], "main", False, False, "main"),
                        ("push", owned, [], "main", False, False, "dev")]
@@ -355,7 +370,12 @@ class TwoObservationGateTests(unittest.TestCase):
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
-                        expected = {shared_owner, owner} | browser_owners if path == shared else {owner}
+                        if path == shared:
+                            expected = {shared_owner, owner, timing_guard} | browser_owners
+                        elif path in {owner, timing_violation}:
+                            expected = {path, timing_guard}
+                        else:
+                            expected = {owner}
                         self.assertEqual(actual, trusted_ci.PR_SMOKE | expected)
                         self.assertEqual(trusted_ci.census_files(plan, files), actual)
                     else:
