@@ -47,6 +47,7 @@ def test_department_why_reuses_exact_trials(pg, monkeypatch):
         source = {key: value for key, value in source.items() if key != '_participation_cache'}
         return original(source, *rest, **kwargs)
     with monkeypatch.context() as reference:
+        reference.setattr(staffing, '_WHY_RESULT_CACHE', {})
         reference.setattr(validation, 'evaluate', uncached)
         reference.setattr(staffing, 'evaluate', uncached)
         expected, baseline = measure(pg, 'why-reference', lambda: why(pg, workspace, [shift['id']]))
