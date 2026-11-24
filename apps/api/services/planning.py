@@ -2175,7 +2175,7 @@ def undo(db, actor, command):
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
     if lock_jobs:
-        db.refresh(workspace, with_for_update={'key_share': True})
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
         draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
     require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
@@ -2269,7 +2269,7 @@ def redo(db, actor, command):
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
     if lock_jobs:
-        db.refresh(workspace, with_for_update={'key_share': True})
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
         draft(db, actor, command.target_id, command.expected_revision)
     step = db.scalar(latest_change(workspace, m.ChangeSet))
     require(step is not None and step.before_snapshot.get('_undo_of') and step.actor_id == actor.identity_id, 'NO_REDO',

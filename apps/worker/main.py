@@ -763,7 +763,8 @@ def stage_feasibility_result(db, claim, result):
     db.execute(insert(table).from_select(['job_id', 'attempt', 'payload'], lease).on_conflict_do_nothing())
 
 
-def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None):
+def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None,
+               record_merge_refusal=False):
     require_current_schema(db)
     if not error and claim.get('kind') in {'validation', 'merge_apply'}:
         workspace_id = db.scalar(select(m.Job.workspace_id).where(m.Job.id == claim['id']))
@@ -859,6 +860,8 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
                     reason=command.payload['reason'], detail={**subject_detail(db, command.kind, result), 'job_id': job.id,
                         'input_changes': list(db.info.get('_input_changes', {}).values())}, correlation_id=job.id)))
         except Problem as rejected:
+            if not record_merge_refusal:
+                raise
             # Roll back the merge and retain the job lock for the failed receipt.
             result, error = None, rejected.code
     if job.kind == "swap_audience":
@@ -1775,6 +1778,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             if feasibility_projection is not None:
                 return finish_job(db, claim, None, error, progress=progress,
                                   feasibility_projection=feasibility_projection)
+            if claim['kind'] in {'merge_preview', 'merge_apply'} and not error:
+                return finish_job(db, claim, result, None, progress=progress, record_merge_refusal=True)
             if pending_checkpoint is not None:
                 checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation, clear_terminal=False)
             return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
