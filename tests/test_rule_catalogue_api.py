@@ -270,6 +270,50 @@ def test_partial_rule_amendment_keeps_omissions_and_accepts_explicit_clears(pg):
         assert db.query(m.AuditEvent).filter_by(action='rule.propose', target_id=amended['id']).count() == 1
 
 
+@pytest.mark.parametrize('omitted', ['on', 'settings', 'lines'])
+def test_rule_amendment_keeps_each_omitted_field(h, omitted):
+    catalogue_id = 'duties_per_week'
+    original = {'on': False, 'settings': {'max_duties': {'window': 'week'}},
+                'lines': [line(numbers={'max': {'value': 3}})]}
+    live = approve(h, propose(h, catalogue_id, **original)['record'])
+    if omitted == 'lines':
+        seed = line(who=person(h.seed['people'][0]), numbers={'max': {'value': 2}})
+        with transaction(h.app.state.engine, write=True) as db:
+            db.add(m.PolicySeedLine(id=seed['id'], department_id=h.seed['department_id'],
+                                    policy_id=live['id'], policy_revision=live['revision'], line=seed))
+    changes = {'on': True, 'settings': {}, 'lines': []}
+    del changes[omitted]
+    payload = {'catalogue_id': catalogue_id, 'expected_policy_id': live['id'],
+               'expected_revision': live['revision'], 'reason': 'Review amended rule settings', **changes}
+    if omitted == 'lines':
+        stale = h.command('coordinator', 'rule.propose', {**payload, 'expected_line_ids': []}, status=409)
+        assert stale['error']['code'] == 'STALE_REVISION'
+    amended = h.command('coordinator', 'rule.propose', payload)['record']['definition']['rule']
+    assert {field: amended[field] for field in changes} == changes
+    if omitted == 'lines':
+        assert [item['id'] for item in amended['lines']] == [original['lines'][0]['id'], seed['id']]
+    else:
+        assert amended[omitted] == original[omitted]
+
+
+def test_rule_amendment_stores_the_normalised_dates_of_omitted_lines(h):
+    catalogue_id = 'other_counts_per_period'
+    live = approve(h, propose(h, catalogue_id, [line(numbers={'min': {'value': 2}})])['record'])
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, live['id'])
+        rule = row.definition['rule']
+        undated = {key: value for key, value in rule['lines'][0].items() if key not in ('starts_on', 'ends_on')}
+        row.definition = {**row.definition, 'rule': {**rule, 'lines': [undated]}}
+    reply = h.command('coordinator', 'rule.propose', {
+        'catalogue_id': catalogue_id, 'expected_policy_id': live['id'], 'expected_revision': live['revision'],
+        'reason': 'Keep the counting block', 'settings': {},
+    })
+    [saved] = reply['record']['definition']['rule']['lines']
+    [checked] = reply['check']['lines']
+    assert saved['starts_on'] == checked['starts_on'] == live['starts_on']
+    assert saved['ends_on'] == checked['ends_on'] > saved['starts_on']
+
+
 def test_catalogue_rules_are_not_proposed_as_plain_rules(h):
     h.command('coordinator', 'policy.create', {'name': 'Sneaky', 'owner': 'Test', 'source': 'Constructed fixture', 'starts_on': '2026-01-01',
                                                'definition': {'rule': {'kind': 'catalogue', 'id': 'keep_off', 'lines': []}}}, status=422)
