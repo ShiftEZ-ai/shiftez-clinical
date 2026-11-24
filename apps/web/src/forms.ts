@@ -1035,8 +1035,11 @@ function openingHours(ctx:Context,row:Row|null|undefined){
 /** Recorded kinds that are leave (they carry a leave type); the rest (day off, commitments…) do not. */
 export const LEAVE_RECORD_KINDS=['recorded_leave','actual_absence'];
 /** The one leave Type control: the shared picker over the department's active types, required. */
-export function leaveTypePicker(){
-  return select('Type',leaveTypes().map(t=>({value:String(t.id),label:String(t.name),hint:t.counts_as_unavailable===false?'Does not block duties':undefined})));
+export function leaveTypePicker(current?:Row){
+  const value=String(current?.leave_type_id||'');
+  const choices:Choice[]=leaveTypes().map(t=>({value:String(t.id),label:String(t.name),hint:t.counts_as_unavailable===false?'Does not block duties':undefined}));
+  if(value&&!choices.some(c=>c.value===value))choices.push({value,label:leaveTypeName(current!)||'Archived leave type'});
+  return select('Type',choices,value);
 }
 /** Prefill: the planner opens this for a person and day it already knows. */
 /** Record leave for a person (staff ask for leave from Requests › New request). `_requestOnly` is kept for callers. */
@@ -1071,21 +1074,25 @@ export function availabilityEditForm(ctx:Context,r:Row,done:()=>Promise<void>|vo
 }
 /** The fields of a request (`requestOnly`; `prefill.kinds` limits its kinds) or of recorded availability, built into
  *  `form`; returns the save. Shared by availabilityForm and the Requests page's New request dialog. */
-export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:boolean,prefill:{person_id?:string;person_ids?:string[];day?:string;kinds?:string[]}={}){
+export const REQUEST_FORM_KINDS=[{value:'leave',label:'Leave'},{value:'clinic_change',label:'Clinic change'},{value:'meeting',label:'Meeting'},{value:'administrative',label:'Administrative'}];
+
+export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:boolean,prefill:{person_id?:string;person_ids?:string[];day?:string;kinds?:string[];edit?:Row}={}){
+    const edit=prefill.edit;
     const canChoose=ctx.permits(CAPABILITY.COORDINATOR);
     const people=canChoose?all(ctx,'people'):[{id:ctx.me.person_id!,revision:1,display_name:ctx.me.display_name}];
     const person=select('Person',canChoose?peopleChoices(ctx):options(people),prefill.person_id||ctx.me.person_id||'');
     // Coordinators record the same leave, day off or commitment for several people in one go.
     const many=canChoose&&!requestOnly?multi('People',peopleChoices(ctx),prefill.person_ids||(prefill.person_id?[prefill.person_id]:[]),'Choose one or more people'):null;
     const day=prefill.day||today(ctx);
-    const start=field(requestOnly?'Request from':'Unavailable from','datetime-local',`${day}T08:00`,{required:true}),end=field(requestOnly?'Request until':'Unavailable until','datetime-local',`${day}T16:00`,{required:true});
-    const kinds=[{value:'leave',label:'Leave'},{value:'clinic_change',label:'Clinic change'},{value:'meeting',label:'Meeting'},{value:'administrative',label:'Administrative'}].filter(k=>!prefill.kinds||prefill.kinds.includes(k.value));
-    const requestKind=select('Request type',kinds,kinds[0].value);
+    const zone=ctx.me.organisation.timezone,initialStart=edit?toLocal(edit.start,zone):`${day}T08:00`,initialEnd=edit?toLocal(edit.end,zone):`${day}T16:00`;
+    const start=field(requestOnly?'Request from':'Unavailable from','datetime-local',initialStart,{required:true}),end=field(requestOnly?'Request until':'Unavailable until','datetime-local',initialEnd,{required:true});
+    const kinds=REQUEST_FORM_KINDS.filter(k=>!prefill.kinds||prefill.kinds.includes(k.value));
+    const requestKind=select('Request type',kinds,edit?.kind||kinds[0].value);
     const kind=select('Record as',RECORD_AS,'recorded_leave');
     // Leave says which leave it is, from the department's active types (Configuration › Leave types); never free text.
-    const leaveType=leaveTypePicker();
+    const leaveType=leaveTypePicker(edit);
     const isLeave=()=>requestOnly?requestKind.input.value==='leave':LEAVE_RECORD_KINDS.includes(kind.input.value);
-    const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=1000;
+    const reason=area('Reason',edit?.private_reason||'');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=1000;
     const privacy=el('small',{class:'hint',id:reason.input.id+'-hint'},'Private · no patient information');reason.wrap.append(privacy);reason.input.setAttribute('aria-describedby',privacy.id);
     if(many&&ctx.me.person_id&&mayDecide(ctx.me,'request.decide',true)){
       const own=ctx.me.person_id,reasonLabel=reason.wrap.querySelector('label')!;
@@ -1098,9 +1105,11 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
       many.wrap.addEventListener('change',showApproval);showApproval();
     }
     // Whole days (most leave): pick dates only; it runs from the first day's start to the end of the last day.
-    const allDay=check('All day',false);
+    const editAllDay=!!edit&&initialStart.endsWith('T00:00')&&initialEnd.endsWith('T00:00');
+    const allDay=check('All day',editAllDay);
     // All day swaps the two times for one range of days (the shared date picker), carrying the days across.
-    const first=field('First day','date',day,{required:true}),last=field('Last day','date',day,{required:true}),days=dateRange('Dates',first,last);
+    const first=field('First day','date',initialStart.slice(0,10),{required:true});
+    const last=field('Last day','date',editAllDay?addDays(initialEnd.slice(0,10),-1):initialEnd.slice(0,10),{required:true}),days=dateRange('Dates',first,last);
     const sync=()=>{const on=allDay.input.checked;days.hidden=!on;start.wrap.hidden=end.wrap.hidden=on;
       for(const f of [first,last])f.input.disabled=!on;for(const f of [start,end])f.input.disabled=on;};
     const put=(f:{input:HTMLInputElement},v:string)=>{if(!v||f.input.value===v)return;f.input.value=v;f.input.dispatchEvent(new Event('change',{bubbles:true}));};
@@ -1118,27 +1127,29 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
         if(shift)put(b,set(b.input.value,moved<now?now:moved));was=now;});};
     const shiftDays=(d:string,n:number)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10);};
     follow(first,last,v=>v,(_,d)=>d);follow(start,end,v=>v.slice(0,10),(v,d)=>d+v.slice(10));
-    const lead=[...(many?[many.wrap]:canChoose?[person.wrap]:[]),...(requestOnly?(kinds.length>1?[requestKind.wrap]:[]):[kind.wrap]),leaveType.wrap];
+    const lead=[...(many?[many.wrap]:canChoose&&!edit?[person.wrap]:[]),...(requestOnly?(kinds.length>1?[requestKind.wrap]:[]):[kind.wrap]),leaveType.wrap];
     // From and until stay side by side: All day takes the whole row unless a field before it fills the other half.
     const syncType=()=>{const on=isLeave();leaveType.wrap.hidden=!on;leaveType.input.disabled=!on;
       allDay.wrap.classList.toggle('span-2',lead.filter(x=>x!==many?.wrap&&!x.hidden).length%2===0);};  // People (many) is a whole row
     // Leave starts as whole days and other kinds as times, until the person sets All day themselves.
-    let chosen=false;allDay.input.addEventListener('change',e=>{if(e.isTrusted)chosen=true;});
+    let chosen=!!edit;allDay.input.addEventListener('change',e=>{if(e.isTrusted)chosen=true;});
     const follows=()=>{if(chosen||allDay.input.checked===isLeave())return;allDay.input.checked=isLeave();allDay.input.dispatchEvent(new Event('change'));};
     requestKind.input.addEventListener('change',syncType);kind.input.addEventListener('change',syncType);syncType();
     for(const k of [requestKind,kind])k.input.addEventListener('change',follows);follows();
     const nextDay=(d:string)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+1);return x.toISOString().slice(0,10);};
     const from=()=>allDay.input.checked?first.input.value+'T00:00':start.input.value,until=()=>allDay.input.checked?nextDay(last.input.value)+'T00:00':end.input.value;
-    const clash=requestOnly?requestClash(ctx,form,()=>({person:person.input.value,from:from(),until:until(),kind:requestKind.input.value,leaveType:isLeave()?leaveType.input.value:''})):null;
+    const subject=()=>String(edit?.person_id||person.input.value);
+    const clash=requestOnly?requestClash(ctx,form,()=>({person:subject(),from:from(),until:until(),kind:requestKind.input.value,leaveType:isLeave()?leaveType.input.value:''}),edit?.id):null;
     form.append(...lead,allDay.wrap,start.wrap,end.wrap,days,reason.wrap,...(clash?[clash.wrap]:[]));
     return async()=>{
-      if(clash&&await clash.duplicate())throw new Error(person.input.value===ctx.me.person_id?'You already asked for exactly this. Open it under Requests instead of sending it again.':'This person already has exactly this request. Open it under Requests instead of sending it again.');
+      if(clash&&await clash.duplicate())throw new Error(subject()===ctx.me.person_id?'You already asked for exactly this. Open it under Requests instead of sending it again.':'This person already has exactly this request. Open it under Requests instead of sending it again.');
       const body=async(id:string)=>({person_id:id,start:await instant(from()),end:await instant(until()),private_reason:reason.input.value,kind:requestOnly?requestKind.input.value:kind.input.value,leave_type_id:isLeave()?leaveType.input.value:null});
       if(many&&many.values().length>1){const ids=many.values(),{person_id:_,...common}=await body(ids[0]);
         await runBulk({collection:'availability',noun:['leave record','leave records'],message:'Recorded for {n} people. Review live staffing gaps and arrange cover.',onDone:()=>ctx.refresh(),
           body:{item_kind:'availability.record',common,items:ids.map(id=>({payload:{person_id:id}})),reason:'Leave recorded for several people'}});return;}
       if(many&&!many.values().length)throw new Error('Choose at least one person.');
-      const result=await command<{message:string;warnings?:string[]}>(requestOnly?'request.create':'availability.record',await body(many?many.values()[0]:person.input.value));notify(requestOnly?['Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);await ctx.refresh();};
+      const result=await command<{message:string;warnings?:string[]}>(edit?'request.edit':requestOnly?'request.create':'availability.record',await body(many?many.values()[0]:subject()),edit?.id,edit?.revision);
+      notify(requestOnly?[edit?'Request updated. It is still waiting for a decision.':'Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);await ctx.refresh();};
 }
 
 /** Every waiting or approved leave/other request of one person, page by page (the API pages at 200): a copy at row 201
@@ -1150,7 +1161,7 @@ async function allRequests(person:string):Promise<Row[]>{
 }
 /** Before a request is sent (R-05): the person's own duties and open requests its dates overlap, read again a moment
  *  after the dates change, and whether it is an exact copy of one already waiting or approved (Send then refuses it). */
-function requestClash(ctx:Context,form:HTMLElement,read:()=>{person:string;from:string;until:string;kind:string;leaveType:string}){
+function requestClash(ctx:Context,form:HTMLElement,read:()=>{person:string;from:string;until:string;kind:string;leaveType:string},excluded?:string){
   const wrap=el('div',{class:'span-2 request-clash','aria-live':'polite'}),zone=ctx.me.organisation.timezone;
   let asked=0,timer=0,mine:Row[]=[],seen='';
   const local=(v:string)=>toLocal(v,zone);
@@ -1165,7 +1176,7 @@ function requestClash(ctx:Context,form:HTMLElement,read:()=>{person:string;from:
     if(turn!==asked||!wrap.isConnected)return;
     const over=(r:Row)=>local(r.start)<x.until&&local(r.end)>x.from;
     const duties=((cal?.events||[]) as Row[]).filter(e=>e.kind==='duty'&&e.person_id===x.person&&!e.cancelled&&over(e));
-    mine=(reqs||[]).filter(r=>r.source==='request'||r.source==='availability');
+    mine=(reqs||[]).filter(r=>r.id!==excluded&&(r.source==='request'||r.source==='availability'));
     const others=mine.filter(over),copy=mine.find(r=>same(r,x));
     const when=(r:Row)=>spanLabel(r.start,r.end,zone);
     // Filing for someone else (a coordinator): the notes name them, never "you".

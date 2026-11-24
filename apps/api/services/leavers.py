@@ -10,6 +10,7 @@ at the time, except accidentally retained private leave reasons are removed from
 staged payloads involving the person are cleared. The change is audited; old values are not copied anywhere.
 """
 from sqlalchemy import func, inspect, select
+from sqlalchemy.orm import undefer
 from packages.contracts import schemas as s
 from packages.domain.time import aware
 from apps.api import models as m
@@ -35,7 +36,10 @@ def _current_rows(db, model, query, matches):
 
 
 def _person_rows(db, model, person_id):
-    return _current_rows(db, model, select(model).where(model.person_id == person_id),
+    query = select(model).where(model.person_id == person_id)
+    if model is m.RequestRecord:
+        query = query.options(undefer(m.RequestRecord.private_undo_note))
+    return _current_rows(db, model, query,
                          lambda row: row.person_id == person_id)
 
 
@@ -83,14 +87,16 @@ def anonymise(db, actor, command, settings):
     erased[person.id] = record(person)
     scrubbed = {}
     availability_ids = set()
-    for model, column in ((m.Availability, "private_reason"), (m.RequestRecord, "private_reason"),
-                          (m.AvailabilityPattern, "note"), (m.StaffWish, "note")):
+    for model, fields in ((m.Availability, {"private_reason": ""}),
+                          (m.RequestRecord, {"private_reason": "", "private_undo_note": None}),
+                          (m.AvailabilityPattern, {"note": ""}), (m.StaffWish, {"note": ""})):
         rows = _person_rows(db, model, person.id)
         if model is m.Availability:
             availability_ids = {row.id for row in rows}
-        changed = [row for row in rows if getattr(row, column)]
+        changed = [row for row in rows if any(getattr(row, field) for field in fields)]
         for row in changed:
-            setattr(row, column, "")
+            for field, empty in fields.items():
+                setattr(row, field, empty)
         erased.update((row.id, record(row, exclude=("private_reason",))) for row in rows)
         scrubbed[model.__tablename__] = len(changed)
         affected += len(changed)

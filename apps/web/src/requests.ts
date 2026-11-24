@@ -13,7 +13,7 @@ import {dataTable,openFiltered,tableFilters,tableFiltered,tableAsOf,tableSearch,
 import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
 import {editRoles,type BulkAction} from './bulk.js';
 import {runBulk,openChange} from './bulk_change.js';
-import {availabilityFields,availabilityEditForm,calendarProtectionPanel,peopleChoices,catalogueEntryOf,type Context} from './forms.js';
+import {availabilityFields,availabilityEditForm,calendarProtectionPanel,peopleChoices,catalogueEntryOf,REQUEST_FORM_KINDS,type Context} from './forms.js';
 import {daysText,numbersText,numberLabel,noNumberText,amountWords} from './rule_catalogue.js';
 import {wishData,wishFields,wishesPanel,periodName,oneOffWish,wishKindLabel,wishWhenParts} from './wishes.js';
 import {swapActions,swapNext,swapOptions,offerFields} from './governance.js';
@@ -709,6 +709,8 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
     menu.push({label:'Withdraw wish',icon:'close',danger:true,run:async()=>{await command('wish.withdraw',{reason:'Withdrawn'},r.id,r.revision);notify('Wish withdrawn. Its points are free again.');await ctx.refresh();}});
   }
   // Their own "Can't make it" waiting for cover: Withdraw is one press on the row (the coordinator is told), with Undo.
+  if(r.source==='request'&&r.stage==='waiting'&&r.created_by===ctx.me.identity_id&&REQUEST_FORM_KINDS.some(kind=>kind.value===r.kind))
+    buttons.push(button('Change request',()=>formDialog('Change request','',form=>availabilityFields(ctx,form,true,{edit:r}),'Save changes'),'ghost small'));
   if(isAbsenceReport(r)&&r.stage==='waiting'&&mine(ctx,r))buttons.push(withdrawReport(r,()=>void ctx.refresh()));
   else if(r.source==='request'&&(r.stage==='waiting'||isOvertime(r)&&r.stage==='approved')&&r.created_by===ctx.me.identity_id)menu.push({label:isOvertime(r)?'Withdraw offer':'Withdraw request',icon:'close',danger:true,run:()=>confirmAction(isOvertime(r)?'Withdraw offer':'Withdraw request',`${title(r)} · ${when(r,ctx.me.organisation.timezone)}. ${isOvertime(r)?`${r.person_id===ctx.me.person_id?'You':r.person_name||'They'} will no longer be offered overtime on these days.`:'It will no longer wait for a decision.'}`,
     async reason=>{await command('request.decide',{decision:'withdraw',reason},r.id,r.revision);notify(isOvertime(r)?'Offer withdrawn.':'Request withdrawn.');await ctx.refresh();},isOvertime(r)?'Withdraw offer':'Withdraw request',undefined,true)});
@@ -779,7 +781,7 @@ function requestPeople(ctx:Context,r:Row,labelled=false):Node|string{
   const people=r.source==='swap'?[[r.proposer_person_id,r.proposer_name],[r.recipient_person_id,r.recipient_name]].filter(([id])=>id):[[r.person_id,r.person_name]];
   return el('span',{},...people.flatMap(([id,name],i)=>[...(i?[' · ']:[]),id?personLink(id,labelled&&name?personName(id,name):name||'Person',ctx.navigate):name||'—']));
 }
-const EVENTS:Record<string,string>={'request.link_rota':'Rota linked','request.create':'Submitted','request.withdraw':'Withdrawn','wish.create':'Added',
+const EVENTS:Record<string,string>={'request.link_rota':'Rota linked','request.create':'Submitted','request.edit':'Changed','request.undo_edit':'Change undone','request.withdraw':'Withdrawn','wish.create':'Added',
   'availability.record':'Recorded','availability.update':'Changed','availability.restore':'Restored','availability.undo_create':'Removed','availability_pattern.propose':'Proposed','availability_pattern.restore':'Restored','availability.retract':'Retracted','availability_pattern.end':'Ended','wish.update':'Changed','wish.withdraw':'Withdrawn','wish.restore':'Restored',
   'swap.offered':'Offered','swap.accept':'Accepted','swap.counteroffer':'Offered a duty in return','swap.confirm':'Confirmed','swap.prepare':'Rota change prepared',
   'swap.prepare_refused':'Not prepared automatically · needs a coordinator','swap.publish_refused':'Not published automatically · needs a coordinator','swap.published':'Published',

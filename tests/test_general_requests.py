@@ -5,6 +5,66 @@ from apps.api.db import transaction
 from tests.outbox_support import process_one_after_undo as process_one
 
 
+def test_author_changes_waiting_request_and_undo_restores_it(h):
+    person = h.seed['people'][0]
+    original = {'person_id': person, 'kind': 'administrative', 'start': '2026-10-04T09:00:00+03:00',
+                'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic original request note'}
+    row = h.command('staff', 'request.create', original)['record']
+    detail_url = '/api/requests/all?id=' + row['id']
+    before = h.get('staff', detail_url)['item']
+    draft = h.shift(h.workspace(), start='2026-10-05T09:00:00+03:00', end='2026-10-05T11:00:00+03:00',
+                    people=[person])['workspace']
+    h.publish(draft)
+    edited = {**original, 'kind': 'leave', 'start': '2026-10-05T09:00:00+03:00',
+              'end': '2026-10-05T10:00:00+03:00', 'private_reason': 'Synthetic updated request note'}
+
+    assert h.command('coordinator', 'request.edit', edited, row['id'], row['revision'],
+                     status=403)['error']['code'] == 'FORBIDDEN'
+    key = m.uid()
+    reply = h.command('staff', 'request.edit', edited, row['id'], row['revision'], key=key)
+    assert h.committed('staff', key)['undo'] == reply['undo']
+    assert original['private_reason'] not in str(h.committed('staff', key))
+    assert edited['private_reason'] not in str(reply)
+    with transaction(h.app.state.engine) as db:
+        receipt = db.scalar(select(m.CommandReceipt).where(m.CommandReceipt.key == key))
+        assert all(note not in str(receipt.result) for note in (original['private_reason'], edited['private_reason']))
+        assert db.get(m.RequestRecord, row['id']).private_undo_note == original['private_reason']
+    detail = h.get('staff', detail_url)
+    after = detail['item']
+    assert (after['id'], after['stage'], after['kind']) == (row['id'], 'waiting', 'leave')
+    assert after['start'] != before['start'] and after['impact_count'] == 1
+    assert after['private_reason'] == edited['private_reason']
+    assert 'private_undo_note' not in after
+    assert detail['history'][-1]['action'] == 'request.edit'
+    assert edited['private_reason'] not in str(detail['history'])
+    assert not h.get('staff', '/api/availability')['availability']
+
+    coordinator = h.client('coordinator')
+    selection = {'collection': 'requests', 'include_ids': [row['id']]}
+    page = coordinator.post('/api/bulk/rows', json={'selection': selection})
+    assert page.status_code == 200, page.text
+    assert any(item['id'] == row['id'] for item in page.json()['rows'])
+    assert all('private_undo_note' not in item for item in page.json()['rows'])
+    searched = coordinator.post('/api/bulk/rows', json={
+        'selection': {'collection': 'requests', 'where': {'q': original['private_reason']}}})
+    assert searched.status_code == 200 and searched.json()['total'] == 0, searched.text
+    filtered = coordinator.post('/api/bulk/rows', json={
+        'selection': {'collection': 'requests', 'where': {'filters': {'private_undo_note': [original['private_reason']]}}}})
+    assert filtered.status_code == 422, filtered.text
+
+    restored = h.command('staff', **reply['undo'])['record']
+    detail = h.get('staff', detail_url)
+    for field in ('start', 'end', 'kind', 'private_reason'):
+        assert detail['item'][field] == before[field]
+    assert detail['history'][-1]['action'] == 'request.undo_edit'
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.RequestRecord, row['id']).private_undo_note is None
+    decision = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Synthetic approval'},
+                         row['id'], restored['revision'])['record']
+    assert h.command('staff', 'request.edit', edited, row['id'], decision['revision'],
+                     status=409)['error']['code'] == 'WORKFLOW_STATE'
+
+
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
 @pytest.mark.parametrize('kind', ['leave', 'meeting', 'clinic_change', 'administrative'])
 @pytest.mark.parametrize('state', ['submitted', 'approved', 'rejected', 'withdrawn'])

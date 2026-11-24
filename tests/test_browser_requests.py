@@ -60,6 +60,39 @@ def no_horizontal_scroll(page):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 1000}, PHONE])
+def test_change_a_waiting_request_and_undo(browser, live_server, h, viewport):
+    person = h.seed['people'][0]
+    start = f'{day()}T09:00:00+03:00'
+    request = h.command('staff', 'request.create', {'person_id': person, 'start': start,
+        'end': f'{day()}T11:00:00+03:00', 'kind': 'administrative', 'private_reason': 'Initial request note'})['record']
+    url = '/api/requests/all?id=' + request['id']
+    context, page = sign_in(browser, live_server, 'staff', viewport=viewport)
+    try:
+        navigate(page, 'requests')
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('Reason', exact=True)).to_have_value('Initial request note')
+        dialog.get_by_label('Request type', exact=True).select_option('meeting')
+        dialog.get_by_label('Request from', exact=True).fill(day(1))
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='Request updated')
+        expect(toast).to_be_visible()
+        after = h.get('staff', url)['item']
+        assert (after['stage'], after['kind'], after['private_reason']) == ('waiting', 'meeting', 'Updated request note')
+        assert after['start'] != request['start']
+
+        toast.get_by_role('button', name='Undo', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Undone')
+        restored = h.get('staff', url)['item']
+        for field in ('start', 'end', 'kind'):
+            assert restored[field] == request[field]
+        assert restored['private_reason'] == 'Initial request note'
+    finally:
+        context.close()
+
+
 CONTRAST = '''els => els.map(el => {
   const rgb = c => (c.match(/[\\d.]+/g) || []).map(Number);
   const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };

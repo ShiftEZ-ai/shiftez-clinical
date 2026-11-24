@@ -684,5 +684,10 @@
     "class": "additive",
     "sha256": "5fb845220111eee7d31d8f261c5d9f661284731ebb023ed18b70bd9e25b6a591",
     "review": "Adds a per-attempt feasibility result table keyed to jobs and preserves all existing rows."
+  },
+  "0153_request_undo_note": {
+    "class": "additive",
+    "sha256": "98db45f0a037e6c0de15496014efb2eb84a1b9d3484b6e698fc2a80b2e211116",
+    "review": "Adds a nullable request Undo note without changing existing records. The note can be erased with the request's private details."
   }
 }

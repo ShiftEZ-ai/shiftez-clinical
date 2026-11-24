@@ -4283,6 +4283,10 @@ class LeaveInput(InstantInterval):
     kind: Literal['leave', 'clinic_change', 'meeting', 'administrative'] = 'leave'
 
 
+class RequestEditUndo(Schema):
+    receipt_id: ID
+
+
 class OvertimeAvailabilityInput(Schema):
     person_id: ID
     kind: Literal['overtime_availability'] = 'overtime_availability'

@@ -37164,6 +37164,21 @@
     "title": "RequestUndo",
     "type": "object"
   },
+  "RequestEditUndo": {
+    "additionalProperties": false,
+    "properties": {
+      "receipt_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Receipt Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "receipt_id"
+    ],
+    "title": "RequestEditUndo",
+    "type": "object"
+  },
   "OvertimeAvailabilityInput": {
     "additionalProperties": false,
     "properties": {
