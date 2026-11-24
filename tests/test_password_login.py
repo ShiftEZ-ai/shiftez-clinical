@@ -395,15 +395,20 @@ def test_failure_audit_includes_rate_limit_csrf_schema_and_session_issuance(h, m
         for binding in db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == identity_id)):
             binding.revoked = True
     response = post_login(client)
-    assert response.status_code == 401 and response.json()["error"] == INVALID
+    assert response.status_code == 403 and response.json()["error"]["code"] == "UNPROVISIONED_IDENTITY"
+    assert failure_counts(h, settings) == [0, 0]
+    wrong = post_login(client, password=PASSWORD + " wrong")
+    assert wrong.status_code == 401 and wrong.json()["error"] == INVALID
     assert failure_counts(h, settings) == [1, 1]
-    fill_failure_budget(h, settings, "login-account", 7)
+    fill_failure_budget(h, settings, "login-account", settings.password_login_account_limit - 1)
     blocked = post_login(client)
     assert blocked.status_code == 429 and 1 <= int(blocked.headers["retry-after"]) <= 900
     with transaction(h.app.state.engine) as db:
         events = list(db.scalars(select(m.AuthLoginEvent)))
-        assert len(events) == 4  # The two malformed bodies share one immutable first-rejection event.
-        assert {event.outcome for event in events} == {"ORIGIN_REJECTED", "SCHEMA_INVALID", "INVALID_LOGIN", "LOGIN_RATE_LIMIT"}
+        assert len(events) == 5  # The two malformed bodies share one immutable first-rejection event.
+        assert {event.outcome for event in events} == {
+            "ORIGIN_REJECTED", "SCHEMA_INVALID", "UNPROVISIONED_IDENTITY", "INVALID_LOGIN", "LOGIN_RATE_LIMIT",
+        }
         assert all(len(event.account_hash) == len(event.peer_hash) == 64 and event.correlation_id for event in events)
         assert all(event.session_id is None for event in events)
         assert PASSWORD not in repr([vars(event) for event in events]) and USERNAME not in repr([vars(event) for event in events])
