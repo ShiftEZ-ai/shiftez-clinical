@@ -2657,7 +2657,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft)undoButton=hold(iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'}));
+    if(draft&&!w.archived_at){
+      const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
+      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Open the rota to check Undo availability.');
+    }
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
     if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
@@ -8563,6 +8566,7 @@ window.addEventListener('online',()=>{if(me)void onPulse();});
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
+const NO_UNDO='Nothing left to undo';
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(){
   const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
@@ -8598,6 +8602,7 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
   const undo=plannerRota?.id===w.id?document.querySelector('.planner-bar button[aria-label="Undo last edit"]'):null;
+  if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
   if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw
