@@ -34,6 +34,27 @@ def test_bulk_installation_admin_cannot_grant_after_revoking_own_access(h):
         assert [(b.id, b.identity_id, b.revoked) for b in bindings] == [(first['id'], admin, False)]
 
 
+def test_bulk_developer_cannot_grant_installation_admin_after_revoking_own_access(h):
+    operator, staff, coordinator = (h.seed['identities'][r] for r in ('operator', 'staff', 'coordinator'))
+    h.command('operator', 'role.grant', {'identity_id': staff, 'role': 'operator',
+        'starts_on': '2020-01-01', **REASON})
+    first = next(b for b in h.get('operator', '/api/access')['bindings']
+                 if b['identity_id'] == operator and b['role'] == 'operator')
+    payload = {'items': [
+        {'item_kind': 'role.revoke', 'target_id': first['id'], 'expected_revision': first['revision'],
+         'payload': REASON},
+        {'item_kind': 'role.grant', 'payload': {'identity_id': coordinator, 'role': s.INSTALLATION_ADMIN_ROLE,
+         'starts_on': '2020-01-01', **REASON}},
+    ], **REASON}
+    refused = h.command('operator', 'bulk.apply', payload, status=(403, 409))
+    assert refused['error']['code'] == 'INSTALLATION_ADMIN_REQUIRED'
+    assert refused['error']['details']['failed_index'] == 1
+    with transaction(h.app.state.engine) as db:
+        assert not db.get(m.RoleBinding, first['id']).revoked
+        assert db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == coordinator,
+            m.RoleBinding.role == s.INSTALLATION_ADMIN_ROLE)) is None
+
+
 def revoked_binding(h, role, target=None):
     target = target or identity(h, "restore_target", ["staff"])
     row = h.command("operator", "role.grant", {

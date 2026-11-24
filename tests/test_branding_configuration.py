@@ -214,6 +214,12 @@ def test_installation_admin_grants_are_explicit_audited_and_keep_a_live_holder(h
     h.command('coordinator', 'role.grant', grant, status=403)
     h.command('coordinator', 'role.revoke', reason, first_id, first_revision, status=403)
 
+    h.command('operator', 'role.grant', {**grant, 'identity_id': h.seed['identities']['staff'],
+        'ends_on': (date.today() + timedelta(days=30)).isoformat()})
+    assert h.get('staff', '/api/admin/branding')['can_edit']
+    assert h.command('operator', 'role.revoke', reason, first_id, first_revision, status=409)[
+        'error']['code'] == 'LAST_INSTALLATION_ADMIN'
+
     second = h.command('operator', 'role.grant', grant)['record']
     assert h.get('coordinator', '/api/admin/branding')['can_edit']
     h.command('coordinator', 'role.revoke', reason, first_id, first_revision)
@@ -248,6 +254,15 @@ def test_disabling_the_last_installation_admin_is_refused(h):
 
     assert refused['error']['code'] == 'LAST_INSTALLATION_ADMIN'
     assert h.get('staff', '/api/admin/branding')['can_edit']
+
+
+@pytest.mark.usefixtures('branding_editor')
+def test_pending_managed_account_has_no_installation_authority_in_its_department(h):
+    admin_id = h.seed['identities']['admin']
+    assert h.get('admin', '/api/admin/branding')['can_edit']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.Account(identity_id=admin_id, username='pending.setup', email='pending.setup@example.test'))
+    assert not h.get('admin', '/api/admin/branding')['can_edit']
 
 
 def test_concurrent_revoke_and_disable_preserve_installation_admin(pg):

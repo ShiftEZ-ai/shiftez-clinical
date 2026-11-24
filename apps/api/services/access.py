@@ -1,7 +1,7 @@
 from sqlalchemy import and_, or_, select
 from packages.contracts import schemas as s
 from apps.api import models as m
-from apps.api.auth import _live, has_installation_admin, require_role, person_access
+from apps.api.auth import _live, current_roles, has_installation_admin, require_role, person_access
 from apps.api.errors import require
 from apps.api.serialization import record, generation_defaults_record
 from .common import scoped, expected, history, range_overlaps, bump_inputs
@@ -68,8 +68,8 @@ def keep_installation_admin(db, *, binding_id=None, identity_ids=()):
     """The command writer serializes this check and its revoke or disable across departments."""
     if db.info.get("bulk"):
         db.flush()
-    require(has_installation_admin(db, excluding_binding_id=binding_id, excluding_identities=identity_ids)
-            or not has_installation_admin(db), "LAST_INSTALLATION_ADMIN",
+    require(has_installation_admin(db, excluding_binding_id=binding_id, excluding_identities=identity_ids, permanent=True)
+            or not has_installation_admin(db, permanent=True), "LAST_INSTALLATION_ADMIN",
             f"Give someone else the {s.ROLE_LABELS[s.INSTALLATION_ADMIN_ROLE]} role before removing this access", 409)
 
 
@@ -289,10 +289,14 @@ def require_role_change(db, actor, role, *, grant=False):
     allowed = s.PERMISSIONS[permission]
     if permission == "access.installation_admin":
         require_role(actor, *allowed)
-        if db is not None and db.info.get("bulk") and not actor.permits(*(r for r in allowed if r != role)):
+        if db is not None and db.info.get("bulk"):
             # Bulk commands defer flushing; read revocations already made by this batch.
             db.flush()
-            require(has_installation_admin(db, actor.identity_id), "INSTALLATION_ADMIN_REQUIRED",
+            identity = db.get(m.Identity, actor.identity_id)
+            held = current_roles(db, actor.identity_id, actor.department_id) - {role}
+            installation_admin = role in allowed and actor.permits(role) and has_installation_admin(db, actor.identity_id)
+            require(identity is not None and not identity.disabled and
+                    (installation_admin or bool(held.intersection(allowed, actor.roles))), "INSTALLATION_ADMIN_REQUIRED",
                     f"Ask an {s.ROLE_LABELS[role]} to change this role", 403)
         return
     if permission == "role.grant":

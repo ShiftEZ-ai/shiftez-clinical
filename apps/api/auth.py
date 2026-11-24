@@ -91,7 +91,7 @@ def _live(binding, today):
     return not binding.revoked and binding.starts_on <= today and (binding.ends_on is None or today < binding.ends_on)
 
 
-def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=()):
+def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=(), permanent=False):
     """Check installation-wide grants on the local day of each binding's department."""
     query = select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
         Department, Department.id == RoleBinding.department_id).join(
@@ -106,6 +106,8 @@ def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, e
         query = query.where(RoleBinding.id != excluding_binding_id)
     if excluding_identities:
         query = query.where(RoleBinding.identity_id.not_in(excluding_identities))
+    if permanent:
+        query = query.where(RoleBinding.ends_on.is_(None))
     moment = now()
     with db.execute(query.execution_options(stream_results=True)) as rows:
         return any(_live(row, moment.astimezone(ZoneInfo(row.timezone)).date()) for row in rows)
@@ -175,9 +177,11 @@ def authenticate(db, token: str | None, csrf: str | None = None, write: bool = F
         require(bool(csrf) and secrets.compare_digest(session.csrf_hash, digest(csrf)),
                 "CSRF_FAILED", "Refresh your session before saving", 403)
     roles = current_roles(db, identity.id, session.department_id)
+    if roles:
+        roles -= {INSTALLATION_ADMIN_ROLE}
+        if has_installation_admin(db, identity.id):
+            roles |= {INSTALLATION_ADMIN_ROLE}
     require(bool(roles), "FORBIDDEN", "No active access binding for this department", 403)
-    if INSTALLATION_ADMIN_ROLE not in roles and has_installation_admin(db, identity.id):
-        roles |= {INSTALLATION_ADMIN_ROLE}
     actor = Actor(identity.id, department.id, department.organisation_id, identity.display_name,
                   roles, identity.person_id, session.id)
     from .services import workspace_access  # registers the shared graph visibility policy

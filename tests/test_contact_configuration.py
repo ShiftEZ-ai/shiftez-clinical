@@ -223,7 +223,7 @@ def test_migration_retains_all_existing_data(session_limits_database):
     from sqlalchemy import MetaData, Table
     from scripts.manage import alembic_config
     from apps.api.db import make_engine
-    from tests.migration_support import historical_seed
+    from tests.migration_support import historical_seed, without_installation_admin_backfill
     from migrations import safety
     from pathlib import Path
     cfg = alembic_config(session_limits_database)
@@ -242,7 +242,7 @@ def test_migration_retains_all_existing_data(session_limits_database):
                     for name, table in old.tables.items() if name != 'alembic_version'}
     before = snapshot()
     command.upgrade(cfg, 'head')
-    assert snapshot() == before
+    assert without_installation_admin_backfill(snapshot()) == before
     with transaction(engine) as db:
         types = list(db.scalars(select(m.ContactType)))
         assert len(types) == len(s.DEFAULT_CONTACT_TYPES)

@@ -11,6 +11,43 @@ from apps.api import models as m
 from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_NAMES
 
 
+def add_historical_admin(connection, department_id, identity_id, *, organisation_id=None):
+    """Give a historical fixture an active administrator, adding a department and identity if needed."""
+    metadata = sa.MetaData()
+    base = {'revision': 1, 'created_at': datetime(2026, 1, 1, tzinfo=timezone.utc)}
+
+    def insert(name, **fields):
+        table = sa.Table(name, metadata, autoload_with=connection)
+        connection.execute(table.insert().values(**base, **fields))
+
+    if organisation_id is not None:
+        insert('departments', id=department_id, organisation_id=organisation_id,
+               name='Synthetic upgrade department', generation_defaults={})
+        insert('identities', id=identity_id, issuer='historical-test', subject=identity_id,
+               display_name='Synthetic upgrade administrator', disabled=False)
+    insert('role_bindings', id=str(uuid4()), department_id=department_id, identity_id=identity_id,
+           role='admin', starts_on=date(2020, 1, 1), revoked=False)
+
+
+def without_installation_admin_backfill(snapshot, columns=None):
+    """Verify the new grant and its audit, then retain every older row for comparison."""
+    def rows(name):
+        return [(row, dict(zip(columns[name], row)) if columns is not None else getattr(row, '_mapping', row))
+                for row in snapshot[name]]
+
+    bindings = rows('role_bindings')
+    events = rows('audit_events')
+    grant, = [value for _, value in bindings if value['role'] == INSTALLATION_ADMIN_ROLE]
+    event, = [value for _, value in events if value['correlation_id'] == '0153_installation_admin']
+    assert grant['ends_on'] is None and not grant['revoked']
+    assert event['action'] == 'role.grant' and event['target_id'] == grant['id']
+    assert (event['actor_id'], event['department_id']) == (grant['identity_id'], grant['department_id'])
+    assert any(value['role'] == 'admin' and value['identity_id'] == grant['identity_id']
+               and value['department_id'] == grant['department_id'] for _, value in bindings)
+    return {**snapshot, 'role_bindings': [row for row, value in bindings if value['id'] != grant['id']],
+            'audit_events': [row for row, value in events if value['id'] != event['id']]}
+
+
 def historical_seed(db):
     connection, metadata = db.connection(), sa.MetaData()
     base = {'revision': 1, 'created_at': datetime(2026, 1, 1, tzinfo=timezone.utc)}
