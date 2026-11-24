@@ -1181,19 +1181,6 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                 shared_inputs = saved_inputs
             else:
                 shared_inputs = saved_inputs
-            if workspace.status == 'draft' and current_mandatory:
-                # A captured active policy can be retired without a successor.
-                # Its current row still drives the draft's changed-rule explanation.
-                current_ids = {row['id'] for row in (live_inputs or {}).get('policies', [])}
-                captured_ids = {row['id'] for row in saved_inputs.get('policies', []) if
-                                row['status'] == 'active' and row.get('active', True)
-                                and row['department_id'] == workspace.department_id}
-                if missing := captured_ids - current_ids:
-                    retired = [record(row) for row in db.scalars(select(m.Policy).where(
-                        m.Policy.department_id == workspace.department_id,
-                        m.Policy.id.in_(missing), m.Policy.status == 'retired'))]
-                    if retired:
-                        live_inputs = {**live_inputs, 'policies': live_inputs['policies'] + retired}
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
                                               include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,

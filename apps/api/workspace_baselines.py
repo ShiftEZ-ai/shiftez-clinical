@@ -675,6 +675,16 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         return result
 
     frozen_policies = frozen.get("policies", [])
+    if current_mandatory:
+        captured_active_rules = {row["id"]: row["definition"]["rule"] for row in frozen_policies
+                                 if row.get("status") == "active" and row.get("active", True)
+                                 and row["department_id"] == workspace.department_id}
+        # Submit and approve must fingerprint the same current rows, even after a source refresh.
+        if missing := captured_active_rules.keys() - {row["id"] for row in current["policies"]}:
+            retired = [record(row) for row in db.scalars(select(m.Policy).where(
+                m.Policy.department_id == workspace.department_id,
+                m.Policy.id.in_(missing), m.Policy.status == "retired"))]
+            current = {**current, "policies": current["policies"] + retired}
     current_policies = current.get("policies", [])
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
@@ -696,11 +706,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             *(binding for binding in current.get("source_bindings", []) if mandatory(binding["source"])),
         ]
         if workspace.status == "draft":
-            captured = {p["id"]: p["definition"]["rule"] for p in frozen_policies
-                        if p.get("status") == "active" and p.get("active", True)
-                        and p["department_id"] == workspace.department_id}
-            changed = {p["id"] for p in current_policies if p["id"] in captured
-                       and (p["definition"]["rule"] != captured[p["id"]] or p["status"] == "retired")}
+            changed = {p["id"] for p in current_policies if p["id"] in captured_active_rules
+                       and (p["definition"]["rule"] != captured_active_rules[p["id"]] or p["status"] == "retired")}
             result["_changed_department_rules"] = sorted(changed | {
                 p["id"] for p in active_current_policies
                 if changed.intersection(p["definition"].get("merged_ids") or ())

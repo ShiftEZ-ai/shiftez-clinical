@@ -19,7 +19,7 @@ def _all_policy_rows(_db, department_ids, _binding_where):
 
 
 @pytest.mark.parametrize("database", ["h", pytest.param("pg", marks=pytest.mark.postgres)])
-def test_snapshot_does_not_load_unreachable_retired_rules(database, scale_harness, monkeypatch, record_property):
+def test_snapshot_policy_row_count_at_department_scale(database, scale_harness, monkeypatch, record_property):
     h = scale_harness(database)
     workspace, _, _, _ = scale_department(h, assigned=False)
     department_id = h.seed["department_id"]
@@ -130,3 +130,38 @@ def test_published_rule_pin_and_read_parity(h, monkeypatch):
     for participant in late["participants"]:
         participant["start"], participant["end"] = late["start"], late["end"]
     assert any(finding["code"] == "MIN_REST" for finding in evaluate(unsafe)["findings"])
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+def test_approval_stays_current_after_a_captured_rule_retires(h):
+    rule = h.policy({"kind": "max_hours", "hours": 40, "window": "week"})
+    draft = h.shift(h.workspace("Review after rule retirement"))["workspace"]
+    assert not h.snapshot(draft)["wishes"]
+    h.command("approver", "policy.retire", {"reason": "Retire without replacement"}, rule["id"], rule["revision"])
+
+    submitted = h.lifecycle(draft, "submit")["workspace"]
+    assert submitted["status"] == "submitted"
+    assert h.detail(submitted)["review_progress"]["stale_inputs"] is False
+    approved = h.lifecycle(submitted, "approve", "approver")["workspace"]
+    assert approved["status"] == "approved"
+    assert h.detail(approved)["review_progress"]["stale_inputs"] is False
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+def test_review_inputs_keep_a_captured_retirement_after_refreshing_current_sources(h):
+    rule = h.policy({"kind": "max_hours", "hours": 40, "window": "week"})
+    draft = h.workspace("Review source refresh")
+    with transaction(h.app.state.engine) as db:
+        stale = snapshots.snapshot_inputs(db, db.get(m.Organisation, h.seed["organisation_id"]))
+    retired = h.command("approver", "policy.retire", {"reason": "Retire without replacement"},
+                        rule["id"], rule["revision"])["record"]
+    with transaction(h.app.state.engine) as db:
+        current = snapshots.snapshot_inputs(db, db.get(m.Organisation, h.seed["organisation_id"]))
+        assert current["organisation"]["input_revision"] != stale["organisation"]["input_revision"]
+        assert rule["id"] not in {row["id"] for row in current["policies"]}
+        workspace = db.get(m.Workspace, draft["id"])
+        for inputs in (stale, current):
+            data = snapshots.domain_snapshot(db, workspace, shared_inputs=inputs, current_mandatory=True)
+            rows = {row["id"]: row for row in data["_live_safety_staleness"]["policies"]}
+            assert (rows[rule["id"]]["status"], rows[rule["id"]]["revision"]) == ("retired", retired["revision"])
+            assert rule["id"] in data["_changed_department_rules"]
