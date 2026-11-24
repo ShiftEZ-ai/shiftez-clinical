@@ -15,7 +15,8 @@ def test_partial_people_update_preserves_omissions_and_undo_restores_preimage(pg
     before = pg.configure('people', {
         'display_name': 'Synthetic person', 'active': False, 'inactive_from': '2026-10-01',
         'title': 'Synthetic title', 'staff_number': 'T42', 'directory_order': 37,
-        'work_extension': '4321', 'short_code': 'P42', 'tags': ['Synthetic tag'],
+        'work_phone': '555018811', 'work_extension': '4321', 'pager': '551122',
+        'short_code': 'P42', 'tags': ['Synthetic tag'],
     })['record']
     value = {'display_name': 'Updated synthetic person', 'title': '', 'inactive_from': None, 'tags': []}
     payload = {'catalogue': 'people', 'value': value, 'reason': 'Edit synthetic person'}
