@@ -175,13 +175,17 @@ def person_rows(data, name, person_id):
     return index[name].get(person_id, ())
 
 
-def display_only_change(snapshot, current):
-    """A duty type edit that only changes its colour is display, not a new definition: no refresh needed."""
+def display_only_change(snapshot, current, *, live_staffing=False):
+    """Ignore colour and, for drafts that enforce them live, hard staffing values."""
     if not snapshot:
         return False
     def core(r):
-        return {**{k: v for k, v in r.items() if k != "revision"},
-                "definition": {k: v for k, v in (r.get("definition") or {}).items() if k != "colour"}}
+        definition = {k: v for k, v in (r.get("definition") or {}).items() if k != "colour"}
+        if live_staffing:
+            definition["requirements"] = [(row.get("from_minute", 0), row.get("to_minute"), row["target"])
+                                          for row in definition.get("requirements") or () if row.get("target") is not None]
+            definition.pop("supervision", None)
+        return {**{k: v for k, v in r.items() if k not in ("revision", "draft_safety")}, "definition": definition}
     return core(snapshot) == core(current)
 
 
@@ -276,18 +280,67 @@ def _published_session(data, shift):
             or shift['workspace_id'] != workspace['id'])
 
 
-def effective_issued_definition(issued, current):
+def _supervision_scope(supervision):
+    return supervision["capability_id"], frozenset(supervision["trainee_category_ids"])
+
+
+def prepare_draft_type_safety(data, shifts):
+    """Prepare only duties affected by catalogue safety drift, once at snapshot assembly."""
+    types, zone = data["types"], data["organisation"]["timezone"]
+    workspace_id = data["workspace"]["id"]
+    fields = ("requirements", "supervision")
+    operational = data.get("operational")
+    prepared = {}
+    for shift in shifts:
+        if shift["workspace_id"] != workspace_id:
+            continue
+        typ = types.get(shift["assignment_type_id"])
+        if typ is None:
+            continue
+        overlay = typ.get("draft_safety")
+        if overlay is None and shift["type_revision"] == typ["revision"]:
+            continue
+        issued = shift["type_snapshot"]["definition"]
+        current = typ["definition"]
+        captured = overlay["captured"] if overlay else None
+        live = overlay["live"] if overlay else current
+        if not valid_dates(typ, aware(shift["start"]), aware(shift["end"]), zone):
+            live = None
+        sources = [source for source in (captured, live) if source is not None
+                   and any(source.get(field) != issued.get(field) for field in fields)]
+        if not sources:
+            continue
+        scopes = {_supervision_scope(source["supervision"]) for source in (issued, *sources)
+                  if source.get("supervision")}
+        effective = current if operational else issued
+        for source in ([issued] if operational else []) + sources:
+            effective = effective_issued_definition(effective, source, draft=True)
+        prepared[shift["id"]] = (effective, len(scopes) > 1)
+    return prepared
+
+
+def _prepared_draft_type(data, shift):
+    if prepared := data.get("_draft_type_safety"):
+        return prepared.get(shift.get("id"))
+
+
+def effective_issued_definition(issued, current, *, draft=False):
     """Keep issued type fields frozen while tightening its safety requirements from today."""
     effective = deepcopy(issued or {})
     current = current or {}
     effective['requirements'] = list(effective.get('requirements') or [])
     issued_requirements = effective['requirements']
     current_requirements = current.get('requirements') or []
+    if draft:
+        current_requirements = [{**row, "target": None} for row in current_requirements
+                                if row.get("minimum") or row.get("maximum") is not None or row.get("capabilities")]
     used = set()
     for row in issued_requirements:
         key = requirement_key(row)
         index = next((i for i, live in enumerate(current_requirements)
-                      if i not in used and requirement_key(live) == key), None)
+                      if i not in used and requirement_key(live) == key
+                      and (not draft or not row.get("distinct_capability_seats")
+                           or row.get("capabilities") == live.get("capabilities"))), None)
         if index is None:
             continue
         used.add(index)
@@ -307,7 +360,8 @@ def effective_issued_definition(issued, current):
     current_supervision = current.get('supervision')
     if issued_supervision is None and current_supervision is not None:
         effective['supervision'] = deepcopy(current_supervision)
-    elif issued_supervision is not None and current_supervision is not None:
+    elif (issued_supervision is not None and current_supervision is not None
+          and (not draft or _supervision_scope(issued_supervision) == _supervision_scope(current_supervision))):
         issued_supervision['trainees_per_supervisor'] = min(
             issued_supervision.get('trainees_per_supervisor', 20),
             current_supervision.get('trainees_per_supervisor', 20))
@@ -317,12 +371,14 @@ def effective_issued_definition(issued, current):
 
 
 def effective_type_definition(data, shift):
-    """Drafts use current definitions; issued sessions keep frozen fields plus today's tighter safety values.
-    Each caller owns its definition, including nested requirements and supervision.
-    """
+    """Resolve draft and operational safety while keeping each caller's definition detached."""
     issued = shift['type_snapshot']['definition']
     operational = bool(data.get('operational'))
-    current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
+        current = prepared[0]
+    else:
+        current = data['types'][shift['assignment_type_id']]['definition'] if operational else None
     published = _published_session(data, shift) if operational else False
     cache = data.get('_line_index_cache')
     if cache is not None:
@@ -334,11 +390,11 @@ def effective_type_definition(data, shift):
     if operational and published:
         effective = effective_issued_definition(issued, current)
     else:
-        definition = (current if operational else issued) or {}
+        definition = (current if operational or prepared else issued) or {}
         effective = dict(definition) if cache is not None else deepcopy(definition)
         effective['requirements'] = list(effective.get('requirements') or [])
     if cache is not None:
-        # Retain both sources so their identities cannot be reused during this run.
+        # Retain the sources so their identities cannot be reused during this run.
         encoded = pickle.dumps(effective, protocol=pickle.HIGHEST_PROTOCOL)
         definitions[key] = issued, current, encoded
         return pickle.loads(encoded)
@@ -1073,10 +1129,19 @@ def validate_session_setup(data, shift, shifts, definition, add):
     sid, start, end = shift['id'], aware(shift['start']), aware(shift['end'])
     typ = data["types"][shift["assignment_type_id"]]
     published = data.get('operational') and _published_session(data, shift)
+    prepared = _prepared_draft_type(data, shift)
+    if prepared:
+        authored = typ["definition"] if data.get("operational") else shift["type_snapshot"]["definition"]
+    else:
+        authored = definition
     if not valid_dates(shift['type_snapshot'] if published else typ, start, end, zone):
         add("TYPE_INACTIVE", "Assignment type is inactive or outside its effective interval", sid)
-    if (sid not in data.get("_issued_type_versions", ()) and shift["type_revision"] != typ["revision"]
-            and not display_only_change(shift.get("type_snapshot"), typ) and not published):
+    # Different supervision scopes cannot be represented by one duty-type slot.
+    if prepared and prepared[1]:
+        add("TYPE_VERSION_CHANGED", "Supervision scope changed; review and refresh the draft duty inputs", sid)
+    elif (sid not in data.get("_issued_type_versions", ()) and shift["type_revision"] != typ["revision"]
+            and not display_only_change(shift.get("type_snapshot"), typ, live_staffing=prepared is not None)
+            and not published):
         add("TYPE_VERSION_CHANGED", "Type changed; explicitly refresh the draft definition and review its impact", sid,
             severity="error")
     if sid in focus and not configured_duration_matches(definition, start, end, zone):
@@ -1087,7 +1152,9 @@ def validate_session_setup(data, shift, shifts, definition, add):
             "maximum_duration_minutes", TypeDefinition.model_fields["maximum_duration_minutes"].default):
         add("DURATION_LIMIT", "Session exceeds the assignment type's maximum duration", sid)
     try:
-        validate_attributes(TypeDefinition.model_validate(definition), shift["attributes"])
+        # Independently valid limits can conflict across versions. Validate
+        # attributes against the authored schema.
+        validate_attributes(TypeDefinition.model_validate(authored), shift["attributes"])
     except ValueError as exc:
         add("CUSTOM_FIELD_INVALID", str(exc), sid)
     if definition["purpose"] == "staffed" and not shift["service_ids"]:
