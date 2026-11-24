@@ -3,7 +3,8 @@ page and fails on one screen (Retry; Sign out when signed in)."""
 import re
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, new_context, open_app, expect_loaded
+from packages.contracts.schemas import BRANDING_DEFAULTS
+from .test_browser import browser, live_server, sign_in, new_context, open_app, expect_loaded, route_fetch
 
 pytestmark = pytest.mark.browser
 
@@ -12,16 +13,29 @@ pytestmark = pytest.mark.browser
 def test_sign_in_page_is_the_brand_and_the_form(browser, live_server, viewport, scheme):
     """N-06 / N-07: no marketing story; the brand, "Sign in" and the form, with Username focused."""
     context = new_context(browser, viewport, color_scheme=scheme)
+
+    def with_wordmark(route):
+        reply = route_fetch(route)
+        branding = reply.json()
+        route.fulfill(response=reply, json={**branding, 'wordmark_url': branding['emblem_url'] + '?wordmark',
+            'wordmark_alt': 'Test wordmark'})
+
+    context.route('**/api/branding', with_wordmark)
     try:
         page = open_app(context, live_server)
         expect(page.get_by_role("heading", name="Sign in", level=1)).to_be_visible()
-        expect(page.locator(".login-brand")).to_have_text("Rota")
-        # The institution's own wordmark, loaded from the app's assets, at its natural aspect ratio and named.
-        mark = page.get_by_role("img", name="Example Organisation")
+        brand = page.locator(".login-brand")
+        expect(brand).to_have_text(BRANDING_DEFAULTS['app_name'])
+        mark = brand.get_by_role("img", name='Test wordmark', exact=True)
         expect(mark).to_be_visible()
+        expect(mark).to_have_attribute("src", re.compile(r"/brand/emblem\.png\?wordmark$"))
         expect(mark).to_have_js_property("complete", True)
         size = mark.evaluate("n => ({w: n.naturalWidth, h: n.naturalHeight, rw: n.getBoundingClientRect().width, rh: n.getBoundingClientRect().height})")
         assert size and size["w"] > 0 and abs(size["rw"] / size["rh"] - size["w"] / size["h"]) < 0.08, size
+        box = mark.bounding_box()
+        for container in (brand, page.locator('.login-form')):
+            outer = container.bounding_box()
+            assert abs((box['x'] + box['width'] / 2) - (outer['x'] + outer['width'] / 2)) <= 1, (box, outer)
         expect(page.locator(".login-story")).to_have_count(0)
         expect(page.get_by_text("Welcome back")).to_have_count(0)
         expect(page.get_by_label("Username or email", exact=True)).to_be_focused()
