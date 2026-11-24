@@ -188,8 +188,17 @@ def test_first_visit_downloads_the_bundle_into_the_worker_once(browser, live_ser
         context.route('**/*', worker_requests)
         with context.expect_event('request', lambda r: bool(r.service_worker) and r.url.endswith('/print.css')):
             page.goto(live_server)
-        page.wait_for_function('async () => !(await navigator.serviceWorker.getRegistration())')
-        assert failed, fetched
+        # Wait for the failed install to end. wait_for_function takes a returned promise as truthy and does not poll,
+        # and a page reloaded while the install still runs gets that dying registration back from register().
+        state = page.evaluate('''async () => {
+            const registration = await navigator.serviceWorker.getRegistration();
+            if(!registration)return 'redundant';
+            const worker = registration.installing;
+            if(!worker)return 'not installing';
+            if(worker.state==='installing')await new Promise(ok=>worker.addEventListener('statechange',ok,{once:true}));
+            return worker.state;
+        }''')
+        assert failed and state == 'redundant', (state, fetched)
         first = dict(fetched)
         page.reload()
         page.evaluate('''async () => {
