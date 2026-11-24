@@ -8601,7 +8601,7 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   // Any other change to the rota on screen (a Redo too) takes Redo off at once.
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
-  const undo=plannerRota?.id===w.id?document.querySelector('.planner-bar button[aria-label="Undo last edit"]'):null;
+  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar button[aria-label="Undo last edit"]'):null;
   if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
   if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
