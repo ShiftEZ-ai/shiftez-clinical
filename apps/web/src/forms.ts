@@ -249,6 +249,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       const title=field('Job title','text',row?.title||'',{maxlength:160}),section=field('Directory section','text',row?.directory_section||'',{maxlength:160});
       const phone=field('Hospital phone','tel',row?.work_phone||'',{maxlength:80}),extension=field('Office extension','text',row?.work_extension||'',{maxlength:80});
       const number=field('Employee or student number','text',row?.staff_number||'',{maxlength:80}),pager=field('Pager number','text',row?.pager||'',{maxlength:40}),order=field('Directory order','number',row?.directory_order??1000,{min:0,max:100000,required:true});
+      const initialPhone=phone.input.value,initialExtension=extension.input.value,initialPager=pager.input.value;
       const code=field('Short code','text',row?.short_code||'',{maxlength:6,pattern:'[A-Z0-9]{0,6}',autocomplete:'off'});
       const codeHint=el('small',{class:'hint'}),syncCode=()=>{code.input.value=code.input.value.toUpperCase().replace(/[^A-Z0-9]/g,'');const auto=autoCode(name.input.value);codeHint.textContent=code.input.value?'Shown on dense rota views instead of the automatic code.':auto?`Leave empty to use the automatic code ${auto}.`:'';codeHint.hidden=!codeHint.textContent;};
       code.wrap.append(codeHint);code.input.addEventListener('input',syncCode);name.input.addEventListener('input',syncCode);syncCode();
@@ -278,7 +279,11 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       active.input.addEventListener('change',syncInactive);syncInactive();
       form.append(part('Who they are','',name.wrap,code.wrap,title.wrap,tags.wrap,rotaName.wrap,aliases.wrap,colour.wrap,active.wrap,inactiveFrom.wrap),
         part('Directory & contact','',section.wrap,order.wrap,phone.wrap,extension.wrap,pager.wrap,number.wrap));
-      value=()=>({colour:colour.input.value,display_name:name.input.value,active:active.input.checked,title:title.input.value,directory_section:section.input.value,work_phone:phone.input.value,work_extension:extension.input.value,staff_number:number.input.value,pager:pager.input.value,directory_order:Number(order.input.value),short_code:code.input.value,tags:tags.values(),
+      value=()=>({colour:colour.input.value,display_name:name.input.value,active:active.input.checked,title:title.input.value,directory_section:section.input.value,staff_number:number.input.value,directory_order:Number(order.input.value),short_code:code.input.value,tags:tags.values(),
+        // The list can omit stored contacts. Send an empty value only when clearing a displayed number.
+        work_phone:!row||phone.input.value!==initialPhone?phone.input.value:undefined,
+        work_extension:!row||extension.input.value!==initialExtension?extension.input.value:undefined,
+        pager:!row||pager.input.value!==initialPager?pager.input.value:undefined,
         rota_name:rotaName.input.value.trim(),rota_aliases:aliasList(),...(!active.input.checked&&inactiveFrom.input.value?{inactive_from:inactiveFrom.input.value}:{})});
     }else if(kind==='programme_calendar_entries'){
       const programme=select('Programme',options(all(ctx,'programmes')),row?.programme_id||'');

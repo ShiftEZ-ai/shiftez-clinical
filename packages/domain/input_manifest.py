@@ -37,7 +37,7 @@ FIELDS = {
     'categories': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'capabilities': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'location_types': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
-    'types': ('id', 'department_id', 'definition', 'tags', 'active', 'starts_on', 'ends_on'),
+    'types': ('id', 'department_id', 'definition', 'draft_safety', 'tags', 'active', 'starts_on', 'ends_on'),
     'operating_calendars': ('id', 'department_id', 'definition', 'active', 'starts_on', 'ends_on'),
     'date_sets': ('id', 'department_id', 'name', 'entries', 'active'),
     'resource_pools': ('id', 'department_id', 'capacity', 'location_id', 'calendar_id', 'active', 'starts_on', 'ends_on'),

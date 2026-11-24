@@ -407,8 +407,13 @@ def main():
     listed = frozenset()
     if maker.retry_run(candidate):
         event = policy.event()
-        branch = (event["pull_request"]["base"]["ref"] if os.environ["GITHUB_EVENT_NAME"] == "pull_request"
-                  else event["merge_group"]["base_ref"].removeprefix("refs/heads/"))
+        kind = os.environ["GITHUB_EVENT_NAME"]
+        if kind == "pull_request":
+            branch = event["pull_request"]["base"]["ref"]
+        elif kind == "merge_group":
+            branch = event["merge_group"]["base_ref"].removeprefix("refs/heads/")
+        else:
+            branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
         base = candidate["base_sha"]
         current = policy.read_file(candidate["sha"], policy.KNOWN)
         old = policy.read_file(base, policy.KNOWN)

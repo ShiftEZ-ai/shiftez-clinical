@@ -15,6 +15,9 @@ from .test_performance_budget import python_budget
 
 def scale_publication(h):
     """150 current staff, each with ten future duties; fixture construction is outside the budget."""
+    # Set capacity before the draft captures it for the overlapping duties.
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Location, h.seed["locations"][0]).capacity = 1000
     workspace = h.workspace("Open swap scale fixture", end="2026-10-14")
     with transaction(h.app.state.engine, write=True) as db:
         made = [m.Person(organisation_id=h.seed["organisation_id"], display_name=f"Scale clinician {n:03d}")
@@ -37,7 +40,6 @@ def scale_publication(h):
             for service_id in h.seed["services"]:
                 db.add(m.Eligibility(person_id=person.id, service_id=service_id,
                     department_id=h.seed["department_id"], starts_on=date(2020, 1, 1)))
-        db.get(m.Location, h.seed["locations"][0]).capacity = 1000
         typ = record(db.get(m.AssignmentType, h.seed["type"]))
         db.flush()
         duties, shifts, links = [], [], []
