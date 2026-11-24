@@ -40,6 +40,7 @@ COMMAND_PERMISSIONS = {
     "programme_membership.withdraw": "catalogue.programmes",
     "programme_membership.restore": "catalogue.programmes",
     "rotation.restore": "rotation.remove",
+    "rotation.import_reference": "rotation.plan",
     "rotation.swap": "rotation.swap",
     "wish.override": "wish.override",
     "policy.withdraw_approval": "policy.retire",
@@ -501,13 +502,15 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         return timeline_commands.apply(db, actor, command)
     if kind.startswith(("rotation.", "trainee_note.")):
         from .services import training
-        if kind in {"rotation.plan", "rotation.copy", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
+        if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
             require(command.target_id is None and command.expected_revision is None, "RESIDENCY_COMMAND_TARGET",
                     "This operation uses the records in its payload, with no top-level target or revision")
         if kind == "rotation.plan":
             return training.plan(db, actor, command)
         if kind == "rotation.copy":
             return training.copy_forward(db, actor, command)
+        if kind == "rotation.import_reference":
+            return training.reference_rotation_import(db, actor, command.payload)
         if kind in {"rotation.undo_plan", "rotation.remove"}:
             return training.remove(db, actor, command, own=kind == "rotation.undo_plan")
         if kind == 'rotation.restore':
@@ -740,7 +743,7 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
             records = result.get("created", result.get("records", []))
             from .services.training import rotation_records_access
             rotation_records_access(db, actor, records, scope=(result.get("rotation_scope") or [])
-                                    if kind in {"rotation.plan", "rotation.copy"} else None)
+                                    if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference"} else None)
     if kind.startswith("swap."):
         source = result.get("undone") or result.get("swap", {})
         row = swaps.get_scoped(db, actor, source.get("id"))

@@ -7374,6 +7374,30 @@ class ImportPreview(Schema):
     csv_text: str = Field(min_length=1, max_length=1_000_000)
 
 
+class ReferenceRotationFile(Schema):
+    rotations: list[RotationInput] = Field(min_length=1, max_length=1000)
+
+
+REFERENCE_ROTATION_FILE_LIMIT = 500_000
+
+
+class ReferenceRotationImport(Schema):
+    file_text: str = Field(min_length=1, max_length=REFERENCE_ROTATION_FILE_LIMIT)
+    reason: Reason
+    expected_fingerprint: Sha256 | None = None
+
+
+class ReferenceRotationConflict(Schema):
+    row: int
+    messages: list[str]
+
+
+class ReferenceRotationReview(Schema):
+    count: int
+    conflicts: list[ReferenceRotationConflict]
+    expected_fingerprint: Sha256
+
+
 class ReferenceRotaPreview(Schema):
     workspace_id: ID
     reference_import_id: ID
@@ -8687,6 +8711,7 @@ class RotationBoard(Schema):
     can_plan: bool
     can_note: bool
     note_person_ids: list[ID]
+    reference_leave_conflicts: list[ID] = Field(default_factory=list)
 
 
 class RotationBlock(Schema):

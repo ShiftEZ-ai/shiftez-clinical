@@ -43,7 +43,8 @@ def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, 
     return result
 
 
-def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation_context=None):
+def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation_context=None,
+                             historical_reference=False):
     """Project relational records once; the shared domain evaluator owns the rule itself."""
     source = rotation if rotation is not None else absence
     candidate = json_value(source if isinstance(source, dict) else source.model_dump())
@@ -106,9 +107,15 @@ def rotation_leave_conflicts(db, actor, *, rotation=None, absence=None, rotation
     except (ValueError, OverflowError):
         require(False, 'INTERVAL_DATES', 'The interval exceeds the supported local date range')
     own = lambda row: row.get('department_id', actor.department_id) == actor.department_id
-    return redact_rotation_leave_findings(findings, rotation_ids={row.get('id') for row in rotations if own(row)},
+    visible = redact_rotation_leave_findings(findings, rotation_ids={row.get('id') for row in rotations if own(row)},
         availability_ids={row.get('id') for row in records if own(row) and row['kind'] != 'leave'},
         request_ids={row.get('id') for row in records if own(row) and row['kind'] == 'leave'})
+    if historical_reference:
+        # A reference file can retain existing leave. Every other blocking finding is still enforced.
+        recorded_leave = {row.get('id') for row in records if row['kind'] in {'recorded_leave', 'approved_leave'}}
+        require_rotation_leave([safe for raw, safe in zip(findings, visible, strict=True)
+                                if raw['detail'].get('availability_id') not in recorded_leave])
+    return visible
 
 
 def require_rotation_leave(findings, *, record_kind=None):

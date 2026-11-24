@@ -1,6 +1,7 @@
 """Rotation leave policy uses the same dated domain rule at each write and rota check."""
 from importlib import import_module
 from datetime import date
+from json import dumps
 
 import pytest
 import sqlalchemy as sa
@@ -303,6 +304,46 @@ def test_rotation_create_change_plan_and_request_approval_recheck_leave(h):
     h.configure('rotation_types', setting, typ['id'], allowed['revision'])
     assert h.command('approver', 'request.decide', {'decision': 'approve', 'reason': REASON}, request['id'],
                      request['revision'], status=409)['error']['code'] == 'ROTATION_LEAVE_NOT_ALLOWED'
+
+
+def test_reference_import_keeps_an_approved_leave_conflict_visible(h, monkeypatch):
+    from apps.api.services import independence
+
+    _, value, _ = resident(h, create=False)
+    monkeypatch.setattr(independence, 'today', lambda db, department_id: date(2026, 11, 1))
+    client = h.client('coordinator')
+    endpoint = '/api/rotation-board/reference-preview'
+    payload = {'file_text': dumps({'rotations': [value]}), 'reason': REASON}
+    pending = request_leave(h)['record']
+    refused = client.post(endpoint, json=payload)
+    assert refused.status_code == 409, refused.text
+    h.command('approver', 'request.decide', {'decision': 'approve', 'reason': REASON},
+              pending['id'], pending['revision'])
+    assert h.configure('rotations', value, status=409)['error']['code'] == 'ROTATION_LEAVE_NOT_ALLOWED'
+
+    future = {**payload, 'file_text': dumps({'rotations': [{**value, 'ends_on': '2026-11-02'}]})}
+    assert h.command('coordinator', 'rotation.import_reference', future,
+                     status=422)['error']['code'] == 'REFERENCE_ROTATION_DATES'
+    review = client.post(endpoint, json=payload)
+    assert review.status_code == 200, review.text
+    preview = review.json()
+    assert preview['count'] == 1 and preview['conflicts'][0]['row'] == 1
+    assert 'not allowed' in preview['conflicts'][0]['messages'][0]
+    assert not h.get('coordinator', '/api/catalogues')['rotations']
+    assert h.command('coordinator', 'rotation.import_reference', payload,
+                     status=409)['error']['code'] == 'STALE_PREVIEW'
+
+    payload['expected_fingerprint'] = preview['expected_fingerprint']
+    imported = h.command('coordinator', 'rotation.import_reference', payload)
+    assert imported['conflicts'] == preview['conflicts']
+    rotation = imported['created'][0]
+    board = h.get('coordinator', '/api/rotation-board?start=2026-10-01&end=2026-11-01')
+    assert board['reference_leave_conflicts'] == [rotation['id']]
+    findings = evaluate(h.snapshot(h.workspace()))['findings']
+    assert any(f['code'] == 'ROTATION_LEAVE_NOT_ALLOWED' and f['severity'] == 'error'
+               and f['detail']['rotation_id'] == rotation['id'] for f in findings)
+    assert h.command('coordinator', 'rotation.import_reference', payload,
+                     status=409)['error']['code'] == 'DUPLICATE_IMPORT'
 
 
 def test_recheck_and_snapshot_carry_policy_and_shared_findings(h):

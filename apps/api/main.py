@@ -3180,6 +3180,12 @@ def create_app(settings: Settings | None = None, engine=None):
         from .services.timeline_commands import preview
         return retry_write(engine, lambda db: preview(db, actor_for(request, db, write=True), value))
 
+    @app.post("/api/rotation-board/reference-preview", response_model=s.ReferenceRotationReview)
+    def reference_rotation_preview(value: s.ReferenceRotationImport, request: Request):
+        from .services.training import reference_rotation_import
+        with transaction(engine) as db:
+            return reference_rotation_import(db, actor_for(request, db, write=True), value, preview=True)
+
     @app.get("/api/rotation-board", response_model=s.RotationBoard)
     def rotation_board(request: Request, start: s.date, end: s.date, programme_id: s.ID | None = None):
         from .services import training
@@ -3865,7 +3871,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_role(actor, "coordinator")
             return {"imports": [reference_receipt(db, source) for source in db.scalars(
-                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id)
+                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id,
+                    func.coalesce(m.ReferenceImport.manifest['format'].as_string(), '') != 'rotation_reference')
                 .order_by(m.ReferenceImport.created_at.desc(), m.ReferenceImport.seq.desc()).limit(10))]}
 
     @app.get("/api/staff-imports")

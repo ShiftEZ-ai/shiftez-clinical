@@ -1,5 +1,7 @@
 """A rotation saved over leave says so on save: the clash, what it means, and a way to the Timeline to fix it."""
 import re
+from datetime import date
+from json import dumps
 
 import pytest
 from playwright.sync_api import expect
@@ -59,5 +61,35 @@ def test_rotation_saved_without_leave_shows_no_clash(browser, live_server, h):
         extend(page, rotation, '2026-11-05')
         expect(page.locator('#toast-tray .toast').filter(has_text='Published rotas stay as they were')).to_be_visible()
         expect(page.locator('#toast-tray .toast.warning')).to_have_count(0)
+    finally:
+        context.close()
+
+
+def test_import_review_and_rotation_show_the_retained_leave_conflict(browser, live_server, h, monkeypatch):
+    from apps.api.services import independence
+    from .test_rotation_leave_policy import record_away, resident
+
+    monkeypatch.setattr(independence, 'today', lambda db, department_id: date(2026, 11, 1))
+    _, value, _ = resident(h, create=False)
+    record_away(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
+    try:
+        navigate(page, 'programmes/board')
+        page.get_by_role('button', name='More rotation actions').click()
+        page.get_by_role('menuitem', name='Import reference rotations').click()
+        upload = page.get_by_role('dialog', name='Import reference rotations')
+        upload.get_by_label('Reference file').set_input_files({
+            'name': 'rotations.json', 'mimeType': 'application/json',
+            'buffer': dumps({'rotations': [value]}).encode('utf-8'),
+        })
+        upload.get_by_label('Reason', exact=True).fill(REASON)
+        upload.get_by_role('button', name='Review file').click()
+        review = page.get_by_role('dialog', name='Review reference rotations')
+        expect(review).to_contain_text('Leave or time away is not allowed during this rotation.')
+        review.get_by_role('button', name='Import rotations').click()
+        expect(page.locator('#toast-tray')).to_contain_text('Reference rotations imported')
+        rotation = h.get('coordinator', '/api/catalogues')['rotations'][0]
+        page.locator(f'.tl button[data-bar="{rotation["id"]}"]').click()
+        expect(page.locator('.dock-panel').get_by_role('heading', name='Leave conflict at import')).to_be_visible()
     finally:
         context.close()
