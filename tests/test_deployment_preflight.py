@@ -3,13 +3,17 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import secrets
 import stat
 import subprocess
 import sys
+from uuid import uuid4
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from apps.api.db import transaction
 from apps.api.settings import Settings, secret_from_env, MAX_SECRET_BYTES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE
 from scripts import backup, preflight
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -320,6 +324,50 @@ def test_invalid_bootstrap_request_cannot_migrate_or_create_a_database(tmp_path,
     result=subprocess.run([sys.executable,str(ROOT/'scripts/manage.py'),action],
         env={**os.environ,'ROTA_ENV':environment,'DATABASE_URL':'sqlite:///'+str(path)},capture_output=True,text=True,timeout=20)
     assert result.returncode!=0 and not path.exists()
+
+
+@pytest.mark.postgres
+def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgres_worker_url, tmp_path, monkeypatch, capsys):
+    from apps.api.main import create_app
+    from scripts import manage
+    from .conftest import postgres_database
+
+    with postgres_database(postgres_worker_url, "rota_test_" + uuid4().hex) as url:
+        clean_env(monkeypatch)
+        users = tmp_path / "users.yml"
+        users.write_text('{"users": {}}', encoding="utf-8")
+        origin = "https://rota.test"
+        env = {"DATABASE_URL": url, "ROTA_ENV": "production", "PUBLIC_ORIGIN": origin,
+               "ROTA_IDENTITY_USERS_FILE": str(users), "FMUC_DATA_KEY": secrets.token_hex(32),
+               "FORWARDED_ALLOW_IPS": "192.0.2.18"}
+        for name, val in env.items():
+            monkeypatch.setenv(name, val)
+        monkeypatch.setattr(sys, "argv", ["manage.py", "init-institution",
+                        "--organisation", "Organisation (test)", "--department", "Department (test)",
+                        "--username", "first-admin", "--email", "first-admin@example.test",
+                        "--display-name", "Administrator (test)", "--reason", "Initialize test installation"])
+        manage.main()
+        link = capsys.readouterr().out.splitlines()[-1]
+        if not link.startswith(origin + "/invite/"):
+            pytest.fail("Bootstrap did not return an invitation")
+        app = create_app(Settings.from_env())
+        try:
+            with TestClient(app, base_url=origin, headers={"origin": origin}) as client:
+                password = secrets.token_urlsafe(28)
+                token = link.rsplit("/", 1)[1]
+                setup = client.post("/api/account-links/" + token, json={"password": password})
+                assert setup.status_code == 200
+                assert client.post("/api/account-links/" + token, json={"password": password}).status_code == 404
+                login = client.post("/auth/login", json={"username": "first-admin", "password": password})
+                assert login.status_code == 200
+                me = client.get("/api/me")
+                assert me.status_code == 200 and "admin" in me.json()["roles"]
+                assert INSTALLATION_ADMIN_ROLE in me.json()["roles"]
+                assert "operator" not in me.json()["roles"]
+                branding = client.get("/api/admin/branding")
+                assert branding.status_code == 200 and branding.json()["can_edit"]
+        finally:
+            app.state.engine.dispose()
 
 
 def test_explicit_database_url_file_is_shared_by_migration_and_backup_clis(tmp_path,monkeypatch):

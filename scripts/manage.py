@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit operator entry points. No migrations or demo seeding on normal reads."""
 import argparse
+from dataclasses import replace
 from datetime import date
 import json
 import os
@@ -13,6 +14,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
+from pydantic import ValidationError
 from sqlalchemy import func, inspect, select
 from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
                                refuse_test_flags, secret_from_env)
@@ -20,7 +22,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, TypeDefinition
+from packages.contracts.schemas import AccountInvite, INSTALLATION_ADMIN_ROLE, TypeDefinition
 from migrations import safety
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -164,11 +166,11 @@ def main():
     parser.add_argument("--empty", action="store_true", help="Demo identities/people only, no operational catalogues")
     parser.add_argument("--organisation")
     parser.add_argument("--department")
-    parser.add_argument("--issuer")
-    parser.add_argument("--subject")
-    parser.add_argument("--display-name")
+    parser.add_argument("--username", help="First administrator's sign-in name")
+    parser.add_argument("--email", help="First administrator's email")
+    parser.add_argument("--display-name", help="First administrator's display name")
     parser.add_argument("--seed-version", type=int, choices=[1])
-    parser.add_argument("--reason", help="Recorded owner reason for the explicit initial seed")
+    parser.add_argument("--reason", help="Recorded owner reason for the initial seed or administrator invitation")
     parser.add_argument("--timezone", default="Asia/Riyadh")
     parser.add_argument("--week-start", type=int, choices=range(7), default=6, help="Institution calendar: Monday=0 through Sunday=6")
     args = parser.parse_args()
@@ -180,10 +182,21 @@ def main():
     if args.action == "init-demo" and os.getenv("ROTA_ENV") == "production":
         parser.error("Demo bootstrap is prohibited in production")
     if args.action == "init-institution":
-        if not all([args.organisation, args.department, args.issuer, args.subject, args.display_name]):
-            parser.error("Institution bootstrap requires --organisation, --department, --issuer, --subject and --display-name")
+        if not all([args.organisation, args.department, args.username, args.email, args.display_name, args.reason]):
+            parser.error("Institution bootstrap requires --organisation, --department, --username, --email, --display-name and --reason")
         from zoneinfo import ZoneInfo
         ZoneInfo(args.timezone)
+        try:
+            invite = AccountInvite(username=args.username, email=args.email, display_name=args.display_name,
+                                   roles=["admin", INSTALLATION_ADMIN_ROLE], reason=args.reason)
+            settings = replace(Settings.from_env(), database_url=args.database_url)
+            if not settings.identity_users_file:
+                parser.error("Institution bootstrap requires a managed sign-in users file")
+            settings.check()
+        except ValidationError:
+            parser.error("Enter a valid sign-in name, email, display name and reason for the first administrator")
+        except RuntimeError as exc:
+            parser.error(str(exc))
     if os.getenv("ROTA_ENV") == "production" and not args.database_url.startswith("postgresql+psycopg://"):
         parser.error("Production migration/bootstrap requires an explicit PostgreSQL psycopg URL")
     if args.action == "init-production-seed":
@@ -226,10 +239,7 @@ def main():
                 json.dump({"warning": "Local fictional demonstration only", "accounts": values["credentials"]}, handle, indent=2)
             print(f"Fictional demo initialized. Generated credentials: {path}\nNo credentials are committed or included in deliverable archives.")
         else:
-            if not all([args.organisation, args.department, args.issuer, args.subject, args.display_name]):
-                parser.error("Institution bootstrap requires --organisation, --department, --issuer, --subject and --display-name")
-            from zoneinfo import ZoneInfo
-            ZoneInfo(args.timezone)
+            from scripts.system_command import apply, maintenance_identity
             with transaction(engine, write=True) as db:
                 if db.scalar(select(func.count()).select_from(m.Organisation)):
                     raise RuntimeError("Refusing to bootstrap a nonempty installation")
@@ -237,8 +247,7 @@ def main():
                 db.add(org); db.flush()
                 dept = m.Department(organisation_id=org.id, name=args.department,
                                     display_settings=new_department_display_settings(), **new_department_session_limits())
-                identity = m.Identity(issuer=args.issuer, subject=args.subject, display_name=args.display_name)
-                db.add_all([dept, identity]); db.flush()
+                db.add(dept); db.flush()
                 from apps.api.services.event_defaults import seed_department
                 seed_department(db, dept)
                 from apps.api.services.leave_types import seed as seed_leave_types
@@ -247,10 +256,11 @@ def main():
                 seed_contacts(db, dept.id)
                 from apps.api.services.scoring_defaults import seed as seed_scoring_defaults
                 seed_scoring_defaults(db, dept.id)
-                day = m.now().astimezone(ZoneInfo(org.timezone)).date()
-                for role in ("admin", INSTALLATION_ADMIN_ROLE):
-                    db.add(m.RoleBinding(identity_id=identity.id, department_id=dept.id, role=role, starts_on=day))
-            print("Institution initialized with one explicitly bound administrative identity. No clinical/approval role was inferred.")
+                actor = maintenance_identity(db, m, select)
+                [receipt] = apply(db, actor, dept, [{"kind": "account.invite", "payload": invite.model_dump(mode="json")}],
+                                  m.uid(), settings)
+            print("Institution initialized. Give this private one-time setup link to the first administrator:")
+            print(receipt["one_time_link"])
     finally:
         engine.dispose()
 

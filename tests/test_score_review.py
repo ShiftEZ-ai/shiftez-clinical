@@ -65,9 +65,19 @@ def test_score_review_reuses_current_validation_without_changing_payload(h, monk
                              fingerprint=data['fingerprint'], score=expected_lines['score'],
                              total_lost_points=expected_lines['total_lost_points'], lines=expected_lines['lines'])
 
+    snapshot = service.domain_snapshot
+    source_counts = []
+
+    def read_snapshot(*args, **kwargs):
+        value = snapshot(*args, **kwargs)
+        source_counts.append(len(value.get('input_manifest', {}).get('sources', {})))
+        return value
+
+    monkeypatch.setattr(service, 'domain_snapshot', read_snapshot)
     monkeypatch.setattr(service, 'evaluate', lambda *args, **kwargs: pytest.fail('reused current validation must not evaluate'))
     monkeypatch.setattr(service, 'schedule_score', lambda *args, **kwargs: pytest.fail('reused current validation must not rescore'))
     assert h.get('coordinator', f"/api/workspaces/{workspace['id']}/score-review") == expected.model_dump(mode='json')
+    assert source_counts == [0]
 
 
 def save_department_options(h, options):
