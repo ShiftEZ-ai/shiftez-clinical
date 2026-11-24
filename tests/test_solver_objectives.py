@@ -156,6 +156,9 @@ def test_fair_share_does_not_add_work_beyond_requested_staffing(h, mode, demand)
 
     result = generate(data, 5, workers=1, deterministic=True)
     assert result['status'] == 'candidate_feasible', result
+    if demand in {'minimum', 'scoped_cover'}:
+        assert ('staffing' in [row['name'] for row in result['objectives']]) == (demand == 'scoped_cover')
+        assert 'Requested work and minimum staffing precede weighted quality.' in result['optimality_boundary']
     assigned = {row['person_id'] for row in apply(data, result)['shifts'][0]['participants']}
     assert len(assigned) == (1 if demand == 'quota' and mode == 'rebalance' else 2), result
     if demand in {'scoped_cover', 'pooled_cover'}:

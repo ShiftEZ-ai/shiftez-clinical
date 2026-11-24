@@ -605,6 +605,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
     staffing_targets = [] if relative_fair_share else None
     staffing_choices = []
+    capped = False
     cross_duty_demand = relative_fair_share and any(
         rule['kind'] == 'team_lead_requirement'
         or rule['kind'] == 'block_quota' and rule['comparison'] != 'maximum'
@@ -1551,6 +1552,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             # A mutable whole duty fills all its staffed intervals. Cover needed in
             # any interval may require a place even if another is already staffed.
             model.add(sum(choices[sid, pid] for pid in mutable_people) <= places_to_fill).with_name('duty:' + sid)
+            capped = True
         elif not can_cap and (not whole_duty or maximum_places > places_to_fill):
             staffing_choices.extend(choices[sid, pid] for pid in mutable_people)
 
@@ -1667,7 +1669,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         result['optimality_boundary'] = 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
     if fill_priority.enabled:
         result['optimality_boundary'] += ' Configured fill-priority stages precede weighted quality.'
-    if staffing_choices:
+    if staffing_choices or capped:
         result['optimality_boundary'] += ' Requested work and minimum staffing precede weighted quality.'
     if desired_coverage:
         result['optimality_boundary'] += ' Required cover and mandatory minima precede desired cover; no coverage weight ratio applies.'
