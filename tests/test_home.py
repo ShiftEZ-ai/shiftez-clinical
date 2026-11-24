@@ -53,7 +53,7 @@ def test_roles_see_only_their_work(h):
     assert approver['requests']['count'] == 1 and approver['rules']['count'] == 1
     # A row says which: the person and times of the first requests, the rule's name and who proposed it, nothing private.
     sample = approver['requests']['sample']
-    assert [(r['person'], r['kind'], r['start'][:10]) for r in sample] == [('Alex Morgan', 'leave', '2026-10-06')]
+    assert [(r['person'], r['kind'], r['start'][:10]) for r in sample] == [('Staff 01(test)', 'leave', '2026-10-06')]
     assert set(sample[0]) == {'person', 'kind', 'start', 'end'}
     assert approver['rules']['sample'] == [{'name': 'Home proposed rule', 'by': 'Coordinator · Demo'}]
     assert keys(h.get('coordinator', '/api/home')) & {'unchecked', 'blocking'}
@@ -228,7 +228,7 @@ def test_swap_rows_name_both_people_and_the_offered_duty(h):
                                       'expires_at': (clock_now() + timedelta(days=1)).isoformat(), 'reason': 'Private family matter'})
     item = next(i for i in h.get('colleague', '/api/home')['attention'] if i['key'] == 'my_swaps')
     assert item['count'] == 1
-    assert item['sample'] == [{'proposer': 'Alex Morgan', 'recipient': 'Jordan Lee', 'proposer_id': h.seed['people'][0],
+    assert item['sample'] == [{'proposer': 'Staff 01(test)', 'recipient': 'Staff 02(test)', 'proposer_id': h.seed['people'][0],
                                'start': item['sample'][0]['start'], 'end': item['sample'][0]['end']}]
     assert datetime.fromisoformat(item['sample'][0]['start']) == start  # the offered duty, never the message
     assert 'my_swaps' not in keys(h.get('staff', '/api/home'))  # the proposer waits; nothing needs them yet

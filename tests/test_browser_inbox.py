@@ -11,9 +11,9 @@ from .test_browser import browser, live_server, sign_in, navigate, filter_by, wa
 
 pytestmark = pytest.mark.browser
 # The worker's titles for each kind; the weekly-unavailability title once fell under "Leave or absence" by its words.
-KINDS = {'request': ('Weekly unavailability to approve for Alex Morgan', 'Request'),
-         'availability': ('Leave or absence recorded for Alex Morgan', 'Leave or absence'),
-         'swap': ('Swap offer from Alex Morgan', 'Swap'),
+KINDS = {'request': ('Weekly unavailability to approve for Staff 01(test)', 'Request'),
+         'availability': ('Leave or absence recorded for Staff 01(test)', 'Leave or absence'),
+         'swap': ('Swap offer from Staff 01(test)', 'Swap'),
          'review': ('Rota sent for review', 'Review'),
          'publication': ('October rota published', 'Rota published'),
          'announcement': ('Clinic closed on Friday', 'Announcement'),

@@ -25,7 +25,7 @@ PHONE = {'width': 390, 'height': 844}
 
 
 def two_versions(h, people=None):
-    """Two published rotas; staff (Alex Morgan) works in both."""
+    """Two published rotas; staff (Staff 01(test)) works in both."""
     me = h.get('staff', '/api/me')['person_id']
     for name, day in (('Fictional October rota', '2026-10-04'), ('Fictional November rota', '2026-11-01')):
         end = '2026-10-11' if day == '2026-10-04' else '2026-11-08'

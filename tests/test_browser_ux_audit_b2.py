@@ -147,12 +147,12 @@ def test_lists_never_keep_a_typed_search_and_say_when_rows_are_hidden(browser, l
         table = page.locator('#main .dt').first
         strip = table.locator('.dt-filtered')
         expect(strip).to_be_hidden()
-        table.get_by_role('searchbox').first.fill('Alex')
+        table.get_by_role('searchbox').first.fill('Staff 01')
         expect(strip).to_contain_text(re.compile(r'Filtered: 1 of \d+ people shown'))
         strip.get_by_role('button', name='Show all').click()
         expect(strip).to_be_hidden()
         expect(table.get_by_role('searchbox').first).to_have_value('')
-        table.get_by_role('searchbox').first.fill('Alex')
+        table.get_by_role('searchbox').first.fill('Staff 01')
         page.reload()
         navigate(page, 'people')
         expect(page.locator('#main .dt').first.get_by_role('searchbox').first).to_have_value('')
@@ -169,7 +169,7 @@ def test_coordinator_records_leave_in_one_place_with_a_type_and_dates_that_follo
         dialog = page.get_by_role('dialog', name='New request')
         expect(dialog.get_by_role('radio', name=re.compile('^Leave An approver'))).to_have_count(0)  # one way in
         dialog.get_by_role('radio', name=re.compile('^Leave or absence')).check()
-        dialog.get_by_label('Alex Morgan', exact=True).check()
+        dialog.get_by_label('Staff 01(test)', exact=True).check()
         expect(dialog.get_by_label('Type', exact=True)).to_be_visible()  # the one Type picker (maintenance), no free text
         dialog.get_by_label('Type', exact=True).select_option(label='Annual')
         dialog.get_by_label('All day').uncheck()

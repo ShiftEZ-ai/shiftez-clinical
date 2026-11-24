@@ -464,10 +464,10 @@ def test_an_amendment_is_approved_as_changes_counted_as_home_counts_them(browser
     s = next(x for x in snap if x['start'].startswith(tomorrow.isoformat()))
     alex = next(p for p in s['participants'] if p['person_id'] == a)
     first = h.command('coordinator', 'publication.change', {'kind': 'absence', 'shift_id': s['id'], 'assignment_id': alex['id'],
-                      'absence_reason': 'Sick', 'reason': 'Alex absent'}, pub)
+                      'absence_reason': 'Sick', 'reason': 'Staff 01 absent'}, pub)
     rev = first['workspace']['revision']
-    second = h.command('coordinator', 'publication.change', {'kind': 'add', 'shift_id': s['id'], 'person_id': c, 'reason': 'Taylor added'}, pub, rev)
-    sent = h.command('coordinator', 'publication.changes.submit', {'urgency': 'routine', 'reason': 'Cover for Alex'}, pub, second['workspace']['revision'])
+    second = h.command('coordinator', 'publication.change', {'kind': 'add', 'shift_id': s['id'], 'person_id': c, 'reason': 'Staff 03 added'}, pub, rev)
+    sent = h.command('coordinator', 'publication.changes.submit', {'urgency': 'routine', 'reason': 'Cover for Staff 01'}, pub, second['workspace']['revision'])
     amendment = sent['workspace']['id']
     context, page = sign_in(browser, live_server, 'approver', DESKTOP)
     try:

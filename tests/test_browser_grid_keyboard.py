@@ -92,7 +92,7 @@ def test_schedule_names_its_places_published_panel_list_table_and_new_range(brow
     try:
         show(page, f"schedule/week/2026-10-14?edit={d['id']}")
         grid = page.get_by_role('region', name='Week view').get_by_role('grid')
-        chip = grid.get_by_role('button', name=re.compile(r'^Jordan Lee, Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
+        chip = grid.get_by_role('button', name=re.compile(r'^Staff 02\(test\), Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
         place = chip.get_attribute('aria-label').split(', ')[2]
         assert place and place != '12 Oct 2026'
         chip.click()

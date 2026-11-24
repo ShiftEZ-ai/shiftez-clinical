@@ -172,7 +172,7 @@ def test_every_role_desktop_and_phone_light_and_dark(browser, live_server, h, ro
         if role == 'approver':
             row = needs(page, 'Leave request')
             expect(row.locator('.home-count')).to_have_text('1')
-            expect(row).to_contain_text('Alex Morgan')
+            expect(row).to_contain_text('Staff 01(test)')
             expect(needs(page, 'Rule change')).to_contain_text('Home proposed rule · proposed by Coordinator · Demo')
         if role == 'coordinator':
             row = needs(page, 'Home draft rota')
@@ -208,7 +208,7 @@ def test_every_role_desktop_and_phone_light_and_dark(browser, live_server, h, ro
             expect(today.locator('table').first.locator('tbody tr').filter(has_text='Review clinic').locator('td').nth(1)).to_have_text('—')
             away = main.locator('.home-away-list li')
             expect(away).to_have_count(1)
-            expect(away).to_contain_text('Taylor Noor')
+            expect(away).to_contain_text('Staff 03(test)')
             expect(away).to_contain_text('Annual · to')
             expect(main.get_by_role('region', name='Away today')).to_contain_text('1 person')
         if role == 'staff':

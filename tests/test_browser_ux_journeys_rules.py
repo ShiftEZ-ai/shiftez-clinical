@@ -40,7 +40,7 @@ def test_home_names_a_duty_during_approved_leave_and_replace_opens_it(browser, l
     h.shift(w)
     shift = h.detail(w)['shifts'][0]
     # The item as home.py sends it (leave_conflicts; tests/test_home_leave_conflicts.py covers the server side).
-    item = {'key': 'leave_conflicts', 'count': 2, 'sample': [{'person': 'Alex Morgan', 'start': shift['start'], 'end': shift['end'],
+    item = {'key': 'leave_conflicts', 'count': 2, 'sample': [{'person': 'Staff 01(test)', 'start': shift['start'], 'end': shift['end'],
         'rota_id': w['id'], 'rota_name': w['name'], 'shift_id': shift['id'], 'request_id': 'r1'}]}
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
@@ -48,7 +48,7 @@ def test_home_names_a_duty_during_approved_leave_and_replace_opens_it(browser, l
             **body, 'attention': [item, *body['attention']]}))
         page.reload()
         row = page.locator('.home-needs li').filter(has_text='Duties during approved leave')
-        expect(row).to_contain_text(re.compile(r'Alex Morgan · Sun,? 4 Oct'))
+        expect(row).to_contain_text(re.compile(r'Staff 01\(test\) · Sun,? 4 Oct'))
         # G-02: each duty is its own line with its Replace; the one past the sample opens the Fix list.
         expect(row.locator('.home-need-items > li').nth(0)).to_contain_text('Leave conflict rota')
         expect(row.locator('.home-need-items > li').nth(1)).to_contain_text('1 more')

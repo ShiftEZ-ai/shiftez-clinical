@@ -74,7 +74,7 @@ def test_weeks_follow_the_first_weekday_when_a_rota_starts_mid_week(client_modul
 
 
 @pytest.mark.parametrize('filters,count',[
-    ({},2),({'search':'alex'},1),({'search':'CONTINUITY'},1),({'search':'satellite'},1),
+    ({},2),({'search':'staff 01'},1),({'search':'CONTINUITY'},1),({'search':'satellite'},1),
     ({'person_id':'p2'},1),({'location_id':'l1'},1),({'assignment_type_id':'t2'},1),
     ({'location_id':'l1','person_id':'p2'},0),({'search':'private explanation'},0)])
 def test_actual_filter_function_consumes_each_supported_saved_setting(client_modules,filters,count):
@@ -82,7 +82,7 @@ def test_actual_filter_function_consumes_each_supported_saved_setting(client_mod
         {'id':'a','location_id':'l1','assignment_type_id':'t1','type_snapshot':{'name':'Clinic'},'service_ids':['s1'],'participants':[{'person_id':'p1'}]},
         {'id':'b','location_id':'l2','assignment_type_id':'t2','type_snapshot':{'name':'Education'},'service_ids':['s2'],'participants':[{'person_id':'p2'}]}],
         'catalogues':{'locations':[{'id':'l1','name':'Main room'},{'id':'l2','name':'Satellite'}],
-            'people':[{'id':'p1','display_name':'Alex Morgan'},{'id':'p2','display_name':'Jordan Lee'}],
+            'people':[{'id':'p1','display_name':'Staff 01(test)'},{'id':'p2','display_name':'Staff 02(test)'}],
             'services':[{'id':'s1','name':'Continuity'},{'id':'s2','name':'Academic'}]}}
     assert len(js(client_modules,'m.filterShifts(input.shifts,input.catalogues,input.filters)',value))==count
 

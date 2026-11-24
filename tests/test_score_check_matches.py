@@ -62,7 +62,7 @@ def test_any_confident_match_can_be_overridden_and_undone_using_decide(h, kind):
     item = next(item for item in before['items'] if item['kind'] == kind)
     if kind == 'person':
         target = next(person['id'] for person in h.get('coordinator', '/api/catalogues')['people']
-                      if person['display_name'] == 'Jordan Lee')
+                      if person['display_name'] == 'Staff 02(test)')
     else:
         catalogue = 'assignment_types' if kind == 'duty_code' else 'services'
         extra = {'definition': {}} if kind == 'duty_code' else {}

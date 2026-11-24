@@ -28,7 +28,7 @@ def test_rule_numbers_read_in_one_style_everywhere(browser, live_server, h, sche
     flag(h)
     a = h.seed['people'][0]
     catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line', ends_on='2026-10-20'),
-                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line')])
+                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 line')])
     context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
     try:
         page.emulate_media(color_scheme=scheme)
@@ -49,7 +49,7 @@ def test_rule_numbers_read_in_one_style_everywhere(browser, live_server, h, sche
         plain(issue.locator('.rule-num').first)
         # A rule's lines table and the line panel's title.
         navigate(page, 'rules/duties_per_month')
-        row = main.locator('tr[data-row]').filter(has_text='Alex line')
+        row = main.locator('tr[data-row]').filter(has_text='Staff 01 line')
         max_ = row.get_by_label(re.compile('^Max: ')).locator('.rule-num')
         expect(max_).to_have_text('10 Mandatory')
         plain(max_)

@@ -80,7 +80,7 @@ def test_phone_navigation_lists_only_phone_views(browser, live_server, h, role, 
         # Commands follow the same rule: no planning or setup actions, no People results.
         expect(page.get_by_role('option').first).to_be_visible()
         expect(page.get_by_role('option', name=re.compile(r'New rota|announcement|Auto-schedule', re.I))).to_have_count(0)
-        expect(page.get_by_role('option', name=re.compile(r'Alex Morgan'))).to_have_count(0)
+        expect(page.get_by_role('option', name=re.compile(r'Staff 01\(test\)'))).to_have_count(0)
         page.keyboard.press('Escape')
         if role == 'staff':
             shot(page, f'home-staff-{theme}')

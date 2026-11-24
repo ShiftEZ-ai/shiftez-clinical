@@ -281,7 +281,7 @@ def test_standalone_proposal_stays_discoverable_and_can_be_checked_in_catalogue_
     try:
         if scope == 'person':
             navigate(page, 'people')
-            page.get_by_role('button', name=re.compile('^More actions for Alex Morgan')).click()
+            page.get_by_role('button', name=re.compile('^More actions for Staff 01\\(test\\)')).click()
             page.get_by_role('menuitem', name='Add a rule for this person', exact=True).click()
             form = page.get_by_role('dialog', name='Add rule', exact=True)
             form.get_by_label('Rule title', exact=True).fill(title)

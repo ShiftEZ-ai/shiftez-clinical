@@ -644,7 +644,7 @@ def test_staffing_replacement_options_use_same_maximum_quota(h):
     shift = h.detail(w)["shifts"][0]
     result = h.client("coordinator").post("/api/planner/staffing-suggestions", json={
         "workspace_id": w["id"], "expected_revision": w["revision"], "shift_id": shift["id"],
-        "replace_assignment_id": shift["participants"][0]["id"], "search": "Jordan"})
+        "replace_assignment_id": shift["participants"][0]["id"], "search": "Staff 02"})
     assert result.status_code == 200
     option = result.json()["candidates"][0]
     assert option["person_blockers"] == 1 and not option["whole_candidate_valid"]

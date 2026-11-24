@@ -354,7 +354,7 @@ def test_rule_exceptions_exception_label_matches_only_indented_non_safety_lines(
         item = _list_item(page)
         expect(item.locator('ol.rt-exc > li.rt-ln')).to_have_count(2)
         expect(item.locator('ol.rt-always > li.rt-ln')).to_have_count(1)
-        expect(item.locator('ol.rt-exc > li.rt-ln').filter(has_text='Alex Morgan')).to_have_count(1)
+        expect(item.locator('ol.rt-exc > li.rt-ln').filter(has_text='Staff 01(test)')).to_have_count(1)
         navigate(page, 'rules/workload_limit')
         for line_id in (mandatory['id'], advisory['id']):
             expect(_line_rows(page, line_id).locator('.rt-exc-who .sr-only')).to_have_text('Exception: ')

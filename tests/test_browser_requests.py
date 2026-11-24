@@ -667,7 +667,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
         whole_list(page)  # the whole list, not the decider's Waiting for you
         def hold_search(route):
             nonlocal captured
-            if captured or parse_qs(urlparse(route.request.url).query).get('q') != ['Jordan']:
+            if captured or parse_qs(urlparse(route.request.url).query).get('q') != ['Staff 02']:
                 return route.continue_()
             captured = True
             response = route_fetch(route)
@@ -676,7 +676,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
             else:
                 held.append((route, response))
         page.route('**/api/requests/all?*', hold_search)
-        page.get_by_role('searchbox', name='Search requests').fill('Jordan')
+        page.get_by_role('searchbox', name='Search requests').fill('Staff 02')
         wait_held(page, held)
         for n in range(3):
             rows(page).nth(n).locator('input.bulk-check').check()
@@ -690,7 +690,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
         expect(dialog).to_have_count(0)
         expect(rows(page).get_by_text('Approved', exact=True)).to_have_count(3)
         route, response = held.pop(0)
-        with page.expect_response(lambda r: parse_qs(urlparse(r.url).query).get('q') == ['Jordan']) as delivered:
+        with page.expect_response(lambda r: parse_qs(urlparse(r.url).query).get('q') == ['Staff 02']) as delivered:
             route.fulfill(response=response)
         delivered.value.finished()
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
@@ -928,7 +928,7 @@ def test_a_declined_swap_is_open_again_after_undo(browser, live_server, h):
         dialog.get_by_role('button', name='Decline swap', exact=True).click()
         expect(row(page, 'Swap')).to_contain_text('Declined')
         page.locator('#toast-tray .toast', has_text='Swap declined.').get_by_role('button', name='Undo', exact=True).click()
-        expect(row(page, 'Swap').locator('.badge')).to_contain_text('Waiting for Jordan Lee')
+        expect(row(page, 'Swap').locator('.badge')).to_contain_text('Waiting for Staff 02(test)')
         expect(rows(page)).to_have_count(1)  # one thread: the reopened swap, not the declined one beside it
     finally:
         context.close()
@@ -937,7 +937,7 @@ def test_a_declined_swap_is_open_again_after_undo(browser, live_server, h):
         navigate(page, 'requests?type=swap')
         expect(row(page, 'Swap').get_by_role('button', name='Offer a duty in return', exact=True)).to_be_visible()
         rows(page).first.locator('td').nth(1).click()
-        expect(page.get_by_role('region', name=re.compile('Jordan Lee')).locator('.request-history')).to_contain_text('Step undone')
+        expect(page.get_by_role('region', name=re.compile('Staff 02\\(test\\)')).locator('.request-history')).to_contain_text('Step undone')
     finally:
         context.close()
 
@@ -1122,7 +1122,7 @@ def test_your_own_request_reads_as_yours_and_a_decider_keeps_the_decision_in_rea
         panel = page.locator('.request-panel')
         expect(panel.locator('.request-facts')).to_be_visible()
         expect(panel.locator('.request-facts dt', has_text='Person')).to_have_count(0)
-        expect(panel.locator('.side-head small:not(.side-pos)')).not_to_contain_text('Alex Morgan')
+        expect(panel.locator('.side-head small:not(.side-pos)')).not_to_contain_text('Staff 01(test)')
         expect(panel.get_by_text(re.compile(r"^You're on duty"))).to_be_visible()
         expect(panel.get_by_text('Approving opens', exact=False)).to_have_count(0)
     finally:

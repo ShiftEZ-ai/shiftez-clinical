@@ -27,7 +27,7 @@ def test_a_server_that_stops_answering_says_reconnecting_and_recovers_by_itself(
     context, page = themed(browser, live_server, 'admin', width, theme)
     try:
         navigate(page, 'people')
-        expect(page.locator('#main').get_by_text('Alex Morgan', exact=True).first).to_be_visible()
+        expect(page.locator('#main').get_by_text('Staff 01(test)', exact=True).first).to_be_visible()
         connection = page.locator('#connection')
         expect(connection).to_have_accessible_name('Connected')
         page.route('**/api/**', lambda route: route.fulfill(**GATEWAY))
@@ -36,14 +36,14 @@ def test_a_server_that_stops_answering_says_reconnecting_and_recovers_by_itself(
         expect(connection.locator('.status-word')).to_have_text('Reconnecting…')
         expect(connection.locator('.spinner')).to_have_count(1)
         expect(page.locator('#main > .stale-banner')).to_have_count(1)
-        expect(page.locator('#main').get_by_text('Alex Morgan', exact=True).first).to_be_visible()  # the data stays
+        expect(page.locator('#main').get_by_text('Staff 01(test)', exact=True).first).to_be_visible()  # the data stays
         expect(page.locator('.login-layout')).to_have_count(0)  # never signed out
         page.unroute('**/api/**')
         # The app's own next read (its periodic pulse) answers: nobody presses anything.
         page.evaluate("window.importBundle('api.js').then(m => m.background('/api/pulse'))")
         expect(connection).to_have_accessible_name('Connected')
         expect(page.locator('#main > .stale-banner')).to_have_count(0)
-        expect(page.locator('#main').get_by_text('Alex Morgan', exact=True).first).to_be_visible()
+        expect(page.locator('#main').get_by_text('Staff 01(test)', exact=True).first).to_be_visible()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     finally:
         context.close()

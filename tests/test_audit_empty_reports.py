@@ -89,6 +89,6 @@ def test_team_report_formats_accept_missing_snapshot_people(database, request):
         response = h.client('coordinator').get(url + '?format=' + format)
         assert response.status_code == 200, response.text
         assert 'Unknown person' in response.text and 'Assigned' in response.text
-        assert 'Alex Morgan' not in response.text
+        assert 'Staff 01(test)' not in response.text
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Publication, publication_id).snapshot == before
