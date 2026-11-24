@@ -182,8 +182,8 @@ class DefaultBranchTests(unittest.TestCase):
         for default in ("dev", "main", ""):
             other = "main" if default == "dev" else "dev"
             for ref_type, ref_name, expected in (
-                    ("branch", default, "--tag img:dev --tag img:dev-0123456789ab" if default else None),
-                    ("tag", "v1.2.3", "--tag img:v1.2.3"), ("branch", other, None), ("branch", "feature", None)):
+                    ("branch", default, "img:dev img:dev-0123456789ab" if default else None),
+                    ("tag", "v1.2.3", "img:v1.2.3"), ("branch", other, None), ("branch", "feature", None)):
                 with self.subTest(default=default, ref=ref_type + "/" + ref_name):
                     env = {**os.environ, "REF_TYPE": ref_type, "REF_NAME": ref_name, "COMMIT": commit,
                            "DEFAULT_BRANCH": default}
@@ -191,10 +191,11 @@ class DefaultBranchTests(unittest.TestCase):
                                             env=env, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.stdout.strip() if result.returncode == 0 else None, expected, result.stderr)
 
-    def test_public_image_requires_main_and_a_passing_scan_before_push_and_attestation(self):
+    def test_every_image_publish_requires_a_passing_scan(self):
         doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
         jobs = doc["jobs"]
         self.assertEqual(set(doc["on"]), {"push"})
+        self.assertEqual(doc["on"]["push"]["tags"], ["v*"])
         self.assertEqual(doc["permissions"], {"contents": "read"})
         self.assertEqual(jobs["publish"]["permissions"], {
             "contents": "read", "packages": "write", "id-token": "write", "attestations": "write",
@@ -205,42 +206,37 @@ class DefaultBranchTests(unittest.TestCase):
                 self.assertTrue(permissions == "read-all" or
                                 (isinstance(permissions, dict) and set(permissions.values()) <= {"read"}))
 
-        private_push, scanner, scan, login, push, attest = jobs["publish"]["steps"][-6:]
-        self.assertEqual(private_push["id"], "push")
-        self.assertNotIn("if", private_push)
-        main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-        self.assertEqual(scanner["if"], main_push)
-        self.assertEqual(scanner["working-directory"], "scripts")
-        when_present, _, when_absent = scanner["run"].partition("else\n")
-        self.assertIn("if [[ -f privacy_check.py ]]; then", when_present)
-        self.assertIn('echo \'available=true\' >> "$GITHUB_OUTPUT"', when_present)
-        self.assertIn("$GITHUB_STEP_SUMMARY", when_absent)
-        self.assertNotIn("$GITHUB_OUTPUT", when_absent)
-        self.assertEqual(scan["if"], f"steps.{scanner['id']}.outputs.available == 'true'")
+        scan, login, push, public_push, attest = jobs["publish"]["steps"][-5:]
+        self.assertEqual(scan["id"], "scan")
+        self.assertNotIn("if", scan)
         self.assertNotIn("continue-on-error", scan)
         self.assertTrue(scan["run"].startswith("set -euo pipefail\n"))
-        self.assertIn("--load --provenance=false", scan["run"])
+        self.assertIn("--provenance=false", scan["run"])
+        self.assertIn('--output "type=docker,dest=$archive" --iidfile "$iid"', scan["run"])
         self.assertIn("--build-arg PUBLIC_IMAGE=1", scan["run"])
-        self.assertNotIn("PUBLIC_IMAGE", private_push["run"])
         self.assertNotIn("--push", scan["run"])
-        self.assertIn('docker image save --output "$archive" "$image:$tag"', scan["run"])
-        self.assertIn('python3 scripts/scan_public_image.py "$archive" "$base_config" "$image_id"', scan["run"].splitlines())
+        self.assertNotIn("--tag", scan["run"])
+        self.assertNotIn("docker image tag", scan["run"])
+        scanner = 'python3 scripts/scan_public_image.py "$archive" "$base_config" "$image_id"'
+        self.assertLess(scan["run"].index(scanner), scan["run"].index("docker image load"))
         passed = f"steps.{scan['id']}.outcome == 'success'"
         self.assertEqual(login["if"], passed)
+        self.assertEqual(push["id"], "push")
         self.assertEqual(push["if"], passed)
-        self.assertEqual(push["env"], {
-            "IMAGE": "${{ steps.public_scan.outputs.image }}", "TAG": "${{ steps.public_scan.outputs.tag }}",
-            "IMAGE_ID": "${{ steps.public_scan.outputs.image-id }}",
+        self.assertEqual(push["env"]["IMAGE_ID"], "${{ steps.scan.outputs.image-id }}")
+        main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        self.assertEqual(public_push["if"], f"{passed} && {main_push}")
+        self.assertEqual(public_push["env"], {
+            "IMAGE": "${{ steps.scan.outputs.public-image }}", "TAG": "${{ steps.scan.outputs.public-tag }}",
+            "IMAGE_ID": "${{ steps.scan.outputs.image-id }}",
         })
-        self.assertIn('docker push "$IMAGE:$TAG"', push["run"])
-        self.assertIn('docker buildx imagetools inspect --raw "$IMAGE@$digest"', push["run"])
         self.assertEqual(jobs["publish"]["outputs"], {
             "digest": "${{ steps.push.outputs.digest }}", "public-digest": "${{ steps.public_push.outputs.digest }}",
         })
-        self.assertEqual(attest["if"], f"steps.{push['id']}.outcome == 'success'")
+        self.assertEqual(attest["if"], f"steps.{public_push['id']}.outcome == 'success'")
         self.assertRegex(attest["uses"], r"^actions/attest-build-provenance@[0-9a-f]{40}$")
         self.assertEqual(attest["with"], {
-            "subject-name": "${{ steps.public_scan.outputs.image }}",
+            "subject-name": "${{ steps.scan.outputs.public-image }}",
             "subject-digest": "${{ steps.public_push.outputs.digest }}",
             "push-to-registry": "true",
             "create-storage-record": "false",
@@ -261,7 +257,7 @@ class DefaultBranchTests(unittest.TestCase):
                 self.assertEqual("--no-compile" in result.stdout.splitlines(), public == "1")
 
 
-def test_public_publish_stops_on_scan_failure_or_config_mismatch(tmp_path):
+def test_push_uses_the_scanned_image_id_and_rejects_config_mismatch(tmp_path):
     repo = DefaultBranchTests.REPO
     doc = yaml.load((repo / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
     steps = {step.get("id"): step for step in doc["jobs"]["publish"]["steps"]}
@@ -275,39 +271,111 @@ def test_public_publish_stops_on_scan_failure_or_config_mismatch(tmp_path):
                                 env=env, cwd=repo, capture_output=True, text=True, timeout=30)
         return result.returncode, output.read_text().splitlines()
 
-    scan = run("public_scan", """
-docker() { :; }
-git() { :; }
-python3() { return 44; }
-""", COMMIT="0" * 40, GITHUB_REPOSITORY="owner/repo", GITHUB_SERVER_URL="", RUNNER_TEMP=tmp_path.as_posix())
-    assert scan == (44, [])
-
-    push = """
+    stubs = """
 docker() {
-  if [[ "$1" == push ]]; then printf '%s: digest: %s\n' "$TAG" "$PUBLISHED"; fi
+  case "$1/$2" in
+    image/tag) [[ "$3" == "$IMAGE_ID" ]] ;;
+    buildx/imagetools) [[ "$3/$4" == "inspect/--raw" ]] ;;
+    push/*) printf '%s: digest: %s\n' "${2##*:}" "$PUBLISHED" ;;
+    *) return 90 ;;
+  esac
 }
 jq() { printf '%s\n' "$REMOTE_CONFIG"; }
 """
-    for remote in ("wrong", "matching"):
-        result = run("public_push", push, IMAGE="image", TAG="tag", IMAGE_ID="matching",
-                     REMOTE_CONFIG=remote, PUBLISHED=published)
-        expected = [f"digest={published}"] if remote == "matching" else []
-        assert result == (int(remote != "matching"), expected)
+    for step in ("push", "public_push"):
+        for remote in ("wrong", "matching"):
+            result = run(step, stubs, IMAGE="image", TAG="tag", IMAGE_ID="matching", COMMIT="0" * 40,
+                         REF_TYPE="branch", REF_NAME="main", DEFAULT_BRANCH="main", GITHUB_REPOSITORY="owner/repo",
+                         REMOTE_CONFIG=remote, PUBLISHED=published)
+            expected = [f"digest={published}"] if remote == "matching" else []
+            assert result == (int(remote != "matching"), expected)
+
+
+def image_tar(files):
+    data = BytesIO()
+    with tarfile.open(fileobj=data, mode="w") as archive:
+        for name, content in files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, BytesIO(content))
+    return data.getvalue()
+
+
+def image_digest(data):
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def test_image_build_step_rejects_planted_values_on_branch_and_tag(tmp_path):
+    repo = DefaultBranchTests.REPO
+    doc = yaml.load((repo / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
+    scan = next(step["run"] for step in doc["jobs"]["publish"]["steps"] if step.get("id") == "scan")
+    stubs = """
+git() { :; }
+python3() { "$TEST_PYTHON" "$@"; }
+docker() {
+  case "$1/$2" in
+    buildx/imagetools) cat "$FIXTURE_BASE" ;;
+    buildx/create) : ;;
+    buildx/build)
+      while (( $# )); do
+        case "$1" in
+          --output) cp "$FIXTURE_ARCHIVE" "${2#type=docker,dest=}"; shift ;;
+          --iidfile) printf '%s' "$FIXTURE_ID" > "$2"; shift ;;
+          --tag|--push) return 90 ;;
+        esac
+        shift
+      done
+      ;;
+    image/load) echo 'loaded' >> "$TRACE" ;;
+    *) return 90 ;;
+  esac
+}
+"""
+    base = image_tar({"base.txt": b"clean"})
+    # Construct synthetic values at runtime so the source tree stays clean.
+    marker = ("gh" + "p_" + "aB3d" * 9).encode()
+    address = ("10." + "20.30.40").encode()
+    base_config = tmp_path / "base.json"
+    fixture = tmp_path / "fixture.tar"
+    output = tmp_path / "output"
+    trace = tmp_path / "trace"
+
+    def config(layers):
+        return json.dumps({"os": "linux", "architecture": "amd64",
+                           "rootfs": {"type": "layers", "diff_ids": [image_digest(layer) for layer in layers]}}).encode()
+
+    base_config.write_bytes(config([base]))
+    for planted in (False, True):
+        first = image_tar({"removed.txt": marker + b"\n" + address if planted else b"clean"})
+        later = image_tar({".wh.removed.txt": b""})
+        content = config([base, first, later])
+        manifest = [{"Config": "config.json", "Layers": ["base.tar", "first.tar", "later.tar"]}]
+        fixture.write_bytes(image_tar({"manifest.json": json.dumps(manifest).encode(), "config.json": content,
+                                       "base.tar": base, "first.tar": first, "later.tar": later}))
+        for ref_type, ref_name in (("branch", "main"), ("tag", "v1.2.3")):
+            output.write_bytes(b"")
+            trace.write_bytes(b"")
+            env = {**os.environ, "GITHUB_OUTPUT": output.as_posix(), "RUNNER_TEMP": tmp_path.as_posix(),
+                   "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SERVER_URL": "", "COMMIT": "0" * 40,
+                   "GITHUB_REF_TYPE": ref_type, "GITHUB_REF_NAME": ref_name, "TEST_PYTHON": Path(sys.executable).as_posix(),
+                   "FIXTURE_BASE": base_config.as_posix(), "FIXTURE_ARCHIVE": fixture.as_posix(),
+                   "FIXTURE_ID": image_digest(content), "TRACE": trace.as_posix()}
+            result = subprocess.run([SHELL, "-c", stubs + scan], env=env, cwd=repo, capture_output=True, timeout=30)
+            assert result.returncode == int(planted)
+            assert all(value not in result.stdout + result.stderr for value in (marker, address))
+            if planted:
+                assert result.stdout.splitlines()[:3] == [b"github-token: 1", b"ipv4: 1", b"Image privacy scan: 2 hits"]
+                assert output.read_bytes() == trace.read_bytes() == b""
+            else:
+                assert b"Image privacy scan: 0 hits" in result.stdout
+                assert output.read_text().splitlines()[0] == f"image-id={image_digest(content)}"
+                assert trace.read_text().splitlines() == ["loaded"]
 
 
 def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path, capsys):
     from scripts import scan_public_image
 
     marker = "planted value"
-
-    def tar(files):
-        data = BytesIO()
-        with tarfile.open(fileobj=data, mode="w") as archive:
-            for name, content in files.items():
-                entry = tarfile.TarInfo(name)
-                entry.size = len(content)
-                archive.addfile(entry, BytesIO(content))
-        return data.getvalue()
 
     image = tmp_path / "image.tar"
     base_config = tmp_path / "base.json"
@@ -316,7 +384,7 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
     dpkg_status = "var/lib/dpkg/status"
     dpkg_line = b"Depends: " + upstream + b"\xff"
     base_status = b"Version: 1\n" + dpkg_line + b"\n"
-    base_layer = tar({"base.txt": upstream, dpkg_status: base_status})
+    base_layer = image_tar({"base.txt": upstream, dpkg_status: base_status})
     upgraded_status = b"Version: 2\n" + dpkg_line + b"\n\nPackage: extra\nVersion: 1\n"
     root = "usr/local/lib/python3.13/site-packages"
     installed = f"{root}/module.py"
@@ -326,32 +394,29 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
     excepted = "generated.bin"
     exceptions.write_text(json.dumps({excepted: {hashlib.sha256(upstream).hexdigest(): ["test-pattern"]}}))
 
-    def digest(data):
-        return "sha256:" + hashlib.sha256(data).hexdigest()
-
     def config(layers, value="clean"):
         return {"os": "linux", "architecture": "amd64", "rootfs": {"type": "layers", "diff_ids": layers},
                 "config": {"Env": [f"VALUE={value}"]}}
 
     def make_image(files, later, *, value="clean", changed_base=False, missing_config=False):
-        layers = [base_layer, tar(files), tar(later)]
-        content = json.dumps(config([digest(layer) for layer in layers], value)).encode()
+        layers = [base_layer, image_tar(files), image_tar(later)]
+        content = json.dumps(config([image_digest(layer) for layer in layers], value)).encode()
         manifest = [{"Config": "config.json", "Layers": ["base.tar.gz", "first.tar", "second.tar"]}]
         members = {
             "manifest.json": json.dumps(manifest).encode(),
-            "base.tar.gz": gzip.compress(tar({"new-base.txt": upstream}) if changed_base else base_layer),
+            "base.tar.gz": gzip.compress(image_tar({"new-base.txt": upstream}) if changed_base else base_layer),
             "first.tar": layers[1],
             "second.tar": layers[2],
         }
         if not missing_config:
             members["config.json"] = content
-        image.write_bytes(tar(members))
-        return digest(content)
+        image.write_bytes(image_tar(members))
+        return image_digest(content)
 
     def findings(text):
         return [(number, "test-pattern") for number, line in enumerate(text.split("\n"), 1) if marker in line]
 
-    base_config.write_text(json.dumps(config([digest(base_layer)])))
+    base_config.write_text(json.dumps(config([image_digest(base_layer)])))
     good = {installed: upstream, record: wheel_record, excepted: upstream, dpkg_status: upgraded_status}
     removed = {".wh.removed.txt": b""}
     with (patch.dict(sys.modules, {"privacy_check": SimpleNamespace(findings=findings)}),
@@ -380,8 +445,8 @@ def test_public_image_scan_verifies_upstream_content_and_scans_the_rest(tmp_path
             image_id = make_image(good, removed, **changes)
             assert scan_public_image.main(image, base_config, image_id) == 2
         image_id = make_image(good, removed)
-        assert scan_public_image.main(image, base_config, digest(b"wrong cfg")) == 2
-        base_config.write_text(json.dumps(config([digest(b"wrong base")])))
+        assert scan_public_image.main(image, base_config, image_digest(b"wrong cfg")) == 2
+        base_config.write_text(json.dumps(config([image_digest(b"wrong base")])))
         assert scan_public_image.main(image, base_config, image_id) == 2
 
 
