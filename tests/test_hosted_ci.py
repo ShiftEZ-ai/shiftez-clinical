@@ -112,6 +112,7 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     }))
     trusted_ci.canaries.verify_directory(tmp_path, allow_retry=True)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.delenv("GITHUB_REF", raising=False)
     single = run(["tests/test_x.py"], "unit", tmp_path / "push.xml", [], "0", None, candidate=candidate)
     assert single["exit_code"] == 1 and "retry" not in single
     assert not (tmp_path / "push-retry.xml").exists()
@@ -126,6 +127,8 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     pytest.param([1], False, True, "main", "merge_group", True, "dev", id="release-uses-accepted-dev"),
     # After the rename main is the default, so its merge groups are integration and read the candidate.
     pytest.param([1], False, True, "main", "merge_group", True, "main", id="renamed-main-group-retirement"),
+    pytest.param([1], False, True, "main", "push", False, "main", id="default-branch-push"),
+    pytest.param([1], False, False, "main", "push", False, "dev", id="non-default-push"),
 ])
 def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
         tmp_path, monkeypatch, replicas, smoke, retry_expected, branch, event, retired, default):
@@ -160,10 +163,13 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
-    monkeypatch.setattr(trusted_ci.policy, "event", lambda: {
-        "pull_request": {"base": {"ref": branch}}, "merge_group": {"base_ref": "refs/heads/" + branch},
-        "repository": {"default_branch": default},
-    })
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/" + branch)
+    payload = {"repository": {"default_branch": default}}
+    if event == "pull_request":
+        payload[event] = {"base": {"ref": branch}}
+    elif event == "merge_group":
+        payload[event] = {"base_ref": "refs/heads/" + branch}
+    monkeypatch.setattr(trusted_ci.policy, "event", lambda: payload)
     release = branch == "main" and default != "main"
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")

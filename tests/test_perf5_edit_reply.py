@@ -490,7 +490,8 @@ def test_publish_rejects_inputs_changed_after_read_basis(backend, monkeypatch):
         result = original(row, revision)
         if row.id == w['id'] and not changed_inputs:
             with transaction(h.app.state.engine, write=True) as writer:
-                writer.get(m.Location, h.seed['locations'][0]).capacity += 1
+                # The captured ceiling still binds when capacity rises. Lower it to exercise the publish race.
+                writer.get(m.Location, h.seed['locations'][0]).capacity -= 1
             changed_inputs.append(True)
         return result
     monkeypatch.setattr(commands, 'expected', changed)

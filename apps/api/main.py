@@ -1944,6 +1944,16 @@ def create_app(settings: Settings | None = None, engine=None):
         def operation(db):
             actor = actor_for(request, db, write=True)
             return disclose_leave(db, actor, planner_tools.preview(db, actor, command))
+        if engine.dialect.name == 'postgresql':
+            # The trial rolls back its writes. One snapshot keeps admission and both
+            # views consistent without acquiring the instance-wide writer.
+            trial = engine.execution_options(isolation_level='REPEATABLE READ')
+            try:
+                return JSONResponse(retry_write(trial, operation, serialize=False))
+            except OperationalError as exc:
+                if getattr(exc.orig, 'sqlstate', None) in {'40001', '40P01'}:
+                    raise DatabaseWriteTimeout() from None
+                raise
         return JSONResponse(retry_write(engine, operation))
 
     @app.get("/api/workspaces/{workspace_id}/compare")
@@ -3555,7 +3565,7 @@ def create_app(settings: Settings | None = None, engine=None):
     def job_detail(job_id: str, request: Request, full: bool = False):
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            from .services.job_reads import current_source_digest, generation_currency, metadata, result_stale
+            from .services.job_reads import current_source_digest, full_job_result, generation_currency, metadata, result_stale
             from .services.jobs import superseded_flag
             from .serialization import effective_input_fingerprint, job_detail_result, job_result_projection
             from .serialization import job_result_with_reconciliation
@@ -3580,7 +3590,7 @@ def create_app(settings: Settings | None = None, engine=None):
             projection = None if full else (job.result_summary if job.read_metadata is not None
                                              else job_result_projection(job.kind, job.result))
             # Apply the current read projection to summaries retained by older workers too.
-            result = job.result if full else job_detail_result(job.kind, (projection or {}).get('result'))
+            result = full_job_result(db, job) if full else job_detail_result(job.kind, (projection or {}).get('result'))
             result = job_result_with_reconciliation(job, result)
             include_events = job.kind == 'generation' and job.status == 'running'
             if include_events:
