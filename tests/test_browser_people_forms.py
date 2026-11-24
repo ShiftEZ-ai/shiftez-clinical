@@ -147,7 +147,7 @@ def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, 
     def directory_extension():
         rows = h.get("coordinator", "/api/directory")["people"]
         entry = next(row for row in rows if row["id"] == p["id"])
-        return next((contact["value"] for contact in entry["contacts"]
+        return next((contact["value"] for contact in entry.get("contacts", ())
                      if contact["legacy_field"] == "work_extension"), None)
 
     context, page = sign_in(browser, live_server, "coordinator")
