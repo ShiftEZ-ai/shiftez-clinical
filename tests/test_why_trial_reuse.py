@@ -16,7 +16,7 @@ from tests.test_performance_budget import python_budget
 
 
 @pytest.mark.postgres
-def test_department_why_reuses_exact_trials(pg, monkeypatch):
+def test_department_why_reuses_exact_trials(pg, monkeypatch, record_property):
     workspace, data, _, _ = scale_department(pg)
     people = list(data['people'])
     policies = [rule(data, f'Synthetic Why rule {n}', {'kind': 'max_hours', 'hours': 168},
@@ -53,6 +53,9 @@ def test_department_why_reuses_exact_trials(pg, monkeypatch):
         expected, baseline = measure(pg, 'why-reference', lambda: why(pg, workspace, [shift['id']]))
     result.pop('evaluated_at')
     expected.pop('evaluated_at')
+    record_property('why_trial_work', reused_work)
+    record_property('why_reference_work', len(calls))
+    record_property('why_selects', measured['sql'].get('SELECT', 0))
     assert result == expected
     assert len(result['sessions'][0]['rows']) == 163
     assert reused_work < len(calls) * .8, (reused_work, len(calls))
@@ -64,13 +67,13 @@ def test_department_why_reuses_exact_trials(pg, monkeypatch):
 
 @pytest.mark.postgres
 @pytest.mark.cpu_budget
-def test_department_why_cpu_budget(pg, monkeypatch):
-    state = test_department_why_reuses_exact_trials(pg, monkeypatch)
+def test_department_why_cpu_budget(pg, monkeypatch, record_property):
+    state = test_department_why_reuses_exact_trials(pg, monkeypatch, record_property)
     assert state['measured']['cpu_seconds'] < python_budget(3.5), state['measured']
 
 
 @pytest.mark.postgres
 @pytest.mark.wall_benchmark
-def test_department_why_wall_budget(pg, monkeypatch):
-    state = test_department_why_reuses_exact_trials(pg, monkeypatch)
+def test_department_why_wall_budget(pg, monkeypatch, record_property):
+    state = test_department_why_reuses_exact_trials(pg, monkeypatch, record_property)
     assert state['measured']['wall_seconds'] < python_budget(12), state['measured']
