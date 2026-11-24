@@ -2173,6 +2173,10 @@ def put_back(db, actor, workspace, snapshot, current):
 def undo(db, actor, command):
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True})
+        draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
     require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
     current = workspace_content(db, workspace)
@@ -2183,10 +2187,13 @@ def undo(db, actor, command):
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
         receipt_column, raw_revision, current_revision = job_reconciliation_columns()
-        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
-                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
-                current_revision == change.resulting_content_revision)):
+        jobs = select(m.Job, receipt_column, raw_revision).options(
+            defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+            m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+            current_revision == change.resulting_content_revision).order_by(m.Job.id)
+        if lock_jobs:
+            jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+        for job, receipt, revision in db.execute(jobs):
             result = job_result_with_reconciliation(job, {'reconciliation': receipt,
                                                           'applied_content_revision': revision})
             if result['applied_content_revision'] == change.resulting_content_revision:
@@ -2260,6 +2267,10 @@ def redo(db, actor, command):
     whole rota check, and is itself an edit: audited, and undoable again."""
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True})
+        draft(db, actor, command.target_id, command.expected_revision)
     step = db.scalar(latest_change(workspace, m.ChangeSet))
     require(step is not None and step.before_snapshot.get('_undo_of') and step.actor_id == actor.identity_id, 'NO_REDO',
             'Nothing to redo: Redo follows your own Undo, until the rota changes again', 409)
@@ -2270,9 +2281,12 @@ def redo(db, actor, command):
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
     receipt_column, _, _ = job_reconciliation_columns()
     revision = workspace.content_revision + int(content_changed)
-    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
-            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+    jobs = select(m.Job, receipt_column).options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+        m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+        m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded').order_by(m.Job.id)
+    if lock_jobs:
+        jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+    for job, receipt in db.execute(jobs):
         receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
         retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
