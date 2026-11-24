@@ -88,11 +88,16 @@ def resume_expired(job, days):
     return aware(job.completed_at or job.created_at) < m.now() - timedelta(days=days)
 
 
+def generation_admitted(job):
+    return job.input_snapshot['_generation_authority_pending'].as_boolean().is_not(True)
+
+
 def resume_current(db, job, *, days=None):
     if days is not None and resume_expired(job, days):
         return False
-    latest = db.scalar(select(m.Job.id).where(m.Job.workspace_id == job.workspace_id, m.Job.kind == 'generation')
-                       .order_by(m.Job.created_at.desc(), m.Job.seq.desc()).limit(1))
+    latest = db.scalar(select(m.Job.id).where(m.Job.workspace_id == job.workspace_id, m.Job.kind == 'generation',
+        or_(m.Job.id == job.id, generation_admitted(m.Job)))
+        .order_by(m.Job.created_at.desc(), m.Job.seq.desc()).limit(1))
     if latest != job.id:
         return False
     workspace = db.scalar(select(m.Workspace).where(m.Workspace.id == job.workspace_id).options(load_only(
@@ -105,7 +110,7 @@ def resume_current(db, job, *, days=None):
 def prune_generation_resume(db, *, days, limit=None):
     newer = aliased(m.Job)
     superseded = exists(select(newer.id).where(newer.workspace_id == m.Job.workspace_id, newer.kind == 'generation',
-        or_(newer.created_at > m.Job.created_at,
+        generation_admitted(newer), or_(newer.created_at > m.Job.created_at,
             and_(newer.created_at == m.Job.created_at, newer.seq > m.Job.seq))))
     invalid_workspace = m.Job.workspace_id.in_(select(m.Workspace.id).where(or_(
         m.Workspace.status != 'draft', m.Workspace.archived_at.is_not(None))))
