@@ -44,6 +44,28 @@ def test_weekly_maximum_precedence_survives_catalogue_conversion(h, entry):
     assert proof['identical'], proof
 
 
+def test_independent_weekly_primitives_stay_separate_across_both_conversions(h):
+    from packages.domain.rule_catalogue_migration import plan
+
+    before = fixture(h, people=22, sessions=2)
+    person = next(iter(before['people']))
+    cap = rule('Synthetic individual weekly limit', {'kind': 'max_duties', 'maximum': 7, 'window': 'week'},
+               {'person_id': person})
+    workload = rule('Synthetic shared weekly quota', quota('2026-10-04', '2026-10-11', 1, 'range', 'duties',
+                                                           maximum_amount=4, window_alignment='calendar_week'))
+    proposals, held = plan([cap, workload], department_id='d')
+    assert held == []
+    [proposal] = proposals
+    assert set(proposal['rule_ids']) == {cap['id'], workload['id']}
+    source = proposal['row']
+    assert outranking_by_number(source) == {}
+    before['policies'] = [source]
+    conversion = plan_v2([source], department_id='d')
+    assert conversion['blocked'] == []
+    proof = strict_proof(before, after_snapshot(before, conversion))
+    assert proof['identical'], proof
+
+
 def test_all_36_listed_rows_with_their_own_numbers_convert_without_a_frozen_default():
     source = clinical_target()
     plan = plan_v2([source], department_id='d')

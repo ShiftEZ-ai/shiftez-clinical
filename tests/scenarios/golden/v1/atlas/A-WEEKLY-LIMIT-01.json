@@ -1,6 +1,6 @@
 {
   "id": "A-WEEKLY-LIMIT-01",
-  "revision": 1,
+  "revision": 2,
   "title": "Weekly maximum with an inherited minimum",
   "intent": "A more specific weekly maximum replaces only the broad maximum.",
   "pressure": "Two fixed duties use the individual maximum. The shared minimum still requires one duty for the other person.",
@@ -232,17 +232,6 @@
       }
     },
     {
-      "key": "workload_activate",
-      "role": "approver",
-      "kind": "policy.activate",
-      "target": "$workload",
-      "revision": "$workload.revision",
-      "payload": {
-        "acknowledge_unresolved": true,
-        "reason": "Reviewed synthetic golden scenario"
-      }
-    },
-    {
       "key": "s0",
       "role": "coordinator",
       "kind": "shift.create",
@@ -305,6 +294,17 @@
         "start": "2027-01-06T08:00:00+03:00",
         "end": "2027-01-06T12:00:00+03:00",
         "participants": []
+      }
+    },
+    {
+      "key": "workload_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "target": "$workload",
+      "revision": "$workload.revision",
+      "payload": {
+        "acknowledge_unresolved": true,
+        "reason": "Reviewed synthetic golden scenario"
       }
     }
   ],
