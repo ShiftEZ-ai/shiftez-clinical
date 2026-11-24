@@ -118,6 +118,25 @@ def test_timeline_findings_are_only_current_stored_evidence(h, monkeypatch, stal
     assert all(not p['conflicts'] for p in outside['people'])
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_timeline_reads_the_findings_immediately_after_publish(h, monkeypatch):
+    from apps.api.services import timeline
+
+    person = h.seed['people'][0]
+    goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'target', 'amount': 10},
+                    {'person_id': person}, severity='advisory')
+    w = h.shift(h.workspace())['workspace']
+    published = h.publish(w)
+    with transaction(h.app.state.engine) as db:
+        check = db.get(m.Publication, published['publication_id']).validation
+        expected = [finding for finding in check['findings'] if finding.get('person_id') == person]
+    assert any(finding['rule_id'] == goal['id'] and finding['code'] == 'BALANCE_GOAL' for finding in expected)
+
+    monkeypatch.setattr(timeline, 'evaluate', lambda *a, **kw: pytest.fail('timeline ran validation'))
+    body = h.get('coordinator', f'/api/people/{person}/timeline?start={START}&end={END}&layers=conflict')
+    assert body['people'][0]['conflicts'] == expected
+
+
 def test_timeline_hidden_layers_do_not_change_people_filter_semantics(h):
     ids = timeline_records(h)
     filt = s.CollectionFilter.model_validate({'conditions': {'conditions': [
