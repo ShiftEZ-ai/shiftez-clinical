@@ -13,9 +13,11 @@ export const BASELINE_SOURCES:[BaselineSource,string][]=[
   ['display','Display defaults'],
 ];
 export const baselineSourceLabel=(source:string)=>BASELINE_SOURCES.find(s=>s[0]===source)?.[1]||source;
-/** A refresh row's state (workspace_baselines._diff) in words; a conflict on mandatory safety rules says so. */
+/** A refresh row's state (workspace_baselines._diff) in words; a rules conflict says whether a mandatory or safety
+ *  rule is in it. */
 const CHANGE:Record<string,string>={department:'Department changed',draft:'Changed in this draft',same:'Same change in both',conflict:'Conflict'};
-export const changeLabel=(c:{status:string;safety?:boolean})=>c.status==='conflict'&&c.safety?'Conflict · mandatory safety':CHANGE[c.status]||c.status;
+export const changeLabel=(c:{status:string;safety?:boolean;mandatory?:boolean})=>c.status==='conflict'&&c.safety
+  ?(c.mandatory===false?'Conflict · advisory':'Conflict · mandatory safety'):CHANGE[c.status]||c.status;
 export const SAFETY_KEEP='mandatory safety rules stay with the department';
 /** A safety conflict has one outcome: said as its decision, never a picker with one usable value. */
 export const SAFETY_DECIDED=`Use department · ${SAFETY_KEEP}`;
