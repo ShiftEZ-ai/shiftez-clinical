@@ -373,6 +373,13 @@ class FeedbackReport(InsertionOrdered, Record, DepartmentRecord, Base):
     )
 
 
+class LeaveBalancePolicy(Record, DepartmentRecord, Base):
+    __tablename__ = 'leave_balance_policies'
+    definition: Mapped[dict] = mapped_column(JSON)
+    previous_definition: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    __table_args__ = (UniqueConstraint('department_id'),)
+
+
 class LeaveType(Record, DepartmentRecord, Base):
     __tablename__ = "leave_types"
     short_name: Mapped[str] = mapped_column(String(40), default="", server_default="")

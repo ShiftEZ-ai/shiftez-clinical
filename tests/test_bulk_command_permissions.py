@@ -89,6 +89,7 @@ HEAD_ROLES = {
     'department.create': ('operator',),  # maintenance create-department, operator-only; maintenance governance PASS 11 Nov
     'department.display': ('admin',),
     'department.display.restore': ('admin',),
+    'department.leave_balance_settings': ('admin',),
     'department.sessions': ('admin',),
     'department.settings': ('admin',),
     'department_content.remind': ('admin', 'coordinator'),

@@ -73,6 +73,7 @@ import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
 import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
+import {leaveAllowanceSettings} from './leave_balances.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
 import {mountRules,selectTicked,openRotaRules,openRotaRulesFor,unpin,pin as pinRules,highlightRule,dayTitle,ROTA_TARGETS,loadRuleMap,type Target as RuleTarget,type RuleMap,type MapRule} from './planner_rules.js';
@@ -4978,7 +4979,8 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // keep theirs above a list (P findings, their lane), never twice above an empty state.
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
-  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
+  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null,
+    catalogueKind==='leave_types'&&items.length&&permits(CAPABILITY.ADMIN)?button('Leave allowances',()=>leaveAllowanceSettings(ctx()),'secondary'):null);
   const about=aboutOf(catalogueKind);
   if(items.length&&about){
     const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
