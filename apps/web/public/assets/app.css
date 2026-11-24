@@ -2072,7 +2072,8 @@ td small.mono{font-size:12px}
 
 /* Bulk selection: row checkboxes and a floating action bar */
 .bulk-check{width:16px;height:16px;margin:0 10px 0 0;flex:none;accent-color:var(--accent);cursor:pointer}
-th .bulk-check,td>.bulk-check{margin:0}
+th .bulk-check,td>.bulk-check,td>.dt-check-hit>.bulk-check{margin:0}
+.dt-check-hit{display:contents}
 @media(max-width:720px){.bulk-check{width:24px;height:24px}}  /* WCAG 2.5.8 target size on phones */
 @media print{.selection-bar,.bulk-check{display:none}}
 
@@ -6231,6 +6232,19 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   :root :is(.dt-tool,.pv-tab){justify-content:center}
   :root .mobile-account{align-items:center;justify-content:center}
   :root .dt-search{align-self:stretch;height:auto}  /* the field's whole box takes the tap */
+  :root label:has(>input:is([type=checkbox],[type=radio])):not(.wk-check-hit){min-width:var(--target);min-height:var(--target)}
+  :root .checkbox{align-items:center}
+  /* The native label activates the small selection box across its whole slot. */
+  :root .dt-check-hit{display:inline-grid;width:var(--target);height:var(--target);place-items:center;vertical-align:middle;cursor:pointer}
+  :root .dt-check-hit>.bulk-check,:root .dt-check-head>.bulk-check{margin:0}
+  :root .dt-table:has(.dt-check-hit):not(:has(.dt-check-head)){--dt-check-w:var(--target)}
+  :root .dt-table .dt-check:has(.dt-check-hit){padding:0!important;text-align:center}
+  /* The one-line legend reserves the whole overflow target while retaining the painted pill. */
+  :root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}
+  :root .view-legend>.lg-more{min-width:var(--target);justify-content:center}
+  :root .view-legend li:first-child{max-width:calc(100% - var(--target) - 14px)}
+  :root .view-legend .lg-more>.pill-more{position:relative}
+  :root .view-legend .lg-more>.pill-more::after{content:'';position:absolute;inset:min(0px,calc(50% - var(--target)/2))}
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark:not(.cov-cell>*),.app-footer :is(button,a[href])){position:relative}  /* an absolute mark already holds its ::after */
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark,.app-footer :is(button,a[href]))::after{content:'';position:absolute;inset:min(0px,calc(50% - var(--target)/2))}
   :root .health-pills:has(>button){row-gap:calc(var(--target) - 28px)}  /* wrapped pills' targets never overlap */
