@@ -169,32 +169,29 @@ class DefaultBranchTests(unittest.TestCase):
                     if lines[number - 2:number + 2] != self.TRIGGER:
                         offenders.append(where)
         self.assertEqual(offenders, [])
-        self.assertEqual(triggers, 3)
-        for name in ("ci.yml", "dependency-graph.yml", "image.yml"):
+        self.assertEqual(triggers, 2)
+        for name, branches in (("ci.yml", ["dev", "main", "release/*"]),
+                               ("dependency-graph.yml", ["dev", "main"]), ("image.yml", ["main"])):
             doc = yaml.load((self.REPO / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
-            self.assertEqual(doc["on"]["push"]["branches"], ["dev", "main"])
+            self.assertEqual(doc["on"]["push"]["branches"], branches)
+        ci = yaml.load((self.REPO / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertNotIn("branches", ci["on"]["pull_request"])
+        self.assertEqual(ci["on"]["merge_group"], {"types": ["checks_requested"]})
+        for job in ("unit", "browser"):
+            self.assertEqual(ci["jobs"][job]["uses"], "./.github/workflows/ci-tests.yml")
+            for sha in ("base_sha", "census_base_sha", "candidate_sha", "trusted_sha"):
+                self.assertEqual(ci["jobs"][job]["with"][sha], "${{ needs.checks.outputs." + sha + " }}")
 
     def test_default_branch_image_keeps_the_dev_tag_names(self):
         doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
         script = next(step["run"] for step in doc["jobs"]["publish"]["steps"] if step.get("id") == "push")
-        block = script[script.index("case "):script.index("esac") + 4]
-        commit = "0123456789ab" + "c" * 28
-        for default in ("dev", "main", ""):
-            other = "main" if default == "dev" else "dev"
-            for ref_type, ref_name, expected in (
-                    ("branch", default, "--tag img:dev --tag img:dev-0123456789ab" if default else None),
-                    ("tag", "v1.2.3", "--tag img:v1.2.3"), ("branch", other, None), ("branch", "feature", None)):
-                with self.subTest(default=default, ref=ref_type + "/" + ref_name):
-                    env = {**os.environ, "REF_TYPE": ref_type, "REF_NAME": ref_name, "COMMIT": commit,
-                           "DEFAULT_BRANCH": default}
-                    result = subprocess.run([SHELL, "-c", 'set -euo pipefail; image=img\n' + block + '\necho "${tags[@]}"'],
-                                            env=env, capture_output=True, text=True, timeout=30)
-                    self.assertEqual(result.stdout.strip() if result.returncode == 0 else None, expected, result.stderr)
+        self.assertIn('--push --tag "$image:dev" --tag "$image:dev-${COMMIT:0:12}"', script)
 
     def test_public_image_requires_main_and_a_passing_scan_before_push_and_attestation(self):
         doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
         jobs = doc["jobs"]
         self.assertEqual(set(doc["on"]), {"push"})
+        self.assertEqual(doc["on"]["push"], {"branches": ["main"], "tags": ["v*"]})
         self.assertEqual(doc["permissions"], {"contents": "read"})
         self.assertEqual(jobs["publish"]["permissions"], {
             "contents": "read", "packages": "write", "id-token": "write", "attestations": "write",
@@ -207,13 +204,15 @@ class DefaultBranchTests(unittest.TestCase):
 
         private_push, scanner, scan, login, push, attest = jobs["publish"]["steps"][-6:]
         self.assertEqual(private_push["id"], "push")
-        self.assertNotIn("if", private_push)
-        main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-        self.assertEqual(scanner["if"], main_push)
+        main_push = "github.ref == 'refs/heads/main'"
+        self.assertEqual(private_push["if"], main_push)
+        self.assertNotIn("if", scanner)
         self.assertEqual(scanner["working-directory"], "scripts")
         when_present, _, when_absent = scanner["run"].partition("else\n")
         self.assertIn("if [[ -f privacy_check.py ]]; then", when_present)
         self.assertIn('echo \'available=true\' >> "$GITHUB_OUTPUT"', when_present)
+        self.assertIn('elif [[ "$REF_TYPE" == tag ]]; then', when_present)
+        self.assertIn('exit 1', when_present)
         self.assertIn("$GITHUB_STEP_SUMMARY", when_absent)
         self.assertNotIn("$GITHUB_OUTPUT", when_absent)
         self.assertEqual(scan["if"], f"steps.{scanner['id']}.outputs.available == 'true'")
@@ -235,9 +234,10 @@ class DefaultBranchTests(unittest.TestCase):
         self.assertIn('docker push "$IMAGE:$TAG"', push["run"])
         self.assertIn('docker buildx imagetools inspect --raw "$IMAGE@$digest"', push["run"])
         self.assertEqual(jobs["publish"]["outputs"], {
-            "digest": "${{ steps.push.outputs.digest }}", "public-digest": "${{ steps.public_push.outputs.digest }}",
+            "digest": "${{ steps.push.outputs.digest || steps.public_push.outputs.digest }}",
+            "public-digest": "${{ github.ref == 'refs/heads/main' && steps.public_push.outputs.digest || '' }}",
         })
-        self.assertEqual(attest["if"], f"steps.{push['id']}.outcome == 'success'")
+        self.assertEqual(attest["if"], f"{main_push} && steps.{push['id']}.outcome == 'success'")
         self.assertRegex(attest["uses"], r"^actions/attest-build-provenance@[0-9a-f]{40}$")
         self.assertEqual(attest["with"], {
             "subject-name": "${{ steps.public_scan.outputs.image }}",
@@ -267,20 +267,30 @@ def test_public_publish_stops_on_scan_failure_or_config_mismatch(tmp_path):
     steps = {step.get("id"): step for step in doc["jobs"]["publish"]["steps"]}
     published = "sha256:" + "a" * 64
 
-    def run(step, stubs, **values):
+    def run(step, stubs, *, cwd=repo, **values):
         output = tmp_path / "github-output"
         output.write_text("")
         env = {**os.environ, "GITHUB_OUTPUT": output.as_posix(), "GITHUB_STEP_SUMMARY": "/dev/null", **values}
         result = subprocess.run([SHELL, "-c", stubs + steps[step]["run"]],
-                                env=env, cwd=repo, capture_output=True, text=True, timeout=30)
+                                env=env, cwd=cwd, capture_output=True, text=True, timeout=30)
         return result.returncode, output.read_text().splitlines()
 
-    scan = run("public_scan", """
-docker() { :; }
+    assert run("scanner", "", cwd=tmp_path, REF_TYPE="tag") == (1, [])
+    assert run("scanner", "", cwd=repo / "scripts", REF_TYPE="tag") == (0, ["available=true"])
+    scan = """
+docker() { if [[ "$1 $2" == 'image inspect' ]]; then echo matching; fi; }
 git() { :; }
-python3() { return 44; }
-""", COMMIT="0" * 40, GITHUB_REPOSITORY="owner/repo", GITHUB_SERVER_URL="", RUNNER_TEMP=tmp_path.as_posix())
-    assert scan == (44, [])
+python3() { return "$SCAN_STATUS"; }
+"""
+    for ref_type, ref_name, image, tag in (
+        ("branch", "main", "ghcr.io/owner/repo-public", "dev-000000000000"),
+        ("tag", "v1.2.3-rc.2", "ghcr.io/owner/repo", "v1.2.3-rc.2"),
+        ("tag", "v1.2.3", "ghcr.io/owner/repo", "v1.2.3"),
+    ):
+        args = {"COMMIT": "0" * 40, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SERVER_URL": "",
+                "RUNNER_TEMP": tmp_path.as_posix(), "REF_TYPE": ref_type, "REF_NAME": ref_name}
+        assert run("public_scan", scan, **args, SCAN_STATUS="44") == (44, [])
+        assert run("public_scan", scan, **args, SCAN_STATUS="0") == (0, ["image-id=matching", f"image={image}", f"tag={tag}"])
 
     push = """
 docker() {

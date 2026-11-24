@@ -639,6 +639,7 @@ jobs:
     # shortcut: dev is removed after the default branch is renamed to main.
     - dev
     - main
+    - release/*
 defaults:
   run:
     working-directory: candidate
