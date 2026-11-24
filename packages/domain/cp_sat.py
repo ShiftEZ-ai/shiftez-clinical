@@ -473,6 +473,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             data['_scope_membership_index'][field, row['person_id'], row.get(field)].append(row)
     from .conditions import resolved_rule_context
     data = resolved_rule_context(data)
+    relative_fair_share = not feasibility_only and options.scoring.weights.fairness > 0 and any(
+        p['definition']['rule']['kind'] == 'balance_goal'
+        and p['definition']['rule'].get('aim', 'equal_share') in {'equal_share', 'max_min'}
+        and p['definition'].get('strength') != 'off'
+        for p in data['policies'])
     data['_candidate_evidence_cache'] = {}
     data['_candidate_evidence_policy_source'] = data['policies']
     data['_policy_name_static'] = {}
@@ -598,6 +603,13 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     by_person, by_shift = defaultdict(list), defaultdict(list)
     # Coverage stays first; advisory instances feed the same normalized components as the score.
     coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
+    staffing_targets = [] if relative_fair_share else None
+    staffing_choices = []
+    cross_duty_demand = relative_fair_share and any(
+        rule['kind'] == 'team_lead_requirement'
+        or rule['kind'] == 'block_quota' and rule['comparison'] != 'maximum'
+        or rule['kind'] == 'balance_goal' and rule.get('aim') in {'target', 'min_per_pair'}
+        for rule in (p['definition']['rule'] for p in data['policies']))
     coverage_floor_rows = []
     diagnostic_domains = {}
     live_coverage = []
@@ -948,6 +960,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 return append_objective(coverage, term) if record_objective else (coverage, term)
         else:
             model.add_max_equality(deficit, [0, expression - bound])
+            if (staffing_targets is not None and options.scoring.weights.rules
+                    and policy['definition']['rule']['kind'] == 'minimum_cover'):
+                strength = strengths.get(policy['definition'].get('strength', 'medium'), 0)
+                if strength:
+                    staffing_targets.append(strength * score_math.ratio(deficit, max(1, capacity)))
             return penalise(deficit, policy, max(1, capacity), capacity, subject=subject)
 
     staffing = counting_views(data, [p for p in data['policies']
@@ -1188,6 +1205,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             continue
         repair_targets = {}
         supervision = definition.get('supervision')
+        mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if relative_fair_share else []
+        whole_duty = bool(mutable_people) and all(presence(sid, pid) == [(start, end)] for pid in mutable_people)
+        can_cap = (whole_duty and not cross_duty_demand and not supervision and not definition.get('lead')
+                   and not is_open_extra_cover(definition) and all(not r['capabilities'] for r in definition['requirements']))
+        places_to_fill = 0
+        maximum_places = len(mutable_people)
         needs_pairing = supervision and (bool(attachments_on(shift)) or supervision.get('require_pairing') or any(
             (p['definition']['rule']['kind'] in {'supervision_limit', 'spread_evenly'} or
             p['definition']['rule']['kind'] == 'max_duties' and p['definition']['rule'].get('group_by') == 'supervisor'
@@ -1258,6 +1281,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 if (policy['department_id'] != data['types'][shift['assignment_type_id']]['department_id']
                     or not within_dates(policy, a, b, zone) or not scope_matches_throughout(data, selector, None, shift, a, b)):
                     continue
+                if rule['kind'] == 'minimum_cover':
+                    # Scoped seats may need different people from the seats counted by the duty type.
+                    can_cap = False
                 peers = [shift]
                 if rule.get('aggregation') in {'service', 'service_group'}:
                     peers = [s for s in shifts if data['types'][s['assignment_type_id']]['department_id'] == policy['department_id']
@@ -1339,6 +1365,9 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         for pid in available], r['target'])
                 if r['maximum'] is not None:
                     model.add(total <= r['maximum']).with_name('duty:' + sid)
+                    if whole_duty:
+                        kept = sum((sid, pid) not in decisions for pid in present)
+                        maximum_places = min(maximum_places, r['maximum'] - kept)
                 if r['target'] is not None and r['target'] > r['minimum']:
                     if greedy_repair:
                         kept_target = min(r['target'], sum((sid, pid) in greedy_placements for pid in available))
@@ -1373,6 +1402,10 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                             for pid in eligible], clause['minimum'], stage='mandatory_cover')
                 for same_person in seats.values():
                     model.add(sum(same_person) <= 1)
+            if whole_duty:
+                requested = max((max(r['minimum'], r['target'] or 0) for r in interval_requirements), default=0)
+                kept = sum((sid, pid) not in decisions for pid in available)
+                places_to_fill = max(places_to_fill, requested - kept)
             append_coverage_score_row(cover, interval_requirements, (b - a) // timedelta(microseconds=1))
             if sid in selected:
                 live_coverage.append((sid, cover, max((r['minimum'] for r in interval_requirements), default=0)))
@@ -1514,6 +1547,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     stage='mandatory_cover')
                 if local_maximums:
                     model.add(sum(lead_terms[sid, pid] for pid in present) <= min(local_maximums)).with_name('duty:' + sid)
+        if can_cap and maximum_places > places_to_fill:
+            # A mutable whole duty fills all its staffed intervals. Cover needed in
+            # any interval may require a place even if another is already staffed.
+            model.add(sum(choices[sid, pid] for pid in mutable_people) <= places_to_fill).with_name('duty:' + sid)
+        elif not can_cap and (not whole_duty or maximum_places > places_to_fill):
+            staffing_choices.extend(choices[sid, pid] for pid in mutable_people)
 
     control.check()
     from .cp_sat_workload import add_workload_limits
@@ -1527,7 +1566,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     issues = add_quotas(model, data, by_person, penalise, diagnostic_proposal=diagnostic_proposal, leads=lead_terms,
                         score_items=None if feasibility_only else quota_items,
                         score_strengths=quota_strengths, target_group=fill_priority.target if fill_priority.enabled else None, strict_minima=strict_constraints,
-                        diagnostic_domains=diagnostic_domains if not feasibility_only else None)
+                        diagnostic_domains=diagnostic_domains if not feasibility_only else None,
+                        staffing_targets=staffing_targets if options.scoring.weights.rules else None)
     if issues:
         return {**result, 'status': 'invalid_inputs', 'issues': issues}
     control.check()
@@ -1536,7 +1576,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     score_program = None
     score_variable_start = len(model.proto.variables)
     score_constraint_start = len(model.proto.constraints)
-    def compile_components(target_model, target_data, target_options, *, stability):
+    def compile_components(target_model, target_data, target_options, *, stability, staffing_targets=None):
         from .cp_sat_score_preferences import add_score_preferences
         from .cp_sat_goals import add_score_goals
         q = ScoreModel(target_model, target_options.scoring.model_dump())
@@ -1545,9 +1585,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     target_options.scoring.desired_cover_factor, check=control.check),
                  'rules': rule_component(target_model, target_data, choices, participants, score_breaches,
                     [(levels[level], loss, present) for (_, loss, present), level in zip(quota_items, quota_strengths)], levels)}
-        goal_presence = []
+        goal_presence, fixed_goals = [], []
         goals = add_score_goals(target_model, target_data, choices, participants, overtime_choices, pairings,
-                               focus, levels, leads=lead_terms, presence=goal_presence)
+                               focus, levels, leads=lead_terms, presence=goal_presence,
+                               fixed_goals=fixed_goals if staffing_targets is not None else None)
+        if fixed_goals:
+            staffing_targets.append(q.mean(fixed_goals))
         # Normalize exact goal weights; the complete component is inactive until focused work exists.
         fairness_numerator = fairness_denominator = 0
         from fractions import Fraction
@@ -1583,7 +1626,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         from .fairness_distribution import PairLimitBudgetExceeded
         begin_score_program(model, score_variable_start)
         try:
-            components, score_baseline, any_assignment = compile_components(model, data, options, stability=True)
+            components, score_baseline, any_assignment = compile_components(
+                model, data, options, stability=True, staffing_targets=staffing_targets)
         except PairLimitBudgetExceeded as error:
             return {**result, 'status': 'invalid_inputs', 'issues': [error.issue]}
     weighted = []
@@ -1610,6 +1654,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     tier_list = [tier for stage in STAGE_ORDER for tier in stage_tiers[stage]]
     # Fix demand before choosing who fills it, so minimum-seat credits cannot block requested extra seats.
     tier_list.extend(fill_priority.objectives())
+    if staffing_choices:
+        if staffing_targets:
+            tier_list.append(('staffing_targets', staffing_targets, 0))
+        # Independent requests may require extra places. Find the smallest roster
+        # that meets those requests before sharing the work by weighted score.
+        tier_list.append(('staffing', staffing_choices, 0))
     tier_list.extend(weighted_prefix)
     tier_list.append(('weighted', weighted, 0))
     result['optimality_boundary'] = 'Coverage first, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
@@ -1617,6 +1667,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         result['optimality_boundary'] = 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
     if fill_priority.enabled:
         result['optimality_boundary'] += ' Configured fill-priority stages precede weighted quality.'
+    if staffing_choices:
+        result['optimality_boundary'] += ' Requested work and minimum staffing precede weighted quality.'
     if desired_coverage:
         result['optimality_boundary'] += ' Required cover and mandatory minima precede desired cover; no coverage weight ratio applies.'
     objective_order = [name for name, _, _ in tier_list]
