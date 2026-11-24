@@ -1248,6 +1248,16 @@ def session_limits_database(request, tmp_path):
         admin.dispose()
 
 
+def test_installation_admin_migration_is_independent_of_runtime_code():
+    import ast
+
+    path = safety.VERSIONS / '0153_installation_admin.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
+    imports.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not {name for name in imports if name.split('.', 1)[0] in {'apps', 'packages'}}
+
+
 @pytest.mark.parametrize('populated', [False, True])
 def test_installation_admin_migration_preserves_rows_and_seeds_once(session_limits_database, populated):
     from importlib import import_module
@@ -1282,6 +1292,12 @@ def test_installation_admin_migration_preserves_rows_and_seeds_once(session_limi
             original = list(db.execute(binding.select().order_by(binding.c.id)))
 
         command.upgrade(cfg, revision)
+        role_check = next(c['sqltext'] for c in inspect(engine).get_check_constraints('role_bindings')
+                          if re.match(r'^\(*"?role\b', c['sqltext'].strip()))
+        assert set(re.findall(r"'([a-z_]+)'", role_check)) == {
+            'staff', 'coordinator', 'approver', 'credentialer', 'admin', 'auditor', 'programme_lead',
+            'operator', 'installation_admin',
+        }
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             import_module(f'migrations.versions.{revision}').upgrade()
 

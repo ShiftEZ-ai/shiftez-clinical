@@ -218,6 +218,8 @@ def render():
     content += "export const WISH_RANGE_MAX_DAYS = " + str(s.WISH_RANGE_MAX_DAYS) + ";\n"
     content += "export const SYSTEM_ROLES = " + json.dumps(s.SYSTEM_ROLES) + " as const;\n"
     content += "export const EXPLICIT_ROLES = " + json.dumps(sorted(s.EXPLICIT_ROLES)) + " as const;\n"
+    content += "export const INSTALLATION_ADMIN_ROLE = " + json.dumps(s.INSTALLATION_ADMIN_ROLE) + " as const;\n"
+    content += "export const ROLE_GRANT_PERMISSIONS = " + json.dumps(s.ROLE_GRANT_PERMISSIONS) + " as const;\n"
     content += "export const ROLE_LABELS = " + json.dumps(s.ROLE_LABELS) + " as const;\n"
     content += "export const PERMISSIONS = " + json.dumps(s.PERMISSIONS) + " as const;\n"
     content += "export const CAPABILITIES = " + json.dumps(s.CAPABILITIES) + " as const;\n"

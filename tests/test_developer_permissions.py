@@ -190,6 +190,15 @@ def test_account_invitation_bootstrap_requires_system_role_permission(h, tmp_pat
         assert db.scalar(select(m.Account).where(m.Account.username == "bootstrap")) is None
 
 
+def test_department_admin_cannot_invite_an_installation_admin(h, tmp_path):
+    with_users_file(h, tmp_path)
+    before = h.get("admin", "/api/access")
+    refused = invite(h, roles=(s.INSTALLATION_ADMIN_ROLE,), status=403)
+    assert refused["error"]["code"] == "FORBIDDEN"
+    assert h.get("admin", "/api/access") == before
+    assert json.loads(h.users.read_text()) == {"users": {}}
+
+
 def test_refused_system_role_invite_keeps_target_role_and_error_in_audit(h, tmp_path):
     with_users_file(h, tmp_path)
     refused = h.command("admin", "account.invite", {

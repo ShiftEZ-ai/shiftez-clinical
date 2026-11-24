@@ -204,6 +204,12 @@ for _family in ('membership', 'eligibility', 'programme_membership'):
 # intentionally backed by the same map the server uses for command enforcement. Keep the command permission
 # registry unchanged: `/api/me.permissions` is an action list, while this UI map also carries role-shaped gates.
 PERMISSION_NAMES: tuple[str, ...] = tuple(PERMISSIONS)
+ROLE_GRANT_PERMISSIONS = {
+    role: ("access.installation_admin" if role == INSTALLATION_ADMIN_ROLE else
+           "access.system_roles" if role in EXPLICIT_ROLES else "role.grant")
+    for role in ROLE_NAMES
+}
+
 CAPABILITIES: dict[str, tuple[RoleName, ...]] = {
     **PERMISSIONS,
     **{f'ui.{role}': (role,) for role in ROLE_NAMES},

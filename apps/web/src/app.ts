@@ -102,7 +102,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -8205,12 +8205,12 @@ async function inboxPage(target:HTMLElement){
   if(page&&inboxPath()!==readPath)void search();
 }
 
-const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),'installation_admin',roleForCapability(CAPABILITY.OPERATOR)];
+const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),INSTALLATION_ADMIN_ROLE,roleForCapability(CAPABILITY.OPERATOR)];
 /** Access & approvals › People & roles (who signs in, their roles) or › Role history (every grant). */
 async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'history'){
   const access=await data;const identities:Row[]=access.identities;
   const accounts:Record<string,Row>=access.accounts||{};
-  const admin=permits(CAPABILITY.ADMIN);
+  const admin=permits(CAPABILITY.ADMIN),fullAccess=admin||may('access.system_roles');
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
   target.append(sectionHead('People who can sign in','',invite,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
   /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
@@ -8303,8 +8303,8 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
       {key:'name',label:'Person',text:i=>String(i.display_name)+' '+(accounts[i.id]?.username||''),cell:i=>el('strong',{},i.display_name)},
       {key:'issuer',label:'Signs in with',text:i=>accounts[i.id]?.username||String(i.issuer||''),facet:i=>accounts[i.id]?'Sign-in name':String(i.issuer||''),
         cell:i=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer||'—')},
-      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):['No current role'],sort:i=>rolesOf(i).length,
-        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},'No current role'))},
+      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):fullAccess?['No current role']:[],sort:i=>rolesOf(i).length,
+        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},fullAccess?'No current role':'—'))},
       {key:'status',label:'Status',facet:i=>accountState(i),cell:i=>{const state=accountState(i),a=accounts[i.id];
         return el('span',{class:'status-dot '+(state==='Active'?'on':'off'),'data-tip':a&&!a.accepted_at&&a.invite_expires_at?(a.invite_open?'Link expires ':'Link expired ')+formatDate(a.invite_expires_at,zone()):''},state);}},
       {key:'last',label:'Last sign-in',text:i=>String(i.last_sign_in_at||''),sort:i=>String(i.last_sign_in_at||''),cell:i=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},admin||may('access.system_roles')?'Never':'—')},

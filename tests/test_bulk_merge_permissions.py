@@ -1,5 +1,6 @@
 """Bulk reverses preserve the shared Developer permission and credential-recovery boundary."""
 import pytest
+from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -9,6 +10,28 @@ from .test_accounts import PASSWORD, accepted, anonymous, invite, token_of, with
 
 
 REASON = {"reason": "Synthetic explicit-role restore after the dev merge"}
+
+
+@pytest.mark.usefixtures('branding_editor')
+def test_bulk_installation_admin_cannot_grant_after_revoking_own_access(h):
+    role = s.INSTALLATION_ADMIN_ROLE
+    admin, staff, coordinator = (h.seed['identities'][r] for r in ('admin', 'staff', 'coordinator'))
+    first = next(b for b in h.get('admin', '/api/access')['bindings']
+                 if b['identity_id'] == admin and b['role'] == role)
+
+    def grant(identity_id):
+        return {'item_kind': 'role.grant', 'payload': {
+            'identity_id': identity_id, 'role': role, 'starts_on': '2020-01-01', **REASON}}
+
+    revoke = {'item_kind': 'role.revoke', 'target_id': first['id'], 'expected_revision': first['revision'],
+              'payload': REASON}
+    payload = {'items': [grant(staff), revoke, grant(coordinator)], **REASON}
+    refused = h.command('admin', 'bulk.apply', payload, status=(403, 409))
+    assert refused['error']['code'] == 'INSTALLATION_ADMIN_REQUIRED'
+    assert refused['error']['details']['failed_index'] == 2
+    with transaction(h.app.state.engine) as db:
+        bindings = list(db.scalars(select(m.RoleBinding).where(m.RoleBinding.role == role)))
+        assert [(b.id, b.identity_id, b.revoked) for b in bindings] == [(first['id'], admin, False)]
 
 
 def revoked_binding(h, role, target=None):

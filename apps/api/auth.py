@@ -91,7 +91,7 @@ def _live(binding, today):
     return not binding.revoked and binding.starts_on <= today and (binding.ends_on is None or today < binding.ends_on)
 
 
-def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None):
+def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=()):
     """Check installation-wide grants on the local day of each binding's department."""
     query = select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
         Department, Department.id == RoleBinding.department_id).join(
@@ -104,6 +104,8 @@ def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None):
         query = query.where(RoleBinding.identity_id == identity_id)
     if excluding_binding_id is not None:
         query = query.where(RoleBinding.id != excluding_binding_id)
+    if excluding_identities:
+        query = query.where(RoleBinding.identity_id.not_in(excluding_identities))
     moment = now()
     with db.execute(query.execution_options(stream_results=True)) as rows:
         return any(_live(row, moment.astimezone(ZoneInfo(row.timezone)).date()) for row in rows)

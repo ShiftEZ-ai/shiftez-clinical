@@ -3,6 +3,7 @@ import io
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from threading import Barrier
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from PIL import Image, PngImagePlugin
@@ -235,6 +236,46 @@ def test_installation_admin_grants_are_explicit_audited_and_keep_a_live_holder(h
             ('role.revoke', second['id'], h.seed['identities']['operator']),
         }
         assert {event.reason for event in events} == {reason['reason']}
+
+
+def test_disabling_the_last_installation_admin_is_refused(h):
+    identity_id = h.seed['identities']['staff']
+    reason = {'reason': 'Transfer installation administration'}
+    h.command('operator', 'role.grant', {'identity_id': identity_id, 'role': s.INSTALLATION_ADMIN_ROLE,
+        'starts_on': '2020-01-01', **reason})
+
+    refused = h.command('admin', 'identity.disable', reason, identity_id, 1, status=409)
+
+    assert refused['error']['code'] == 'LAST_INSTALLATION_ADMIN'
+    assert h.get('staff', '/api/admin/branding')['can_edit']
+
+
+def test_concurrent_revoke_and_disable_preserve_installation_admin(pg):
+    h = pg
+    role = s.INSTALLATION_ADMIN_ROLE
+    reason = {'reason': 'Transfer installation administration'}
+    staff, coordinator = (h.seed['identities'][name] for name in ('staff', 'coordinator'))
+    grant = h.command('operator', 'role.grant', {'identity_id': staff, 'role': role,
+        'starts_on': '2020-01-01', **reason})['record']
+    h.command('operator', 'role.grant', {'identity_id': coordinator, 'role': role,
+        'starts_on': '2020-01-01', **reason})
+    h.client('operator')
+    h.client('admin')
+    ready = Barrier(2)
+
+    def change(actor, kind, target, revision):
+        ready.wait(timeout=10)
+        return h.command(actor, kind, reason, target, revision, status=(200, 409))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            pool.submit(change, 'operator', 'role.revoke', grant['id'], grant['revision']),
+            pool.submit(change, 'admin', 'identity.disable', coordinator, 1),
+        ]
+        failures = [error['code'] for result in results if (error := result.result().get('error'))]
+    assert failures == ['LAST_INSTALLATION_ADMIN']
+    with transaction(h.app.state.engine) as db:
+        assert auth.has_installation_admin(db)
 
 
 @pytest.mark.parametrize('fmt,media_type', [('PNG', 'image/png'), ('JPEG', 'image/jpeg'), ('WEBP', 'image/webp')])

@@ -18,7 +18,7 @@ from apps.api.errors import require
 from apps.api.identity_store import store_for
 from apps.api.serialization import record
 from .accounts import written
-from .access import keep_developer
+from .access import keep_developer, keep_installation_admin
 from .common import bump_inputs, expected, materialise_defaults
 from . import tags
 
@@ -69,7 +69,10 @@ def anonymise(db, actor, command, settings):
     expected(person, command.expected_revision)
     require(not person.active, "PERSON_ACTIVE", "Mark the person as left (inactive) first, then remove their details", 409)
     identities = _person_rows(db, m.Identity, person.id)
-    keep_developer(db, {identity.id for identity in identities})
+    if identities:
+        retiring = {identity.id for identity in identities}
+        keep_developer(db, retiring)
+        keep_installation_admin(db, identity_ids=retiring)
     affected = 1
     name = f"Former staff member {person.id[:8]}"
     person.display_name, person.tags, person.rota_aliases = name, [], []
