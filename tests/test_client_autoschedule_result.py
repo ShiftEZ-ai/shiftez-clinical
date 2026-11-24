@@ -33,6 +33,17 @@ def run(client_modules, body, data):
     return json.loads(out.stdout)
 
 
+def test_group_exclusion_line_counts_only_people_left_out(client_modules):
+    texts = run(client_modules, """
+        console.log(JSON.stringify(a.map(job=>m.outsideGroupLine(job)?.textContent ?? '')));
+    """, [{}, {'planning_context': {'outside_group_count': 0}},
+          {'planning_context': {'outside_group_count': 1}}, {'planning_context': {'outside_group_count': 2}}])
+    assert texts == [
+        '', '', '1 person left out because they are outside this group.',
+        '2 people left out because they are outside this group.',
+    ]
+
+
 def test_solver_receipt_distinguishes_unfinished_score_from_no_candidate(client_modules):
     candidate = {'kind': 'generation', 'result': {'status': 'candidate_feasible',
         'solver_status': 'FEASIBLE', 'score': None, 'score_completed': False, 'change_count': 1}}

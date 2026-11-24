@@ -75,11 +75,12 @@ def test_coordinator_follows_the_setup_guide_without_admin_actions(browser, live
         # The setup guide lives in Configuration: in the sidebar while setup is incomplete (no rota yet in this seed).
         expect(page.locator("#department-nav [data-route=configuration]")).to_have_count(1)
         expect(page.locator("#department-nav [data-route=setup]")).to_have_count(0)
-        # Coordinators also keep Scheduling groups (D19: planners read them), Tags (tags of any kind for #tag rule lines)
-        # and Auto-schedule (their score review; app.ts COORDINATOR_KINDS).
+        # The guide should only link to sections the coordinator can use.
         nav = page.get_by_role("navigation", name="Configuration sections")
         sections = nav.get_by_role("button")
-        expect(sections).to_have_count(4)
+        allowed_sections = {"setup", "scheduling_groups", "tags", "auto_schedule", "department_content"}
+        expect(sections).to_have_count(len(allowed_sections))
+        assert set(sections.evaluate_all("buttons => buttons.map(button => button.dataset.section)")) == allowed_sections
         expect(nav.locator("[data-section=auto_schedule]")).to_have_count(1)
         expect(sections.filter(has_text="Scheduling groups")).to_have_count(1)
         expect(sections.filter(has_text="Tags")).to_have_count(1)

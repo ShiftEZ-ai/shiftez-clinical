@@ -284,6 +284,10 @@ def _supervision_scope(supervision):
     return supervision["capability_id"], frozenset(supervision["trainee_category_ids"])
 
 
+def draft_type_safety_key(shift):
+    return shift["id"], shift["assignment_type_id"], shift["type_revision"]
+
+
 def prepare_draft_type_safety(data, shifts):
     """Prepare only duties affected by catalogue safety drift, once at snapshot assembly."""
     types, zone = data["types"], data["organisation"]["timezone"]
@@ -315,13 +319,13 @@ def prepare_draft_type_safety(data, shifts):
         effective = current if operational else issued
         for source in ([issued] if operational else []) + sources:
             effective = effective_issued_definition(effective, source, draft=True)
-        prepared[shift["id"]] = (effective, len(scopes) > 1)
+        prepared[draft_type_safety_key(shift)] = (effective, len(scopes) > 1)
     return prepared
 
 
 def _prepared_draft_type(data, shift):
     if prepared := data.get("_draft_type_safety"):
-        return prepared.get(shift.get("id"))
+        return prepared.get(draft_type_safety_key(shift))
 
 
 def effective_issued_definition(issued, current, *, draft=False):
