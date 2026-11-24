@@ -41,9 +41,12 @@ def shift(data, id_):
 def place(data, sid, people):
     """Hand-built rota, independent of any solver result."""
     row = shift(data, sid)
-    row['participants'] = [dict(id=_id('golden-witness', sid, pid), shift_id=sid,
-        **ParticipantInput(person_id=pid, start=row['start'], end=row['end']).model_dump(mode='json'))
-        for pid in people]
+    row['participants'] = []
+    for person in people:
+        fields = {'person_id': person} if isinstance(person, str) else person
+        participant = ParticipantInput.model_validate({'start': row['start'], 'end': row['end'], **fields})
+        row['participants'].append(dict(id=_id('golden-witness', sid, participant.person_id),
+            shift_id=sid, **participant.model_dump(mode='json')))
 
 
 def finding(data, code, sid, pid, rule):
@@ -211,6 +214,9 @@ def check_interaction(data, ids, spec):
 
 
 def check_scenario(data, ids, spec):
+    if 'safety' in spec['expect']:
+        from tests.golden_safety import check_safety
+        return check_safety(data, ids, spec)
     if spec['id'] == 'A-LEAD-01':
         from tests.golden_leadership import check_leadership
         return check_leadership(data, ids, spec)
