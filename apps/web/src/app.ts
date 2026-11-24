@@ -672,10 +672,11 @@ async function showLogin(reason='',resume=''){
       waitTimer=window.setInterval(()=>{left--;if(!form.isConnected||left<=0){window.clearInterval(waitTimer);submit.disabled=false;error.replaceChildren();return;}count.textContent=String(left);},1000);};
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
     const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s)wait(s);else error.replaceChildren(note((err as Error).message,'error',err));};
-    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal says why under the
-    // password, keeps what was typed and puts focus back there; success opens the app frame at once (boot).
+    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal keeps what was
+    // typed and shows its reason; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
-      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();pw.input.removeAttribute('aria-invalid');
+      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();
+      pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');
       const accountActions=[...formWrap.querySelectorAll<HTMLButtonElement>('.login-account button,.login-switch')];accountActions.forEach(b=>{b.disabled=true;});
       if(department)department.input.disabled=true;
       const done=busy(submit,identified?'Signing in…':'Continuing…');
@@ -694,6 +695,8 @@ async function showLogin(reason='',resume=''){
           form.insertBefore(department.wrap,remember.wrap);announce('Choose a department to continue.');department.input.focus();return;
         }
         refused(err);
+        if(err instanceof ApiError&&err.code==='FORBIDDEN'){department?.input.focus();return;}
+        if(err instanceof ApiError&&err.code==='UNPROVISIONED_IDENTITY')return;
         pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby','login-error');pw.input.focus();pw.input.select();return;}
       rotatedNow();
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);

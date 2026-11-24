@@ -577,6 +577,37 @@ def test_correct_password_department_selection_does_not_consume_failure_budget(h
                                            "department_id": h.seed["department_id"]}).status_code == 200
 
 
+@pytest.mark.parametrize("progressive", [False, True], ids=["fixed", "progressive"])
+@pytest.mark.parametrize("department_id, code, message", [
+    (None, "UNPROVISIONED_IDENTITY", "Your identity needs an active departmental role binding"),
+    (str(uuid.UUID(int=0)), "FORBIDDEN", "No access to this department"),
+])
+def test_verified_password_access_refusal_does_not_consume_failure_budget(
+    h, managed, monkeypatch, progressive, department_id, code, message,
+):
+    pin_login_clock(monkeypatch)
+    _, settings, _, identity_id = managed
+    settings = replace(settings, password_login_progressive_delay=progressive,
+                       password_login_account_limit=1, password_login_pair_limit=1, password_login_address_limit=1)
+    if department_id is None:
+        with transaction(h.app.state.engine, write=True) as db:
+            for binding in db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == identity_id)):
+                binding.revoked = True
+
+    payload = {"username": USERNAME, "password": PASSWORD, "department_id": department_id}
+    with client_for(h, settings) as client:
+        for _ in range(2):
+            response = client.post("/auth/login", json=payload)
+            assert response.status_code == 403
+            assert response.json()["error"] == {"code": code, "message": message, "details": None}
+            assert "set-cookie" not in response.headers
+        assert failure_counts(h, settings) == [0, 0]
+        wrong = client.post("/auth/login", json={**payload, "password": PASSWORD + " wrong"})
+        assert wrong.status_code == 401 and wrong.json()["error"] == INVALID
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(func.count()).select_from(m.Session)) == 0
+
+
 @pytest.mark.parametrize("window", [60, 900, 3600])
 def test_configured_password_failure_window_and_pair_limit(h, managed, monkeypatch, window):
     moment = pin_login_clock(monkeypatch)
