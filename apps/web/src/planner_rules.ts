@@ -1047,8 +1047,10 @@ export function openRotaRules(tab:RotaTab='rules',rule=''){pin({kind:'rota',labe
 /** A rota's Rules tab (at a rule when given) from anywhere: now when the planner shows that rota, else once it does.
  *  True when it opened now. */
 let pendingPanel:{rota:string;rule:string}|null=null;
+/** A link to the Rules panel already counts as a request for the whole rota. */
+export const hasPendingRulePanel=(rotaId:string)=>!!pending||pendingPanel?.rota===rotaId;
 export function openRotaRulesFor(rotaId:string,rule=''){
-  if(dataNow?.workspace.id===rotaId&&host?.isConnected){openRotaRules('rules',rule);return true;}
+  if(dataNow?.workspace.id===rotaId&&!dataNow.partial&&host?.isConnected){openRotaRules('rules',rule);return true;}
   pendingPanel={rota:rotaId,rule};return false;}
 // Esc clears a locked highlight, then the selection, when nothing else wants it.
 if(typeof window!=='undefined')window.addEventListener('keydown',e=>{

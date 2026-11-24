@@ -75,7 +75,7 @@ import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_
 import {requestsPage} from './requests.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
-import {mountRules,selectTicked,openRotaRules,openRotaRulesFor,unpin,pin as pinRules,highlightRule,dayTitle,ROTA_TARGETS,loadRuleMap,type Target as RuleTarget,type RuleMap,type MapRule} from './planner_rules.js';
+import {mountRules,selectTicked,openRotaRules,openRotaRulesFor,hasPendingRulePanel,unpin,pin as pinRules,highlightRule,dayTitle,ROTA_TARGETS,loadRuleMap,type Target as RuleTarget,type RuleMap,type MapRule} from './planner_rules.js';
 import {generationOptionsFields,fairnessPlateauField,timeField,stopFields,stopsDefault,stopWords,generationProgress,stageLabel,generationPhaseTimings,PRESETS,DEFAULT_PRESET,knownPreset,presetOptions,weightSummary,animationFields,animationSettings,whileFresh,ownedListener,liveFinisher,LIVE_STEPS,type AnimationSettings} from './generation_options.js';
 import {ruleReview} from './rule_review.js';
 import {publishedAbsenceLabel,plainCode,openPlaceIssue,placeReason,type PlaceFix,leaveLabel,leaveDates,setLeaveDisplay,setLeaveTypes,issueKind,findingNumbers,alsoShort,LEAVE_DISPLAY_CHOICES,setFindingNamer,causeIssue,causeText,causeWhat,draftComparison,sinceOfMany,mergeCauseGroups,runError} from './findings.js';
@@ -303,8 +303,9 @@ const WHOLE_GONE:Record<string,string>={'data-assignment':'This duty is no longe
 function onWholeUse(view:HTMLElement,at:string,uses:string,load:(pressed:HTMLButtonElement|null,replay:()=>void)=>Promise<boolean>){
   let going=false;
   const use=(e:Event)=>{const t=e.target instanceof Element?e.target:null;
-    // Enter and Space produce a click. Catch menu keys here before the grid or browser opens a menu.
-    if(e instanceof KeyboardEvent&&!(e.key==='ContextMenu'||e.key==='F10'&&e.shiftKey||
+    // Buttons produce a click; a non-button rule target handles Enter itself.
+    const ruleEnter=e instanceof KeyboardEvent&&e.key==='Enter'&&t?.matches('[data-rk-pin="1"]:not(button,a,input,select,textarea)');
+    if(e instanceof KeyboardEvent&&!(ruleEnter||e.key==='ContextMenu'||e.key==='F10'&&e.shiftKey||
       e.key.toLowerCase()==='x'&&!e.ctrlKey&&!e.metaKey&&!e.altKey))return;
     const hit=e.type==='dragstart'?t?.closest<HTMLElement>('[draggable=true]'):t?.closest<HTMLElement>(uses);if(!hit||t!.closest(WINDOW_ONLY))return;
     e.preventDefault();e.stopImmediatePropagation();if(going)return;going=true;
@@ -314,7 +315,7 @@ function onWholeUse(view:HTMLElement,at:string,uses:string,load:(pressed:HTMLBut
     const attr=['data-assignment','data-shift','data-session','data-rk'].find(a=>target.hasAttribute(a)),spot=attr?null:focusSpot(view,target);
     const refind=(root:HTMLElement)=>attr?root.querySelector<HTMLElement>(`${target.localName}[${attr}="${CSS.escape(target.getAttribute(attr)!)}"]`)
       :spot&&spot.nth>=0?sameKey(root,spot.key)[spot.nth]||null:null;
-    const pressed=t!.closest('button');
+    const pressed=t!.closest('button'),chipMenu=!!t!.closest('.pchip-more');
     // A control of its own inside the item (a chip's ⋯) is replayed on that control, found again by its place and name.
     const inner=pressed&&pressed!==hit&&hit.contains(pressed)?{nth:[...hit.querySelectorAll('button')].indexOf(pressed),label:pressed.getAttribute('aria-label')}:null;
     const replay=()=>{const root=document.querySelector<HTMLElement>(at),item=root?refind(root):null,
@@ -322,13 +323,18 @@ function onWholeUse(view:HTMLElement,at:string,uses:string,load:(pressed:HTMLBut
       if(!n){notify(WHOLE_GONE[attr||'']||'This item is no longer in the rota.','info');return;}  // never a silent no-op
       // The press as it was: Ctrl/Meta/Shift add to a selection or open in place, so a replay keeps them.
       const m=e as MouseEvent,keys={shiftKey:m.shiftKey,ctrlKey:m.ctrlKey,metaKey:m.metaKey,altKey:m.altKey};
-      if(e.type==='click'){afterWired(n,()=>{if(n.isConnected)n.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:m.button,...keys}));});return;}
-      n.focus({preventScroll:true});
-      if(e.type==='dragstart'){notify('Whole rota loaded · drag again','info');return;}
-      // A menu opens at the control as drawn now (as the menu key does: its bottom left), not where the old one was.
-      const r=n.getBoundingClientRect();
-      n.dispatchEvent(e instanceof KeyboardEvent?new KeyboardEvent(e.type,{key:e.key,code:e.code,bubbles:true,cancelable:true,...keys})
-        :new MouseEvent(e.type,{bubbles:true,cancelable:true,clientX:r.left,clientY:r.bottom,button:m.button,...keys}));};
+      if(e.type==='click'){afterWired(n,()=>{if(!n.isConnected)return;
+        n.focus({preventScroll:true});
+        const at=chipMenu?n.querySelector('.pchip-more'):n;
+        if(at)at.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:m.button,...keys}));});return;}
+      const send=()=>{if(!n.isConnected)return;
+        n.focus({preventScroll:true});
+        if(e.type==='dragstart'){notify('Whole rota loaded · drag again','info');return;}
+        // A menu opens at the control as drawn now (as the menu key does: its bottom left), not where the old one was.
+        const r=n.getBoundingClientRect();
+        n.dispatchEvent(e instanceof KeyboardEvent?new KeyboardEvent(e.type,{key:e.key,code:e.code,bubbles:true,cancelable:true,...keys})
+          :new MouseEvent(e.type,{bubbles:true,cancelable:true,clientX:r.left,clientY:r.bottom,button:m.button,...keys}));};
+      if(ruleEnter)afterWired(n,send);else send();};
     void load(pressed&&view.contains(pressed)?pressed:null,replay).finally(()=>{going=false;});};
   for(const type of ['click','dblclick','contextmenu','dragstart','keydown'])view.addEventListener(type,use,true);
 }
@@ -2351,10 +2357,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const rotaFailed=(e:unknown)=>e instanceof ApiError&&(e.status===0||e.status>=500)&&!sessionChanged(e)?Object.assign(new Error(e.message),{cause:e}):e;
   const readDraft=(id:string)=>wholeRota(id).catch(e=>{throw rotaFailed(e);});
   // Week, Day and Month on a rota not yet read whole this visit (no link to one session, no comparison, proposal or
-  // selection, no Auto-schedule panel open, not on a phone): the window first (wholeRota above). The panel needs the
-  // whole rota, so with it open (H-04: Home's Review, ?review=proposal) the rota is read whole.
+  // selection, no panel requested, not on a phone): the window first. A linked review or rule panel needs the
+  // whole rota, so their explicit open reads it with the page.
   const windowFirst=(id:string)=>!!id&&['week','day','month'].includes(schedView)&&!wholeSeen.has(id)&&!routeShift&&!routeQuery.get('shift')&&
-    routeQuery.get('panel')!=='session'&&layerMode==='edit'&&!proposal&&!selected.size&&!schedulingSettings.open&&!phoneQuery.matches&&!phoneReview&&!sourcePublication;
+    routeQuery.get('panel')!=='session'&&layerMode==='edit'&&!proposal&&!selected.size&&!schedulingSettings.open&&fixPanelRota!==id&&!hasPendingRulePanel(id)&&!phoneQuery.matches&&!phoneReview&&!sourcePublication;
   const warm=(id:string)=>!!memo&&scheduleCache.drafts.has(id)&&draftReadIn===schedView;
   // Staff never open drafts: a shared link naming one shows the published schedule (and says so once).
   if(!planner&&workspaceId){if(!phoneLite())notify('That rota is not available. Showing the published schedule.','warning');workspaceId='';}
@@ -2650,7 +2656,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // The chosen rota's own row (`named` is looked up before a plain Schedule visit picks its default draft).
     // QA cycle 3 (maintenance): one source. The Fix list held for the rota as it is now (the panel's, the page's, an edit's delta)
     // is the footer's too; the rota list's summary only until one is held.
-    const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
+    const fixSum=heldFixSummary(w.id,draftData)||fixSummaryOf(draftData?.health?.summary||work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=(d:WorkspaceData)=>{const first=resolveQueue(d)[0];if(!first){notify('No problems to resolve one by one.','info');return;}startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(first.shift);renderPage();};
     // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
     const missingBaseline=draft&&!w.baseline;
@@ -2689,14 +2695,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // A published rota has nothing to check in place (its changes are amendments): its footer is the published layer's.
     const kind=footerCheck({stalled,checking:!!checking,provisional:!!provisional,checked:!!w.validation,counts:!!fixSum,current:fresh,
       partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished,whole:!!draftData,draft});  // a window knows its freshness
-    const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
+    const health=(s:FixSummary)=>fixHealth(w.id,s,data,w,windowDraft?replay=>loadWhole(null,replay):undefined,draftData);
+    const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(health({...fixSum,checking:true}))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
-    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
-      :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(fixHealth(w.id,{...fixSum,checking:true},data,w)):longCheck())
+    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(health({...fixSum,stale:true} as FixSummary),validate):validate)
+      :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(health({...fixSum,checking:true})):longCheck())
       :kind==='provisional'?withWords(checkingWords(provisional!.status)):kind==='waiting'?withWords(waitingWord('queued'))
-      :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?fixHealth(w.id,fixSum!,data,w)
+      :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?health(fixSum!)
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
-      :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
+      :kind==='stale'?staleHealth(health({...fixSum!,stale:true} as FixSummary),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
@@ -2777,9 +2784,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Below 1180px the panel stacks under the schedule (CSS): bring it into view, or the button seems to do nothing.
     if(matchMedia('(max-width:1180px)').matches)side.scrollIntoView({block:'start'});void reloadScheduling?.().catch(e=>{reportError(e);});}}));
   target.append(bodyWrap);target=mainCol;
-  if(w&&whole){const data=whole;
-    // Rules in context: hover or pin anything on the schedule to see the rules that apply there, and highlight a rule.
-    mountRules(ctx(),data,bodyWrap,mainCol,{editable:draft,canPropose:may('rule.propose'),canRequestException:permits(CAPABILITY.COORDINATOR),
+  if(w&&draftData&&(whole||windowDraft)){const data=draftData;
+    // Hover uses the rule map on the visible window. Opening the rules panel reads the whole draft first.
+    mountRules(ctx(),data,bodyWrap,mainCol,{editable:draft&&!!whole,canPropose:may('rule.propose'),canRequestException:permits(CAPABILITY.COORDINATOR),
       policy:id=>rows('policies').find(p=>p.id===id),sentence:ruleSentence,rotaChanges:()=>rotaTargetsDialog(w.id),refresh,
       openRule:(id,person)=>void openRuleSource(id,person).catch(reportError),
       fix:draft?focus=>openIssues(w.id,focus||{}):undefined,
@@ -2791,8 +2798,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       // A person's details are the one person card (D67/D68): contacts with Copy and Call as each contact type allows.
       personDetails:pid=>{const p=rows('people').find(x=>x.id===pid);return p?personCard(ctx(),p):el('p',{class:'muted'},'This person is not in your lists.');},
       ownRules:()=>rows('policies').filter(p=>p.status==='proposed'&&p.definition?.workspace_id===w.id),
-      addRotaRule:draft?()=>policyForm(ctx(),'',{workspace_id:w.id,title:w.name+' · ',starts_on:w.starts_on,ends_on:w.ends_on}):undefined,
-      onOpen:()=>{closeWeekPanel();closeAuto();}});
+      addRotaRule:draft&&whole?()=>policyForm(ctx(),'',{workspace_id:w.id,title:w.name+' · ',starts_on:w.starts_on,ends_on:w.ends_on}):undefined,
+      onOpen:()=>{closeWeekPanel();closeAuto();}});}
+  if(w&&whole){const data=whole;
     if(permits(CAPABILITY.COORDINATOR)){
       // An already-open panel must finish its first read before a same-page redraw swaps it in; otherwise the
       // breakpoint change briefly exposes only the loading skeleton and drops the step rail.
@@ -2804,10 +2812,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(w.review_snapshot&&['submitted','approved'].includes(w.status)){const strip=reviewPanel(ctx(),data);
       strip.append(...submittedFacts(data));target.append(strip);}
     if(w.urgency==='urgent')target.append(note('Urgent amendment · '+w.urgency_reason+' · Mandatory validation and independent review still apply.','warning'));
-    // An approver's return stays on the draft (who, when, why) until it is submitted again.
-    const back=w.status==='draft'?w.return_note:null;
-    if(back)target.append(note(`Returned for changes by ${back.by_name||'an approver'} · ${formatDate(back.at,zone())} ${formatTime(back.at,zone())} · “${back.reason}”`,'warning'));
   }else side.hidden=true;
+  // An approver's return stays on the draft (who, when, why) until it is submitted again.
+  const back=w?.status==='draft'?w.return_note:null;
+  if(back)target.append(note(`Returned for changes by ${back.by_name||'an approver'} · ${formatDate(back.at,zone())} ${formatTime(back.at,zone())} · “${back.reason}”`,'warning'));
   if(source)target.append(note(`${source.snapshot.workspace.name} · version ${source.publication.sequence} is ${source.publication.current?'published and read-only.':'superseded and read-only. Staff work from the current version.'}`,source.publication.current?'info':'warning'));
 
   // Search in the People layout finds people; in every other layout it finds sessions.
@@ -2857,7 +2865,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       {label:'Remove',icon:'trash',run:bulkRun('remove'),tip:'Delete these sessions from the draft',danger:true,...heldAct(onlyRotaCoordinator('remove'))}]});};
   if(draft)target.append(selectionBarRoot);selectionUpdate();
   const people=Object.fromEntries(sctx().catalogues.people.map(r=>[r.id,r])),locations=Object.fromEntries(sctx().catalogues.locations.map(r=>[r.id,r]));
-  dragWorkspace=draft?whole:null;
+  dragWorkspace=draft?draftData:null;
   // A published session (or anything in the published-only schedule) opens read-only.
   // A session without the planner's panel beside it (a published session, or a draft's on the phone's day list): the
   // same summary docked, with the session's actions when it is a draft one this person may change (S-09, S-22).
@@ -2926,7 +2934,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
   target.append(viewPanel);
   if(windowDraft){plannerTargets=null;onWholeUse(viewPanel,'#schedule-view',WHOLE_USE,loadWhole);
-    const d=draftData!;if(draft)void readJobs(d).then(()=>{if(mySerial===renderSerial)markProposal(d);});}
+    const d=draftData!;if(draft)void readJobs(d).then(()=>requestAnimationFrame(()=>{
+      if(mySerial!==renderSerial||!viewPanel.isConnected||lastJobs?.id!==d.workspace.id)return;
+      markProposal(d);
+      const jobs=(lastJobs.jobs.jobs||[]) as Row[];
+      const live=jobs.find(j=>j.kind==='generation'&&['queued','running'].includes(j.status));
+      if(live){void loadWhole();return;}
+      const check=jobs.find(j=>j.kind==='validation'&&['queued','running'].includes(j.status));
+      if(check)autoCheck(d,check);
+    }));}
   else if(reading){windowOnScreen=true;viewPanel.dataset.reading='';viewPanel.setAttribute('aria-label',viewPanel.getAttribute('aria-label')+' · from the last check');
     const id=w!.id,epoch=scheduleEpoch,here=()=>mySerial===renderSerial&&epoch===scheduleEpoch&&workspaceId===id&&view==='schedule';
     const readWhole=():void=>void (scheduleCache.drafts.has(id)?Promise.resolve():wholeRota(id,true).catch(e=>{throw rotaFailed(e);})).then(
@@ -3654,25 +3670,31 @@ const readyStep=(w:Row|null|undefined,data:WorkspaceData|null):FixStep=>{
   if(w.status==='draft')return w.purpose!=='sandbox'&&permits(CAPABILITY.COORDINATOR)?'submit':null;
   if(w.status==='submitted')return !!data&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&decidesStep(data)?'approve':null;
   return w.status==='approved'&&permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)?'publish':null;};
-function fixHealth(id:string,s:FixSummary,data:WorkspaceData|null,w:Row|null|undefined=data?.workspace){
+function fixHealth(id:string,s:FixSummary,data:WorkspaceData|null,w:Row|null|undefined=data?.workspace,
+  loadWhole?:(replay:()=>void)=>Promise<boolean>,displayData=data){
   // maintenance: with scheduling groups the footer counts the group shown ("Consultants · ⚠ 3 must fix"), the server's per-group
   // numbers; the score is the whole rota's, so it waits for All groups.
-  const g=scopedGroup(id,planningOf(data));
+  const g=scopedGroup(id,planningOf(data,fixCache.get(id)?.list));
   // A7: once nothing must be fixed, the ready popover's Score breakdown opens the score's own "Why this score".
   const score=data?.workspace.validation?.score,byId=new Map((data?.shifts||[]).map(x=>[x.id,x]));
-  const breakdown=score&&shownScore(score)!=null?()=>{const at=document.querySelector<HTMLElement>('.app-footer .fix-pills .health-pill.ok');if(!at)return;
-    const review=w?.status==='draft'?reviewScores(id):undefined;
-    popover(at,(panel,close)=>panel.append(...scoreWhy(score,pid=>name('people',pid),sid=>{close();const x=byId.get(sid);if(x&&!openSession(x))readOnlySession(x);},review&&(()=>{close();review();}))),{label:'Why this score',placement:'below-end'});}:undefined;
+  const breakdown=score&&shownScore(score)!=null||loadWhole&&s.score!=null?()=>{
+    const open=(d:WorkspaceData|null)=>{const value=d?.workspace.validation?.score,at=document.querySelector<HTMLElement>('.app-footer .fix-pills .health-pill.ok');if(!at||!value)return;
+      const review=w?.status==='draft'?reviewScores(id):undefined;
+      popover(at,(panel,close)=>panel.append(...scoreWhy(value,pid=>name('people',pid),sid=>{close();const x=d?.shifts.find(y=>y.id===sid);if(x&&!openSession(x))readOnlySession(x);},review&&(()=>{close();review();}))),{label:'Why this score',placement:'below-end'});};
+    if(loadWhole)void loadWhole(()=>open(scheduleCache.drafts.get(id)||null));else open(data);
+  }:undefined;
   // V08: a summary without a score (an applied run's command_changes check and its fix_list_after say score null) shows
   // the rota's current check's score, which the complete check patches into the held draft (applyCheckDelta).
-  const pills=fixPills(g?{...s,must:g.must,could:g.could,score:null}:{...s,score:s.score??(score?shownScore(score):null)},{load:()=>readFixList(id),held:()=>{const h=fixCache.get(id)?.list;return h&&h.summary.must===s.must&&h.summary.could===s.could?h:heldFixList(id,s);},open:()=>openIssues(id),breakdown,hooks:fixHooks(id,data,w),step:readyStep(w,data)});
+  const pills=fixPills(g?{...s,must:g.must,could:g.could,score:null}:{...s,score:s.score??(score?shownScore(score):null)},{load:()=>readFixList(id),held:()=>{const h=fixCache.get(id)?.list;return h&&h.summary.must===s.must&&h.summary.could===s.could?h:heldFixList(id,s);},open:()=>openIssues(id),breakdown,hooks:fixHooks(id,displayData,w),step:readyStep(w,displayData)});
   if(g)pills.prepend(el('span',{class:'footer-group'},g.name));
   if(data&&proposalShown(data))pills.prepend(proposalPill(data));
   // Owner, 7 Nov 2026: the score shows whenever the rota has one, not only once nothing must be fixed. Capped, it says
   // only "capped": the must-fix pill beside it gives the one count (two different numbers side by side confused).
-  if(!g&&s.must&&score&&shownScore(score)!=null){
-    const pill=scorePill(id+':'+(data?.shifts.length??0),score,pid=>name('people',pid),sid=>{const x=byId.get(sid);if(x&&!openSession(x))readOnlySession(x);},w?.status==='draft'?reviewScores(id):undefined);
-    const said=`Schedule score ${shownScore(score)} of 100, capped while anything must be fixed: ${mustWords(s.must)}`;
+  const shown=score?shownScore(score):s.uncapped_score??s.score;
+  if(!g&&s.must&&shown!=null&&(score||loadWhole)){
+    const pill=scorePill(id,score||{score:shown,publishable:false,blocking_count:s.must},pid=>name('people',pid),sid=>{const x=byId.get(sid);if(x&&!openSession(x))readOnlySession(x);},
+      w?.status==='draft'?reviewScores(id):undefined,loadWhole?()=>void loadWhole(()=>document.querySelector<HTMLElement>('.app-footer .score-pill')?.click()):undefined);
+    const said=`Schedule score ${shown} of 100, capped while anything must be fixed: ${mustWords(s.must)}`;
     pill.setAttribute('aria-label',said);pill.dataset.ctip=said;
     pill.append(el('span',{class:'pill-extra score-blocking','aria-hidden':'true'},' · capped'));pills.append(pill);}
   return pills;
@@ -3931,10 +3953,12 @@ const fixCache=new Map<string,{key:string;list:FixList}>(),fixChipsOpen=new Set<
 const planOnDesk=()=>!phoneQuery.matches&&permits(CAPABILITY.COORDINATOR);
 const openIssuesPage=(workspace:string)=>navigate(routeHash('schedule',['issues'],{draft:workspace}).slice(1));
 function openIssues(workspace:string,focus:{cause?:string;shift?:string;only?:string[];chosen?:boolean}={}){
-  const w=scheduleCache.drafts.get(workspace)?.workspace;
+  const w=scheduleCache.drafts.get(workspace)?.workspace||(plannerMemo?.id===workspace?plannerMemo.window?.workspace:undefined);
   if(!planOnDesk()||w&&w.status!=='draft'){openIssuesPage(workspace);return;}
   focusOn(workspace,{...focus,chosen:focus.chosen??!!focus.shift});fixPanelRota=workspace;
-  if(view==='schedule'&&!schedSubPage()&&workspaceId===workspace&&document.querySelector('#main .planner-body')){void drawFixPanel(true);return;}
+  if(view==='schedule'&&!schedSubPage()&&workspaceId===workspace&&document.querySelector('#main .planner-body')){
+    if(scheduleCache.drafts.has(workspace))void drawFixPanel(true);else void redraw();
+    return;}
   workspaceId=workspace;draftNone=false;navigate(routeHash('schedule',[schedView,planDay],{edit:workspace}).slice(1));
 }
 /** Where an issue list's items go (issue_marker.ts issueList, the one list): an item shows its session (marked now when
@@ -8649,7 +8673,7 @@ window.addEventListener('online',()=>{if(me)void onPulse();});
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
-const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
+const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(plannerMemo?.id===workspaceId&&plannerMemo.window?.workspace)||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(){
   const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
   await applyUndone(done);notifyUndone(done,'Undone. The previous arrangement is back and checked again.');

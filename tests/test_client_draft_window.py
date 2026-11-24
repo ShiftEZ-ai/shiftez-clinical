@@ -121,8 +121,14 @@ REPLAY_IO = r"""
 const handlers=new Map(),messages=[],calls=[],CSS={escape:s=>s};
 class Element {
   constructor(){this.localName='button';this.attrs={'data-assignment':'a'};this.dataset={};this.isConnected=true;}
-  closest(s){if(s===WINDOW_ONLY)return this.windowOnly?this:null;return this;}
-  matches(){return false;}
+  closest(s){
+    if(s===WINDOW_ONLY)return this.windowOnly?this:null;
+    if(s==='.pchip-more')return this.chipMenu?this:null;
+    if(s==='button'&&this.ruleMark)return null;
+    return this;
+  }
+  matches(s){return !!this.ruleMark&&s.startsWith('[data-rk-pin=');}
+  querySelector(s){return s==='.pchip-more'?{dispatchEvent:e=>calls.push('menu '+e.type)}:null;}
   hasAttribute(a){return a in this.attrs;}getAttribute(a){return this.attrs[a];}
   focus(){calls.push('focus');}click(){calls.push('click');}dispatchEvent(e){calls.push(e.type);}
   getBoundingClientRect(){return {left:10,bottom:20};}
@@ -147,7 +153,7 @@ def replay_code(client_modules):
 
 
 @pytest.mark.parametrize(('event', 'options', 'actions', 'message'), [
-    ('click', {}, ['click'], []),
+    ('click', {}, ['focus', 'click'], []),
     ('dblclick', {}, ['focus', 'dblclick'], []),
     ('contextmenu', {}, ['focus', 'contextmenu'], []),
     ('keydown', {'key': 'x'}, ['focus', 'keydown'], []),
@@ -167,6 +173,18 @@ def test_focus_and_native_button_keys_do_not_start_a_whole_read_on_keydown(clien
     got = node(replay_code(client_modules) + f"const event=send('keydown',{{key:{json.dumps(key)}}});" +
                "console.log(JSON.stringify({event,loads,calls}));")
     assert got == {'event': {'prevented': False, 'stopped': False}, 'loads': 0, 'calls': []}
+
+
+@pytest.mark.parametrize(('action', 'event', 'options', 'calls'), [
+    ('ruleMark', 'keydown', {'key': 'Enter', 'shiftKey': True}, ['focus', 'keydown']),
+    ('chipMenu', 'click', {}, ['focus', 'menu click']),
+])
+def test_rule_enter_and_the_chip_menu_replay_on_the_new_control(client_modules, action, event, options, calls):
+    got = node(replay_code(client_modules) +
+               f"original.{action}=true;const first=send({json.dumps(event)},{json.dumps(options)});" + r"""
+send('click');const before=[...calls];answer();await pending;
+console.log(JSON.stringify({first,before,loads,calls}));""")
+    assert got == {'first': {'prevented': True, 'stopped': True}, 'before': [], 'loads': 1, 'calls': calls}
 
 
 @pytest.mark.parametrize('modifier', ['ctrlKey', 'metaKey', 'altKey'])
@@ -192,7 +210,7 @@ def test_a_toolbar_action_is_refound_before_its_busy_label_changes(client_module
     got = node(replay_code(client_modules) + r"""
 original.attrs={};send('click');original.textContent='Loading';answer();await pending;
 console.log(JSON.stringify({loads,calls,messages}));""")
-    assert got == {'loads': 1, 'calls': ['click'], 'messages': []}
+    assert got == {'loads': 1, 'calls': ['focus', 'click'], 'messages': []}
 
 
 @pytest.mark.parametrize('modifier', ['ctrlKey', 'metaKey', 'shiftKey'])

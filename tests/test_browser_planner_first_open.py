@@ -63,7 +63,7 @@ def test_the_planner_draws_a_department_week_before_the_whole_rota_and_then_whol
             'reads': len(reads), 'by_route': dict(by_route.most_common(6))}))
         assert not any(r[1] == '/api/workspaces/{id}?view=schedule' for r in before), [r[1] for r in before]
         assert any(r[1] == '/api/workspaces/{id}?view=compact' for r in before), [r[1] for r in before]
-        assert all(any(f'/parts?part={part}&' in r[1] for r in before) for part in ('shifts', 'validation'))
+        assert all(any(r[1].endswith(f'/parts?part={part}') for r in before) for part in ('shifts', 'validation'))
         assert len(detail) == 1, [r[1] for r in reads]  # the whole rota is read once
     finally:
         context.close()

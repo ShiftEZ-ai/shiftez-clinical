@@ -264,6 +264,17 @@ def test_focus_keys_leave_the_rota_on_its_window(browser, live_server, window_ro
         assert whole_count(reads, window_rota) == 0, reads
 
 
+def test_rule_hover_stays_on_the_window_and_keyboard_open_replays_once(browser, live_server, window_rota):
+    with opened_window(browser, live_server, window_rota) as (page, reads):
+        day = page.locator('.wk-day[data-rk-pin="1"]').first
+        day.hover()
+        expect(page.locator('.planner-main')).to_have_attribute('data-rk-rules', re.compile(r'^\d+$'))
+        assert whole_count(reads, window_rota) == 0, reads
+        day.press('Enter')
+        expect(page.locator('.rk-panel')).to_be_visible()
+        assert whole_count(reads, window_rota) == 1, reads
+
+
 @pytest.mark.parametrize('key', ['x', 'ContextMenu', 'Shift+F10'])
 def test_selection_and_menu_keys_wait_for_the_whole_rota_then_act(browser, live_server, window_rota, key):
     with opened_window(browser, live_server, window_rota) as (page, reads), holding(page) as held:
@@ -356,8 +367,8 @@ def test_undo_reads_the_window_again_without_a_whole_read(browser, live_server, 
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
         expect(page.locator(CHIP)).to_have_count(before)
         assert len(h.detail(window_rota)['shifts']) == 2
-        # Undo first reads the displayed revision, then reads the changed window's compact detail.
-        assert_window_reads(reads, window_rota, '2026-10-04', '2026-10-11', compact=2)
+        # Undo uses the revision on screen, then reads the changed window's compact detail.
+        assert_window_reads(reads, window_rota, '2026-10-04', '2026-10-11')
 
 
 def test_a_submitted_rota_reads_whole_at_once(browser, live_server, h):
