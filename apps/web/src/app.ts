@@ -4976,7 +4976,12 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
   const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
-  if(items.length&&aboutOf(catalogueKind))head.querySelector('h2')!.append(' ',helpButton('About '+kindLabel(catalogueKind),aboutOf(catalogueKind),'field-help'));
+  const about=aboutOf(catalogueKind);
+  if(items.length&&about){
+    const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
+    heading.replaceWith(title);
+    title.append(heading,helpButton('About '+kindLabel(catalogueKind),about,'field-help'));
+  }
   target.append(head);
   // One empty state everywhere (C-03): what is missing, why it matters, and the one action that adds it.
   // A kind that needs another first (a recurring session needs a duty type) offers that step instead of a Create that
