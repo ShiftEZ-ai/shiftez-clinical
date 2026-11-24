@@ -9,7 +9,7 @@ from playwright.sync_api import expect
 
 from apps.api import models as m
 from apps.api.db import transaction
-from .test_browser import route_fetch, browser, live_server, sign_in, navigate, fill_sign_in, reconnect  # noqa: F401
+from .test_browser import route_fetch, browser, live_server, sign_in, navigate, fill_sign_in, reconnect, wait_until  # noqa: F401
 from .test_browser_uiux_sessions import switch_account
 
 pytestmark = pytest.mark.browser
@@ -32,57 +32,34 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
         original = notification(db, h, recipient, 'Original polling notice')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
-        # The first timer starts both real SSE and fallback polling. Observe that
-        # connection handshake before measuring a steady background cycle.
-        cdp=context.new_cdp_session(page)
+        # Sign-in can already have received the first pulse. A heartbeat on the real stream
+        # comes after that pulse and starts a fresh live window regardless of startup timing.
+        cdp = context.new_cdp_session(page)
         cdp.send('Network.enable')
-        initial_pulse=[];startup_reads=[];pending=set()
-        cdp.on('Network.eventSourceMessageReceived',lambda event: initial_pulse.append(event) if event['eventName']=='pulse' else None)
-        def started(request):
-            if request.method=='GET' and urlsplit(request.url).path=='/api/notifications':
-                startup_reads.append(request);pending.add(request)
-        page.on('request',started)
-        page.on('requestfinished',lambda request: pending.discard(request))
-        # Every page read in flight (the stream aside): the idle window below starts once a refresh has finished.
-        reading=set()
-        page.on('request',lambda request: reading.add(request) if request.method=='GET' and urlsplit(request.url).path.startswith('/api/') and urlsplit(request.url).path!='/api/events' else None)
-        page.on('requestfinished',lambda request: reading.discard(request))
-        page.on('requestfailed',lambda request: reading.discard(request))
-        navigate(page, 'inbox')
-        expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
-        with page.expect_response(lambda response: urlsplit(response.url).path == '/api/pulse', timeout=15000) as startup:
-            # The pulse is the app's 10 s timer, on the page clock; with the stream live it reads once a minute. On a
-            # loaded runner its first tick already ran in real time while signing in, so step past the next minute's check.
-            page.clock.run_for(71_000)
-        startup.value.finished()
-        deadline=time.monotonic()+15
-        while time.monotonic()<deadline:
-            page.wait_for_timeout(50)
-            if initial_pulse and startup_reads and not pending:
-                page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-                if not pending:break
-        else:pytest.fail('Initial SSE pulse and notification reads did not complete')
-        # Idle with the live stream up (SH-04): the Inbox follows the stream like every page, so two timer ticks right
-        # after a ping (the stream is alive) read nothing, where it used to read the pulse and the inbox every 10 s.
         pinged = []
         cdp.on('Network.eventSourceMessageReceived', lambda event: pinged.append(event) if event['eventName'] == 'ping' else None)
-        deadline = time.monotonic() + 30
-        while not pinged and time.monotonic() < deadline:
-            page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
-        assert pinged, 'no ping from the live stream'
+        reading = set()
+
+        def started(request):
+            path = urlsplit(request.url).path
+            if request.method == 'GET' and path.startswith('/api/') and path != '/api/events':
+                reading.add(request)
+
+        page.on('request', started)
+        page.on('requestfinished', lambda request: reading.discard(request))
+        page.on('requestfailed', lambda request: reading.discard(request))
+        navigate(page, 'inbox')
+        wait_until(page, lambda: pinged and not reading, 'Live stream heartbeat or inbox reads did not settle')
         cdp.detach()
-        # The idle window starts here. The start-up step above may refresh the page once (stepping past the minute's
-        # check outdates the stream until its next ping), so the inbox the idle checks must keep is the one shown now.
-        deadline = time.monotonic() + 30
-        while reading and time.monotonic() < deadline:
-            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-        assert not reading, [r.url for r in reading]
         expect(page.get_by_text('Original polling notice', exact=True)).to_be_visible()
+
+        # With the stream live, two idle timer ticks must not repeatedly fetch or replace the inbox.
         original_node = page.locator('.note-item').first.element_handle()
         reads = []
         page.on('request', lambda request: reads.append(urlsplit(request.url).path) if request.method == 'GET' else None)
         page.clock.run_for(20_000)
-        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        page.wait_for_function('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
+        wait_until(page, lambda: not reading, 'Idle inbox reads did not settle')
         periodic = [path for path in reads if path != '/api/events']
         assert periodic.count('/api/notifications') <= 1 and periodic.count('/api/pulse') <= 1, periodic
         assert '/api/me' not in reads and '/api/catalogues' not in reads, reads
@@ -93,7 +70,8 @@ def test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_c
         with transaction(h.app.state.engine, write=True) as db:
             db.get(m.Notification, original).acknowledged_at = m.now()
             notification(db, h, recipient, 'Replacement polling notice')
-        page.clock.run_for(60_000)
+        with page.expect_request_finished(lambda request: urlsplit(request.url).path == '/api/pulse', timeout=15000):
+            page.clock.run_for(60_000)
         expect(page.get_by_text('Replacement polling notice', exact=True)).to_be_visible(timeout=15000)
         expect(page.get_by_text('Original polling notice', exact=True)).to_have_count(0)
     finally:
