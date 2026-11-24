@@ -338,7 +338,7 @@ def pytest_runtest_makereport(item, call):
 
     def run_guard(self, changed, branch="dev", after_known=None, merge_tree=None, preview_history=False,
                   kind="pull_request", after_removed=None, after_python=None, preview_probe=None,
-                  candidate_helpers=None, files=None,
+                  candidate_helpers=None, base_helpers=None, files=None,
                   real_inventory=False, default="dev", accepted=None):
         base, head, candidate, source = (c * 40 for c in "abcd")
         data = {"number": 1, "pull_request": {"base": {"ref": branch, "sha": base, "repo": {"id": policy.REPOSITORY}},
@@ -388,6 +388,8 @@ def pytest_runtest_makereport(item, call):
                 return after_python if rev == candidate and after_python is not None else b"x=1\n"
             return b"{}"
         def inventory(rev):
+            if rev == base and base_helpers is not None:
+                return {**self.inventory, "helpers": base_helpers}
             if rev == candidate and candidate_helpers is not None:
                 return {**self.inventory, "helpers": candidate_helpers}
             return self.inventory.copy()
@@ -583,9 +585,21 @@ def pytest_runtest_makereport(item, call):
         self.assertEqual(policy.working_branches("dev"), {"dev", "main", "preview"})
         self.assertEqual(policy.working_branches("main"), {"main"})
         self.assertEqual(self.run_guard("apps/example.py", branch="dev", default="main"), {})
-        for default, branch in (("main", "dev"), ("main", "preview"), ("dev", "preview")):
+        for default, branch in (("main", "dev"), ("main", "preview"), ("dev", "preview"), ("main", "release/latest")):
             with self.subTest(default=default, branch=branch), self.assertRaisesRegex(ValueError, "Unexpected queue target"):
                 self.run_guard("apps/example.py", branch=branch, kind="merge_group", default=default)
+
+    def test_guard_checks_release_fixes_against_their_target(self):
+        branch = "release/v1.2.3"
+        helper = "scripts/release_check.py"
+        accepted = Mock(side_effect=AssertionError("Release fixes must not use the trunk tree"))
+        for kind in ("pull_request", "merge_group"):
+            with self.subTest(kind=kind):
+                report = self.run_guard(helper, branch=branch, kind=kind, default="main", accepted=accepted,
+                                        preview_probe=128, base_helpers={helper})
+                self.assertEqual((report["branch"], report["target_sha"]), (branch, "a" * 40))
+                self.assertEqual([row["path"] for row in report["tier1"]], [helper])
+        accepted.assert_not_called()
 
     def test_missing_or_unexpected_default_branch_refuses(self):
         for default in (None, "", "preview", "release"):
@@ -608,9 +622,9 @@ def pytest_runtest_makereport(item, call):
                 with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}):
                     self.assertEqual(policy.default_branch(policy.event()), default)
 
-    def run_ci_context(self, kind, ref, default):
+    def run_ci_context(self, kind, ref, default, *, created=False):
         before, head, accepted = "a" * 40, "b" * 40, "e" * 40
-        data = {"before": before, "repository": {"default_branch": default},
+        data = {"before": "0" * 40 if created else before, "created": created, "repository": {"default_branch": default},
                 "pull_request": {"base": {"ref": ref, "sha": before}},
                 "merge_group": {"base_ref": "refs/heads/" + ref, "base_sha": before}}
         with tempfile.TemporaryDirectory() as folder:
@@ -624,6 +638,8 @@ def pytest_runtest_makereport(item, call):
                                          "GITHUB_OUTPUT": str(output)}):
                 policy.ci_context()
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        if ref.startswith("release/"):
+            self.assertEqual(values["census_base_sha"], head if created else before)
         return values["base_sha"], values["release"], fetched
 
     def test_ci_context_follows_the_default_branch(self):
@@ -644,6 +660,15 @@ def pytest_runtest_makereport(item, call):
                                    ("push", "feature", "dev"), ("push", "main", None)):
             with self.subTest(kind=kind, ref=ref, default=default), self.assertRaises(ValueError):
                 self.run_ci_context(kind, ref, default)
+
+    def test_ci_context_keeps_the_release_base_for_every_event(self):
+        branch = "release/v1.2.3"
+        for kind in ("pull_request", "merge_group", "push"):
+            with self.subTest(kind=kind):
+                self.assertEqual(self.run_ci_context(kind, branch, "main"), ("a" * 40, "false", []))
+        self.assertEqual(self.run_ci_context("push", branch, "main", created=True), ("b" * 40, "false", []))
+        with self.assertRaisesRegex(ValueError, "CI supports only the working branches"):
+            self.run_ci_context("push", "release/latest", "main")
 
     def test_guard_allows_an_absent_preview_ref_but_propagates_fetch_failures(self):
         for kind in ("pull_request", "merge_group"):
@@ -911,7 +936,7 @@ def pytest_runtest_makereport(item, call):
         with patch.object(verifier, "PR_SMOKE", {"tests/test_browser_a.py"}):
             self.assertEqual(verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_a.py"}),
                              {"tests/test_a.py", "tests/test_browser_a.py"})
-            with self.assertRaisesRegex(ValueError, "ordinary dev pull request"):
+            with self.assertRaisesRegex(ValueError, "ordinary pull request targeting a working branch"):
                 verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2})
             with self.assertRaisesRegex(ValueError, "omits required test files"):
                 verifier.assert_inventory(partial, rows, {"unit": 2, "browser": 2}, {"tests/test_unobserved.py"})
