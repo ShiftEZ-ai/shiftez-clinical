@@ -11,16 +11,23 @@ def test_golden_scenario(scenario_id, golden_case):
     assert receipt['bindings'] and all(value > 0 for value in receipt['bindings'].values())
 
 
-def test_golden_compiler_is_idempotent(budget_h):
+@pytest.fixture
+def golden_bulk_h(budget_h):
     from dataclasses import replace
     from apps.api.main import create_app
-    from scripts.golden_scenarios import compile_scenario, command_key
 
     h = budget_h
-    # Two full-pack replays share a window; rate-limit behavior has its own tests.
+    # Bulk replays share a command window; rate-limit behavior has its own tests.
     h.app.state.engine.dispose()
     h.settings = replace(h.settings, rate_commands_per_minute=10_000)
     h.app = create_app(h.settings)
+    return h
+
+
+def test_golden_compiler_is_idempotent(golden_bulk_h):
+    from scripts.golden_scenarios import compile_scenario, command_key
+
+    h = golden_bulk_h
     specs = load_pack()
     from apps.worker.main import process_one
     def compile(spec):
@@ -59,12 +66,12 @@ def test_golden_replayed_activation_still_rejects_changed_content(budget_h):
                          work=lambda: pytest.fail('Replayed activation created another check'))
 
 
-def test_golden_configuration_reaches_api_generation_snapshots(budget_h):
+def test_golden_configuration_reaches_api_generation_snapshots(golden_bulk_h):
     import copy
     from scripts.golden_scenarios import compile_scenario
     from tests.test_staff_wishes import department_settings
 
-    h = budget_h
+    h = golden_bulk_h
     from apps.worker.main import process_one
     for spec in load_pack():
         compiled = compile_scenario(h.command, spec, read=h.get, committed=h.committed,

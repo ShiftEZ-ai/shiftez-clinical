@@ -9,7 +9,7 @@ import {dateRange,lastDayIncluded} from './date_picker.js';
 import {LINE_ENDING_DAYS,TERMS} from './terms.js';
 import {openPicker} from './picker.js';
 import {skeleton,busy,elapsed,working} from './loading.js';
-import {relationOf,lineEffect,effectRunning,waitingWord,effectWords,effectReady,relationText,broaderStrength,relaxSeed,promoteSeed,adjustmentEffect,proposalReview,checkEffect,approveAndActivate,type Relation,type Effect,type RelaxTarget,type Checked,type Adjustment,type ActiveChoices,activeChoices,forgetActiveChoices,applyAdjustment,workspaceRevision,type Review} from './rule_check_api.js';
+import {relationOf,lineEffect,effectRunning,waitingWord,effectWords,effectReady,effectRecheckable,relationText,broaderStrength,relaxSeed,promoteSeed,adjustmentEffect,proposalReview,checkEffect,approveAndActivate,type Relation,type Effect,type RelaxTarget,type Checked,type Adjustment,type ActiveChoices,activeChoices,forgetActiveChoices,applyAdjustment,workspaceRevision,type Review} from './rule_check_api.js';
 import {setRuleDraftCheck,ruleProposing,ruleKey,redrawWhenSettled,lineSelection,type BulkAction} from './bulk.js';
 import {openChange,runBulk} from './bulk_change.js';
 import {get,background,command,request,readAfresh,sessionChanged,sessionKey,onSessionReset,ApiError,type Undone} from './api.js';
@@ -1125,7 +1125,7 @@ function effectRows(rows:Effect[],none='No rota being planned overlaps its dates
     // says it waits, timed from then; only a running one reads Checking.
     const since=x.started_at||x.created_at;
     const end=w?badge(w.text,w.tone):elapsed(waitingWord(x.status)||'Checking',since?Date.parse(since):Date.now());
-    if(w?.tone==='ok')end.prepend(icon('check'));if(!w)end.id=`rc-effect-wait-${i}`;
+    if(w?.tone==='ok')end.prepend(icon('check'));if(!w||x.activation_blocker)end.id=`rc-effect-why-${i}`;
     const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
       :x.summary&&x.summary!==w?.text?x.summary:'';
     let problems:Child='';
@@ -1806,21 +1806,23 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         await Promise.all(Array.from({length:Math.min(CHECKS_AT_ONCE,queue.length)},worker));
         for(const x of queue)started.delete(x.workspace_id);};  // closed before they were started
       const reread=async()=>{const r=await proposalReview(String(p.id));review=r;rows=r.effect||[];paint();};
-      const recheck=button('Check',async()=>{understood.input.checked=false;const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&x.status!=='ready'));await reread();void load();}
+      const recheck=button('Check',async()=>{understood.input.checked=false;const done=busy(recheck);try{await start(rows.filter(x=>!effectRunning(x)&&effectRecheckable(x)));await reread();void load();}
         catch(err){reportError(err);}finally{await done();}},'secondary small');
       const stop=mayStop?button('Stop',async()=>{const done=busy(stop!);
         try{await command('bulk.apply',{item_kind:'job.cancel',reason:'Stopped the rule check',
           items:rows.filter(effectRunning).filter(x=>x.job_id).map(x=>({target_id:String(x.job_id)}))});await reread();}
         catch(err){reportError(err);}finally{await done();}},'secondary small'):null;
+      const needsFirstCheck=(x:Effect)=>x.status==='not_checked'&&effectRecheckable(x)&&!started.has(x.workspace_id);
       let paintedEffects='';
       const paint=()=>{if(!review){disabledWhy(approve,waitsWhy,[],approveWhy);recheck.hidden=true;if(stop)stop.hidden=true;return;}
         const effects=rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x);
         // Keep the evidence open when only the acknowledgement controls repaint.
         const effectKey=JSON.stringify([effects,review.summary]);
         if(effectKey!==paintedEffects){list.replaceChildren(...effectRows(effects,review.summary||undefined));paintedEffects=effectKey;}
-        const wait=list.querySelector('[id^="rc-effect-wait"]');
-        const fresh=rows.some(x=>x.status==='not_checked'&&!started.has(x.workspace_id));
-        recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(x=>x.status!=='ready');
+        // What Approve waits for, or the finished check that refuses it, is its description.
+        const wait=list.querySelector('[id^="rc-effect-why"]');
+        const fresh=rows.some(needsFirstCheck);
+        recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(effectRecheckable);
         if(stop)stop.hidden=!rows.some(effectRunning);
         failure.replaceChildren(...(startError?[note(startError,'warning')]:[]),
           // maintenance: a review read that fails is said, with Retry, and polling goes on (it used to stop for good while the
@@ -1839,7 +1841,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           :ask&&!understood.input.checked?'Tick the box above first':ask&&why.input.value.trim().length<3?'Give a reason (3 characters or more)':'',[],approveWhy);};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
-        if(canCheck)await start(rows.filter(x=>x.status==='not_checked'&&!started.has(x.workspace_id)));paint();
+        if(canCheck)await start(rows.filter(needsFirstCheck));paint();
         window.clearTimeout(timer);if(checking()||pollError)timer=window.setTimeout(()=>void poll(),3000);};
       const poll=()=>proposalReview(String(p.id)).then(r=>{pollError='';review=r;rows=r.effect||[];drawSays(r.relations||{});paint();return load();},
         err=>{if(sessionChanged(err)||!d.body.isConnected)return;pollError=(err as Error).message;paint();window.clearTimeout(timer);timer=window.setTimeout(()=>void poll(),3000);});
