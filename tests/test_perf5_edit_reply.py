@@ -285,6 +285,11 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
     worker_up(h)
     canonical = validation.evaluate
     scopes = []
+    input_reads = []
+    read_inputs = snapshots._snapshot_inputs
+    def counted_inputs(db, org):
+        input_reads.append(org.id)
+        return read_inputs(db, org)
     def scoped(data, **kwargs):
         scope = data.get('_partial')
         assert scope and not scope.get('complete') and scope['shifts'] == {shift['id']}
@@ -296,6 +301,7 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
     monkeypatch.setattr(planning, 'revalidate', forbidden)
     monkeypatch.setattr(planning, 'evaluate', scoped)
     monkeypatch.setattr(validation, 'evaluate', scoped)
+    monkeypatch.setattr(snapshots, '_snapshot_inputs', counted_inputs)
     monkeypatch.setattr(fairness, 'prepare_history_window', forbidden)
     monkeypatch.setattr(fairness, 'history', forbidden)
     monkeypatch.setattr(wishes, 'snapshot_wishes', forbidden)
@@ -309,6 +315,7 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
         json={'kind': 'shift.update', 'payload': payload, 'expected_revision': w['revision']})
     assert response.status_code == 200, response.text
     result = response.json()
+    assert input_reads == [h.seed['organisation_id']]
     assert len(scopes) >= 3  # Pairing trial plus the before/after admission.
     row = next(row for row in result['shifts'] if row['id'] == shift['id'])
     assert next(p for p in row['participants'] if p['person_id'] == trainee)['supervisor_person_id'] == mentor
