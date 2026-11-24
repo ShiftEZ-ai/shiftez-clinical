@@ -4669,6 +4669,10 @@ tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
 .tag-chip.rc-not{border-style:dashed}
 .rc-lp-foot .button.is-disabled{opacity:.55;cursor:not-allowed}
 .rc-lp-foot{display:flex;align-items:center;gap:8px;padding:12px 0 0;border-top:1px solid var(--line)}
+/* The decision's reason for a disabled Approve sits just before it and may wrap; the actions keep the bottom line, so
+   none moves under the pointer when the reason goes. */
+.rc-decide-foot{align-items:flex-end}
+.rc-decide-foot>.why-unavailable{flex:1 1 0;text-align:end}
 /* The actions stay put while the line is written (no button moves under the pointer): pinned to the panel's bottom. */
 .dock-body.rc-lp-body:has(>.rc-lp-foot){padding-bottom:0;scroll-padding-bottom:84px}  /* nothing scrolled into view hides under the actions */
 .rc-lp-body>.rc-lp-foot{position:sticky;bottom:0;z-index:2;margin:12px -20px 0;padding:12px 20px 16px;background:var(--surface)}

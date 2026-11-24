@@ -17,7 +17,7 @@ export type Relation={line_id:string;line_no:number;overrides:boolean;both_apply
 export type Effect={workspace_id:string;name:string;status?:string;clears?:number;adds?:number;effect?:'clears'|'adds'|'no_change';
   job_id?:string|null;started_at?:string|null;created_at?:string|null;revision?:number;
   /** The number of problems in the approval comparison, which also checks staffing and candidate availability. */
-  new_or_worse_count?:number;summary?:string|null;requires_acknowledgement?:boolean;activation_blocker?:boolean};
+  new_or_worse_count?:number;summary?:string|null;requires_acknowledgement?:boolean;activation_blocker?:string|null};
 /** The rule check (POST /api/rules/catalogue/{id}/check): `relations` by edited line id. */
 export type Checked={relations?:Record<string,Relation>};
 export const relationOf=(c:Checked|null|undefined,lineId:string):Relation|null=>c?.relations?.[lineId]??null;

@@ -1774,7 +1774,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         return box;}));
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
-      const waitsWhy='Waits until the effect of this change is known';
+      const waitsWhy='Waits until the effect of this change is known',approveWhy=el('small',{class:'why-unavailable'});
       const approve=button('Approve and activate',()=>{
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
@@ -1813,7 +1813,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           items:rows.filter(effectRunning).filter(x=>x.job_id).map(x=>({target_id:String(x.job_id)}))});await reread();}
         catch(err){reportError(err);}finally{await done();}},'secondary small'):null;
       let paintedEffects='';
-      const paint=()=>{if(!review){approve.disabled=true;recheck.hidden=true;if(stop)stop.hidden=true;return;}
+      const paint=()=>{if(!review){disabledWhy(approve,waitsWhy,[],approveWhy);recheck.hidden=true;if(stop)stop.hidden=true;return;}
         const effects=rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x);
         // Keep the evidence open when only the acknowledgement controls repaint.
         const effectKey=JSON.stringify([effects,review.summary]);
@@ -1831,8 +1831,12 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
         why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
-        approve.disabled=checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
-        if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');};
+        if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');
+        // Disabled, it says why in words beside it (the shared reason), all the while the drafts' checks run.
+        const blocker=rows.find(x=>x.activation_blocker)?.activation_blocker;
+        disabledWhy(approve,checking()?waitsWhy:!decidable?(blocker==='RULE_INTRODUCES_CONFLICT'?'This change makes a draft impossible to fill'
+          :blocker==='RULE_CHECK_UNRESOLVED'?'A safety rule needs a complete check of every draft':'A draft’s check failed; check it again')
+          :ask&&!understood.input.checked?'Tick the box above first':ask&&why.input.value.trim().length<3?'Give a reason (3 characters or more)':'',[],approveWhy);};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
         if(canCheck)await start(rows.filter(x=>x.status==='not_checked'&&!started.has(x.workspace_id)));paint();
@@ -1866,7 +1870,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       d.body.append(says,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
         section(el('span',{},'Effect',effectHelp(one?.line||now[0]||{} as RuleLine)),effect),
         // Using a self-approval permission is said before deciding, as it is recorded.
-        el('footer',{class:'rc-lp-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approve:''));
+        el('footer',{class:'rc-lp-foot rc-decide-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approveWhy:'',canApprove?approve:''));
       paint();first();
     }});
   const o2=(id:string)=>{location.hash=`#rules/${e.id}/${id}`;};
