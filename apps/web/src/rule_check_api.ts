@@ -195,7 +195,7 @@ export const forgetActiveChoices=()=>{active=null;};
 
 // ---- The approver's decision (B5) ----
 /** A proposal's relation and effect, only for drafts whose dates overlap its changed lines (rule_effects.review). */
-export type Review={policy_id:string;relations:Record<string,Relation>;effect:Effect[];ready:boolean;
+export type Review={policy_id:string;relations:Record<string,Relation>;effect:Effect[];ready:boolean;weakens_safety?:boolean;
   /** A decision may be made when no check is running and there is no hard blocker. Added problems or an uncertain
    *  effect need the approver's explicit acknowledgement and reason. */can_decide?:boolean;requires_acknowledgement?:boolean;
   /** Why no check was needed (maintenance: lines only of people who left before them), said instead of an empty effect. */summary?:string|null};

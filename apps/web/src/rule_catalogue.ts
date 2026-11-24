@@ -187,7 +187,7 @@ export const specificFirst=(l:RuleLine)=>-tier(l)*2+(l.where?.conditions?.length
  *  NEVER_OVERRIDDEN: restriction / no duties, min_rest, forbidden_transition…), as schemas.safety_rule judges it. */
 export const setsSafety=(e:Pick<RuleCatalogueEntry,'numbers'>,l:Pick<RuleLine,'numbers'>)=>Object.keys(l.numbers||{}).some(k=>(e.numbers[k]||[]).some(slot=>NEVER_OVERRIDDEN.includes(slot.kind)));
 /** The lock a safety line carries wherever its numbers are read (the Rules list and a rule's page). */
-export const safetyLock=()=>ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety line: can only be made stricter','data-tip':'Safety line: can only be made stricter'},icon('lock')),'safety');
+export const safetyLock=()=>ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':TERMS.safetyLineProtection,'data-tip':TERMS.safetyLineProtection},icon('lock')),'safety');
 /** one where's lines read as "a group line with its exceptions", the one layout of the Rules list and a rule's
  *  page. The anchor is the single broadest line (Everyone, else one group line); every other line sits under it, most
  *  specific first. A safety rule (whoWins: every matching line applies, the strictest binds), or lines with no single
@@ -495,7 +495,7 @@ const RULE_MARKS={numbers:[()=>numbersEl([{text:'2 – 5 → 4'}]),'min – max 
   proposed:[()=>{const b=badge('Proposed','warn','lg-mark');b.prepend(icon('clock'));return b;},'a line waiting for approval'],starts_later:[()=>el('span',{class:'muted'},'Starts later'),'not in force yet'],ended:[()=>el('span',{class:'muted'},'Ended'),'no longer in force'],
   no_one:[()=>badge('No one','warn','lg-mark'),'reaches no active person today'],gives_way:[()=>badge('Gives way','warn','lg-mark'),'a more specific line wins for some people'],overlaps:[()=>badge('Overlaps','warn','lg-mark'),'another line covers the same people'],
   overlap_seen:[()=>badge('Overlap seen','ok','lg-mark'),'an overlap marked as intended'],refused:[()=>badge('Refused','err','lg-mark'),'cannot be proposed as it is'],same:[()=>badge('Same line','err','lg-mark'),'repeats another line'],both:[()=>badge('Both apply','warn','lg-mark'),'two lines apply to the same people'],inherits:[()=>badge('Inherits a conflict','err','lg-mark'),'its broader line conflicts'],weaker:[()=>badge('Weaker','warn','lg-mark'),'weaker than another line'],
-  safety:[()=>el('span',{class:'rk-lockmark lg-mark','aria-hidden':'true'},icon('lock')),'safety rule: can only be made stricter'],waiting:[()=>badge(WAITING,'info','lg-mark',{icon:'clock'}),'read only until approved or declined'],attention:[()=>badge('Needs attention',statusTone('attention'),'lg-mark',{icon:'alert'}),'open the issues to fix'],must_fix:[()=>badge('Must fix','err','lg-mark'),'blocks the rule until fixed'],consolidate:[()=>badge('Consolidate','warn','lg-mark'),'could be merged with other lines'],off:[()=>el('span',{class:'lg-off lg-mark','aria-hidden':'true'}),'Off: not in force'],
+  safety:[()=>el('span',{class:'rk-lockmark lg-mark','aria-hidden':'true'},icon('lock')),TERMS.safetyRuleProtection],waiting:[()=>badge(WAITING,'info','lg-mark',{icon:'clock'}),'read only until approved or declined'],attention:[()=>badge('Needs attention',statusTone('attention'),'lg-mark',{icon:'alert'}),'open the issues to fix'],must_fix:[()=>badge('Must fix','err','lg-mark'),'blocks the rule until fixed'],consolidate:[()=>badge('Consolidate','warn','lg-mark'),'could be merged with other lines'],off:[()=>el('span',{class:'lg-off lg-mark','aria-hidden':'true'}),'Off: not in force'],
   instead:[()=>badge('replaces','neutral'),'the line above, for its people'],also:[()=>el('span',{class:'rt-rel rt-also'},'also applies'),'with the line above'],applies:[()=>badge('applies','ok'),'what holds here'],replaced:[()=>el('span',{class:'rt-rel rt-also'},'replaced'),'a more specific line applies']} satisfies Record<string,[()=>HTMLElement,string]>;
 export type RuleMarkKey=keyof typeof RULE_MARKS;
 /** The pill kinds whose hue is a mark ("not …" pills are muted and say it in words; "Everyone" is grey words). */
@@ -1775,6 +1775,9 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
       const waitsWhy='Waits until the effect of this change is known';
+      const protection=note(TERMS.reducesSafetyProtection,'warning');
+      protection.id='rc-safety-protection-'+String(p.id);protection.hidden=true;
+      const selfApproval=canApprove&&mine?badge('Self-approved','warn'):null;
       const approve=button('Approve and activate',()=>{
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
@@ -1831,8 +1834,12 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
         why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
-        approve.disabled=checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
-        if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');};
+        protection.hidden=!review.weakens_safety;
+        const needsReviewer=mine&&!!review.weakens_safety;
+        if(selfApproval)selfApproval.hidden=needsReviewer;
+        approve.disabled=needsReviewer||checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
+        const descriptions=[wait?.id,protection.hidden?'':protection.id].filter(Boolean).join(' ');
+        if(descriptions)approve.setAttribute('aria-describedby',descriptions);else approve.removeAttribute('aria-describedby');};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
         if(canCheck)await start(rows.filter(x=>x.status==='not_checked'&&!started.has(x.workspace_id)));paint();
@@ -1863,10 +1870,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
       d.body.classList.add('rc-lp-body');
-      d.body.append(says,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
+      d.body.append(says,protection,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
         section(el('span',{},'Effect',effectHelp(one?.line||now[0]||{} as RuleLine)),effect),
         // Using a self-approval permission is said before deciding, as it is recorded.
-        el('footer',{class:'rc-lp-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approve:''));
+        el('footer',{class:'rc-lp-foot'},decline||'',el('span',{class:'grow'}),selfApproval||'',canApprove?approve:''));
       paint();first();
     }});
   const o2=(id:string)=>{location.hash=`#rules/${e.id}/${id}`;};

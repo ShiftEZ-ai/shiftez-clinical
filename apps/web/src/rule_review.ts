@@ -5,7 +5,8 @@ import {conditionBuilder,scopeAsConditions} from './conditions.js';
 import {ruleConditionFields,type Context} from './forms.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
 import {clock} from './loading.js';
-import {waitingWord,checkCodeLabel} from './rule_check_api.js';
+import {waitingWord,checkCodeLabel,proposalReview} from './rule_check_api.js';
+import {TERMS} from './terms.js';
 
 function checkProgress(job:Row){
   const elapsed=clock(Date.now()-new Date(job.started_at||job.created_at).getTime());
@@ -38,7 +39,12 @@ export function findingsDiff(result:Row,name:(kind:string,id:string)=>string,zon
 export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canApprove:boolean,refresh:()=>Promise<void>,name:(kind:string,id:string)=>string,zone:string,unsaved=false,replaces:Row[]=[],title='',summary='',context?:Context,factFamily=''){
   const lines=Array.isArray(given)?given:[given as Row],policy=lines[0];
   if(lines.length>100)throw new Error('Review at most 100 lines at a time: filter or select fewer lines.');
-  const page=await get('/api/workspaces?limit=100&current_only=true');
+  const proposed=unsaved||factFamily?[]:lines.filter(p=>p.status==='proposed'&&
+    (p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
+  const [page,reviews]=await Promise.all([get('/api/workspaces?limit=100&current_only=true'),
+    Promise.all(proposed.map(p=>proposalReview(p.id)))]);
+  const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
+  const needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
   if(page.has_more)throw new Error('More than 100 rotas need review. Archive completed rotas before checking this rule.');
   // Rotas still being planned that overlap any line; published rotas keep the rules they were approved under.
   const work:Row[]=page.workspaces.filter((w:Row)=>['draft','submitted','approved'].includes(w.status)&&lines.some(p=>(!p.starts_on||p.starts_on<w.ends_on)&&(!p.ends_on||p.ends_on>w.starts_on)&&(!p.definition?.workspace_id||p.definition.workspace_id===w.id)));
@@ -170,11 +176,13 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         gate.replaceChildren();gate.hidden=!activate||!checksRequired||!due.length&&!busy.length;
         if(!gate.hidden&&due.length)gate.append(el('span',{},`Activation needs a fresh check of ${rotas(due)} first. `),canCheck?button(`Check ${rotas(due)}`,async()=>{await Promise.all(due.map(run));await load();},'primary small'):el('span',{},'Ask a coordinator to check it.'));
         else if(!gate.hidden)gate.append(`Checking ${rotas(busy)}. Activate when it finishes.`);
-        if(activate)activate.disabled=!gate.hidden;
+        if(activate)activate.disabled=needsReviewer||!gate.hidden;
       }catch(e){status.textContent=(e as Error).message;}finally{loading=false;}
     };
     // What the approver is deciding on, before the checks: the rule in one sentence and where it comes from.
     if(summary)body.append(el('p',{class:'rule-review-summary'},el('strong',{},summary),policy.source?el('span',{class:'muted'},' · Source: '+policy.source):''));
+    const protection=weakened.size?note(TERMS.reducesSafetyProtection,'warning'):null;
+    if(protection){protection.id='rule-review-safety-protection';body.append(protection);}
     const controls=el('div',{class:'form-grid'});
     budget.wrap.classList.add('span-2');acknowledgement.wrap.classList.add('span-2');
     body.append(status,list,controls);list.hidden=!work.length;
@@ -221,6 +229,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       // The other decision, with the same reason: the proposal is declined (kept in history, audited); nothing turns on.
       lines.length===1&&!factFamily?button('Decline',async()=>{if(!reason.input.reportValidity())return;
         await command('policy.decline',{reason:reason.input.value},policy.id,policy.revision);close();notify('Proposal declined.');await refresh();},'secondary'):'',unchecked));  // the button and what it has not checked, in one row
+    if(activate&&protection){activate.disabled=needsReviewer;activate.setAttribute('aria-describedby',protection.id);}
     void load();
   });
 }

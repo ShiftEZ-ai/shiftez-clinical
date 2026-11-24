@@ -879,27 +879,30 @@ def _activation_inputs(db, actor, commands):
     return pending, decisions
 
 
-def _require_independent_safety_change(before, after):
-    require(not weakens_safety_rules(before, after), 'SELF_APPROVAL',
+def _require_independent_safety_change(weakens):
+    require(not weakens, 'SELF_APPROVAL',
             'Another authorised person must approve a change that weakens a safety rule', 403)
+
+
+def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessors=None):
+    from .rule_effects import predecessor_rows
+    from .scoring_defaults import seeded_rows
+
+    before = predecessor_rows(db, actor, [policy]) if predecessors is None else list(predecessors)
+    replaced = {old.id for old in before}
+    before.extend(scoped(db, m.Policy, ident, actor) for ident in sorted(set(replaces_ids) - replaced))
+    replaced.update(replaces_ids)
+    if entry := policy.definition.get('calendar_entry_id'):
+        before.extend(old for old in policies_with_status(db, actor, 'active')
+                      if old.id not in replaced and old.definition.get('calendar_entry_id') == entry)
+    before = [record(old) for old in before if old.status == 'active']
+    return bool(before) and weakens_safety_rules(seeded_rows(db, before), [{**record(policy), 'status': 'active'}])
 
 
 def _activation_independence(db, actor, policy, value):
     independent = person_key(db, policy.created_by) != person_key(db, actor.identity_id)
     if not independent:
-        from .scoring_defaults import seeded_rows
-
-        definition = policy.definition
-        replaces = set(value.replaces_ids) | set(definition.get('merged_ids') or ())
-        if previous := definition.get('replaces_id'):
-            replaces.add(previous)
-        before = [scoped(db, m.Policy, ident, actor) for ident in sorted(replaces)]
-        if entry := definition.get('calendar_entry_id'):
-            before.extend(old for old in policies_with_status(db, actor, 'active')
-                          if old.id not in replaces and old.definition.get('calendar_entry_id') == entry)
-        if before:
-            _require_independent_safety_change(seeded_rows(db, [record(old) for old in before]),
-                                               [{**record(policy), 'status': 'active'}])
+        _require_independent_safety_change(activation_weakens_safety(db, actor, policy, value.replaces_ids))
     independence.ensure(db, actor, 'rule.activate', independent,
                         'Another authorised person must approve this policy', value.reason, policy.id)
 
@@ -1146,7 +1149,7 @@ def transition_approval(db, actor, policy, action, reason, effects, *, excluded=
         before = seeded_rows(db, [record(policy)])
         after = seeded_rows(db, [{**record(old), 'status': 'active',
                                   'active': approved_active_before_retirement(db, actor, old)} for old, _ in restoring])
-        _require_independent_safety_change(before, after)
+        _require_independent_safety_change(weakens_safety_rules(before, after))
     independence.ensure(db, actor, "rule.activate", reviewer not in proposers,
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,
         allow_self_approval=required == 1 and (

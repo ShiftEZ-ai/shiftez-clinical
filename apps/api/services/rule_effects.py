@@ -250,8 +250,9 @@ def predecessor_rows(db, actor, policies):
     return list(db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id, m.Policy.id.in_(ids)))) if ids else []
 
 
-def changed_periods(db, actor, policies, *, skipped_people=None):
-    predecessors = predecessor_rows(db, actor, policies)
+def changed_periods(db, actor, policies, *, skipped_people=None, predecessors=None):
+    if predecessors is None:
+        predecessors = predecessor_rows(db, actor, policies)
     by_id = {p.id: p for p in predecessors}
     periods = []
     person_spans = []
@@ -391,8 +392,11 @@ def review(db, actor, policy_id):
     require_role(actor, 'coordinator', 'approver')
     policy = scoped(db, m.Policy, policy_id, actor)
     require(policy.status in {'active', 'proposed'}, 'WORKFLOW_STATE', 'Review an active or proposed rule', 409)
+    from .policies import activation_weakens_safety
+    predecessors = predecessor_rows(db, actor, [policy])
+    weakens_safety = policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, predecessors=predecessors)
     skipped_people = {}
-    periods = changed_periods(db, actor, [policy], skipped_people=skipped_people)
+    periods = changed_periods(db, actor, [policy], skipped_people=skipped_people, predecessors=predecessors)
     workspaces = affected_workspaces(db, actor, [policy], periods=periods)
     from apps.api.snapshots import cheap_fingerprints, currency_hint, currency_match, snapshot_hash
     source_hash, checked_hash = snapshot_hash(record(policy)), snapshot_hash({**record(policy), 'status': 'active'})
@@ -492,7 +496,8 @@ def review(db, actor, policy_id):
             reason = f'No check needed: {len(skipped_people)} people left before these lines start and have no later placements.'
         summary.setdefault('summary', reason)
     return {'policy_id': policy.id, 'relations': relations, **summary,
-            'effect': effects, 'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
+            **({'weakens_safety': True} if weakens_safety else {}), 'effect': effects,
+            'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
             'can_decide': all(e['status'] not in {'queued', 'running'} and not e['activation_blocker'] for e in effects),
             'requires_acknowledgement': any(e['requires_acknowledgement'] for e in effects)}
 

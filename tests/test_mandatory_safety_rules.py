@@ -25,7 +25,8 @@ CASES = [
 
 
 @pytest.mark.parametrize('kind,field,old,stronger', [('min_rest', 'hours', 11, 12),
-                                                     ('maximum_participants', 'maximum', 3, 2)])
+                                                     ('maximum_participants', 'maximum', 3, 2),
+                                                     ('spread_evenly', 'maximum_gap', 1, 0)])
 def test_effective_safety_comparison_preserves_bounds_and_dates(kind, field, old, stronger):
     def policy(value, starts_on='2026-10-01'):
         definition = PolicyDefinition.model_validate({'rule': {'kind': kind, field: value}}).model_dump(mode='json')
@@ -55,6 +56,8 @@ def test_self_approval_cannot_weaken_an_active_safety_line(h, monkeypatch, hours
         'lines': [{**original, 'numbers': {'min': {'value': hours, 'level': 'mandatory'}}}],
         'expected_policy_id': current['id'], 'expected_revision': current['revision'],
         'reason': 'Adjust the rest limit'})['record']
+    review = h.get('approver', f"/api/policies/{change['id']}/review")
+    assert review.get('weakens_safety', False) is weaker
     reply = h.command(who, 'policy.activate', {'reason': 'Temporary review cover'}, change['id'], change['revision'],
                       status=403 if weaker else 200)
     if weaker:
@@ -69,6 +72,39 @@ def test_self_approval_cannot_weaken_an_active_safety_line(h, monkeypatch, hours
                             activated['id'], activated['revision'], status=403)
         assert 'weakens a safety rule' in refusal['error']['message']
         assert entry(h, catalogue)['rule']['id'] == activated['id']
+
+
+def test_advisory_cover_target_is_not_a_mandatory_obligation():
+    definition = PolicyDefinition.model_validate({'rule': {'kind': 'catalogue', 'id': 'people_per_session',
+        'lines': [line(numbers={'target': {'value': 2, 'level': 'medium'}})]}}).model_dump(mode='json')
+    policy = {'id': 'cover', 'kind': 'catalogue', 'active': True, 'status': 'active',
+              'department_id': 'd', 'starts_on': '2026-10-01', 'definition': definition}
+    assert not weakens_safety_rules([policy], [])
+
+
+@pytest.mark.parametrize('severity', ['mandatory', 'advisory'])
+def test_retiring_spread_evenly_requires_independence_for_mandatory_only(h, monkeypatch, severity):
+    from .governance_support import identity
+
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    who = 'rule_reviewer'
+    reviewer = identity(h, who, ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
+              'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'reason': 'Temporary review cover'})
+    proposal = h.command(who, 'policy.create', {'name': 'Supervisor spread', 'owner': 'Rule coordinator',
+        'source': 'Schedule supervisors evenly', 'starts_on': '2026-10-01', 'definition': {'severity': severity,
+            'rule': {'kind': 'spread_evenly', 'maximum_gap': 1}}})['record']
+    current = approve(h, proposal)
+    decision = {'reason': 'Remove the spread rule'}
+    if severity == 'mandatory':
+        refusal = h.command(who, 'policy.retire', decision, current['id'], current['revision'], status=403)
+        assert refusal['error']['code'] == 'SELF_APPROVAL'
+        assert 'weakens a safety rule' in refusal['error']['message']
+        active = h.get('approver', '/api/policies?status=active')['policies']
+        assert any(p['id'] == current['id'] for p in active)
+        who = 'approver'
+    retired = h.command(who, 'policy.retire', decision, current['id'], current['revision'])['record']
+    assert retired['status'] == 'retired'
 
 
 def rule_for(h, kind):

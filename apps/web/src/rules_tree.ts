@@ -405,7 +405,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const changes=changesOf(e),att=attentionWords(issuesOf(e)),shownLines=x.lines.map(i=>i.line);
     const title=el('div',{class:'rt-title'},
       // The safety lock in every grouping: drawn here, once per rule row, never per grouping path.
-      safe(e)?ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter','data-tip':'Safety rule: can only be made stricter'},icon('lock')),'safety'):'',
+      safe(e)?ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':TERMS.safetyRuleProtection,'data-tip':TERMS.safetyRuleProtection},icon('lock')),'safety'):'',
       button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'}),
       // Its strength once (one badge when every number agrees, else Mandatory and Advisory): the shared level badges.
       marks.numbers(el('span',{class:'rt-levels'},...ruleLevels(e,shownLines).map(v=>levelBadge(v))),false),
