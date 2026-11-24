@@ -24,6 +24,15 @@ NON_INPUT_CORE_TABLES = {
 
 
 RAW_LEDGER_ADAPTER = ('apps/api/services/fairness.py', '_write_ledger_rows')
+# Rows copied into a connection's own TEMPORARY table never reach a canonical input table.
+TEMPORARY_SCRATCH = '<temporary scratch table>'
+
+
+def temporary_table(node):
+    return isinstance(node, ast.Call) and getattr(node.func, 'id', getattr(node.func, 'attr', None)) == 'Table' and any(
+        keyword.arg == 'prefixes' and isinstance(keyword.value, (ast.List, ast.Tuple)) and any(
+            isinstance(item, ast.Constant) and str(item.value).upper() in {'TEMPORARY', 'TEMP'}
+            for item in keyword.value.elts) for keyword in node.keywords)
 
 
 def input_write_bypasses(source, path=None):
@@ -45,12 +54,13 @@ def input_write_bypasses(source, path=None):
             and node.func.id == 'bump_snapshot_input_revisions' for node in nodes)
         def allowed_adapter(targets):
             return stamped_adapter and targets == {m.FairnessLedger.__tablename__}
-        aliases = {}
+        aliases, assigned = {}, {}
         for node in [*tree.body, *nodes]:
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         aliases[target.id] = node.value
+                        assigned.setdefault(target.id, []).append(node.value)
             elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
                     if alias.name in MODEL_TABLES:
@@ -76,8 +86,11 @@ def input_write_bypasses(source, path=None):
                 yield part
                 if isinstance(part, ast.Name) and part.id in aliases and part.id not in seen:
                     yield from expanded(aliases[part.id], seen | {part.id})
+        scratch = {name for name, values in assigned.items() if all(map(temporary_table, values))}
         def tables(node, seen=frozenset()):
             if isinstance(node, ast.Name):
+                if node.id in scratch:
+                    return {TEMPORARY_SCRATCH}
                 if node.id in MODEL_TABLES:
                     return {MODEL_TABLES[node.id]}
                 if node.id in aliases and node.id not in seen:
@@ -120,7 +133,7 @@ def input_write_bypasses(source, path=None):
                 isinstance(part.func, ast.Name) and part.func.id in {'update', 'insert', 'delete', 'postgres_insert', 'sqlite_insert'}
                 or isinstance(part.func, ast.Attribute) and part.func.attr in {'update', 'insert', 'delete'}) for part in parts)
             if raw_targets and not allowed_adapter(raw_targets) or method.startswith('bulk_') or dml and not session and (
-                    not named_tables or not named_tables <= NON_INPUT_CORE_TABLES.keys()) and not allowed_adapter(named_tables):
+                    not named_tables or not named_tables <= NON_INPUT_CORE_TABLES.keys() | {TEMPORARY_SCRATCH}) and not allowed_adapter(named_tables):
                 failures.append((node.lineno, rendered))
             if dml and named_tables & INPUT_TABLES:
                 writers.append((node.lineno, sorted(named_tables & INPUT_TABLES), session))
@@ -156,6 +169,9 @@ def test_application_input_dml_cannot_bypass_the_session_events():
     'db.bulk_insert_mappings(m.Availability, rows)',
     'db.bulk_update_mappings(m.Availability, rows)',
     'db.bulk_save_objects([m.Availability()])',
+    'table = Table("availability", metadata)\nconnection.execute(table.insert(), rows)',
+    'table = Table("availability", metadata, prefixes=["TEMPORARY"])\ntable = m.Availability.__table__\n'
+    'connection.execute(table.insert(), rows)',
 ])
 def test_guard_rejects_core_and_legacy_bulk_bypasses(source):
     assert input_write_bypasses(source)[0]
@@ -167,6 +183,7 @@ def test_guard_rejects_core_and_legacy_bulk_bypasses(source):
     'db.execute(delete(m.Availability))',
     'connection.execute(insert(m.WorkspaceReadProjection.__table__), rows)',
     'connection.execute(update(m.ReadProjectionWarmCursor).values(after_id=None))',
+    'table = Table(name, metadata, prefixes=["TEMPORARY"])\nconnection.execute(table.insert().values(v), rows)',
 ])
 def test_guard_accepts_event_paths_and_named_non_input_exceptions(source):
     assert not input_write_bypasses(source)[0]
