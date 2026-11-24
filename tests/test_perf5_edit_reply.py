@@ -213,10 +213,14 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
             event.remove(h.app.state.engine, 'before_cursor_execute', counted)
     record_property('reply_selects', statements.count('SELECT'))
     record_property('reply_statements', len(statements))
-    print({'reply_selects': statements.count('SELECT'), 'reply_statements': len(statements)})
+    acquisitions = (acquired.count('_domain_snapshot'), acquired.count('_snapshot_inputs'))
+    record_property('reply_domain_acquisitions', acquisitions[0])
+    record_property('reply_input_acquisitions', acquisitions[1])
+    print({'reply_selects': statements.count('SELECT'), 'reply_statements': len(statements),
+           'domain_acquisitions': acquisitions[0], 'input_acquisitions': acquisitions[1]})
     # Both additions and removals need D65's scoped safety check; neither needs a complete evaluation.
     assert statements.count('SELECT') <= (130 if add else 80) and len(statements) <= (160 if add else 100)
-    assert acquired.count('_domain_snapshot') == acquired.count('_snapshot_inputs') == 1
+    assert acquisitions == (1, 1)
     assert len(scopes) == 2  # One before and one after, reused by the reply.
     assert result['validation']['scope'] == 'command_changes'
     assert result['health']['score'] is None and result['fix_list']['summary']['checking']
