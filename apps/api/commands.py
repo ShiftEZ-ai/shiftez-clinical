@@ -29,6 +29,8 @@ ALL_ROLES = list(s.ROLE_NAMES)
 NON_SERIALIZED_COMMANDS = frozenset({"department_content.seen"})
 COMMAND_PERMISSIONS = {
     "department.create": "department.create",
+    "branding.update": "branding.configure",
+    "branding.undo": "branding.configure",
     **{kind: kind for kind in s.BULK_ITEM_KINDS},
     **dict.fromkeys(('workspace.archive', 'workspace.restore', 'workspace.delete_draft'), 'workspace.archive'),
     **dict.fromkeys(('score.settings', 'score.settings.rollback'), 'planning.configure'),
@@ -124,7 +126,7 @@ def command_roles(command):
         return ['approver']
     if kind == "account.end_other_sessions":
         return ALL_ROLES
-    if kind in {'branding.update', 'branding.undo', 'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
+    if kind in {'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
         return ['admin']
     if kind.startswith("planner_view."):
         return sorted(planner_tools.PLANNER_ROLES)

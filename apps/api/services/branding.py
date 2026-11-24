@@ -11,7 +11,7 @@ from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.web_assets import asset_url
 from apps.api import models as m
-from apps.api.auth import held_roles, require_role
+from apps.api.auth import held_roles, require_permission
 from apps.api.errors import Problem, require
 from apps.api.serialization import record
 from apps.api.schema import require_current_schema
@@ -24,6 +24,8 @@ IMAGE_FORMATS = s.BRANDING_IMAGE_FORMATS
 
 
 def can_edit(db, actor):
+    if actor.permits(*s.SYSTEM_ROLES):
+        return True
     if not actor.permits('admin'):
         return False
     # Stream scalar rows, keeping only one department's grants in flight; held_roles owns dated authority.
@@ -40,9 +42,9 @@ def can_edit(db, actor):
 
 
 def require_editor(db, actor):
-    require_role(actor, 'admin')
+    require_permission(actor, 'branding.configure')
     require(can_edit(db, actor), 'APPLICATION_ADMIN_REQUIRED',
-            'Application-wide branding requires admin access to every affected department', 403)
+            'Application-wide branding requires an installation operator or admin access to every department', 403)
 
 
 def settings(db):
@@ -65,7 +67,7 @@ def public(db):
 
 
 def status(db, actor):
-    require_role(actor, 'admin')
+    require_permission(actor, 'branding.configure')
     row = db.get(m.ApplicationBranding, SINGLETON)
     permitted = can_edit(db, actor)
     return {'branding': public(db), 'settings': settings(db), 'can_edit': permitted,

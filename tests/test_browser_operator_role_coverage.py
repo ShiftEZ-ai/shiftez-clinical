@@ -116,7 +116,7 @@ def test_all_role_routes_forbidden_controls_and_common_help(browser, live_server
                     expect(page.get_by_role('button', name='Authorise eligibility', exact=True)).to_have_count(0)
                 if key == 'configuration' and role == 'operator':
                     sections = page.locator('.config-nav [data-section]')
-                    permitted = {'integrations'}
+                    permitted = {'integrations', 'branding'}
                     if h.get(role, '/api/me')['department']['score_check_enabled']:
                         permitted.add('ai_provider')
                     expect(sections).to_have_count(len(permitted))

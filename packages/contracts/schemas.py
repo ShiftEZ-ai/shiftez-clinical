@@ -114,6 +114,7 @@ PERMISSIONS: dict[str, tuple[RoleName, ...]] = {
     "date_sets.read_all": ("admin", "coordinator"),
     "access.system_roles": ("operator",),
     "department.create": SYSTEM_ROLES,
+    "branding.configure": ("admin", *SYSTEM_ROLES),
     "feedback.read_all": ("operator", "auditor"),
     "feedback.triage": ("operator",),
     "feedback.export_github": ("operator",),

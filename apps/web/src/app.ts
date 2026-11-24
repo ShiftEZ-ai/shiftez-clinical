@@ -424,7 +424,7 @@ let selected:Set<string>=new TickedSet(()=>selectTicked([...selected])),renderSe
 // Inbox and approvals open for every account that may open them; `phone` below is the one place that decides. Every
 // other page (planning, Configuration, Rules…) is for a desktop.
 /** Sections that need a permission beyond Configuration itself (the server refuses the rest): GitHub is the Developer's. */
-const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update'};
+const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update',branding:'branding.configure'};
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
@@ -4519,8 +4519,8 @@ const ALL_CONFIG_KINDS=CONFIG_GROUPS.flatMap(([,kinds])=>kinds).filter(k=>k!=='s
 /** The admin's sections this person may open: the one list behind the section menu, its addresses and the palette. */
 const configKinds=()=>ALL_CONFIG_KINDS.filter(k=>(!SECTION_PERMISSION[k]||may(SECTION_PERMISSION[k]))&&(k!=='ai_provider'||scoreCheckOn()));
 /** The sections this person's Configuration holds: an admin's all, a coordinator's guide and tags, and any section its own
- *  permission grants (an operator reaches GitHub without any departmental configuration). */
-const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds()]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
+ *  permission grants. Admins reach branding from Department settings. */
+const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds().filter(k=>k!=='branding')]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
 /** A record section this person may edit: its Bulk edit command's roles (editRoles) admit them, so whatever Bulk lets
  *  them change has its own single edit in Configuration too (M1: Bulk-editable == single-edit). */
 const catalogueSection=(kind:string)=>!!editRoles(kind)&&catalogueEditable(kind);
@@ -4961,6 +4961,7 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   if(catalogueKind==='board'){await rotationBoard(target,{ctx:ctx(),zone:zone(),mine:false});return;}
   if(catalogueKind==='tags'){tagsPage(target,ctx(),permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR));return;}
   if(catalogueKind==='department'){await departmentSettingsPage(target);return;}
+  if(catalogueKind==='branding'){target.append(brandingPanel());return;}
   if(catalogueKind==='auto_schedule'){await autoScheduleSettingsPage(target);return;}
   if(catalogueKind==='scheduling_groups'){await schedulingGroupsPage(target,{me:me!,zone:zone(),today:toLocal(new Date().toISOString(),zone()).slice(0,10),fields:ruleConditionFields(ctx()),words:c=>conditionWords({conditions:c})});return;}
   if(catalogueKind==='ai_provider'){await aiProviderPage(target,zone());return;}

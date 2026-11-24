@@ -513,7 +513,7 @@ def test_job_receipt_without_kind_uses_the_current_permission_map(monkeypatch):
 
 
 def test_every_registered_command_keeps_its_head_roles_except_the_decided_exception():
-    """Whole-registry before/after (maintenance): one decided difference only (Master, 10 Nov: membership.withdraw)."""
+    """Whole-registry before/after: permit only the declared role changes."""
     registered = _dispatcher_registry()
     added = {'membership.restore': s.PERMISSIONS['membership.withdraw'],
              'eligibility.restore': s.PERMISSIONS['eligibility.withdraw'],
@@ -522,5 +522,8 @@ def test_every_registered_command_keeps_its_head_roles_except_the_decided_except
              'rotation.restore': s.PERMISSIONS['rotation.remove']}
     expected = HEAD_ROLES | added
     assert registered == set(expected), sorted(registered ^ set(expected))
+    role_changes = {**DELIBERATE_ROLE_CHANGES,
+                    'branding.update': ('admin', *s.SYSTEM_ROLES),
+                    'branding.undo': ('admin', *s.SYSTEM_ROLES)}
     for kind, head_roles in expected.items():
-        assert tuple(command_roles(s.Command(kind=kind))) == DELIBERATE_ROLE_CHANGES.get(kind, head_roles), kind
+        assert tuple(command_roles(s.Command(kind=kind))) == role_changes.get(kind, head_roles), kind

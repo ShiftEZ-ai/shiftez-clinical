@@ -37,7 +37,7 @@ def test_application_permission_streams_and_stops_at_the_first_unowned_departmen
             assert statement.get_execution_options().get('stream_results'), 'Do not buffer all departments and grants'
             return rows
 
-    actor = SimpleNamespace(identity_id=str(uuid.uuid4()), permits=lambda role: role == 'admin')
+    actor = SimpleNamespace(identity_id=str(uuid.uuid4()), permits=lambda *roles: 'admin' in roles)
     assert branding.can_edit(Database(), actor) is False
     assert rows.closed
 
@@ -77,7 +77,8 @@ def test_public_default_and_saved_projection_are_minimal_and_independent_of_depa
     me = h.get('admin', '/api/me')
     assert me['department']['name'] != 'Department rota'
     assert me['organisation']['name'] != 'Test institution'
-    for role in ('staff', 'coordinator', 'operator'):
+    denied_roles = set(h.seed['identities']) - {'admin', *s.SYSTEM_ROLES}
+    for role in (role for role in s.ROLE_NAMES if role in denied_roles):
         h.get(role, '/api/admin/branding', status=403)
         h.command(role, 'branding.update', names(), revision=2, status=403)
         upload(h, role=role, status=403)
@@ -147,6 +148,33 @@ def test_all_application_departments_require_current_admin_even_across_organisat
         assert client.post('/api/commands', json={'kind': 'branding.undo', 'expected_revision': 2,
             'payload': {'reason': 'Undo from a scoped administrator'}},
             headers={'idempotency-key': str(uuid.uuid4())}).status_code == 403
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+def test_operator_edits_branding_after_department_creation(h):
+    from .test_department_create import name_test_administrators, payload, token
+
+    name_test_administrators(h)
+    original = h.get('staff', '/api/branding')
+    spec = payload(h, first_admin_identity_id=h.seed['identities']['coordinator'])
+    h.command('operator', 'department.create', spec, expected_fingerprint=token(h, spec))
+    assert not h.get('admin', '/api/admin/branding')['can_edit']
+
+    status = h.get('operator', '/api/admin/branding')
+    assert status['can_edit'] and not status['can_undo']
+    image = upload(h, role='operator')
+    change = names(emblem_image_id=image['image_id'])
+    revision = status['branding']['revision']
+    saved = h.command('operator', 'branding.update', change, revision=revision, key='operator-branding')
+    assert saved['can_edit'] and saved['can_undo']
+    assert saved['branding']['emblem_url'] == image['url']
+    replayed = h.command('operator', 'branding.update', change, revision=revision, key='operator-branding')
+    assert replayed == saved
+    assert h.get('admin', '/api/admin/branding')['branding'] == saved['branding']
+    assert h.command('operator', 'branding.update', change, revision=revision, status=409)['error']['code'] == 'STALE_REVISION'
+    assert h.get('operator', '/api/admin/branding/history')['versions'][-1]['actor_id'] == h.seed['identities']['operator']
+    undone = h.command('operator', 'branding.undo', {'reason': 'Restore shared branding'}, revision=revision + 1)
+    assert undone['branding'] == {**original, 'revision': revision + 2}
 
 
 @pytest.mark.parametrize('fmt,media_type', [('PNG', 'image/png'), ('JPEG', 'image/jpeg'), ('WEBP', 'image/webp')])

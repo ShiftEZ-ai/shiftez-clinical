@@ -220,6 +220,45 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         context.close()
 
 
+def test_operator_can_edit_branding_when_department_admin_cannot(browser, live_server, h):
+    from .test_department_create import name_test_administrators, payload, token
+
+    name_test_administrators(h)
+    spec = payload(h, first_admin_identity_id=h.seed['identities']['coordinator'])
+    h.command('operator', 'department.create', spec, expected_fingerprint=token(h, spec))
+
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        navigate(page, 'configuration/department')
+        panel = page.locator('.brand-settings')
+        expect(panel.get_by_text('Ask an installation operator', exact=False)).to_be_visible()
+        expect(panel.get_by_role('button', name='Edit', exact=True)).to_have_count(0)
+    finally:
+        context.close()
+
+    context, page = sign_in(browser, live_server, 'operator')
+    try:
+        navigate(page, 'configuration/integrations')
+        page.get_by_role('navigation', name='Configuration sections').get_by_role('button', name='Name and logo').click()
+        panel = page.locator('.brand-settings')
+        panel.get_by_role('button', name='Edit', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Name and logo', exact=True)
+        dialog.get_by_label('App name', exact=True).fill('Rota name (test)')
+        dialog.get_by_label('Reason for the change', exact=True).fill('Update shared branding')
+        dialog.get_by_label('Emblem image', exact=True).set_input_files(
+            {'name': 'emblem.png', 'mimeType': 'image/png', 'buffer': raster()})
+        expect(dialog.locator('.brand-preview-emblem img').first).to_have_attribute('src', re.compile('^data:image/png'))
+        dialog.get_by_role('button', name='Save', exact=True).click()
+        expect(dialog).to_have_count(0)
+        page.reload()
+        expect(panel).to_contain_text('Rota name (test)')
+        expect(panel.locator('.brand-preview-emblem img').first).to_have_attribute(
+            'src', re.compile('^/api/branding/images/'))
+        expect(panel.get_by_role('button', name='Undo last change', exact=True)).to_be_visible()
+    finally:
+        context.close()
+
+
 def test_stalled_public_branding_does_not_block_signin(browser, live_server):
     context = new_context(browser)
     held = []
