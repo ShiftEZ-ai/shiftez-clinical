@@ -223,6 +223,11 @@ def checked_effect(result):
                         'Effect comparison incomplete; full findings, candidate and quota evidence was not established.')}
 
 
+def no_new_problems(result):
+    return (result.get('comparison_complete') is True and result.get('no_new_problems') is True
+            and result.get('new_or_worse_findings') == [])
+
+
 def predecessor_rows(db, actor, policies):
     ids = {ident for p in policies for ident in [*(p.definition.get('merged_ids') or []), p.definition.get('replaces_id')] if ident}
     return list(db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id, m.Policy.id.in_(ids)))) if ids else []
@@ -429,7 +434,8 @@ def review(db, actor, policy_id):
         blocker = context_check_blocker(result or {}) if matching and matching.status == 'succeeded' else None
         if workspace.id in contradictions:
             blocker = 'RULE_INTRODUCES_CONFLICT'
-        complete = bool(matching and matching.status == 'succeeded' and (result or {}).get('comparison_complete') is True)
+        completed_result = (result or {}) if matching and matching.status == 'succeeded' else {}
+        complete = completed_result.get('comparison_complete') is True
         if not blocker and s.safety_rule(policy.definition) and not complete:
             blocker = 'RULE_CHECK_UNRESOLVED'
         effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
@@ -438,7 +444,8 @@ def review(db, actor, policy_id):
             'created_at': json_value(matching.created_at) if matching else None,
             'comparison_complete': complete,
             'activation_blocker': blocker, **effect,
-            'requires_acknowledgement': effect['status'] != 'ready',
+            'new_or_worse_count': len(completed_result.get('new_or_worse_findings') or []) if complete else 0,
+            'requires_acknowledgement': effect['status'] != 'ready' or not no_new_problems(completed_result),
             'summary': effect.get('summary') or 'Effect not established; an approver may decide with a recorded reason.'})
     relations = {}
     if policy.kind == 'catalogue':
