@@ -74,6 +74,38 @@ def test_self_approval_cannot_weaken_an_active_safety_line(h, monkeypatch, hours
         assert entry(h, catalogue)['rule']['id'] == activated['id']
 
 
+def test_review_and_activation_compare_the_selected_older_copy(h, monkeypatch):
+    from .governance_support import identity
+
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    who = 'rule_reviewer'
+    reviewer = identity(h, who, ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
+              'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'reason': 'Temporary review cover'})
+    payload = {'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
+               'starts_on': '2026-10-01', 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}}
+    current = approve(h, h.command('coordinator', 'policy.create', payload)['record'])
+    proposal = h.command(who, 'policy.create', {**payload,
+        'definition': {'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
+    path = f"/api/policies/{proposal['id']}/review"
+    reviewer_client = h.client('approver')
+    decision = {'reason': 'Review rest requirements', 'replaces_ids': [current['id']]}
+
+    unchanged = reviewer_client.post(path, json={})
+    reduction = reviewer_client.post(path, json=decision)
+    assert unchanged.status_code == reduction.status_code == 200
+    assert unchanged.json() == {'policy_id': proposal['id']}
+    assert reduction.json() == {'policy_id': proposal['id'], 'weakens_safety': True}
+    assert h.client('staff').post(path, json=decision).status_code == 403
+    assert any(p['id'] == current['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
+
+    refusal = h.command(who, 'policy.activate', decision, proposal['id'], proposal['revision'], status=403)
+    assert refusal['error']['code'] == 'SELF_APPROVAL'
+    approved = h.command('approver', 'policy.activate', decision, proposal['id'], proposal['revision'])['record']
+    assert approved['status'] == 'active'
+    assert any(p['id'] == current['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
+
+
 def test_advisory_cover_target_is_not_a_mandatory_obligation():
     definition = PolicyDefinition.model_validate({'rule': {'kind': 'catalogue', 'id': 'people_per_session',
         'lines': [line(numbers={'target': {'value': 2, 'level': 'medium'}})]}}).model_dump(mode='json')

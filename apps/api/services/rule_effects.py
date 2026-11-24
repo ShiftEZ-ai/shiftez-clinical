@@ -245,8 +245,9 @@ def no_new_problems(result):
             and result.get('new_or_worse_findings') == [])
 
 
-def predecessor_rows(db, actor, policies):
-    ids = {ident for p in policies for ident in [*(p.definition.get('merged_ids') or []), p.definition.get('replaces_id')] if ident}
+def predecessor_rows(db, actor, policies, *, replaces_ids=()):
+    ids = set(replaces_ids) | {ident for p in policies
+        for ident in [*(p.definition.get('merged_ids') or []), p.definition.get('replaces_id')] if ident}
     return list(db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id, m.Policy.id.in_(ids)))) if ids else []
 
 
@@ -388,13 +389,20 @@ def reachable_workspaces(db, actor, policies, workspaces):
         session_matches(context, scope, shift) for scope in scopes for shift in shifts[w.id].values())]
 
 
-def review(db, actor, policy_id):
+def review(db, actor, policy_id, *, decision=None):
     require_role(actor, 'coordinator', 'approver')
     policy = scoped(db, m.Policy, policy_id, actor)
     require(policy.status in {'active', 'proposed'}, 'WORKFLOW_STATE', 'Review an active or proposed rule', 409)
+    if decision is not None:
+        require(policy.status == 'proposed', 'WORKFLOW_STATE', 'Only a proposed policy can be activated', 409)
     from .policies import activation_weakens_safety
-    predecessors = predecessor_rows(db, actor, [policy])
-    weakens_safety = policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, predecessors=predecessors)
+    replaces_ids = decision.replaces_ids if decision is not None else ()
+    predecessors = predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+    protection = {'policy_id': policy.id}
+    if policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, replaces_ids, predecessors=predecessors):
+        protection['weakens_safety'] = True
+    if decision is not None:
+        return protection
     skipped_people = {}
     periods = changed_periods(db, actor, [policy], skipped_people=skipped_people, predecessors=predecessors)
     workspaces = affected_workspaces(db, actor, [policy], periods=periods)
@@ -495,8 +503,7 @@ def review(db, actor, policy_id):
         else:
             reason = f'No check needed: {len(skipped_people)} people left before these lines start and have no later placements.'
         summary.setdefault('summary', reason)
-    return {'policy_id': policy.id, 'relations': relations, **summary,
-            **({'weakens_safety': True} if weakens_safety else {}), 'effect': effects,
+    return {**protection, 'relations': relations, **summary, 'effect': effects,
             'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
             'can_decide': all(e['status'] not in {'queued', 'running'} and not e['activation_blocker'] for e in effects),
             'requires_acknowledgement': any(e['requires_acknowledgement'] for e in effects)}

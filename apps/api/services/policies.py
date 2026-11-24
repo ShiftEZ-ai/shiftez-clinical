@@ -889,10 +889,10 @@ def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessor
     from .rule_effects import predecessor_rows
     from .scoring_defaults import seeded_rows
 
-    before = predecessor_rows(db, actor, [policy]) if predecessors is None else list(predecessors)
+    before = (predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+              if predecessors is None else list(predecessors))
     replaced = {old.id for old in before}
-    before.extend(scoped(db, m.Policy, ident, actor) for ident in sorted(set(replaces_ids) - replaced))
-    replaced.update(replaces_ids)
+    require(set(replaces_ids) <= replaced, 'NOT_FOUND', 'Record not found', 404)
     if entry := policy.definition.get('calendar_entry_id'):
         before.extend(old for old in policies_with_status(db, actor, 'active')
                       if old.id not in replaced and old.definition.get('calendar_entry_id') == entry)

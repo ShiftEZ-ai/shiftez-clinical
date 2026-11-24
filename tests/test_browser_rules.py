@@ -178,6 +178,42 @@ def test_template_numbers_are_edited_as_rows_and_old_copies_group_into_one_rule(
         context.close()
 
 
+def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_server, h):
+    from .test_rule_catalogue_api import approve
+
+    payload = {'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
+               'starts_on': '2020-01-01', 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}}
+    old = approve(h, h.command('coordinator', 'policy.create', payload)['record'])
+    new = h.command('coordinator', 'policy.create', {**payload,
+        'definition': {'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
+    assert not new['definition'].get('replaces_id') and not new['definition'].get('merged_ids')
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, 'rules')
+        row = page.locator(f'.rule-item[data-rule-ids~="{new["id"]}"]')
+        row.get_by_role('button', name=re.compile(r'^Review(?: 1)?$')).click()
+        review = page.get_by_role('dialog', name=re.compile(r'^Review '))
+        replacement = review.get_by_role('checkbox', name=re.compile(r'^Rest standard'))
+        activate = review.get_by_role('button', name='Activate', exact=True)
+        warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
+        expect(replacement).to_be_checked()
+        expect(review.get_by_text(warning, exact=True)).to_be_visible()
+        expect(activate).to_have_accessible_description(warning)
+        replacement.uncheck()
+        expect(review.get_by_text(warning, exact=True)).not_to_be_visible()
+        expect(activate).to_be_enabled()
+        replacement.check()
+        expect(review.get_by_text(warning, exact=True)).to_be_visible()
+        expect(activate).to_have_accessible_description(warning)
+        review.get_by_label('Reason', exact=True).fill('Independent rest review')
+        activate.click()
+        expect(review).to_have_count(0)
+    finally:
+        context.close()
+    assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
+    assert any(p['id'] == new['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
+
+
 def test_override_is_proposed_from_the_rule_form_and_refused_when_not_narrower(browser, live_server, h):
     a = h.seed['people'][0]
     base = h.policy({'kind': 'max_hours', 'hours': 40})

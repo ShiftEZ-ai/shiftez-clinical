@@ -5,7 +5,7 @@ import {conditionBuilder,scopeAsConditions} from './conditions.js';
 import {ruleConditionFields,type Context} from './forms.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
 import {clock} from './loading.js';
-import {waitingWord,checkCodeLabel,proposalReview} from './rule_check_api.js';
+import {waitingWord,checkCodeLabel,proposalProtection} from './rule_check_api.js';
 import {TERMS} from './terms.js';
 
 function checkProgress(job:Row){
@@ -39,12 +39,7 @@ export function findingsDiff(result:Row,name:(kind:string,id:string)=>string,zon
 export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canApprove:boolean,refresh:()=>Promise<void>,name:(kind:string,id:string)=>string,zone:string,unsaved=false,replaces:Row[]=[],title='',summary='',context?:Context,factFamily=''){
   const lines=Array.isArray(given)?given:[given as Row],policy=lines[0];
   if(lines.length>100)throw new Error('Review at most 100 lines at a time: filter or select fewer lines.');
-  const proposed=unsaved||factFamily?[]:lines.filter(p=>p.status==='proposed'&&
-    (p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
-  const [page,reviews]=await Promise.all([get('/api/workspaces?limit=100&current_only=true'),
-    Promise.all(proposed.map(p=>proposalReview(p.id)))]);
-  const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
-  const needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
+  const page=await get('/api/workspaces?limit=100&current_only=true');
   if(page.has_more)throw new Error('More than 100 rotas need review. Archive completed rotas before checking this rule.');
   // Rotas still being planned that overlap any line; published rotas keep the rules they were approved under.
   const work:Row[]=page.workspaces.filter((w:Row)=>['draft','submitted','approved'].includes(w.status)&&lines.some(p=>(!p.starts_on||p.starts_on<w.ends_on)&&(!p.ends_on||p.ends_on>w.starts_on)&&(!p.definition?.workspace_id||p.definition.workspace_id===w.id)));
@@ -176,13 +171,16 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         gate.replaceChildren();gate.hidden=!activate||!checksRequired||!due.length&&!busy.length;
         if(!gate.hidden&&due.length)gate.append(el('span',{},`Activation needs a fresh check of ${rotas(due)} first. `),canCheck?button(`Check ${rotas(due)}`,async()=>{await Promise.all(due.map(run));await load();},'primary small'):el('span',{},'Ask a coordinator to check it.'));
         else if(!gate.hidden)gate.append(`Checking ${rotas(busy)}. Activate when it finishes.`);
-        if(activate)activate.disabled=needsReviewer||!gate.hidden;
+        updateActivation();
       }catch(e){status.textContent=(e as Error).message;}finally{loading=false;}
     };
     // What the approver is deciding on, before the checks: the rule in one sentence and where it comes from.
     if(summary)body.append(el('p',{class:'rule-review-summary'},el('strong',{},summary),policy.source?el('span',{class:'muted'},' · Source: '+policy.source):''));
-    const protection=weakened.size?note(TERMS.reducesSafetyProtection,'warning'):null;
-    if(protection){protection.id='rule-review-safety-protection';body.append(protection);}
+    const protection=note(TERMS.reducesSafetyProtection,'warning');
+    protection.id='rule-review-safety-protection';protection.hidden=true;
+    const protectionStatus=el('span',{class:'hint',id:'rule-review-protection-status'});
+    const protectionRetry=button('Retry',()=>reviewProtection(),'secondary small');protectionRetry.hidden=true;
+    body.append(el('div',{role:'status'},protection,protectionStatus),protectionRetry);
     const controls=el('div',{class:'form-grid'});
     budget.wrap.classList.add('span-2');acknowledgement.wrap.classList.add('span-2');
     body.append(status,list,controls);list.hidden=!work.length;
@@ -204,7 +202,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
     let activate:HTMLButtonElement|undefined;
     const unchecked=el('span',{class:'muted rc-unchecked',role:'status'});
     if(!unsaved&&canApprove&&lines.every(p=>p.status==='proposed'))controls.append(...(replacing?[replacing.wrap]:[]),acknowledgement.wrap,reason.wrap,refusal,gate,el('div',{class:'span-2 actions'},activate=button(factFamily?'Approve':lines.length>1?`Activate ${lines.length} lines`:'Activate',async()=>{
-      if(!reason.input.reportValidity())return;
+      if(activationBlocked()||!reason.input.reportValidity())return;
       const retire=replacing?.values()||[];
       const decision={reason:reason.input.value,check_job_ids:[...results.values()].map(j=>j.id),acknowledge_unresolved:acknowledgement.input.checked,replaces_ids:retire};
       refusal.hidden=true;refusal.replaceChildren();
@@ -229,7 +227,42 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       // The other decision, with the same reason: the proposal is declined (kept in history, audited); nothing turns on.
       lines.length===1&&!factFamily?button('Decline',async()=>{if(!reason.input.reportValidity())return;
         await command('policy.decline',{reason:reason.input.value},policy.id,policy.revision);close();notify('Proposal declined.');await refresh();},'secondary'):'',unchecked));  // the button and what it has not checked, in one row
-    if(activate&&protection){activate.disabled=needsReviewer;activate.setAttribute('aria-describedby',protection.id);}
-    void load();
+    let protectionRequest=0,protectionPending=false,protectionFailed=false,needsReviewer=false;
+    const activationBlocked=()=>protectionPending||protectionFailed||needsReviewer||!gate.hidden;
+    const updateActivation=()=>{
+      if(!activate)return;
+      activate.disabled=activationBlocked();
+      const description=protectionPending||protectionFailed?protectionStatus.id:protection.hidden?'':protection.id;
+      if(description)activate.setAttribute('aria-describedby',description);else activate.removeAttribute('aria-describedby');
+    };
+    const reviewProtection=async():Promise<void>=>{
+      if(unsaved||factFamily)return;
+      const selected=replacing?.values()||[],request=++protectionRequest;
+      // As policy.activate_many does, associate explicit replacements with the first proposal.
+      const proposed=lines.filter(p=>p.status==='proposed'&&(p===policy&&selected.length||
+        p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
+      protection.hidden=true;needsReviewer=false;protectionFailed=false;protectionPending=proposed.length>0;
+      protectionStatus.textContent=protectionPending?'Checking safety protection…':'';
+      protectionRetry.hidden=true;
+      updateActivation();
+      if(!protectionPending)return;
+      try{
+        const reviews=await Promise.all(proposed.map(p=>proposalProtection(p.id,p===policy?selected:[])));
+        if(request!==protectionRequest||!body.isConnected)return;
+        const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
+        protection.hidden=!weakened.size;
+        needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
+        protectionStatus.replaceChildren();
+      }catch{
+        if(request!==protectionRequest||!body.isConnected)return;
+        protectionFailed=true;
+        protectionStatus.textContent='Could not check safety protection.';
+        protectionRetry.hidden=false;
+      }finally{
+        if(request===protectionRequest){protectionPending=false;updateActivation();}
+      }
+    };
+    replacing?.wrap.addEventListener('change',()=>void reviewProtection());
+    void reviewProtection();void load();
   });
 }

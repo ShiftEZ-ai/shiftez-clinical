@@ -3288,13 +3288,20 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             return adjustment_effect(db, actor_for(request, db, write=True), workspace_id, value)
 
-    @app.get('/api/policies/{policy_id}/review')
-    def policy_review(policy_id: s.ID, request: Request):
+    def _policy_review(policy_id, request, *, decision=None):
         from .services.rule_effects import review
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
-            return review(db, actor, policy_id)
+            return review(db, actor, policy_id, decision=decision)
+
+    @app.get('/api/policies/{policy_id}/review')
+    def policy_review(policy_id: s.ID, request: Request):
+        return _policy_review(policy_id, request)
+
+    @app.post('/api/policies/{policy_id}/review')
+    def policy_replacement_review(policy_id: s.ID, value: s.PolicyActivationDecision, request: Request):
+        return _policy_review(policy_id, request, decision=value)
 
     @app.post('/api/policies/{policy_id}/relax')
     def policy_relax(policy_id: s.ID, value: s.RuleRelaxInput, request: Request):
