@@ -1232,6 +1232,7 @@ def prepare_deferred_generation(engine, claim, settings):
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
         requested = generation_request_from_snapshot(workspace, prior)
         value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
+        retained_population = prior.get('planning_population')
 
         def accept_frozen_scope(scope):
             require(scope.get('generation_role_bindings') == prior.get('generation_role_bindings'),
@@ -1248,7 +1249,8 @@ def prepare_deferred_generation(engine, claim, settings):
             if not (prior.get('baseline') and 'policies' in prior) or (
                     hint.get('input_revision') == organisation.input_revision and all(
                         hint.get(key) == value for key, value in draft_policy_hint(workspace).items())):
-                accept_frozen_scope(guard_generation(db, actor, workspace, None, value))
+                accept_frozen_scope(guard_generation(db, actor, workspace, None, value,
+                                                     retained_population=retained_population))
                 return
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
@@ -1263,7 +1265,8 @@ def prepare_deferred_generation(engine, claim, settings):
                                    lead_balance=options.scoring.lead_balance)
         if claim['input'].get('generation_scope_source'):
             snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
-        scope = guard_generation(db, actor, workspace, snapshot, value, require_population=not deferred)
+        scope = guard_generation(db, actor, workspace, snapshot, value, require_population=not deferred,
+                                 retained_population=retained_population)
         if not deferred:
             if snapshot['policies'] == prior['policies']:
                 accept_frozen_scope(scope)

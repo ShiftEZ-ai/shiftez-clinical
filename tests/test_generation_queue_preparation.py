@@ -1,7 +1,7 @@
 import pytest
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 from sqlalchemy import event, select
 
 from apps.api import commands, models as m, snapshots
@@ -9,6 +9,7 @@ from apps.api.db import transaction
 from apps.api.main import create_app
 from apps.api.services.jobs import require_latest_run
 from apps.worker.main import JOB_LEASE_SECONDS, claim_job, prepare_deferred_generation, process_one
+from tests.test_events import event as calendar_event, event_type, freeze_clock, repeat
 from tests.test_generation_population import scope
 from tests.test_planning_groups_drafts import REASON, group, integrated, settings, tree
 
@@ -31,7 +32,11 @@ def snapshot_builds(monkeypatch):
 
 @pytest.mark.parametrize('h', DATABASES, indirect=True)
 @pytest.mark.parametrize('empty', [False, True])
-def test_population_queue_checks_scope_off_writer(h, snapshot_builds, empty):
+def test_population_queue_checks_scope_off_writer(h, snapshot_builds, empty, monkeypatch):
+    from packages.domain.time import aware
+
+    freeze_clock(monkeypatch, lambda: aware('2026-10-03T06:00:00+00:00'))
+    calendar_event(h, event_type(h, blocks_duties=True), repeat=repeat(), repeat_until='2026-10-19')
     workspace = h.shift(h.workspace(), people=[])['workspace']
     snapshot_builds.clear()
     selection = scope('tags', 'No matching intake') if empty else scope('person_ids', h.seed['people'][0])
@@ -91,31 +96,43 @@ def test_unscoped_queue_does_not_load_shifts(h):
     assert statements == []
 
 
-def test_generation_role_lookup_is_dated_and_read_only():
-    from packages.domain.conditions import rule_holds
+@pytest.mark.postgres
+@pytest.mark.parametrize('h', ['postgresql'], indirect=True)
+def test_generation_role_lookup_is_dated_and_read_only(h):
+    from packages.domain.conditions import rule_holds, scope_segments
     from packages.domain.time import aware
 
-    data = {'organisation': {'timezone': 'UTC'}, 'generation_role_bindings': {
-        'subject': [{'role': 'staff', 'starts_on': '2020-01-01', 'ends_on': '2026-10-05'}],
-        'other': [{'role': 'coordinator', 'starts_on': '2020-01-01', 'ends_on': None}],
-    }}
+    workspace = h.workspace()
+    person_id = h.seed['people'][0]
+    with transaction(h.app.state.engine, write=True) as db:
+        binding = db.scalar(select(m.RoleBinding).where(
+            m.RoleBinding.identity_id == h.seed['identities']['staff'], m.RoleBinding.role == 'staff'))
+        binding.ends_on = date(2026, 10, 5)
+    with transaction(h.app.state.engine) as db:
+        bindings = snapshots.generation_role_bindings(db, db.get(m.Workspace, workspace['id']))
+    data = {'organisation': {'timezone': 'UTC'}, 'generation_role_bindings': bindings}
     original = deepcopy(data)
     morning = aware('2026-10-04T08:00:00+00:00'), aware('2026-10-04T12:00:00+00:00')
     tomorrow = tuple(at + timedelta(days=1) for at in morning)
-    assert rule_holds(data, 'subject', None, *morning)('roles') == {'staff'}
-    assert rule_holds(data, 'subject', None, *tomorrow)('roles') == set()
-    assert rule_holds(data, 'other', None, *tomorrow)('roles') == {'coordinator'}
+    assert rule_holds(data, person_id, None, *morning)('roles') == {'staff'}
+    assert rule_holds(data, person_id, None, *tomorrow)('roles') == set()
+    midnight = aware('2026-10-05T00:00:00+00:00')
+    role_scope = scope('roles', 'staff')
+    assert list(scope_segments(data, role_scope, person_id, None, morning[0], tomorrow[1])) == [
+        (morning[0], midnight, True), (midnight, tomorrow[1], False)]
     assert data == original
 
 
+@pytest.mark.parametrize('h', DATABASES, indirect=True)
 @pytest.mark.parametrize('control', ['continue', 'lease_retry'])
-def test_implicit_group_selection_stays_implicit_after_preparation(h, control):
+@pytest.mark.parametrize('population_moved', [False, True])
+def test_implicit_group_selection_stays_implicit_after_preparation(h, control, population_moved):
     h.app.state.engine.dispose()
     h.settings = replace(h.settings, generation_engine='cp_sat')
     h.app = create_app(h.settings)
-    owned, overlapping = h.seed['people'][:2]
+    owned, overlapping, stays = h.seed['people'][:3]
     group(h, people=[overlapping], owner='admin', primary_priority=5)
-    workspace, shift, selected = integrated(h, membership=tree(owned, overlapping))
+    workspace, shift, selected = integrated(h, membership=tree(owned, overlapping, stays))
     settings(h, group_lookahead='none')
     payload = {'workspace_id': workspace['id'], 'kind': 'generation',
                'planning_group_version_id': selected['id']}
@@ -135,18 +152,35 @@ def test_implicit_group_selection_stays_implicit_after_preparation(h, control):
     prepare_deferred_generation(engine, claim, h.settings)
     with transaction(engine, write=True) as db:
         row = db.get(m.Job, queued['id'])
-        assert row.input_snapshot['planning_population'][shift['id']] == [owned]
+        assert set(row.input_snapshot['planning_population'][shift['id']]) == {owned, stays}
         if control == 'continue':
             row.status, row.completed_at, row.result = 'succeeded', m.now(), {'status': 'needs_more_time'}
         else:
             row.heartbeat_at = m.now() - timedelta(seconds=JOB_LEASE_SECONDS + 1)
-    target = (h.command('coordinator', 'job.continue', {'reason': REASON}, queued['id'])['job']
-              if control == 'continue' else queued)
-    assert process_one(engine, settings=h.settings,
-                       scheduler=lambda *_args, **_kwargs: {'status': 'needs_more_time'})
+    if population_moved:
+        group(h, people=[owned], owner='admin', primary_priority=5)
+    if control == 'continue':
+        response = h.command('coordinator', 'job.continue', {'reason': REASON}, queued['id'],
+                             status=403 if population_moved else 200)
+        if population_moved:
+            assert response['error']['code'] == 'GROUP_GENERATION_SCOPE'
+            with transaction(engine) as db:
+                assert list(db.scalars(select(m.Job.id).where(m.Job.workspace_id == workspace['id'],
+                                                              m.Job.kind == 'generation'))) == [queued['id']]
+            return
+        target = response['job']
+    else:
+        target = queued
+
+    def scheduler(*_args, **_kwargs):
+        assert not population_moved
+        return {'status': 'needs_more_time'}
+
+    assert process_one(engine, settings=h.settings, scheduler=scheduler)
     with transaction(engine) as db:
         row = db.get(m.Job, target['id'])
-        assert row.status == 'succeeded' and row.error_code is None
+        expected = ('failed', 'GROUP_GENERATION_SCOPE') if population_moved else ('succeeded', None)
+        assert (row.status, row.error_code) == expected
         assert row.attempts == (2 if control == 'lease_retry' else 1)
         assert row.input_snapshot['_generation_request'] == original
 

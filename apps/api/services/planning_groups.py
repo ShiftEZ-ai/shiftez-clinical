@@ -437,7 +437,8 @@ class GenerationAdmissionChanged(Exception):
     """The command writer must release its lock before refreshing scope evidence."""
 
 
-def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, require_population=False):
+def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, require_population=False,
+                     retained_population=None):
     from packages.domain.generation_scope import has_population, population_candidates, selected_session_ids
 
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
@@ -461,28 +462,28 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, req
 
     capture = db.info.get('_generation_admission_capture') if enqueue else None
     replay = db.info.get('_generation_admission_replay') if enqueue else None
-    event_currencies = []
+    event_currency = []
     if capture is not None or replay is not None:
         from apps.api.snapshots import currency_match, preparation_stamp, prepared_event_currency_matches
-        key = (actor, workspace.id, value.session_ids, scope, versions, metadata)
+        key = (actor, workspace.id, value.session_ids, scope, versions, metadata, retained_population)
         if replay is not None and replay.get('key') != key:
             raise GenerationAdmissionChanged()
         stamp = preparation_stamp(db, workspace)
         if replay is not None:
             if (not currency_match(replay['stamp'], stamp)
-                    or not all(prepared_event_currency_matches(db, events) for events in replay['events'])):
+                    or not prepared_event_currency_matches(db, replay['event_currency'])):
                 raise GenerationAdmissionChanged()
             if refusal := replay.get('refusal'):
                 raise Problem(*refusal)
             return replay['metadata']
-        capture.update(key=key, stamp=stamp, events=event_currencies)
+        capture.update(key=key, stamp=stamp, event_currency=event_currency)
 
     try:
         if enqueue:
             from apps.api.snapshots import domain_snapshot
             snapshot = domain_snapshot(db, workspace, include_fairness=False,
                                        include_objectives=False, include_fairness_history=False, include_manifest=False,
-                                       _event_currency=event_currencies if capture is not None else None)
+                                       _event_currency=event_currency if capture is not None else None)
         if uses_roles and not enqueue and not frozen:
             snapshot['generation_role_bindings'] = roles
         requested = {**snapshot, 'generation_scope': scope}
@@ -493,6 +494,9 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, req
             candidates = population_candidates(requested, selected) if enqueue and selected_group else None
             population = _generation_population(requested, selected, versions, actor, selected_group, default_scope,
                                                 candidates=candidates)
+            if retained_population is not None:
+                require({shift_id: sorted(people) for shift_id, people in population.items()} == retained_population,
+                        'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
         if check_nonempty:
             requested['generation_session_ids'] = selected
             require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',

@@ -617,7 +617,8 @@ def continue_generation(db, actor, command, settings):
                                 'search_seconds': 0,
                                 'total_search_seconds': previous_spent}
     request = generation_request_from_snapshot(workspace, snapshot)
-    scope = guard_generation(db, actor, workspace, None, s.JobInput.model_validate(request))
+    scope = guard_generation(db, actor, workspace, None, s.JobInput.model_validate(request),
+                             retained_population=snapshot.get('planning_population'))
     require(scope.get('generation_role_bindings') == snapshot.get('generation_role_bindings'),
             'STALE_INPUTS', 'Scheduling population roles changed; start a fresh run', 409)
     if '_generation_admission_capture' in db.info:

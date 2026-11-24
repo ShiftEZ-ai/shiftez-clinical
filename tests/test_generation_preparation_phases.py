@@ -1,4 +1,5 @@
 from collections import Counter
+from copy import deepcopy
 
 from sqlalchemy import select
 
@@ -19,12 +20,20 @@ def test_model_prepares_rule_boundaries_once_per_window(h, monkeypatch):
         return intervals(data, scope, person, start, end)
 
     monkeypatch.setattr(cp_sat, 'scope_intervals', counted)
-    models = []
-    result = cp_sat.generate(snapshot, 30, deterministic=True,
-                             _on_objectives=lambda model, _: models.append(str(model.proto)))
-    assert result['status'] == 'model_ready'
+    def prepare_model():
+        models = []
+        result = cp_sat.generate(deepcopy(snapshot), 30, deterministic=True,
+                                 _on_objectives=lambda model, _: models.append(str(model.proto)))
+        assert result['status'] == 'model_ready'
+        return models[0]
+
+    cached_model = prepare_model()
     assert calls and set(calls.values()) == {1}
-    assert models[0]
+    cache = cp_sat.cache
+    monkeypatch.setattr(cp_sat, 'cache', lambda fn: fn if fn.__name__ == 'rule_boundaries' else cache(fn))
+    calls.clear()
+    assert prepare_model() == cached_model
+    assert max(calls.values()) > 1
 
 
 def test_checkpoint_preparation_has_its_own_phase(h, monkeypatch):

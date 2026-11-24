@@ -260,7 +260,7 @@ OUTRANKED = 'outranked_by'
 INHERITED_LEVEL = 'inherited_level'
 COUNT_BUCKET = 'count_bucket'
 INTERNAL = frozenset({OVERRIDDEN, OWN_LINE, OUTRANKED, INHERITED_LEVEL, COUNT_BUCKET})
-DATED_PERSON_FIELDS = (PERSON_FIELDS - {'roles', 'person_ids', 'tags'}) | INTERNAL
+DATED_PERSON_FIELDS = (PERSON_FIELDS - {'person_ids', 'tags'}) | INTERNAL
 SCOPE_CONTEXT_BUDGET = 65536
 
 
@@ -1276,7 +1276,8 @@ def _change_points(data, person_id):
     def dates(rows):
         return {local_midnight(date.fromisoformat(str(r[f])), zone) for r in rows
                 for f in ('starts_on', 'ends_on') if r.get(f)}
-    rows, definitions = [], []
+    rows = list(data.get('generation_role_bindings', {}).get(person_id, ()))
+    definitions = []
     for name, fields in (('memberships', (('category_id', 'categories'),)),
                          ('grants', (('capability_id', 'capabilities'),)),
                          ('programme_memberships', (('programme_id', 'programmes'),)),

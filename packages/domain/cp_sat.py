@@ -1156,7 +1156,13 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
-    rule_boundaries = {}
+
+    @cache
+    def rule_boundaries(start, end):
+        return {boundary for policy in data['policies']
+                for interval in scope_intervals(data, policy['definition']['scope'], None, start, end)
+                for boundary in interval}
+
     for shift in shifts:
         control.check()
         sid = shift['id']
@@ -1169,14 +1175,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 model.add(staffed >= choices[sid, pid])
             model.add(staffed <= sum(choices[sid, pid] for pid in by_shift[sid]))
         bounds = {start, end, *(t for lo, hi, _ in leadership.segments(data, shift, start, end) for t in (lo, hi))} | {t for t in authority | peer_bounds if start < t < end}
-        window = shift['start'], shift['end']
-        if window not in rule_boundaries:
-            rule_boundaries[window] = {
-                boundary for policy in data['policies']
-                for interval in scope_intervals(data, policy['definition']['scope'], None, start, end)
-                for boundary in interval
-            }
-        bounds.update(rule_boundaries[window])
+        bounds.update(rule_boundaries(start, end))
         for r in definition['requirements']:
             bounds.update(t for t in (start + timedelta(minutes=r['from_minute']),
                 start + timedelta(minutes=r['to_minute']) if r.get('to_minute') is not None else end) if start < t < end)
