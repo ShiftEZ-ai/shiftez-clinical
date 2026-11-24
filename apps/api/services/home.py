@@ -9,7 +9,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from threading import Lock
 from zoneinfo import ZoneInfo
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import load_only
 from apps.api import models as m
 from apps.api.serialization import record
@@ -46,6 +46,7 @@ def _home_stamp(db, actor, now, max_days):
     today = now.astimezone(ZoneInfo(row.timezone)).date()
     # A worker can confirm a submitted rota without an audit or validation job change.
     review_stamps = ()
+    delegation_edge = None
     if actor.permits("coordinator", "approver", "programme_lead"):
         from .read_projections import CANONICAL_AUDIENCE
         W, C = m.Workspace, m.WorkspaceReadProjection
@@ -55,7 +56,18 @@ def _home_stamp(db, actor, now, max_days):
             .where(W.department_id == actor.department_id, W.status == 'submitted', W.archived_at.is_(None),
                    W.ends_on > today - horizon, W.starts_on < today + horizon,
                    C.kind == 'fingerprint', C.audience == CANONICAL_AUDIENCE).order_by(W.id)))
-    return (*row, latest_audit, today, review_stamps, validation_job_stamp(db, department_id=actor.department_id))
+        if actor.roles & reviews.REVIEW_ROLES:
+            G, D = m.ReviewDelegation, m.ReviewDecision
+            used = select(D.delegation_id).join(W, and_(W.id == D.workspace_id,
+                W.content_revision == D.content_revision)).where(W.department_id == actor.department_id,
+                W.status == 'submitted', W.archived_at.is_(None), D.delegation_id.is_not(None))
+            # A completed interval has a different stamp from the time before it started.
+            edge = case((G.expires_at <= now, G.expires_at), else_=G.starts_at)
+            delegation_edge = db.scalar(select(func.max(edge)).where(G.department_id == actor.department_id,
+                G.revoked.is_(False), G.starts_at <= now,
+                or_(G.delegate_id == actor.identity_id, G.id.in_(used))))
+    return (*row, latest_audit, today, review_stamps, delegation_edge,
+            validation_job_stamp(db, department_id=actor.department_id))
 
 
 def rota_strip(db, actor, start, end, limit, offset):
@@ -96,9 +108,9 @@ def rota_strip(db, actor, start, end, limit, offset):
                            'health': value, **({'proposal': proposal_by_workspace[row.id]} if row.id in proposal_by_workspace else {})})
     return {'workspaces': workspaces, 'limit': limit, 'offset': offset, 'has_more': len(rows) > limit}
 
-def _home_uncached(db, actor, *, max_days):
+def _home_uncached(db, actor, *, max_days, now=None):
     org = db.get(m.Organisation, actor.organisation_id)
-    now = m.now()
+    now = m.now() if now is None else now
     today = now.astimezone(ZoneInfo(org.timezone)).date()
     dept = actor.department_id
     can = actor.permits
@@ -220,7 +232,7 @@ def _home_uncached(db, actor, *, max_days):
             mine = []
             from apps.api.auth import held_roles
             context = {'held': held_roles(db, actor.identity_id, actor.department_id),
-                       'permissions': active_permissions(db, actor.department_id)}
+                       'permissions': active_permissions(db, actor.department_id), 'now': now}
             for w in live:
                 if w.status == 'submitted' and w.id not in outdated and reviews.viewer_progress(
                         db, actor, w, current_fingerprint=current_inputs[w.id], context=context)['can_decide']:
@@ -398,7 +410,7 @@ def home(db, actor, *, settings=None):
     from .read_projections import cached_department
     if db is not None:
         return cached_department(db, actor, 'home', digest([stamp, max_days]),
-                                 lambda: _home_uncached(db, actor, max_days=max_days),
+                                 lambda: _home_uncached(db, actor, max_days=max_days, now=now),
                                  audience_values=('home', max_days))
     key = (actor.department_id, actor.identity_id, tuple(sorted(actor.roles)), max_days, stamp)
     with _HOME_CACHE_LOCK:
@@ -406,7 +418,7 @@ def home(db, actor, *, settings=None):
         if cached is not None:
             _HOME_CACHE.move_to_end(key)
             return deepcopy(cached)
-    value = _home_uncached(db, actor, max_days=max_days)
+    value = _home_uncached(db, actor, max_days=max_days, now=now)
     with _HOME_CACHE_LOCK:
         _HOME_CACHE[key] = deepcopy(value)
         _HOME_CACHE.move_to_end(key)

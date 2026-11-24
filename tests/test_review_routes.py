@@ -1,5 +1,5 @@
 from .clock_support import freeze_clock
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import copy
 import uuid
 import pytest
@@ -101,6 +101,29 @@ def delegation(h, row, delegate="approver", delegator="programme", step="program
     return h.command(delegator, "review_delegation.create", {"route_id": row["id"], "step_key": step,
         "delegate_id": h.seed["identities"][delegate], "starts_at": (m.now() - timedelta(minutes=1)).isoformat(),
         "expires_at": (m.now() + timedelta(days=1)).isoformat(), "reason": "Bounded independent delegation"})["delegation"]
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_home_review_card_follows_delegation_start_and_expiry(h, monkeypatch):
+    clock = datetime(2026, 10, 4, 8, tzinfo=UTC)
+    freeze_clock(monkeypatch, lambda: clock)
+    identity(h, 'programme', ['programme_lead'])
+    r = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'}])
+    w = submitted(h)
+    start, expiry = clock + timedelta(minutes=10), clock + timedelta(minutes=20)
+    h.command('programme', 'review_delegation.create', {
+        'route_id': r['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
+        'starts_at': start.isoformat(), 'expires_at': expiry.isoformat(), 'reason': 'Bounded independent delegation',
+    })
+
+    def review_ids():
+        return [item['rota_id'] for item in h.get('approver', '/api/home')['attention'] if item['key'] == 'reviews']
+
+    assert review_ids() == []
+    clock = start
+    assert review_ids() == [w['id']]
+    clock = expiry
+    assert review_ids() == []
 
 
 def test_scoped_delegation_is_real_authority_and_remains_revocable(h):
