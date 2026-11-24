@@ -606,6 +606,54 @@ def test_live_department_changes_do_not_drift_frozen_settings(h):
         assert not {item["source"] for item in changes} & {"score", "auto", "display"}
 
 
+def test_rules_change_says_whether_a_mandatory_rule_is_in_it(h):
+    # Issue 1030: a rules change on advisory rules only is not called mandatory; one with a mandatory rule is.
+    advisory = h.policy({"kind": "max_hours", "hours": 80, "window": "week"}, severity="advisory")
+    mandatory = h.policy({"kind": "max_hours", "hours": 70, "window": "week"})
+    draft = h.workspace("Advisory conflict label")
+
+    def change(policy_id):
+        with transaction(h.app.state.engine, write=True) as db:
+            row = db.get(m.Policy, policy_id)
+            row.definition = {**row.definition, "scope": {"person_ids": ["label-change"]}}
+            row.revision += 1
+            db.flush()
+            workspace = db.get(m.Workspace, draft["id"])
+            current = snapshot_inputs(db, db.get(m.Organisation, h.seed["organisation_id"]))
+            _, _, changes = _diff(latest(db, workspace.id), workspace, current)
+        return next(item for item in changes if item["source"] == "rules")
+
+    assert change(advisory["id"])["mandatory"] is False
+    assert change(mandatory["id"])["mandatory"] is True
+
+
+def test_rules_change_label_reads_catalogue_strengths_safety_and_other_rule_inputs():
+    from apps.api.workspace_baselines import _changes_mandatory_rule
+
+    def catalogue(level, catalogue_id="fair_share"):
+        line = {"id": "line", "numbers": {"apply": {"value": None, "level": level}}}
+        return {"id": "rule", "definition": {"severity": "mandatory", "rule": {"kind": "catalogue", "id": catalogue_id,
+                                                                               "settings": {}, "lines": [line]}}}
+
+    def legacy(kind, severity):
+        return {"id": "rule", "definition": {"severity": severity, "rule": {"kind": kind}}}
+
+    def changed(before, after, **extra):
+        return _changes_mandatory_rule({"policies": [before]}, {"policies": [after], **extra}, {"policies": [before]})
+
+    medium = catalogue("medium")
+    assert changed(medium, {**medium, "revision": 2}) is False
+    assert changed(medium, catalogue("mandatory")) is True
+    assert changed(medium, catalogue(None)) is True  # an inherited strength is not known to be advisory
+    advisory = legacy("max_hours", "advisory")
+    assert changed(advisory, {**advisory, "revision": 2}) is False
+    assert changed(advisory, legacy("max_hours", "mandatory")) is True
+    assert changed(advisory, legacy("restriction", "advisory")) is True  # a safety kind binds whatever it stores
+    # Any other frozen rules input changing is not known to be advisory; a live one (exceptions) is never drift.
+    assert changed(advisory, advisory, type_lead_ownership={"type": "lead"}) is True
+    assert changed(advisory, advisory, exceptions=[{"id": "exception"}]) is False
+
+
 def test_department_frozen_fields_and_live_complement_are_exhaustive(monkeypatch):
     from types import SimpleNamespace
     from apps.api import workspace_baselines as baselines
