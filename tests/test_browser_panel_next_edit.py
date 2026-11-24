@@ -261,31 +261,26 @@ def test_an_older_check_failed_by_the_next_edit_never_draws_stopped_before_the_n
         held_as_footer_says(page, RUNNING)
         # From the second edit on, the page's whole reads of the rota wait (parked), as a slow read does at scale.
         parked, holding = [], [True]
-        page.route(re.compile(r'.*/api/workspaces/' + re.escape(w['id']) + r'\?view=schedule$'),
-                   lambda route: parked.append(route) if holding else route.continue_())
-        panel = open_gap(page)
-        second, _ = assign_first(page, panel)
+        whole_read = re.compile(r'.*/api/workspaces/' + re.escape(w['id']) + r'\?view=schedule$')
+        page.route(whole_read, lambda route: parked.append(route) if holding else route.continue_())
+        # Each `parked` check follows a later page call, which lets the held read's route handler run first.
+        with page.expect_request(lambda r: bool(whole_read.search(r.url)), timeout=20000):
+            panel = open_gap(page)
+            second, _ = assign_first(page, panel)
         expect(panel.get_by_role('status').filter(has_text=second + ' added to the draft')).to_be_visible(timeout=20000)
+        assert parked, 'the page reads the rota whole after the edit'
         assert scopes == ['command_changes', 'command_changes'], scopes
         jobs = h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs']
         assert next(j for j in jobs if j['id'] == older_id)['status'] == 'failed', 'the next edit replaced the older check'
         assert checks_open(h, w), 'the newer edit has its own check'
-        for _ in range(200):
-            if parked:
-                break
-            page.wait_for_timeout(100)
-        assert parked, 'the page reads the rota whole after the edit'
         # The older check's end reaches the page now, while the newer check is not on it yet. Once the page has dealt
         # with it (its next whole read is asked for), nothing says the check stopped.
         reads = len(parked)
-        with page.expect_response(lambda r: r.url.endswith('/api/jobs/' + older_id + '/status'), timeout=20000):
+        with page.expect_request(lambda r: bool(whole_read.search(r.url)), timeout=20000), \
+                page.expect_response(lambda r: r.url.endswith('/api/jobs/' + older_id + '/status'), timeout=20000):
             released.append(True)
-        for _ in range(200):
-            if len(parked) > reads:
-                break
-            page.wait_for_timeout(100)
-        assert len(parked) > reads, 'the dropped check asks for the rota as it is now'
         expect(page.locator('.check-stopped')).to_have_count(0)
+        assert len(parked) > reads, 'the dropped check asks for the rota as it is now'
         expect(page.locator('.app-footer')).not_to_contain_text('Check stopped')
         held_as_footer_says(page)
         # The reads land: the newer check is on the page, and Submit waits for it in the footer's words.
