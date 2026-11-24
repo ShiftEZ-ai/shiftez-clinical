@@ -1394,6 +1394,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
+                    include_manifest_sources: bool = True,
                     fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
                     _event_now=None) -> dict:
     current_scheduling = current_scheduling or current_goals
@@ -1552,7 +1553,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["score_context"] = score_context
     if include_manifest:
         from packages.domain.input_manifest import manifest
-        result['input_manifest'] = manifest(result)
+        result['input_manifest'] = manifest(result, include_sources=include_manifest_sources)
         result['fingerprint'] = result['input_manifest']['token']
     return result
 
