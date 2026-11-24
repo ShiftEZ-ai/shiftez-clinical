@@ -89,6 +89,7 @@ class ImporterV34Tests(unittest.TestCase):
             ('pull request', 'pull_request', 'refs/pull/1/merge', True, {}, full),
             ('merge group', 'merge_group', 'refs/heads/queue', True, {}, full),
             ('preview push', 'push', 'refs/heads/preview', True, {}, full),
+            ('release branch push', 'push', 'refs/heads/release/v1.2.3', True, {}, full),
             ('default branch push', 'push', 'refs/heads/dev', True, {}, full),
             ('dispatch', 'workflow_dispatch', 'refs/heads/dev', True, {}, full),
             ('admitted nightly', 'schedule', 'refs/heads/dev', True, {}, full | {'nightly-budget'}),

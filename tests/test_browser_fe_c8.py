@@ -4,7 +4,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, navigate, condition, pick, wait_held, open_rota, open_scheduling, save_dialog, open_config  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, condition, pick, wait_held, open_rota, open_scheduling, save_dialog, open_config, restart_app  # noqa: F401
 from .test_browser_p2_groups import display, person, group
 
 pytestmark = pytest.mark.browser
@@ -92,6 +92,8 @@ def test_retry_on_a_slow_home_card_asks_again(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
     try:
         navigate(page, 'requests')
+        # Sign-in can finish the first Home read. Restart on Requests so Home opens without a kept reply.
+        restart_app(page)
         page.clock.pause_at(page.evaluate("new Date(Date.now()+1000).toISOString()"))
         # The first read is held for the whole test (unrouting would let it answer, and its answer would replace the
         # card, Retry included, before the press); later reads go through.

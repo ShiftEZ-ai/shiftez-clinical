@@ -1,0 +1,328 @@
+{
+  "id": "A-SUPERVISION-01",
+  "revision": 1,
+  "title": "Named supervision with rank-specific overflow",
+  "intent": "Named supervision with rank-specific overflow",
+  "pressure": "Every trainee is desirable, but only named overflow ranks can raise the ordinary capacity.",
+  "covers": {
+    "kind.supervision_limit": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.supervision_limit.maximum": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.supervision_limit.mode": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.supervision_limit.overflow_category_ids": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.supervision_limit.overflow_maximum": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.supervision_limit.trainee_category_ids": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-SUPERVISION-01 staff rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "A-SUPERVISION-01 primary clinic", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "A-SUPERVISION-01 room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "A-SUPERVISION-01 primary room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 10}, "reason": "Synthetic scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "نيلوفرالجبلي خزامى", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p0_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p0_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "السنبلي النخلي", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p1_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p1_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p2", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "جاهظ قرنفل", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p2_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p2_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p2", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p3", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "ذاخج البحري", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p3_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p3_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p3", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p4", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "كيذش عبدالودود", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p4_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p4", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p4_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p4", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p5", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "قيثه ثامر", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p5_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p5", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p5_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p5", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "A-SUPERVISION-01", "starts_on": "2027-01-01", "ends_on": "2027-01-12"}},
+    {"key": "counted", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Supervision counted rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "overflow", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Supervision overflow rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "other_rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Supervision other_rank rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "p1_counted", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$counted", "starts_on": "2027-01-01"}},
+    {"key": "p2_counted", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$counted", "starts_on": "2027-01-01"}},
+    {"key": "p3_counted", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$counted", "starts_on": "2027-01-01"}},
+    {"key": "p4_counted", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p4", "category_id": "$counted", "starts_on": "2027-01-01"}},
+    {"key": "p3_overflow", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$overflow", "starts_on": "2027-01-01"}},
+    {"key": "p4_overflow", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p4", "category_id": "$overflow", "starts_on": "2027-01-01"}},
+    {"key": "p5_other_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p5", "category_id": "$other_rank", "starts_on": "2027-01-01"}},
+    {"key": "skill", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "capabilities", "value": {"name": "Synthetic supervision qualification", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "supervisor_grant", "role": "credentialer", "kind": "grant.create",
+     "payload": {"person_id": "$p0", "capability_id": "$skill", "starts_on": "2027-01-01", "evidence": "Synthetic qualification"}},
+    {"key": "duty_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "A-SUPERVISION-01 duty_type duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 6}], "supervision": {"trainee_category_ids": ["$counted", "$other_rank"], "trainees_per_supervisor": 5, "require_pairing": true, "capability_id": "$skill"}}}, "reason": "Synthetic scenario"}},
+    {"key": "strict", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-SUPERVISION-01 strict", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "supervision_limit", "mode": "capacity", "maximum": 1, "trainee_category_ids": ["$counted"], "overflow_maximum": 1, "overflow_category_ids": ["$overflow"]}, "scope": {}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "strict_active", "role": "approver", "kind": "policy.activate", "target": "$strict", "revision": "$strict.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "bait", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-SUPERVISION-01 bait", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "allocation_preference", "priority": 9}, "scope": {"person_ids": ["$p1", "$p2", "$p3", "$p4", "$p5"]}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "bait_active", "role": "approver", "kind": "policy.activate", "target": "$bait", "revision": "$bait.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "duty", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": [{"start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "person_id": "$p0", "participation": "supervisor", "fixed": true}]}}
+  ],
+  "expect": {
+    "binding_rules": [
+      "strict"
+    ],
+    "boundary": {
+      "assignments": {
+        "duty": [
+          {
+            "person_id": "$p0",
+            "participation": "supervisor"
+          },
+          {
+            "person_id": "$p1",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          },
+          {
+            "person_id": "$p3",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          },
+          {
+            "person_id": "$p5",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          }
+        ]
+      }
+    },
+    "validator": {
+      "assignments": {
+        "duty": [
+          {
+            "person_id": "$p0",
+            "participation": "supervisor"
+          },
+          {
+            "person_id": "$p1",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          },
+          {
+            "person_id": "$p2",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          },
+          {
+            "person_id": "$p5",
+            "participation": "trainee",
+            "supervisor_person_id": "$p0"
+          }
+        ]
+      },
+      "finding": {
+        "code": "SUPERVISOR_SCOPED_CAPACITY",
+        "shift_id": "$duty",
+        "person_id": "$p0",
+        "detail": {
+          "maximum": 1,
+          "scheduled": 2,
+          "permitted_extra": 0
+        }
+      }
+    },
+    "counterfactual": {
+      "code": "SUPERVISOR_SCOPED_CAPACITY",
+      "shift_id": "$duty",
+      "person_id": "$p0",
+      "detail": {
+        "maximum": 1,
+        "scheduled": 4,
+        "permitted_extra": 1
+      }
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    },
+    "safety": {
+      "contrasts": [
+        {
+          "rule": {
+            "maximum": 2
+          }
+        },
+        {
+          "rule": {
+            "overflow_category_ids": [
+              "$counted"
+            ]
+          }
+        },
+        {
+          "assignments": {
+            "duty": [
+              {
+                "person_id": "$p0",
+                "participation": "supervisor"
+              },
+              {
+                "person_id": "$p1",
+                "participation": "trainee",
+                "supervisor_person_id": "$p0"
+              },
+              {
+                "person_id": "$p3",
+                "participation": "trainee",
+                "supervisor_person_id": "$p0"
+              },
+              {
+                "person_id": "$p4",
+                "participation": "trainee",
+                "supervisor_person_id": "$p0"
+              }
+            ]
+          },
+          "finding": {
+            "code": "SUPERVISOR_SCOPED_CAPACITY",
+            "shift_id": "$duty",
+            "person_id": "$p0",
+            "detail": {
+              "maximum": 1,
+              "scheduled": 3,
+              "permitted_extra": 1
+            }
+          }
+        },
+        {
+          "from_boundary": true,
+          "rule": {
+            "trainee_category_ids": []
+          },
+          "finding": {
+            "code": "SUPERVISOR_SCOPED_CAPACITY",
+            "shift_id": "$duty",
+            "person_id": "$p0",
+            "detail": {
+              "maximum": 1,
+              "scheduled": 3,
+              "permitted_extra": 1
+            }
+          }
+        },
+        {
+          "from_boundary": true,
+          "rule": {
+            "mode": "allowed_ranks",
+            "maximum": null,
+            "overflow_maximum": 0,
+            "overflow_category_ids": []
+          },
+          "finding": {
+            "code": "SUPERVISION_RANK",
+            "shift_id": "$duty",
+            "person_id": "$p5"
+          }
+        }
+      ],
+      "narrower": {
+        "scope": {
+          "person_id": "$p0"
+        },
+        "rule": {
+          "maximum": 5
+        }
+      },
+      "required_in_candidate": {
+        "duty": [
+          "$p0",
+          "$p5"
+        ]
+      }
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 100,
+          "stability": 1
+        }
+      }
+    }
+  }
+}
