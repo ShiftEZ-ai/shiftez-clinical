@@ -1,6 +1,7 @@
 """Batch proposal writes preserve assignment contracts, audit and atomic undo."""
 from .clock_support import freeze_clock
 from datetime import timedelta
+import re
 
 import pytest
 from sqlalchemy import event, func, select
@@ -171,6 +172,33 @@ def test_completed_proposal_result_write_budget(h, legacy_projection):
     assert detail['result']['applied_content_revision'] == reapplied['workspace']['content_revision']
 
 
+@pytest.mark.postgres
+def test_apply_reads_unchanged_proposal_payload_once(pg):
+    workspace = pg.shift(pg.workspace(), people=[])['workspace']
+    shift = pg.snapshot(workspace)['shifts'][0]
+    job = completed_proposal(pg, workspace, [{'shift_id': shift['id'], 'participant': {
+        'person_id': pg.seed['people'][0], 'start': shift['start'], 'end': shift['end']}}])
+    payload_reads = []
+
+    def count_payload_reads(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().startswith('SELECT'):
+            fields = set(re.findall(r'\bjobs\.(input_snapshot|result)\b(?=\s*(?:,|AS\b|FROM\b))', statement))
+            if fields:
+                payload_reads.append(fields)
+
+    engine = pg.app.state.engine
+    event.listen(engine, 'before_cursor_execute', count_payload_reads)
+    try:
+        reply = pg.command('coordinator', 'generation.apply', {'workspace_id': workspace['id'],
+            'job_id': job['id'], 'reason': 'Apply the reviewed proposal'}, revision=workspace['revision'])
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_payload_reads)
+
+    assert reply['reconciliation']['status'] == 'applied'
+    assert payload_reads == [{'input_snapshot', 'result'}]
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
 def test_apply_refuses_addition_absent_from_frozen_shifts_without_writes(h, monkeypatch):
     from apps.api.auth import authenticate
     from apps.api.services import generation_reconciliation
