@@ -1403,6 +1403,58 @@ def _snapshot_window_inputs(db, department_ids, people, lo, hi, availability_lo,
     return values
 
 
+def _quota_window(lo, hi, policies, zone):
+    from packages.domain.quotas import MAX_ROWS, period_bounds
+    for policy in policies[:MAX_ROWS]:
+        try:
+            a, b = period_bounds(policy, zone)
+        except ValueError:
+            continue  # The evaluator emits the explicit ambiguous-time finding.
+        lo, hi = min(lo, a), max(hi, b)
+    return lo, hi
+
+
+def line_trial_snapshot(before, workspace, policy, zone):
+    """Share acquired duties for a plain line trial with an unchanged source window."""
+    from packages.domain.conditions import active_rules
+    from packages.domain.quotas import MAX_ROWS, MAX_SHIFTS, applicable_policies
+
+    ident, definition = policy['id'], policy['definition']
+    predecessors = (set(definition.get('merged_ids') or ()) | {definition.get('replaces_id')}) - {None, ident}
+    if (any(before.get(key) for key in ('source_bindings', 'policy_seed_lines', 'scheduling_facts'))
+            or any(line.get('source_bindings') for line in definition['rule'].get('lines', ()))
+            or definition.get('legacy_lead_conversion')
+            or definition.get('workspace_id') not in (None, workspace.id)
+            or any(p['id'] in predecessors and p['status'] == 'active' for p in before['policies'])):
+        return None
+    previous = [p for p in before['policies'] if p['id'] == ident]
+    after = DomainSnapshot(before, read_quality=dict(getattr(before, 'read_quality', {})))
+    # The override replaces its whole policy, including any local adjustment on it.
+    trial = with_tags({'tags': before.get('tags'), 'policies': [policy]})['policies'][0]
+    after['policies'] = [p for p in before['policies'] if p['id'] != ident] + [trial]
+    if any(p['definition']['rule']['kind'] == 'balance_goal'
+           for p in active_rules([*previous, trial], context=after)):
+        return None  # A changed goal can need a different history window.
+    quota = applicable_policies(after)
+    window = snapshot_window(workspace, zone)
+    lo, hi = _quota_window(*window, quota, zone)
+    old_context = before.get('quota_context')
+    if ((lo.isoformat(), hi.isoformat()) != (old_context['start'], old_context['end'])
+            if old_context else (lo, hi) != window):
+        return None
+    if quota:
+        if len(after['shifts']) > MAX_SHIFTS or (not old_context and len(after['shifts']) != len(after['focus_ids'])):
+            return None  # The normal builder limits the acquisition and records publication sources.
+        after['quota_context'] = {'start': lo.isoformat(), 'end': hi.isoformat(), 'complete': True,
+                                  'limit_exceeded': len({p['id'] for p in quota}) > after['quota_policy_limit']
+                                  or len(quota) > MAX_ROWS, 'publications': (old_context or {}).get('publications', [])}
+    else:
+        after.pop('quota_context', None)
+    after.pop('fingerprint', None)
+    after.pop('input_manifest', None)
+    return after
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1412,6 +1464,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
+                    include_manifest_sources: bool = True,
                     fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
                     _event_now=None) -> dict:
     current_scheduling = current_scheduling or current_goals
@@ -1428,17 +1481,12 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     result, department_settings, org, department_ids, own_publication, baseline, live_inputs, _department = context
     read_quality = result.read_quality
     lo, hi = snapshot_window(workspace, org.timezone)
-    from packages.domain.quotas import applicable_policies, period_bounds, MAX_SHIFTS, MAX_ROWS
+    from packages.domain.quotas import applicable_policies, MAX_SHIFTS, MAX_ROWS
     policy_limit = result["quota_policy_limit"]
     quota_policies = applicable_policies(result)
     if quota_policies:
         # A whole block, not just the neighbouring rest window, must be loaded.
-        for policy in quota_policies[:MAX_ROWS]:
-            try:
-                a, b = period_bounds(policy, org.timezone)
-            except ValueError:
-                continue  # The evaluator emits the explicit ambiguous-time finding.
-            lo, hi = min(lo, a), max(hi, b)
+        lo, hi = _quota_window(lo, hi, quota_policies, org.timezone)
         result["quota_context"] = {"start": lo.isoformat(), "end": hi.isoformat(),
                                    "complete": True, "limit_exceeded": len({p['id'] for p in quota_policies}) > policy_limit or len(quota_policies) > MAX_ROWS}
     if include_fairness:
@@ -1570,7 +1618,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["score_context"] = score_context
     if include_manifest:
         from packages.domain.input_manifest import manifest
-        result['input_manifest'] = manifest(result)
+        result['input_manifest'] = manifest(result, include_sources=include_manifest_sources)
         result['fingerprint'] = result['input_manifest']['token']
     return result
 
