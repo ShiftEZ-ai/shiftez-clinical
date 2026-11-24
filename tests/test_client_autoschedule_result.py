@@ -302,6 +302,17 @@ def receipt_tip(client_modules, result):
                "console.log(JSON.stringify(h?.dataset.tip||null));", {'kind': 'generation', 'result': result})
 
 
+def test_finished_model_and_incomplete_proposal_have_distinct_status_labels(client_modules):
+    result = {'status': 'candidate_with_gaps', 'solver_status': 'OPTIMAL',
+              'search_stop': {'reason': 'model_proven'},
+              'generation_outcome': {'status': 'UNKNOWN', 'candidate': 'with_gaps', 'optimality_proven': False}}
+    got = receipt(client_modules, result)
+    assert 'Proposal status: UNKNOWN' in got
+    assert 'Solver status: UNKNOWN' not in got
+    assert 'search finished' in got and 'proven best' not in got
+    assert "model ended OPTIMAL" in receipt_tip(client_modules, result)
+
+
 @pytest.mark.parametrize('result', [
     {
         'status': 'candidate_with_gaps', 'solver_status': 'OPTIMAL',
@@ -318,7 +329,7 @@ def receipt_tip(client_modules, result):
 ], ids=['candidate-with-gaps', 'validation-failed'])
 def test_solver_receipt_uses_unknown_final_outcome_for_diagnostic_candidates(client_modules, result):
     got = receipt(client_modules, result)
-    assert 'Solver status: UNKNOWN' in got
+    assert 'Proposal status: UNKNOWN' in got
     assert 'diagnostic model:' not in got
     assert 'Stop reason' not in got
     assert 'proven best' not in got
@@ -334,7 +345,7 @@ def test_solver_receipt_reports_needs_more_time_as_unknown_with_diagnostic_model
                                'strict_status': None, 'optimality_proven': False},
     }
     got = receipt(client_modules, result)
-    assert 'Solver status: UNKNOWN' in got
+    assert 'Proposal status: UNKNOWN' in got
     assert 'diagnostic model:' not in got
     assert 'search time used up' in got
     tip = receipt_tip(client_modules, result)
@@ -363,7 +374,7 @@ def test_solver_receipt_reports_valid_feasible_without_proven_best(client_module
                                'strict_status': None, 'optimality_proven': False},
     }}
     got = receipt(client_modules, job['result'])
-    assert 'Solver status: FEASIBLE' in got
+    assert 'Proposal status: FEASIBLE' in got
     tip = receipt_tip(client_modules, job['result'])
     assert tip and 'OPTIMAL' in tip and 'not proven best' in tip
     assert 'diagnostic model:' not in got

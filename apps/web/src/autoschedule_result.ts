@@ -44,12 +44,12 @@ export function runFacts(job:Row):RunFacts{
     conflict,currency:String(job.currency||''),reconciliation:job.reconciliation??r.reconciliation??null,outcome:r.generation_outcome??null,fixListMissing:missing};
 }
 
-/** The immutable solver receipt shown on both the run card and its result dialog. The status is the proposal's final
- *  truth (generation_outcome); the model's own status, when it differs, is named as the model's in the help, and only
- *  an OPTIMAL outcome may say "proven best". */
+/** The receipt labels the proposal outcome when it differs from the solver status. The model's status is in the help,
+ *  and only an OPTIMAL outcome may say "proven best". */
 export function solverReceipt(job:Row):HTMLElement|null{
   if(job.kind&&job.kind!=='generation')return null;
   const r:Row=job.result||{},model=String(r.solver_status||job.solver_status||''),status=String(r.generation_outcome?.status||model||'UNKNOWN');
+  const statusLabel=r.generation_outcome?.status&&status!==model?'Proposal status':'Solver status';
   // D-126: refused before the solver ran (cp_sat.py invalid_inputs): say so in words; no solver status, error or score.
   if(r.status==='invalid_inputs'){const n=Array.isArray(r.issues)?r.issues.length:0;
     return el('p',{class:'solver-receipt',role:'status'},`Not run: the draft has ${n?plural(n,'conflict'):'conflicts'} the run must keep`);}
@@ -62,7 +62,7 @@ export function solverReceipt(job:Row):HTMLElement|null{
   const score=value==null
     ?(r.score_completed===false&&String(r.status).startsWith('candidate_')?'score unfinished':'no score: nothing placed')
     :`score: ${value}`;
-  return el('p',{class:'solver-receipt',role:'status'},[`Solver status: ${status}`,stop&&`Stop reason: ${stop}`,score].filter(Boolean).join(' · '),
+  return el('p',{class:'solver-receipt',role:'status'},[`${statusLabel}: ${status}`,stop&&`Stop reason: ${stop}`,score].filter(Boolean).join(' · '),
     ...(model&&model!==status?[' ',helpButton('About Solver status',`The solver's own model ended ${model}, but the final proposal after checks is ${status}${status==='OPTIMAL'?'':', so it is not proven best'}.`)]:[]));
 }
 
