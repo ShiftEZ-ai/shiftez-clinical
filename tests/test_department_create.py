@@ -235,7 +235,7 @@ def test_creation_is_audited_atomic_idempotent_and_does_not_grant_the_creator_ac
         assert me['department']['id'] == department['id'] and 'admin' in me['roles']
         response = client.post('/auth/login', json={'username': 'operator', 'password': TEST_PASSWORD,
                                                    'department_id': department['id']})
-        assert response.status_code == 401 and response.json()['error']['code'] == 'INVALID_LOGIN', response.text
+        assert response.status_code == 403 and response.json()['error']['code'] == 'FORBIDDEN', response.text
 
 
 def test_an_accepted_managed_account_can_be_the_first_administrator(department_h):
