@@ -62,6 +62,19 @@ def test_effect_words_never_estimate_and_failed_checks_are_not_ready(client_modu
                     {'text': 'Adds 2 problems', 'tone': 'err'}], True, False]
 
 
+def test_a_finished_check_that_refuses_activation_says_why_and_only_a_proven_conflict_cannot_check_again(client_modules):
+    """rule_effects activation_blocker on a ready row: never "No change" beside a disabled Approve."""
+    rows = [{'workspace_id': w, 'name': w, 'status': 'ready', 'adds': 0, 'activation_blocker': b}
+            for w, b in [('a', 'RULE_INTRODUCES_CONFLICT'), ('b', 'RULE_CHECK_FAILED'), ('c', 'RULE_CHECK_UNRESOLVED'),
+                         ('d', None)]]
+    rows.append({**rows[0], 'status': 'failed'})
+    out = run(client_modules, '[i.map(m.effectWords),i.map(m.effectRecheckable)]', rows)
+    assert out == [[{'text': 'Makes this rota impossible', 'tone': 'err'}, {'text': 'Check failed', 'tone': 'err'},
+                    {'text': 'Check incomplete', 'tone': 'warn'}, {'text': 'No change', 'tone': 'neutral'},
+                    {'text': 'Makes this rota impossible', 'tone': 'err'}],
+                   [False, True, True, False, False]]
+
+
 def test_only_a_check_that_has_not_started_says_it_waits(client_modules):
     """One wording for both review panels: queued (a job in the queue, or a check just asked for) waits whatever its
     times say; running and every ended status give no waiting word."""
