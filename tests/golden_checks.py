@@ -221,20 +221,26 @@ def check_weekly_limit(data, ids, spec):
     findings = {(row['code'], row['person_id']) for row in finding_observations(evaluate(broken))
                 if row.get('rule_id') == rid}
     assert findings == {(expected['validator']['limit'], first), (expected['validator']['missing'], second)}
+    missing_minimum = copy.deepcopy(data)
+    for session in (ids['s0'], ids['s1']):
+        place(missing_minimum, session, [second])
+    assert any(row.get('rule_id') == rid and row['code'] == expected['validator']['missing'] and row['person_id'] == first
+               for row in finding_observations(evaluate(missing_minimum)))
 
     broad_only = copy.deepcopy(data)
     for policy in broad_only['policies']:
         if policy['id'] == rid:
             policy['definition']['rule']['lines'] = policy['definition']['rule']['lines'][:1]
     sessions = [ids[f's{index}'] for index in range(len(expected['assignment']))]
-    binding = 0
+    bound = set()
     for seed in expected['seed_robustness']['seeds']:
         candidate = feasible(data, solve(data, seed))
         assignment = [[p['person_id'] for p in shift(candidate, session)['participants']] for session in sessions]
         assert assignment == [[ids[key]] for key in expected['assignment']]
         assert solve(broad_only, seed)['status'] == expected['counterfactual']['without_person_line']
-        binding += 1
-    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': binding}}
+        bound.update((session, first) for session in sessions if first in {
+            p['person_id'] for p in shift(candidate, session)['participants']})
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
 def check_scenario(data, ids, spec):

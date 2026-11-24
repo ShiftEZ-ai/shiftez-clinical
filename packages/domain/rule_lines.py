@@ -1004,19 +1004,22 @@ def _group(rule, line, k, keys, *, default_partition=None):
               and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))}
     if kind == 'allocation_overtime':
         counts.pop('volunteer_required', None)  # Volunteering changes permission, not the duty a line applies to.
-    binding = (line.get('source_bindings') or {}).get(k) or {}
-    if not binding:
-        weekly = _weekly_workload(kind, {**given, **slot['fixed']})
-        numbers = line.get('numbers') or {}
-        if (weekly is None and kind == 'block_quota' and k not in numbers
-                and 'max' in numbers and not settings.get('block_quota')):
-            limit = _slot(entry, 'max', rule, line, list(numbers))
-            limit_kind = limit['kind']
-            weekly = _weekly_workload(limit_kind, resolved_settings(
-                limit_kind, {**settings.get(limit_kind, {}), **limit['fixed']}))
-        if weekly is not None:
-            kind, counts = 'weekly_workload', weekly
-    partition = binding.get('precedence_partition')
+    bindings = line.get('source_bindings') or {}
+    partition = (bindings.get(k) or {}).get('precedence_partition')
+    weekly = _weekly_workload(kind, {**given, **slot['fixed']})
+    numbers = line.get('numbers') or {}
+    if (weekly is None and kind == 'block_quota' and k not in numbers
+            and 'max' in numbers and not settings.get('block_quota')):
+        limit = _slot(entry, 'max', rule, line, list(numbers))
+        limit_kind = limit['kind']
+        weekly = _weekly_workload(limit_kind, resolved_settings(
+            limit_kind, {**settings.get(limit_kind, {}), **limit['fixed']}))
+    if weekly is not None:
+        kind, counts = 'weekly_workload', weekly
+        if k not in numbers:
+            partitions = {pin['precedence_partition'] for key, pin in bindings.items() if key in numbers}
+            if len(partitions) == 1:
+                partition = next(iter(partitions))
     if partition is None:
         partition = default_partition
     return json.dumps([partition, _canonical_tree(line.get('where')), sorted(line.get('weekdays') or range(7)), line.get('start_time') or '00:00',

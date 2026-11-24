@@ -6,6 +6,7 @@ import pytest
 
 from packages.contracts.schemas import PolicyDefinition
 from packages.domain.rule_catalogue_migration import after_snapshot, lines_of, plan_v2
+from packages.domain.rule_lines import outranking_by_number
 from packages.domain.rule_migration_proof import canonical_full_model, same_full_model, strict_proof
 from .test_rule_catalogue_v2_domain import effective
 from .test_rule_catalogue_v2_proof import fixture
@@ -21,6 +22,26 @@ def clinical_target(*, inherited=()):
                               for n, person in enumerate(people)])
     source['definition'] = PolicyDefinition.model_validate(source['definition'], context={'historical': True}).model_dump(mode='json')
     return source
+
+
+@pytest.mark.parametrize('entry', ['duties_per_week', 'hours_per_week'])
+def test_weekly_maximum_precedence_survives_catalogue_conversion(h, entry):
+    before = fixture(h, people=22, sessions=2)
+    person = next(iter(before['people']))
+    period = {'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}
+    source = rule('Synthetic weekly workload', {'kind': 'catalogue', 'id': entry, 'lines': [
+        {'id': str(UUID(int=9101)), **period, 'numbers': {'min': {'value': 1}, 'max': {'value': 4}},
+         'settings': {'block_quota': {'window_alignment': 'calendar_week'}}},
+        {'id': str(UUID(int=9102)), **period, 'numbers': {'max': {'value': 7}},
+         'who': {'conditions': [{'field': 'person_ids', 'values': [person]}]}},
+    ]})
+    source['definition'] = PolicyDefinition.model_validate(source['definition']).model_dump(mode='json')
+    before['policies'] = [source]
+    assert outranking_by_number(source) == {(0, 'max'): [1]}
+    plan = plan_v2([source], department_id='d')
+    assert not plan['blocked'], plan['blocked']
+    proof = strict_proof(before, after_snapshot(before, plan))
+    assert proof['identical'], proof
 
 
 def test_all_36_listed_rows_with_their_own_numbers_convert_without_a_frozen_default():
