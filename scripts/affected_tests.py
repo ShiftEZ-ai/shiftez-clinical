@@ -22,16 +22,13 @@ chains, pytest_plugins, literal dynamic imports) use a transitive reverse graph.
 Data/fixture file readers seed that same graph. Unresolved loaders select more.
 Migrations and contracts remain FULL: all database tests and generated.ts consumers
 are included. Dependency/lock, shared configuration and selector changes are FULL.
-Browser ownership combines transitive TS imports, route literals and imported Python
-helpers with affected_browser_routes.json (app.ts page boundaries). API dependencies
-flow through those Python helpers, including the real live_server. Shared shell/CSS,
-unknown page boundaries, parse errors and missing/deleted source fail closed.
-PR feedback retains transitive unit owners until a shared root reaches over 40% of
-unit files; those fan-outs use direct owners plus fixed smoke. Browser PR feedback
-uses direct owners plus smoke. Merge groups use the same policy; FULL dev/nightly sweeps gate releases.
-Unresolved unit ownership still selects the full unit suite. CI/tooling changes
-select the existing CI/selector/retry contract tests. This is feedback selection,
-not proof of complete affected coverage. Replay guards surviving unit/API regressions.
+Browser ownership combines transitive TS imports and test source references. API
+dependencies flow through Python helpers, including the real live_server. Shared
+shell/CSS, unknown owners, parse errors and missing/deleted source fail closed.
+The standalone PR plan retains transitive unit owners until a shared root reaches
+over 40% of unit files. Larger fan-outs use direct owners plus fixed smoke, as
+does browser selection. Unresolved unit ownership selects the full suite.
+CI/tooling changes select the existing CI and selector contract tests.
 
     python scripts/affected_tests.py                       # changes vs origin/dev (commits + working tree): print
     python scripts/affected_tests.py --run [pytest args]   # ... and run them (browser tests with -n 3)
@@ -45,8 +42,7 @@ not proof of complete affected coverage. Replay guards surviving unit/API regres
     python scripts/affected_tests.py --record junit*.xml   # refresh tests/durations.json from CI reports
 
 Legacy local/--ci selections add SMOKE for code; --ci also retains SAFETY_CORE
-and WORK_CORE. --pr-smoke is unchanged for old consumers and the early partition;
-Native feedback uses --fast-ci; --full-ci is the capacity-aware complete sweep.
+and WORK_CORE. Hosted CI calls direct_test_owners for pull-request selection.
 """
 import argparse
 import ast
@@ -72,12 +68,10 @@ def self_hosted_runner(raw):
 TESTS = ROOT / "tests"
 DURATIONS = TESTS / "durations.json"
 CORE = ("migrations/", "requirements/", "pyproject.toml", "alembic.ini", "package.json", "package-lock.json", ".github/workflows/",
-        "infra/Dockerfile", ".github/scripts/changes.sh", ".github/scripts/pytest_ci.py", "scripts/affected_tests.py", "scripts/affected_browser_routes.json",
+        "infra/Dockerfile", ".github/scripts/pytest_ci.py", "scripts/affected_tests.py",
         "apps/__init__.py", "apps/api/__init__.py", "apps/api/main.py", "apps/api/models.py", "apps/api/db.py",
         "apps/api/schema.py", "apps/api/settings.py", "packages/contracts/", "scripts/manage.py", "scripts/build_web.py",
-        "scripts/generate_contracts.py",
-        "scripts/verify.py", "scripts/preflight.py", "scripts/qualification_preflight.py",
-        "scripts/preload_web.py", "support/")
+        "scripts/generate_contracts.py", "scripts/preflight.py", "scripts/preload_web.py")
 SMOKE = {"unit": ["tests/test_api_lifecycle.py", "tests/test_security.py", "tests/test_domain.py",
                   "tests/test_timing_guard.py", "tests/test_cpu_budget.py", "tests/test_clock_guard.py",
                   "tests/test_postgres_markers.py",
@@ -88,22 +82,13 @@ SMOKE = {"unit": ["tests/test_api_lifecycle.py", "tests/test_security.py", "test
                   "tests/test_data_safety.py::test_grandfather_list_is_closed_and_honest",
                   "tests/test_data_safety.py::test_api_and_worker_never_migrate_seed_or_reset_on_start",
                   "tests/test_data_safety.py::test_hard_delete_paths_are_inventoried",
-                  "tests/test_ci_runtime.py::test_runtime_install_verifies_archive_and_binary_before_exporting_path",
-                  "tests/test_ci_changes.py::test_dependabot_image_pins_match_every_repository_copy",
-                  "tests/test_ci_changes.py::test_requirement_locks_hash_every_exact_pin_and_preserve_layering_and_windows",
-                  "tests/test_deploy_rehearsal.py::test_rehearsal_confirmation_is_explicit_reviewed_revisions_on_its_disposable_target"],
+                  "tests/test_hosted_ci.py::test_runtime_hashes_are_checked_before_exporting_a_path"],
          "browser": ["tests/test_browser.py::test_every_permitted_surface_loads_without_javascript_errors"]}
 # Fast non-browser web/client tests (~300, ~2 min at -n 4) run in every code selection: a wave merge skipped them and
 # 9 reached the hub red . Globbed so new files join; part of SMOKE, so shared-root narrowing keeps them.
 WEB_CLIENT_FAST = tuple(sorted(p.relative_to(ROOT).as_posix() for pattern in ("test_web_*.py", "test_client_*.py")
                                for p in TESTS.glob(pattern)))
 SMOKE["unit"] = list(dict.fromkeys([*SMOKE["unit"], *WEB_CLIENT_FAST]))
-SELECTOR_FILE_OWNERS = {
-    "ci/known_issues.tsv": {
-        "unit": ("tests/test_ci_test_runner.py", "tests/test_ci_workflow.py"),
-        "browser": (),
-    },
-}
 # These tests compile the client with the pinned TypeScript (conftest client_modules); CI copies node_modules in.
 NODE_TOOLCHAIN = "node_modules/typescript/bin/tsc"
 WEB_BUILD = "apps/web/dist/index.html"
@@ -121,7 +106,7 @@ SAFETY_CORE = (
     "tests/test_data_safety.py",
     "tests/test_migration_ids.py",
     "tests/test_postgres_markers.py",
-    "tests/test_postgres.py",
+    "tests/test_product_context_postgres.py",
     "tests/test_postgres_roles.py",
     "tests/test_api_lifecycle.py",
     "tests/test_security.py",
@@ -211,17 +196,6 @@ def parsed(text):
     return ast.parse(text)
 
 
-@lru_cache(maxsize=512)
-def definitions(text):
-    return {n.name: n for n in parsed(text).body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
-
-
-@lru_cache(maxsize=2048)
-def function_text(node):
-    return ast.unparse(node)
-
-
 def closure(reverse, seeds):
     pending, reached = list(seeds), set()
     while pending:
@@ -263,7 +237,7 @@ def ts_imports(text):
 
 
 def graph(root):
-    paths = sorted(p for top in ("apps", "packages", "scripts", "tests", "migrations", "support", ".github/scripts")
+    paths = sorted(p for top in ("apps", "packages", "scripts", "tests", "migrations", ".github/scripts")
                    for p in (root / top).rglob("*.py") if "__pycache__" not in p.parts)
     signature = tuple((p.relative_to(root).as_posix(), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
     return _graph(root, signature)
@@ -287,7 +261,7 @@ def _graph(root, signature):
         def depend(name):
             if source.startswith("tests/") and "tests." + name in namespaces:
                 name = "tests." + name
-            if name.split(".")[0] in {"apps", "packages", "scripts", "tests", "migrations", "support"} and name not in namespaces:
+            if name.split(".")[0] in {"apps", "packages", "scripts", "tests", "migrations"} and name not in namespaces:
                 # A from-import may name an attribute; its parent module remains an owner.
                 if name.rpartition(".")[0] not in modules:
                     opaque.add(source)
@@ -357,7 +331,7 @@ def owners(root, changed, *, pr=False):
                  if part not in {"tests", "scripts", "apps", "packages", ".github", "infra"} and len(part) >= 4]
         for source, text in texts.items():
             if path.startswith("apps/web/"):
-                if not source.startswith(("tests/", "scripts/", "support/")):
+                if not source.startswith(("tests/", "scripts/")):
                     continue
                 if (not pr or source.startswith('tests/test_')) and ("apps/web" in text or re.search(r"['\"]apps['\"]\s*/\s*['\"]web['\"]", text)):
                     seeds.add(source)
@@ -376,42 +350,6 @@ def owners(root, changed, *, pr=False):
     return {path for path in reached if Path(path).name.startswith("test_") and path.startswith("tests/")}
 
 
-def browser_routes(text, texts, routes, seen=None):
-    """Routes named by a test or the specific helpers it imports (not sibling tests)."""
-    seen = set() if seen is None else seen
-    tree = parsed(text)
-    found = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            value = node.value.lstrip("#").split("/", 1)[0].split("?", 1)[0].casefold()
-            if value in routes:
-                found.add(value)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "navigate":
-            destination = node.args[1] if len(node.args) > 1 else None
-            while isinstance(destination, (ast.BinOp, ast.JoinedStr)):
-                destination = destination.left if isinstance(destination, ast.BinOp) else next(iter(destination.values), None)
-            if not isinstance(destination, ast.Constant) or not isinstance(destination.value, str):
-                found.add("*")
-            elif destination.value.lstrip("#").split("/", 1)[0].split("?", 1)[0].casefold() not in routes:
-                found.add("*")
-        elif isinstance(node, ast.ImportFrom):
-            path = "tests/" + (node.module or "").removeprefix("tests.").replace(".", "/") + ".py"
-            if path not in texts:
-                continue
-            helpers = definitions(texts[path])
-            pending = [alias.name for alias in node.names]
-            while pending:
-                name = pending.pop()
-                key = (path, name)
-                if key in seen or name not in helpers or name.startswith("test_") or name == "navigate":
-                    continue
-                seen.add(key)
-                definition = helpers[name]
-                pending.extend(n.id for n in ast.walk(definition) if isinstance(n, ast.Name))
-                found |= browser_routes(function_text(definition), texts, routes, seen)
-    return found
-
-
 def mentions(path, test, text, names=True):
     name = Path(path).name
     words = [w for w in re.split(r"[_\W]+", Path(path).stem) if len(w) >= 4]
@@ -422,7 +360,7 @@ def mentions(path, test, text, names=True):
 
 
 # Entry pages and shared UI modules reach almost every page; their browser owners are the whole browser suite.
-WEB_ENTRY_SOURCES = frozenset(f"apps/web/src/{name}" for name in ("app.ts", "main.ts", "startup.ts"))
+WEB_ENTRY_SOURCES = frozenset(f"apps/web/src/{name}" for name in ("app.ts", "startup.ts"))
 SHARED_WEB_SOURCES = frozenset(f"apps/web/src/{name}" for name in (
     "dom.ts", "conditions.ts", "picker.ts", "side_panel.ts", "table_view.ts", "table_menu.ts",
     "selection_bar.ts", "view_settings.ts"))
@@ -516,35 +454,14 @@ def web_tests(changed, files):
         if source not in reached:
             reached.add(source)
             pending.extend(importers.get(source, ()))
-    mapping_path = ROOT / "scripts/affected_browser_routes.json"
-    mapping = json.loads(mapping_path.read_text(encoding="utf-8")) if mapping_path.is_file() else {}
-    if not isinstance(mapping, dict) or any(not isinstance(v, list) or not v or
-            any(not isinstance(route, str) for route in v) for v in mapping.values()):
-        return "all"
     owners = {f: {p for p in reached if mentions(p.relative_to(ROOT).as_posix(), f, text)}
               for f, text in files.items() if suite(f) == "browser"}
-    # app.ts is a monolithic router: every direct page boundary needs explicit route ownership.
-    boundaries = {p for p in reached if importers.get(p, set()) & entries}
-    if mapping and any(p.name not in mapping for p in boundaries):
-        return "all"
-    covered = {p for p in reached if p.name in mapping} | set().union(set(), *owners.values())
+    covered = set().union(*owners.values())
     while newly_covered := {p for p in reached - covered if importers.get(p, set()) & covered}:
         covered |= newly_covered
     if reached - covered:
         return "all"
-    picked = {f for f, modules in owners.items() if modules}
-    if mapping:
-        routes = set().union(*map(set, mapping.values()))
-        affected_routes = {route for p in reached for route in mapping.get(p.name, ())}
-        helpers = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
-                   for p in TESTS.rglob("*.py")}
-        for f, text in files.items():
-            if suite(f) == "browser":
-                used = browser_routes(text, helpers, routes)
-                # Opaque navigation and tests without a known page are always included.
-                if not used or "*" in used or used & affected_routes:
-                    picked.add(f)
-    return picked or "all"
+    return {f for f, modules in owners.items() if modules} or "all"
 
 
 def doc_tests(changed, files):
@@ -604,17 +521,8 @@ def shared_foundation(path):
             or path in ("tests/conftest.py", "tests/__init__.py"))
 
 
-def selector_file_selection(changed):
-    if set(changed) != set(SELECTOR_FILE_OWNERS) or len(set(changed)) != 1:
-        return None
-    return {kind: set(targets) for kind, targets in SELECTOR_FILE_OWNERS[next(iter(changed))].items()}
-
-
 def select_with_reason(changed, *, pr=False):
     """Return the affected targets and a stable reason whenever ownership requires both full suites."""
-    special = selector_file_selection(changed)
-    if special is not None:
-        return special, ""
     # Local FULL can be decided before inventory; PR feedback retains its narrower ownership policy.
     if not pr:
         for path in changed:
@@ -634,16 +542,11 @@ def select_with_reason(changed, *, pr=False):
     for path in changed:
         if path.startswith(("docs/", "changelog.d/")) or ("/" not in path and path.endswith(".md")) or path in ("LICENSE", ".gitignore"):
             continue
-        if path in ("scripts/batch_prs.py", "tests/test_batch_prs.py"):
-            add("tests/test_batch_prs.py")
-            continue
         code = True
-        if pr and (path.startswith(('.github/', 'infra/ci/', 'scripts/ci_'))
-                   or path in ('scripts/affected_tests.py', 'scripts/affected_browser_routes.json',
-                               'scripts/cloud_test_plan.py', 'scripts/refresh_durations.py', 'tests/quarantine.json')):
+        if pr and (path.startswith(('.github/', 'scripts/ci_'))
+                   or path in ('scripts/affected_tests.py', 'tests/quarantine.json')):
             for test in files:
-                if Path(test).name.startswith(('test_ci_', 'test_affected', 'test_retry_quarantine',
-                                               'test_cloud_test_plan', 'test_refresh_durations')):
+                if Path(test).name.startswith(('test_ci_', 'test_hosted_ci', 'test_affected', 'test_retry_quarantine')):
                     add(test)
             continue
         if path.startswith("apps/web/"):
@@ -665,7 +568,7 @@ def select_with_reason(changed, *, pr=False):
                 add(f)
             continue
         # Kit tests also read siblings via their directory; CI adds the safety and work core below.
-        scope = "/".join(path.split("/")[:2]) if path.startswith(("infra/", "scripts/local-deploy/")) else ""
+        scope = "/".join(path.split("/")[:2]) if path.startswith("infra/") else ""
         names = not scope and not path.startswith(".github/scripts/") and path != "scripts/restore_drill.py"
         hits = [f for f, text in files.items()
                 if mentions(path, f, text, names=names)
@@ -705,9 +608,6 @@ def select(changed):
 
 def pr_select(changed):
     """PR and merge feedback use mapped transitive owners plus smoke; shared fan-outs run in FULL sweeps."""
-    special = selector_file_selection(changed)
-    if special is not None:
-        return special, ""
     picked, reason = select_with_reason(changed, pr=True)
     if reason.startswith(('unknown-', 'missing-', 'unresolved-', 'selection-failed')):
         return {'unit': 'all', 'browser': 'all'}, reason
@@ -1083,7 +983,6 @@ def diagnostic_ci(selection, source_sha, env=None):
         runner_key = 'HEAVY_DB_RUNNER' if advisory else kind.upper() + '_RUNNER'
         matrix.append({'suite': 'cpu-budget' if advisory else kind, 'shard': 1, 'total': 1, 'only': ' '.join(sorted(targets)),
                        'runner': self_hosted_runner(env.get(runner_key) or DEFAULT_RUNNER), 'workers': '0' if advisory else '1'})
-    from scripts.ci_runner import stage_browser_after_unit
     unit_matrix = [row for row in matrix if row['suite'] == 'unit' or advisory]
     browser_matrix = [row for row in matrix if row['suite'] == 'browser']
     return {'sha': source_sha, 'base': '', 'code': 'true', 'image': 'false', 'full': 'false', 'diagnostic': 'true',
@@ -1094,7 +993,6 @@ def diagnostic_ci(selection, source_sha, env=None):
             'unit_matrix': json.dumps(unit_matrix, separators=(',', ':')),
             'browser_matrix': json.dumps(browser_matrix, separators=(',', ':')),
             'large_selection': 'false',
-            'stage_browser_after_unit': str(stage_browser_after_unit(env) == 'on').lower(),
             'hosted_unit_rows': 'false', 'hosted_browser_rows': 'false', 'hosted_test_rows': 'false'}
 
 
@@ -1124,9 +1022,10 @@ def include_failures(picked, reports):
     """Pure local diagnostic union; failed CPU/wall budgets require separate qualification."""
     import importlib.util
     import xml.etree.ElementTree as ET
-    spec = importlib.util.spec_from_file_location("pytest_ci", ROOT / ".github/scripts/pytest_ci.py")
-    pytest_ci = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(pytest_ci)
+    if reports:
+        spec = importlib.util.spec_from_file_location("pytest_ci", ROOT / ".github/scripts/pytest_ci.py")
+        pytest_ci = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pytest_ci)
 
     combined = {kind: "all" if targets == "all" else set(targets) for kind, targets in picked.items()}
     for report in reports:
@@ -1247,9 +1146,14 @@ def main(argv):
             return 2
     status = 0
     for kind, tests in picked.items() if run else ():
-        target = ["tests", "-p", "scripts.ci_partition_plugin", "--fmuc-suite", kind] if tests == "all" else sorted(tests)
+        if tests != "all":
+            target = sorted(tests)
+        elif kind == "unit":
+            target = ["tests", "--ignore-glob", f"*{os.sep}test_browser*.py"]
+        else:
+            target = [path for path in test_files() if suite(path) == kind]
         marker = ["-m", markers()[kind]]
-        if tests:
+        if target:
             result = subprocess.call([sys.executable, "-m", "pytest", "-q", *marker, "--dist", "worksteal", *target, *extra,
                                       "-n", str(workers[kind])], cwd=ROOT)
             status |= 0 if result == 5 else result  # An affected file may contain only nightly budgets.
