@@ -10,6 +10,8 @@ from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from apps.api import main as api, models as m
 from apps.api.db import make_engine, transaction
 from apps.api.settings import Settings
@@ -111,7 +113,7 @@ def measure(harness):
     job, timings['worker_request'] = queue(harness, workspace, role='admin', generation_options={'search_minutes': 1})
 
     env = {**os.environ, 'TEST_POSTGRES_URL': harness.settings.database_url}
-    child = subprocess.run([sys.executable, '-m', 'tests.generation_profile', 'worker', job['id']],
+    child = subprocess.run([sys.executable, str(Path(__file__).resolve()), 'worker', job['id']],
                            check=True, env=env, capture_output=True, text=True)
     return {'people': len(data['people']), 'sessions': len(data['shifts']), 'rule_versions': len(data['policies']),
             'queue': timings, 'worker': json.loads(child.stdout)}
