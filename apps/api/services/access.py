@@ -1,7 +1,7 @@
 from sqlalchemy import and_, or_, select
 from packages.contracts import schemas as s
 from apps.api import models as m
-from apps.api.auth import _live, require_role, person_access
+from apps.api.auth import _live, has_installation_admin, require_role, person_access
 from apps.api.errors import require
 from apps.api.serialization import record, generation_defaults_record
 from .common import scoped, expected, history, range_overlaps, bump_inputs
@@ -276,6 +276,14 @@ def department_settings(db, actor, command, settings):
 
 
 def require_role_change(db, actor, role, *, grant=False):
+    if role == s.INSTALLATION_ADMIN_ROLE:
+        allowed = s.PERMISSIONS["access.installation_admin"]
+        require_role(actor, *allowed)
+        if db is not None and db.info.get("bulk") and not actor.permits(*(r for r in allowed if r != role)):
+            # A preceding action in this batch may have revoked the grant used to authorize the request.
+            require(has_installation_admin(db, actor.identity_id), "INSTALLATION_ADMIN_REQUIRED",
+                    f"Ask an {s.ROLE_LABELS[role]} to change this role", 403)
+        return
     if role not in s.EXPLICIT_ROLES:
         require_role(actor, "admin")
         return
@@ -350,10 +358,14 @@ def access_command(db, actor, command, settings):
         if row.role == "admin":
             require(other_admins(db, actor.department_id, row.identity_id), "LAST_ADMIN",
                     "Keep at least one admin: give someone else the Admin role first", 409)
-        if row.role in s.SYSTEM_ROLES:
+        if row.role in (*s.SYSTEM_ROLES, s.INSTALLATION_ADMIN_ROLE):
             from .independence import today as local_today
             if live_role_holder(db, row, local_today(db, actor.department_id)):
-                keep_developer(db, {row.identity_id}, actor.department_id)
+                if row.role == s.INSTALLATION_ADMIN_ROLE:
+                    require(has_installation_admin(db, excluding_binding_id=row.id), "LAST_INSTALLATION_ADMIN",
+                            f"Give someone else the {s.ROLE_LABELS[row.role]} role before removing this grant", 409)
+                else:
+                    keep_developer(db, {row.identity_id}, actor.department_id)
         row.revoked = True
         row.revision += 1
         from .auth_configuration import protect_break_glass

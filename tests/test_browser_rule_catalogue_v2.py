@@ -291,7 +291,7 @@ def test_role_permissions_on_catalogue_and_person_facts(browser, live_server, h,
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
         page.evaluate("location.hash='rules'")
-        if role == 'staff':
+        if role in {'staff', 'installation_admin'}:
             expect(page.get_by_text('Restricted page', exact=True)).to_be_visible()
         else:
             expect(page.locator('#main li.rt-item')).to_have_count(3)
@@ -309,6 +309,11 @@ def test_role_permissions_on_catalogue_and_person_facts(browser, live_server, h,
                 expect(panel.get_by_role('button', name='Keep change', exact=True)).to_have_count(0)
                 expect(panel.locator('input:not([readonly]):not([disabled]):not([type=hidden]), textarea:not([readonly]):not([disabled]), select:not([disabled])')).to_have_count(0)
             panel.get_by_role('button', name='Close panel', exact=True).click()
+        if role == 'installation_admin':
+            navigate(page, 'people')
+            expect(page.get_by_text('Restricted page', exact=True)).to_be_visible()
+            assert not errors
+            return
         panel = facts_panel(page, person)
         expect(panel.locator('.ph-section').filter(has_text='Quotas & targets')).to_contain_text('≤ 4 duties per calendar week · Mandatory')
         expect(panel.locator('.ph-section').filter(has_text='Overtime offers')).not_to_contain_text('No overtime offered.')

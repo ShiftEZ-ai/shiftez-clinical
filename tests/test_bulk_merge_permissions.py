@@ -26,7 +26,7 @@ def restore(h, actor, row, bulk, status=200):
     return h.command(actor, "role.restore", REASON, row["id"], row["revision"], status=status)
 
 
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 @pytest.mark.parametrize("bulk", [False, True])
 def test_explicit_role_restore_requires_developer_not_admin(h, role, bulk):
     row = revoked_binding(h, role)
@@ -40,7 +40,7 @@ def test_explicit_role_restore_requires_developer_not_admin(h, role, bulk):
         assert not restored.revoked and restored.revision == row["revision"] + 1
 
 
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 @pytest.mark.parametrize("bulk", [False, True])
 def test_explicit_role_restore_uses_current_system_permission_map(h, monkeypatch, role, bulk):
     row = revoked_binding(h, role)
@@ -55,6 +55,7 @@ def test_explicit_role_restore_uses_current_system_permission_map(h, monkeypatch
 @pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
 @pytest.mark.parametrize("purpose", ["invite", "reset"])
 @pytest.mark.parametrize("bulk", [False, True])
+@pytest.mark.usefixtures('branding_editor')
 def test_explicit_role_restore_invalidates_open_recovery_links(h, tmp_path, role, purpose, bulk):
     with_users_file(h, tmp_path)
     target = accepted(h) if purpose == "reset" else invite(h)["record"]["id"]

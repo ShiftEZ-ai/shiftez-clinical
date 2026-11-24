@@ -455,7 +455,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   // Admins and coordinators, plus whoever holds a section's own permission (an operator's GitHub/AI provider): AO-001.
   configuration:{title:'Configuration',roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,...Object.values(SECTION_PERMISSION)],live:['catalogue','settings','people','rules','access']},
   // Review routes (deciding proposals) on a phone; People & roles and Role history stay on the desktop (PAGE_TABS `phone`).
-  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES],live:['access','people','rules','requests']},
+  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN],live:['access','people','rules','requests']},
   system:{title:'System',roles:[CAPABILITY.CATALOGUE_READ,CAPABILITY.SYSTEM_OPERATIONS,CAPABILITY.AUDIT_READ,CAPABILITY.FEEDBACK_READ_ALL],
     live:['jobs','settings','access','people','catalogue','feedback']},
   // The Inbox follows the unread count the pulse carries (onPulse) and changes named for it.
@@ -1763,9 +1763,9 @@ async function renderPage(live=false){
       // Needs you › Rule exceptions (the server's link_target "#rules?exceptions=1") opens what waits.
       else if(routeQuery.has('exceptions'))exceptionsPanel();},
     configuration:configurationPage,
-    // Admins and Developers: one /api/access read serves People & roles, Role history and both tab counts, for the visit
+    // One /api/access read serves People & roles, Role history and both tab counts for the visit
     // (a save, the pulse or leaving the page reads it again).
-    access:t=>{const data=permits(CAPABILITY.ADMIN)||may('access.system_roles')?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
+    access:t=>{const data=permits(CAPABILITY.ADMIN,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN)?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
       return pageTabs(t,{people:t=>accessPage(t,data!,'people'),routes:t=>routingPage(ctx(),t,{phone:phoneLite()}),history:t=>accessPage(t,data!,'history')},
         data?()=>data.then(a=>({people:a.identities.length,history:a.bindings.length})).catch(()=>({})):undefined);},
     system:t=>pageTabs(t,{imports:dataPage,bulk:async t=>bulkEditorPage(t,ctx()),operations:operationsPage,audit:auditPage,feedback:t=>feedbackPage(t,{mine:false,query:routeQuery,triage:may('feedback.triage'),github:may('feedback.export_github')})}),
@@ -8205,7 +8205,7 @@ async function inboxPage(target:HTMLElement){
   if(page&&inboxPath()!==readPath)void search();
 }
 
-const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),roleForCapability(CAPABILITY.OPERATOR)];
+const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),'installation_admin',roleForCapability(CAPABILITY.OPERATOR)];
 /** Access & approvals › People & roles (who signs in, their roles) or › Role history (every grant). */
 async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'history'){
   const access=await data;const identities:Row[]=access.identities;
@@ -8223,8 +8223,7 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
     const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('Hospital user ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
     form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Hospital sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
   });}
-  // Who gives or revokes a role: the server's rule from the contract (role_grants.ts). With no Developer, the system
-  // owner restores one outside the app.
+  // Who gives or revokes a role comes from the server permission contract.
   const manages=(r:string)=>!grantRefusal(r,me!.roles);
   // Every role of the contract, in this page's order; one this person may not give is shown disabled with why (maintenance).
   const roleChoices=(roles:readonly string[]):Choice[]=>[...roles].sort((a,b)=>ROLE_ORDER.indexOf(a)-ROLE_ORDER.indexOf(b))
@@ -8299,16 +8298,16 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
     if(!i.disabled&&(!a||a.accepted_at))acts.push({label:'End all sessions',icon:'logout',danger:true,armed:true,run:async()=>{const r=await command('account.end_sessions',{reason:'Ended all sessions'},i.id);notify(r.ended?`${who} was signed out everywhere (${plural(r.ended,'session')}).`:`${who} had no open sessions.`);}});
     return acts;};
   const people=dataTable<Row>({id:'access',noun:['person','people'],rows:identities,rowId:i=>i.id,searchLabel:'Search people with access',searchPlaceholder:'Name or sign-in',
-    bulk:accessActions,
+    bulk:admin||may('access.system_roles')?accessActions:undefined,
     columns:[
       {key:'name',label:'Person',text:i=>String(i.display_name)+' '+(accounts[i.id]?.username||''),cell:i=>el('strong',{},i.display_name)},
-      {key:'issuer',label:'Signs in with',text:i=>accounts[i.id]?.username||String(i.issuer),facet:i=>accounts[i.id]?'Sign-in name':String(i.issuer),
-        cell:i=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer)},
+      {key:'issuer',label:'Signs in with',text:i=>accounts[i.id]?.username||String(i.issuer||''),facet:i=>accounts[i.id]?'Sign-in name':String(i.issuer||''),
+        cell:i=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer||'—')},
       {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):['No current role'],sort:i=>rolesOf(i).length,
         cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},'No current role'))},
       {key:'status',label:'Status',facet:i=>accountState(i),cell:i=>{const state=accountState(i),a=accounts[i.id];
         return el('span',{class:'status-dot '+(state==='Active'?'on':'off'),'data-tip':a&&!a.accepted_at&&a.invite_expires_at?(a.invite_open?'Link expires ':'Link expired ')+formatDate(a.invite_expires_at,zone()):''},state);}},
-      {key:'last',label:'Last sign-in',text:i=>String(i.last_sign_in_at||''),sort:i=>String(i.last_sign_in_at||''),cell:i=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},'Never')},
+      {key:'last',label:'Last sign-in',text:i=>String(i.last_sign_in_at||''),sort:i=>String(i.last_sign_in_at||''),cell:i=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},admin||may('access.system_roles')?'Never':'—')},
     ],
     rowActions:i=>i.id===me!.identity_id?removeRoles(i):!admin?(i.disabled?removeRoles(i):[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)},...removeRoles(i)]):[...(!i.disabled?[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)}]:[]),...removeRoles(i),...accountActions(i),...(!i.disabled?[{label:TERMS.disableSignIn,icon:'lock' as const,danger:true,run:()=>confirmAction(TERMS.disableSignIn,'Existing sessions lose access on their next request. You can enable sign-in again later. Cross-department sign-ins need the institutional operator.',async reason=>{await command('identity.disable',{reason},i.id,i.revision);await refresh();},TERMS.disableSignIn)}]
       :[{label:TERMS.enableSignIn,icon:'check' as const,run:()=>confirmAction(TERMS.enableSignIn,'They can sign in again with the access roles they still hold.',async reason=>{await command('identity.enable',{reason},i.id,i.revision);await refresh();},TERMS.enableSignIn)}])]});

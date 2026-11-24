@@ -15,7 +15,7 @@ from .models import (Account, AuditEvent, AuthLoginEvent, Department, Identity, 
 from .errors import Problem, require
 from .settings import password_login_enabled
 from packages.domain.time import aware
-from packages.contracts.schemas import CATALOGUE_READS, EXPLICIT_ROLES, PERMISSIONS, ROLE_NAMES
+from packages.contracts.schemas import CATALOGUE_READS, EXPLICIT_ROLES, INSTALLATION_ADMIN_ROLE, PERMISSIONS, ROLE_NAMES
 
 from .identity_store import HASHER as PASSWORDS, _DUMMY as _DUMMY_HASH
 from .db import current_request_parent, liveness_write, log_row_lock_diagnostic
@@ -79,7 +79,7 @@ def _local_today(db, department_id):
 
 
 def _effective(roles):
-    # Admin inherits department powers; system and audit access need explicit bindings.
+    # Admin inherits department powers; installation and audit roles require explicit bindings.
     roles = frozenset(roles)
     return roles | (set(ROLE_NAMES) - EXPLICIT_ROLES) if "admin" in roles else roles
 
@@ -89,6 +89,24 @@ effective_roles = _effective  # the same inheritance for a role set that is not 
 
 def _live(binding, today):
     return not binding.revoked and binding.starts_on <= today and (binding.ends_on is None or today < binding.ends_on)
+
+
+def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None):
+    """Check installation-wide grants on the local day of each binding's department."""
+    query = select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
+        Department, Department.id == RoleBinding.department_id).join(
+        Organisation, Organisation.id == Department.organisation_id).join(
+        Identity, Identity.id == RoleBinding.identity_id).outerjoin(
+        Account, Account.identity_id == Identity.id).where(
+        RoleBinding.role == INSTALLATION_ADMIN_ROLE, RoleBinding.revoked.is_(False), Identity.disabled.is_(False),
+        or_(Account.id.is_(None), Account.accepted_at.is_not(None)))
+    if identity_id is not None:
+        query = query.where(RoleBinding.identity_id == identity_id)
+    if excluding_binding_id is not None:
+        query = query.where(RoleBinding.id != excluding_binding_id)
+    moment = now()
+    with db.execute(query.execution_options(stream_results=True)) as rows:
+        return any(_live(row, moment.astimezone(ZoneInfo(row.timezone)).date()) for row in rows)
 
 
 def role_bindings(db, department_id, identity_id=None):
@@ -156,6 +174,8 @@ def authenticate(db, token: str | None, csrf: str | None = None, write: bool = F
                 "CSRF_FAILED", "Refresh your session before saving", 403)
     roles = current_roles(db, identity.id, session.department_id)
     require(bool(roles), "FORBIDDEN", "No active access binding for this department", 403)
+    if INSTALLATION_ADMIN_ROLE not in roles and has_installation_admin(db, identity.id):
+        roles |= {INSTALLATION_ADMIN_ROLE}
     actor = Actor(identity.id, department.id, department.organisation_id, identity.display_name,
                   roles, identity.person_id, session.id)
     from .services import workspace_access  # registers the shared graph visibility policy

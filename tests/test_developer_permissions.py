@@ -66,7 +66,7 @@ def test_admin_expansion_preserves_department_roles_and_explicit_system_bindings
 
 
 @pytest.mark.parametrize("actor", ["admin", "operator"])
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 def test_explicit_role_grants_require_system_role_permission(h, actor, role):
     target = h.seed["identities"]["admin" if actor == "admin" else "staff"]
     result = h.command(actor, "role.grant", {"identity_id": target, "role": role, "starts_on": "2020-01-01",
@@ -80,7 +80,7 @@ def test_explicit_role_grants_require_system_role_permission(h, actor, role):
 
 
 @pytest.mark.parametrize("actor", ["admin", "operator"])
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 def test_explicit_role_revocations_require_system_role_permission(h, actor, role):
     identity(h, "replacement", ["operator"])
     with transaction(h.app.state.engine) as db:
@@ -97,7 +97,7 @@ def test_explicit_role_revocations_require_system_role_permission(h, actor, role
 
 
 @pytest.mark.parametrize("state", ["live", "pending", "accepted", "temporary", "future", "expired", "revoked", "disabled", "other_department"])
-@pytest.mark.parametrize("system_role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("system_role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 def test_admin_cannot_bootstrap_explicit_roles_regardless_of_developer_cover(h, state, system_role):
     with transaction(h.app.state.engine, write=True) as db:
         binding = db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == h.seed["identities"][system_role]))
@@ -155,7 +155,7 @@ def test_developer_cannot_manage_ordinary_department_roles(h):
     h.command("operator", "role.revoke", {"reason": "Attempt to remove an admin"}, row["id"], row["revision"], status=403)
 
 
-@pytest.mark.parametrize("role", ["staff", *sorted(s.EXPLICIT_ROLES)])
+@pytest.mark.parametrize("role", ["staff", *sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE})])
 @pytest.mark.parametrize("developer", [False, True])
 def test_account_invitation_cannot_bypass_system_role_permission(h, tmp_path, role, developer):
     with_users_file(h, tmp_path)
@@ -175,7 +175,7 @@ def test_account_invitation_cannot_bypass_system_role_permission(h, tmp_path, ro
             assert json.loads(h.users.read_text()) == {"users": {}}
 
 
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 def test_account_invitation_bootstrap_requires_system_role_permission(h, tmp_path, role):
     with_users_file(h, tmp_path)
     with transaction(h.app.state.engine, write=True) as db:
@@ -210,6 +210,7 @@ def test_refused_system_role_invite_keeps_target_role_and_error_in_audit(h, tmp_
 @pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
 @pytest.mark.parametrize("purpose", ["invite", "reset"])
 @pytest.mark.parametrize("state", ["live", "temporary", "future", "expired", "revoked"])
+@pytest.mark.usefixtures('branding_editor')
 def test_account_recovery_protects_live_and_scheduled_system_roles(h, tmp_path, role, purpose, state):
     with_users_file(h, tmp_path)
     target = accepted(h) if purpose == "reset" else invite(h)["record"]["id"]
@@ -285,7 +286,7 @@ def test_api_capabilities_for_each_role_and_explicit_admin_bindings(h, roles):
     own = submit(h, reader, route="#own")
     effective = _effective(roles)
     can = lambda name: bool(effective.intersection(s.PERMISSIONS[name]))
-    h.get(reader, "/api/access", status=200 if "admin" in effective or can("access.system_roles") else 403)
+    h.get(reader, "/api/access", status=200 if "admin" in effective or can("access.installation_admin") else 403)
     reports = h.get(reader, "/api/feedback")["rows"]
     assert {r["id"] for r in reports} == ({row["id"], own["id"]} if can("feedback.read_all") or reader == "staff" else {own["id"]})
     h.get(reader, "/api/feedback/" + row["id"], status=200 if can("feedback.read_all") or reader == "staff" else 404)
@@ -359,7 +360,7 @@ def test_legacy_feedback_receipt_uses_current_permission_without_rewriting_histo
 
 @pytest.mark.parametrize("action", ["role.revoke", "identity.disable"])
 @pytest.mark.parametrize("replacement", [None, "live", "pending", "accepted", "disabled", "future", "expired", "temporary", "revoked", "same_identity", "other_department"])
-@pytest.mark.parametrize("system_role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("system_role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 def test_last_developer_requires_enabled_current_permanent_cover(h, action, replacement, system_role, monkeypatch):
     monkeypatch.setattr(s, "SYSTEM_ROLES", (system_role,))
     target = h.seed["identities"][system_role]

@@ -8,7 +8,7 @@ from sqlalchemy import inspect
 from sqlalchemy.schema import CreateColumn
 
 from apps.api import models as m
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_NAMES
 
 
 def historical_seed(db):
@@ -29,6 +29,8 @@ def historical_seed(db):
               for number in range(3)]
     identities = {}
     for role in ROLE_NAMES:
+        if role == INSTALLATION_ADMIN_ROLE:
+            continue  # It is introduced by the migration that only current databases have.
         identities[role] = insert('identities', issuer='historical-test', subject=role, display_name=f'Historical {role} (test)',
                                   disabled=False, person_id=people[0] if role == 'staff' else None)
         insert('role_bindings', identity_id=identities[role], department_id=department, role=role,

@@ -1,6 +1,6 @@
 /** Application-wide name and logos, including sign-in. The server decides who can edit.
  *  Each change is a version with a reason, Undo and history (branding.* commands). */
-import {el,field,area,button,note,readFailed,sectionHead,formDialog,historyDialog,confirmAction,notify,withIcon,formatDate} from './dom.js';
+import {el,field,area,button,note,readFailed,sectionHead,formDialog,historyDialog,confirmAction,notify,withIcon,formatDate,roleLabel} from './dom.js';
 import {get,request,command,sessionChanged,keptRead,type KeptReadOptions} from './api.js';
 import {skeleton} from './loading.js';
 import {BRANDING_DEFAULTS} from './brand.js';
@@ -74,7 +74,7 @@ export function brandingPanel():HTMLElement{
       el('dl',{class:'brand-facts'},el('dt',{},'App name'),el('dd',{},b.app_name),el('dt',{},'Short name'),el('dd',{},b.short_name),el('dt',{},'Institution'),el('dd',{},b.institution_name)),
       el('div',{class:'brand-logos'},...LOGOS.map(([k,label])=>el('figure',{},preview(k,b[`${k}_url` as const],b[`${k}_alt` as const]),el('figcaption',{},label)))),
       installed(status,(fields,what)=>look(status,fields,what)),
-      status.can_edit?'':note('The name and logo apply to every department. Ask an installation operator to change them.'));};
+      status.can_edit?'':note(`Ask an ${roleLabel('installation_admin')} to change the name and logo`));};
   const saved=(result:BrandingStatus)=>{if(box.isConnected)draw(result);};
   /** One change to how the installed app looks, as its own branding version with a reason (Undo and History as any). */
   const look=(status:BrandingStatus,fields:Record<string,unknown>,what:string)=>{const st=status.settings,b=status.branding;

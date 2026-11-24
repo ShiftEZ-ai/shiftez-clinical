@@ -137,6 +137,7 @@ def test_rule_level_tag_reference_matches_the_real_rules_tree(browser, live_serv
 
 
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
+@pytest.mark.usefixtures('branding_editor')
 def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_server, h, width, scheme):
     original = h.get('staff', '/api/branding')
     context, page = sign_in(browser, live_server, 'admin', {'width': width, 'height': 900}, color_scheme=scheme)
@@ -220,26 +221,33 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         context.close()
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_operator_can_edit_branding_when_department_admin_cannot(browser, live_server, h):
     from .test_department_create import name_test_administrators, payload, token
 
     name_test_administrators(h)
     spec = payload(h, first_admin_identity_id=h.seed['identities']['coordinator'])
     h.command('operator', 'department.create', spec, expected_fingerprint=token(h, spec))
+    role = 'installation_admin'
+    access = h.get('admin', '/api/access')
+    original = next(b for b in access['bindings'] if b['identity_id'] == h.seed['identities']['admin'] and b['role'] == role)
+    h.command('operator', 'role.grant', {'identity_id': h.seed['identities']['approver'],
+        'role': role, 'starts_on': '2020-01-01', 'reason': 'Give installation access for this scenario'})
+    h.command('operator', 'role.revoke', {'reason': 'Exercise a department-only administrator'}, original['id'], original['revision'])
 
     context, page = sign_in(browser, live_server, 'admin')
     try:
         navigate(page, 'configuration/department')
         panel = page.locator('.brand-settings')
-        expect(panel.get_by_text('Ask an installation operator', exact=False)).to_be_visible()
+        expect(panel.get_by_text('Ask an Installation admin to change the name and logo', exact=True)).to_be_visible()
         expect(panel.get_by_role('button', name='Edit', exact=True)).to_have_count(0)
     finally:
         context.close()
 
-    context, page = sign_in(browser, live_server, 'operator')
+    assert h.get('operator', '/api/admin/branding')['can_edit']
+    context, page = sign_in(browser, live_server, 'approver')
     try:
-        navigate(page, 'configuration/integrations')
-        page.get_by_role('navigation', name='Configuration sections').get_by_role('button', name='Name and logo').click()
+        navigate(page, 'configuration/branding')
         panel = page.locator('.brand-settings')
         panel.get_by_role('button', name='Edit', exact=True).click()
         dialog = page.get_by_role('dialog', name='Name and logo', exact=True)

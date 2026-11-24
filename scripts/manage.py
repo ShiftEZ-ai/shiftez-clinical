@@ -20,7 +20,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import TypeDefinition
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, TypeDefinition
 from migrations import safety
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,6 +217,8 @@ def main():
                 raise RuntimeError("Demo bootstrap is prohibited in production")
             with transaction(engine, write=True) as db:
                 values = demo_data(db, empty=args.empty)
+                db.add(m.RoleBinding(identity_id=values["identities"]["admin"], department_id=values["department_id"],
+                                     role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
             directory = ROOT / ".run"
             directory.mkdir(exist_ok=True)
             path = directory / "demo-credentials.json"
@@ -245,7 +247,9 @@ def main():
                 seed_contacts(db, dept.id)
                 from apps.api.services.scoring_defaults import seed as seed_scoring_defaults
                 seed_scoring_defaults(db, dept.id)
-                db.add(m.RoleBinding(identity_id=identity.id, department_id=dept.id, role="admin", starts_on=m.now().date()))
+                day = m.now().astimezone(ZoneInfo(org.timezone)).date()
+                for role in ("admin", INSTALLATION_ADMIN_ROLE):
+                    db.add(m.RoleBinding(identity_id=identity.id, department_id=dept.id, role=role, starts_on=day))
             print("Institution initialized with one explicitly bound administrative identity. No clinical/approval role was inferred.")
     finally:
         engine.dispose()

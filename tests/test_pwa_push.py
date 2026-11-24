@@ -321,6 +321,7 @@ def test_required_events_are_recipient_specific():
     assert pwa.classify_event(published, person) == 'duty_changed'
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_manifest_generated_from_public_config_etag_and_transparent_source(h):
     response = h.client('staff').get('/api/pwa/manifest.webmanifest')
     assert response.status_code == 200

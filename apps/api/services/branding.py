@@ -3,15 +3,13 @@ import hashlib
 import io
 import warnings
 from types import SimpleNamespace
-from itertools import groupby
-from zoneinfo import ZoneInfo
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.web_assets import asset_url
 from apps.api import models as m
-from apps.api.auth import held_roles, require_permission
+from apps.api.auth import require_role
 from apps.api.errors import Problem, require
 from apps.api.serialization import record
 from apps.api.schema import require_current_schema
@@ -23,28 +21,13 @@ SINGLETON = 'application'
 IMAGE_FORMATS = s.BRANDING_IMAGE_FORMATS
 
 
-def can_edit(db, actor):
-    if actor.permits(*s.SYSTEM_ROLES):
-        return True
-    if not actor.permits('admin'):
-        return False
-    # Stream scalar rows, keeping only one department's grants in flight; held_roles owns dated authority.
-    department, organisation, binding = m.Department.__table__, m.Organisation.__table__, m.RoleBinding.__table__
-    query = select(department.c.id.label('scope_id'), organisation.c.timezone.label('scope_timezone'),
-        binding.c.department_id, binding.c.identity_id, binding.c.role,
-        binding.c.starts_on, binding.c.ends_on, binding.c.revoked).select_from(
-            department.join(organisation, department.c.organisation_id == organisation.c.id).outerjoin(binding,
-                (binding.c.department_id == department.c.id) & (binding.c.identity_id == actor.identity_id)))
-    with db.execute(query.order_by(department.c.id).execution_options(stream_results=True)) as rows:
-        return all('admin' in held_roles(db, actor.identity_id, ident,
-            day=m.now().astimezone(ZoneInfo(zone)).date(), bindings=(r for r in grants if r.role is not None))
-            for (ident, zone), grants in groupby(rows, lambda r: (r.scope_id, r.scope_timezone)))
+def can_edit(actor):
+    return actor.permits(*s.PERMISSIONS['branding.configure'])
 
 
-def require_editor(db, actor):
-    require_permission(actor, 'branding.configure')
-    require(can_edit(db, actor), 'APPLICATION_ADMIN_REQUIRED',
-            'Application-wide branding requires an installation operator or admin access to every department', 403)
+def require_editor(actor):
+    require(can_edit(actor), 'APPLICATION_ADMIN_REQUIRED',
+            f"Ask an {s.ROLE_LABELS[s.INSTALLATION_ADMIN_ROLE]} to change the name and logo", 403)
 
 
 def settings(db):
@@ -67,15 +50,16 @@ def public(db):
 
 
 def status(db, actor):
-    require_permission(actor, 'branding.configure')
+    permitted = can_edit(actor)
+    if not permitted:
+        require_role(actor, 'admin')
     row = db.get(m.ApplicationBranding, SINGLETON)
-    permitted = can_edit(db, actor)
     return {'branding': public(db), 'settings': settings(db), 'can_edit': permitted,
             'can_undo': permitted and bool(row and row.previous is not None)}
 
 
 def change(db, actor, command):
-    require_editor(db, actor)
+    require_editor(actor)
     require(command.target_id is None, 'BRANDING_TARGET', 'Branding is application-wide')
     row = db.get(m.ApplicationBranding, SINGLETON)
     expected(row or SimpleNamespace(revision=1), command.expected_revision)
@@ -104,7 +88,7 @@ def change(db, actor, command):
 
 
 def versions(db, actor, limit, offset):
-    require_editor(db, actor)
+    require_editor(actor)
     rows = db.scalars(select(m.DefinitionHistory).where(m.DefinitionHistory.kind == 'application_branding',
         m.DefinitionHistory.object_id == SINGLETON).order_by(m.DefinitionHistory.object_revision).limit(limit).offset(offset))
     return {'versions': [record(row) for row in rows]}
@@ -140,7 +124,7 @@ def prepare_image(content, media_type):
 
 def store_image(db, actor, content, correlation_id):
     require_current_schema(db)
-    require_editor(db, actor)
+    require_editor(actor)
     sha = hashlib.sha256(content).hexdigest()
     row = db.scalar(select(m.BrandingImage).where(m.BrandingImage.sha256 == sha))
     if row is None:

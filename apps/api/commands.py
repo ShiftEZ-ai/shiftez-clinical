@@ -101,7 +101,7 @@ def command_roles(command):
             permission = "request.withdraw"
         roles = list(s.PERMISSIONS[permission])
         if kind.startswith("role."):
-            roles += s.PERMISSIONS["access.system_roles"]
+            roles += (*s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
         return list(dict.fromkeys(roles))
     for prefix, canonical in (("catalogue.", "catalogue.update"), ("eligibility.", "eligibility.create"),
                               ("grant.", "grant.create"), ("role.", "role.grant")):
@@ -700,7 +700,10 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
     """Single and nested receipts keep the command's current sensitive-object authority checks."""
     if kind in {'branding.update', 'branding.undo'}:
         from .services import branding
-        branding.require_editor(db, actor)
+        branding.require_editor(actor)
+    if kind in {'role.grant', 'role.restore', 'role.revoke'}:
+        from .services.access import require_role_change
+        require_role_change(db, actor, result['record']['role'], grant=kind != 'role.revoke')
     if kind == 'timeline.rotation':
         from .services import timeline_commands
         timeline_commands.authorize_result(db, actor, result)

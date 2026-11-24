@@ -21,7 +21,7 @@ from apps.api import models as m
 from apps.api.db import make_engine, transaction
 from apps.api.schema import supported_revision
 from migrations import safety
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_NAMES
 from scripts import backup_job, manage
 from apps.api.settings import Settings
 from .migration_support import current_seed_columns
@@ -98,11 +98,16 @@ def test_insertion_order_migration_preserves_rows_guards_and_legacy_ties(session
         before, protected = snapshot(), guards()
         command.upgrade(cfg, 'head')
         command.upgrade(cfg, 'head')
-        assert snapshot() == before
+        after = snapshot()
+        assert [row.action for row in after['audit_events'] if row.id not in ids] == ['role.grant']
+        assert [row.role for row in after['role_bindings'] if row.role == INSTALLATION_ADMIN_ROLE] == [INSTALLATION_ADMIN_ROLE]
+        after['audit_events'] = [row for row in after['audit_events'] if row.id in ids]
+        after['role_bindings'] = [row for row in after['role_bindings'] if row.role != INSTALLATION_ADMIN_ROLE]
+        assert after == before
         assert all(guards().get(name) == definition for name, definition in protected.items())
         with transaction(engine, write=True) as db:
             rows = list(db.scalars(select(m.AuditEvent).order_by(m.AuditEvent.seq)))
-            assert [row.id for row in rows] == sorted(ids)
+            assert [row.id for row in rows if row.id in ids] == sorted(ids)
             last = db.scalar(select(m.RecordInsertion.seq).order_by(m.RecordInsertion.seq.desc()).limit(1))
             fresh = m.AuditEvent(department_id=seed['department_id'], actor_id=seed['identities']['admin'],
                 action='test.new', reason='New event after backfill', detail={}, correlation_id='after-migration')
@@ -1241,6 +1246,64 @@ def session_limits_database(request, tmp_path):
         with admin.connect() as db:
             db.execute(text('DROP SCHEMA ' + schema + ' CASCADE'))
         admin.dispose()
+
+
+@pytest.mark.parametrize('populated', [False, True])
+def test_installation_admin_migration_preserves_rows_and_seeds_once(session_limits_database, populated):
+    from importlib import import_module
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import select
+
+    from .migration_support import historical_seed
+
+    url = session_limits_database
+    cfg = manage.alembic_config(url)
+    revision = '0153_installation_admin'
+    command.upgrade(cfg, '0152_feasibility_results')
+    engine = make_engine(url)
+    binding = m.RoleBinding.__table__
+    try:
+        with transaction(engine, write=True) as db:
+            if populated:
+                seed = historical_seed(db)
+                later = m.Department(organisation_id=seed['organisation_id'], name='Later test department')
+                db.add(later)
+                db.flush()
+                start = date(2026, 1, 1)
+                db.add_all([
+                    m.RoleBinding(department_id=later.id, identity_id=seed['identities']['operator'],
+                                  role='admin', starts_on=start),
+                    m.RoleBinding(department_id=seed['department_id'], identity_id=seed['identities']['coordinator'],
+                                  role='admin', starts_on=start, revoked=True, created_at=datetime(2025, 1, 1, tzinfo=timezone.utc)),
+                ])
+            db.flush()
+            original = list(db.execute(binding.select().order_by(binding.c.id)))
+
+        command.upgrade(cfg, revision)
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            import_module(f'migrations.versions.{revision}').upgrade()
+
+        with transaction(engine) as db:
+            grants = list(db.scalars(select(m.RoleBinding).where(m.RoleBinding.role == INSTALLATION_ADMIN_ROLE)))
+            audit = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.correlation_id == revision)))
+            assert list(db.execute(binding.select().where(binding.c.role != INSTALLATION_ADMIN_ROLE)
+                                   .order_by(binding.c.id))) == original
+            if populated:
+                grant, = grants
+                event, = audit
+                assert (grant.identity_id, grant.department_id) == (seed['identities']['admin'], seed['department_id'])
+                assert (event.action, event.target_id, event.actor_id) == ('role.grant', grant.id, grant.identity_id)
+                assert event.reason == 'Installation admin granted to the first administrator'
+            else:
+                assert grants == audit == []
+        if populated:
+            with pytest.raises(IntegrityError, match='(?i)check constraint'), engine.begin() as connection:
+                connection.execute(binding.insert().values(identity_id=seed['identities']['admin'],
+                    department_id=seed['department_id'], role='unknown', starts_on=date(2026, 1, 1)))
+    finally:
+        engine.dispose()
 
 
 def test_session_limits_migration_preserves_data_and_other_guards(session_limits_database):

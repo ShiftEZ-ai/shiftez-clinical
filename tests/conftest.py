@@ -307,6 +307,17 @@ def h(tmp_path, database_template, request):
         yield harness
 
 
+@pytest.fixture
+def branding_editor(h):
+    from datetime import date
+    from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE
+
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.RoleBinding(identity_id=h.seed['identities']['admin'], department_id=h.seed['department_id'],
+                             role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
+    return h
+
+
 def pytest_generate_tests(metafunc):
     if 'score_check_enabled' in metafunc.fixturenames:
         metafunc.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)

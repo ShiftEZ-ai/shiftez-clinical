@@ -10,7 +10,7 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
-from packages.contracts.schemas import ROLE_NAMES, SYSTEM_ROLES
+from packages.contracts.schemas import EXPLICIT_ROLES, ROLE_NAMES
 from apps.api import models as m
 from apps.api.db import transaction
 from .governance_support import identity
@@ -19,8 +19,7 @@ from .test_browser import whole_list
 
 pytestmark = pytest.mark.browser
 
-# Authorization expectation, independently frozen from the eight-role product
-# contract. Admin receives all effective roles; it is not a restricted ninth role.
+# Authorization expectations for the contract roles. Admin inherits department powers only.
 PAGES = {
     'home': 'Home', 'schedule': 'Schedule',
     'requests': 'Requests', 'people': 'People', 'programmes': 'Programmes', 'insights': 'Insights',
@@ -35,6 +34,7 @@ ROLE_PAGES = {
     'credentialer': set('home people system inbox'.split()),
     'staff': set('home schedule requests people insights inbox'.split()),
     'operator': set('home inbox configuration access system'.split()),
+    'installation_admin': set('home inbox configuration access'.split()),
     # Auditors and programme leads read pending person facts in Requests (read-only; maintenance).
     'auditor': set('home schedule requests people insights access system inbox'.split()),
     'programme_lead': set('home schedule requests people programmes insights access system inbox'.split()),  # System › Bulk editor
@@ -57,7 +57,8 @@ ROLE_TABS = {
 @pytest.fixture
 def all_roles(h):
     assert set(ROLE_PAGES) == set(ROLE_NAMES)
-    identity(h, 'programme_lead', ['programme_lead'])
+    for role in ('programme_lead', 'installation_admin'):
+        identity(h, role, [role])
     return h
 
 
@@ -77,7 +78,7 @@ def test_all_role_routes_forbidden_controls_and_common_help(browser, live_server
     h.publish(h.shift(h.workspace('Fictional issued role-coverage source'))['workspace'])
     h.shift(h.workspace('Fictional editable role-coverage source'))
     # An admin holds every department role; Developer (operator) and Auditor are granted separately.
-    assert set(h.get(role, '/api/me')['roles']) == (set(ROLE_PAGES) - {*SYSTEM_ROLES, 'auditor'} if role == 'admin' else {role})
+    assert set(h.get(role, '/api/me')['roles']) == (set(ROLE_PAGES) - EXPLICIT_ROLES if role == 'admin' else {role})
     context, page = sign_in(browser, live_server, role)
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
