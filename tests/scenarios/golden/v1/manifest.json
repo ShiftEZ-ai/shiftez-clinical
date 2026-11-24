@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "revision": 3,
+  "revision": 4,
   "timezone": "Asia/Riyadh",
   "seeds": [
     11,
@@ -12,6 +12,11 @@
     "atlas/A-COVER-01.json",
     "atlas/A-LEAD-01.json",
     "atlas/A-PREF-01.json",
-    "interactions/I-LOCK-REST-COVER-01.json"
+    "interactions/I-LOCK-REST-COVER-01.json",
+    "atlas/A-TRANSITION-01.json",
+    "atlas/A-RESTRICTION-01.json",
+    "atlas/A-POOLED-CREDIT-01.json",
+    "atlas/A-ORDERED-COVER-01.json",
+    "atlas/A-SUPERVISION-01.json"
   ]
 }
