@@ -623,11 +623,10 @@ async function showLogin(reason='',resume=''){
   // The account last used on this device: "Continue as <name>", with its password only (or the institutional
   // sign-in), "Use another account", and a remove button for shared computers.
   const known=rememberedAccount(),continuing=known&&(passwords?!!known.username:config.institutional_login)?known:null;
-  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06).
-  const intro=el('p',{hidden:!continuing},continuing?'Continue where you left off.':'');
+  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06); the account card says who.
   // Test or production as the footer shows it: an icon in the card's corner, named in its tooltip.
   const production=config.deployment==='production';
-  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),intro,reason?el('div',{class:'notice warning',role:'status'},reason):null);
+  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),reason?el('div',{class:'notice warning',role:'status'},reason):null);
   // Institutional sign-in returns to this page, as the built-in one does; Remember me goes with it.
   const back:Record<string,string>=location.hash.length>1?{next:location.hash}:{};
   const startUrl=(remembered:boolean)=>'/auth/start?'+new URLSearchParams({...back,...(remembered?{remember_me:'true'}:{})});
@@ -639,7 +638,7 @@ async function showLogin(reason='',resume=''){
     :el('a',{class:'button primary',href:startUrl(false)},continuing?'Continue as '+continuing.name:'Continue with institutional sign-in')):null;
   institutional?.addEventListener('click',()=>{institutional.setAttribute('href',startUrl(remember.input.checked));});
   const chip=continuing?el('div',{class:'login-account'},avatar(continuing.name),
-    el('div',{class:'who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
+    el('div',{class:'who',id:'login-account-who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
     iconButton('Remove '+continuing.name+' from this device','close',()=>{forgetAccount();void showLogin(reason);})):null;
   if(chip)formWrap.append(chip);
   let password:ReturnType<typeof field>|null=null,forget:(()=>void)|null=null;
@@ -648,6 +647,7 @@ async function showLogin(reason='',resume=''){
     // provider); an unknown one behaves like any password account.
     const username=field('Username or email','text',continuing?.username||'',{required:true,autocomplete:'username',spellcheck:false,autocorrect:'off',autocapitalize:'none'});password=field('Password','password','',{id:'current-password',required:true,autocomplete:'current-password'});
     password.wrap.querySelector('label')!.htmlFor=password.input.id;
+    if(continuing)password.input.setAttribute('aria-describedby','login-account-who');  // whose password, said with the field
     // The password step keeps the username in the form, hidden (password managers read it); continuing, the account
     // chip says who, else the name typed with "Not you? Change".
     const pw=password,submit=el('button',{type:'submit',class:'button primary'},'Continue');
@@ -658,7 +658,7 @@ async function showLogin(reason='',resume=''){
     let identified=false,onChip=!!continuing;
     const showPassword=(on:boolean)=>{identified=on;pw.wrap.hidden=!on;pw.input.required=on;username.wrap.hidden=on||onChip;
       whoRow.hidden=!on||onChip;who.textContent=username.input.value.trim();submit.textContent=on?'Sign in':'Continue';};
-    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,remember.wrap,error,submit);
+    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,error,remember.wrap,submit);
     let department:Field<HTMLSelectElement>|null=null;
     const forgetDepartment=()=>{department?.wrap.remove();department=null;};
     showPassword(false);
@@ -671,7 +671,12 @@ async function showLogin(reason='',resume=''){
       submit.disabled=true;error.replaceChildren(message);
       waitTimer=window.setInterval(()=>{left--;if(!form.isConnected||left<=0){window.clearInterval(waitTimer);submit.disabled=false;error.replaceChildren();return;}count.textContent=String(left);},1000);};
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
-    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s)wait(s);else error.replaceChildren(note((err as Error).message,'error',err));};
+    // A wrong password for the remembered account names that account, with the way to another one beside it.
+    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s){wait(s);return;}
+      const named=onChip&&continuing&&err instanceof ApiError&&err.code==='INVALID_LOGIN'?continuing:null;
+      const message=note(named?`Unable to sign in as ${named.name} with this password.`:(err as Error).message,'error',err);
+      if(named)message.append(' ',el('button',{type:'button',class:'link-button',onclick:useAnother},'Use another account'));
+      error.replaceChildren(message);};
     // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal says why under the
     // password, keeps what was typed and puts focus back there; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
@@ -699,13 +704,13 @@ async function showLogin(reason='',resume=''){
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);
     // A local countdown belongs to the name it was for: another account starts with Continue available (the server still decides).
     if(continuing)forget=()=>{stopWait();onChip=false;forgetDepartment();username.input.value='';pw.input.value='';remember.input.checked=false;
-      error.replaceChildren();pw.input.removeAttribute('aria-invalid');showPassword(false);username.input.focus();};
+      error.replaceChildren();pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');showPassword(false);username.input.focus();};
   }
   // "Use another account": back to the generic sign-in (the empty form, or the plain institutional button).
-  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:(e:Event)=>{
-    chip?.remove();(e.currentTarget as HTMLElement).remove();intro.hidden=true;
+  function useAnother(){chip?.remove();another?.remove();
     if(institutional&&!passwords)institutional.textContent='Continue with institutional sign-in';
-    if(forget)forget();else institutional?.focus();}},'Use another account'):null;
+    if(forget)forget();else institutional?.focus();}
+  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:useAnother},'Use another account'):null;
   if(institutional)formWrap.append(...(passwords?[institutional]:[remember.wrap,institutional]));
   if(another)formWrap.append(another);
   if(!config.institutional_login&&!passwords)formWrap.append(note('Identity integration is not configured. Contact the institutional operator.','error'));
