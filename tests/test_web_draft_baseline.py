@@ -35,13 +35,16 @@ def test_baseline_groups_are_the_freezable_list(client_modules):
 def test_refresh_offers_a_decision_only_for_conflicts_and_apply_only_for_department_changes(client_modules):
     out = node(client_modules, """const m=await mod('draft_baseline.js');
 const plans=[[],[{status:'draft'}],[{status:'department'},{status:'same'}],[{status:'conflict'},{status:'draft'}]].map(m.refreshPlan);
-const labels=[{status:'conflict',safety:true},{status:'conflict',safety:false},{status:'department',safety:true}].map(m.changeLabel);
+const labels=[{status:'conflict',safety:true},{status:'conflict',safety:false},{status:'department',safety:true},
+  {status:'conflict',safety:true,mandatory:true},{status:'conflict',safety:true,mandatory:false}].map(m.changeLabel);
 console.log(JSON.stringify({plans,labels,keep:m.SAFETY_KEEP,decided:m.SAFETY_DECIDED,undecided:m.UNDECIDED}));""")
     none, draft_only, plain, conflicts = out['plans']
     empty = 'No department changes since this draft was created'
     assert none == draft_only == {'empty': empty, 'decide': False, 'apply': False}, out
     assert plain == {'empty': '', 'decide': False, 'apply': True} and conflicts == {'empty': '', 'decide': True, 'apply': True}, out
-    assert out['labels'] == ['Conflict · mandatory safety', 'Conflict', 'Department changed'], out
+    # Issue 1030: a conflict between advisory rules only says so; one with a mandatory or safety rule keeps its label.
+    assert out['labels'] == ['Conflict · mandatory safety', 'Conflict', 'Department changed',
+                             'Conflict · mandatory safety', 'Conflict · advisory'], out
     assert out['keep'] == 'mandatory safety rules stay with the department'
     assert out['decided'] == 'Use department · mandatory safety rules stay with the department'
     assert out['undecided'] == 'Choose an outcome for each conflict'
