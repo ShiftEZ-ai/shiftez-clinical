@@ -88,7 +88,7 @@ Product rules:
 - Mandatory rules are hard constraints; advisory rules are scored preferences. Only rota adjustments, person
   exceptions, target overrides and approved, more specific lines relax a rule, and none ever weakens a safety kind
   (see Architecture): every matching line applies and the strictest binds.
-- A preview or trial write takes its "after" snapshot inside the savepoint, before the rollback.
+- A preview or trial write captures its 'after' state inside the savepoint, before the rollback: the snapshot itself, or the complete inputs it is built from, where a missing input fails the preview rather than reading state from after the rollback.
 - Rule changes go propose → approve (a different person) → activate, audited and undoable. A department may grant an
   audited, time-bound self-approval permission; every use needs a reason and is announced and marked Self-approved.
 
