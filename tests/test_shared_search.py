@@ -84,7 +84,10 @@ def test_selected_reference_is_scoped_and_does_not_depend_on_query_label(db_acto
     person = add_person(db, actor, 'Shared name')
     other = add_person(db, actor, 'Shared name')
     # Organisation-level people from another department do not become a directory suggestion or match.
-    foreign_actor = SimpleNamespace(**{**vars(actor), 'department_id': str(uuid4())})
+    foreign_department = m.Department(organisation_id=actor.organisation_id, name='Other search department')
+    db.add(foreign_department)
+    db.flush()
+    foreign_actor = SimpleNamespace(**{**vars(actor), 'department_id': foreign_department.id})
     hidden = add_person(db, foreign_actor, 'Shared name')
     options = s.SearchOptions(scope='self', reference={'kind': 'people', 'id': person.id})
     assert set(db.scalars(select(m.Person.id).where(search.predicate(db, actor, 'people', 'stale label', options, as_of=DAY)))) == {person.id}
