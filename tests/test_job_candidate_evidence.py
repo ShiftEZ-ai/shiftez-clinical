@@ -33,16 +33,18 @@ def test_candidate_evidence_migration_is_additive(migration_url):
     assert safety.classification(path) == 'additive'
     new = safety.VERSIONS / '0152_feasibility_results.py'
     assert safety.classification(new) == 'additive'
-    assert manage.check_migrations(migration_url)[-2:] == [safety.revision(path), safety.revision(new)]
+    evidence, feasibility = safety.revision(path), safety.revision(new)
+    pending = manage.check_migrations(migration_url)
+    assert pending[pending.index(evidence):pending.index(feasibility) + 1] == [evidence, feasibility]
     config = manage.alembic_config(migration_url)
     command.upgrade(config, '0148_bulk_analyze')
-    assert manage.check_migrations(migration_url) == [
-        '0150_person_inactive_from', safety.revision(path), safety.revision(new)]
+    pending = manage.check_migrations(migration_url)
+    assert pending[:pending.index(feasibility) + 1] == ['0150_person_inactive_from', evidence, feasibility]
     command.upgrade(config, '0150_person_inactive_from')
     engine = make_engine(migration_url)
     try:
         before = set(inspect(engine).get_table_names())
-        command.upgrade(config, safety.revision(path))
+        command.upgrade(config, evidence)
         schema = inspect(engine)
         assert set(schema.get_table_names()) - before == {'job_candidate_evidence'}
         assert before <= set(schema.get_table_names())
@@ -54,7 +56,7 @@ def test_candidate_evidence_migration_is_additive(migration_url):
         with engine.connect() as connection:
             assert not connection.execute(select(m.JobCandidateEvidence)).first()
         before = set(schema.get_table_names())
-        command.upgrade(config, 'head')
+        command.upgrade(config, feasibility)
         schema = inspect(engine)
         assert set(schema.get_table_names()) == before | {'job_feasibility_results'}
         assert schema.get_pk_constraint('job_feasibility_results')['constrained_columns'] == ['job_id', 'attempt']

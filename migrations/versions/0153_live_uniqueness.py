@@ -25,13 +25,6 @@ def upgrade():
         CREATE UNIQUE INDEX uq_jobs_live_generation
         ON jobs (workspace_id) WHERE kind = 'generation' AND status IN ('queued', 'running')
     """)
-    op.execute("""
-        CREATE UNIQUE INDEX uq_jobs_running_heavy
-        ON jobs ((1)) WHERE status = 'running' AND kind IN (
-            'generation', 'feasibility', 'catalogue_proof', 'swap_audience',
-            'merge_preview', 'merge_apply', 'fill_options'
-        )
-    """)
 
 
 def downgrade():

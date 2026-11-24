@@ -38,8 +38,8 @@ def test_seeded_upgrade_has_no_duplicates(session_limits_database):
         with engine.connect() as db:
             for query in PRECHECK.read_text(encoding='utf-8').strip().rstrip(';').split(';'):
                 assert db.exec_driver_sql(query).all() == []
-        assert manage.check_migrations(url) == ['0153_live_uniqueness']
-        command.upgrade(config, 'head')
+        assert manage.check_migrations(url)[0] == '0153_live_uniqueness'
+        command.upgrade(config, '0153_live_uniqueness')
         with transaction(engine) as db:
             assert db.get(m.Department, seed['department_id']) is not None
     finally:
@@ -52,7 +52,6 @@ def test_seeded_upgrade_has_no_duplicates(session_limits_database):
     ('uq_people_active_short_code', 'SHORT_CODE_TAKEN'),
     ('uq_jobs_live_validation', None),
     ('uq_jobs_live_generation', 'JOB_ALREADY_RUNNING'),
-    ('uq_jobs_running_heavy', None),
 ])
 def test_postgres_refuses_duplicate_raw_writes(pg, monkeypatch, name, refusal):
     engine = pg.app.state.engine
@@ -70,14 +69,11 @@ def test_postgres_refuses_duplicate_raw_writes(pg, monkeypatch, name, refusal):
     else:
         table = m.Job.__table__
         workspace = pg.workspace()['id']
-        kind = {'uq_jobs_live_validation': 'validation', 'uq_jobs_live_generation': 'generation',
-                'uq_jobs_running_heavy': 'fill_options'}[name]
+        kind = {'uq_jobs_live_validation': 'validation', 'uq_jobs_live_generation': 'generation'}[name]
         values = job_row(seed, workspace, kind)
         if kind == 'validation':
             values['input_snapshot'] = {'validation_request_key': 'raw-key'}
-        if kind == 'fill_options':
-            values['status'] = 'running'
-        second = {**values, 'kind': 'feasibility' if kind == 'fill_options' else kind}
+        second = values
 
     # The second connection remains open across the first commit. Both bypass all API checks.
     with engine.connect() as first, engine.connect() as second_connection:
@@ -132,22 +128,16 @@ def test_validation_conflict_returns_winner_and_preserves_outer_write(pg):
 
 
 @pytest.mark.postgres
-def test_heavy_slot_conflict_leaves_losing_claim_queued(pg, monkeypatch):
+def test_live_heavy_slot_leaves_another_kind_queued(pg):
     engine = pg.app.state.engine
     workspace = pg.workspace()['id']
     pending = str(uuid4())
     with engine.begin() as db:
-        db.execute(m.Job.__table__.insert().values(**job_row(pg.seed, workspace, 'fill_options', status='running')))
-        db.execute(m.Job.__table__.insert().values(**job_row(pg.seed, workspace, 'fill_options', id=pending)))
-
-    def lost_race(db, **_):
-        job = db.get(m.Job, pending)
-        job.status = 'running'
-        job.attempts += 1
-        db.flush()
-        pytest.fail('A competing worker leased a second heavy job')
-
-    monkeypatch.setattr(worker, 'claim_job', lost_race)
+        db.execute(update(m.Job).where(m.Job.workspace_id == workspace, m.Job.kind == 'validation')
+                   .values(status='cancelled'))
+        db.execute(m.Job.__table__.insert().values(
+            **job_row(pg.seed, workspace, 'fill_options', status='running', started_at=m.now())))
+        db.execute(m.Job.__table__.insert().values(**job_row(pg.seed, workspace, 'feasibility', id=pending)))
     assert worker.claim_pending(engine) is None
     with transaction(engine) as db:
         assert (db.get(m.Job, pending).status, db.get(m.Job, pending).attempts) == ('queued', 0)

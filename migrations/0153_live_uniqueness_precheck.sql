@@ -20,11 +20,3 @@ GROUP BY workspace_id, input_snapshot ->> 'validation_request_key' HAVING count(
 SELECT workspace_id, count(*) AS duplicates
 FROM jobs WHERE kind = 'generation' AND status IN ('queued', 'running')
 GROUP BY workspace_id HAVING count(*) > 1;
-
--- uq_jobs_running_heavy
-SELECT count(*) AS duplicates
-FROM jobs WHERE status = 'running' AND kind IN (
-    'generation', 'feasibility', 'catalogue_proof', 'swap_audience',
-    'merge_preview', 'merge_apply', 'fill_options'
-)
-HAVING count(*) > 1;

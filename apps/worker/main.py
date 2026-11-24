@@ -17,7 +17,7 @@ import apps.api.services.catalogue_proof_identity as proof_identity
 from sqlalchemy import delete, func, literal, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import defer, load_only
 from apps.api import models as m
 from apps.api.auth import Actor, current_roles, department_roles
@@ -25,7 +25,6 @@ from apps.api.services.common import may_name_swap
 from apps.api import live
 from apps.api.db import (DatabaseWriteDeferred, DatabaseWriteTimeout, allow_long_idle, is_transient_database_error,
                          make_engine, retry_write, transaction)
-from apps.api.errors import unique_violation
 from apps.api.logging_setup import configure_logging
 from apps.api.settings import Settings
 from apps.api.schema import require_current_schema
@@ -578,24 +577,16 @@ def claim_pending(engine, *, recovering_worker=None):
     with transaction(engine) as db:
         if not job_available(db, recovering_worker=recovering_worker):
             return None
-    try:
-        return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker))
-    except IntegrityError as error:
-        if unique_violation(error) != 'uq_jobs_running_heavy':
-            raise
-        # The claim rolled back. Keep this job queued for the next free slot.
-        return None
+    return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker))
 
 
 def claim_job(db, *, recovering_worker=None):
     require_current_schema(db)
     enabled = enabled_jobs()
     # Bounded lease recovery after worker death; no lost running job remains forever.
-    lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
-    if recovering_worker is not None:
-        lost = or_(lost, m.Job.worker_id == recovering_worker)
-    heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
-    expired = list(db.scalars(select(m.Job).where(or_(enabled, heavy), m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
+    lease_expired = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
+    lost = lease_expired if recovering_worker is None else or_(lease_expired, m.Job.worker_id == recovering_worker)
+    expired = list(db.scalars(select(m.Job).where(enabled, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
         .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)))
     for old in expired:
         if old.kind == 'planner_preview':
@@ -665,8 +656,9 @@ def claim_job(db, *, recovering_worker=None):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
     queued = select(m.Job).where(enabled, m.Job.status == "queued")
-    # shortcut: one solve at a time for the pilot server; add bounded slots when measured demand requires them.
-    if db.scalar(select(m.Job.id).where(m.Job.status == "running", heavy).limit(1)):
+    # The serialized claim reserves one solve slot. A paused expired job keeps its stored status.
+    heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
+    if db.scalar(select(m.Job.id).where(m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
         queued = queued.where(~heavy)
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
