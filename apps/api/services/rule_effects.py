@@ -398,11 +398,12 @@ def review(db, actor, policy_id, *, decision=None):
     from .policies import activation_weakens_safety
     replaces_ids = decision.replaces_ids if decision is not None else ()
     predecessors = predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+    weakens = policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, replaces_ids, predecessors=predecessors)
     protection = {'policy_id': policy.id}
-    if policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, replaces_ids, predecessors=predecessors):
-        protection['weakens_safety'] = True
     if decision is not None:
-        return protection
+        return {**protection, 'weakens_safety': weakens}
+    if weakens:
+        protection['weakens_safety'] = True
     skipped_people = {}
     periods = changed_periods(db, actor, [policy], skipped_people=skipped_people, predecessors=predecessors)
     workspaces = affected_workspaces(db, actor, [policy], periods=periods)

@@ -44,7 +44,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
   // Rotas still being planned that overlap any line; published rotas keep the rules they were approved under.
   const work:Row[]=page.workspaces.filter((w:Row)=>['draft','submitted','approved'].includes(w.status)&&lines.some(p=>(!p.starts_on||p.starts_on<w.ends_on)&&(!p.ends_on||p.ends_on>w.starts_on)&&(!p.definition?.workspace_id||p.definition.workspace_id===w.id)));
   const ids=new Set(lines.map(p=>p.id));
-  showDialog('Review '+(title||policy.name)+(lines.length>1?` · ${lines.length} lines`:''),'Check how this rule affects current rotas. Checks do not change assignments.',(body,close)=>{
+  showDialog('Review '+(title||policy.name)+(lines.length>1?` · ${lines.length} lines`:''),'Check how this rule affects current rotas. Checks do not change assignments.',(body,close,_tryClose,onClose)=>{
     const results=new Map<string,Row>();
     const unsavedJobs=new Map<string,string>();
     const trials=new Map<string,string>();
@@ -227,7 +227,10 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       // The other decision, with the same reason: the proposal is declined (kept in history, audited); nothing turns on.
       lines.length===1&&!factFamily?button('Decline',async()=>{if(!reason.input.reportValidity())return;
         await command('policy.decline',{reason:reason.input.value},policy.id,policy.revision);close();notify('Proposal declined.');await refresh();},'secondary'):'',unchecked));  // the button and what it has not checked, in one row
-    let protectionRequest=0,protectionPending=false,protectionFailed=false,needsReviewer=false;
+    let protectionRead:AbortController|undefined;
+    let protectionPending=false,protectionFailed=false,needsReviewer=false;
+    const stopProtection=()=>{protectionRead?.abort();protectionRead=undefined;};
+    onClose(stopProtection);
     const activationBlocked=()=>protectionPending||protectionFailed||needsReviewer||!gate.hidden;
     const updateActivation=()=>{
       if(!activate)return;
@@ -237,7 +240,8 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
     };
     const reviewProtection=async():Promise<void>=>{
       if(unsaved||factFamily)return;
-      const selected=replacing?.values()||[],request=++protectionRequest;
+      stopProtection();
+      const selected=replacing?.values()||[];
       // As policy.activate_many does, associate explicit replacements with the first proposal.
       const proposed=lines.filter(p=>p.status==='proposed'&&(p===policy&&selected.length||
         p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
@@ -246,20 +250,22 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       protectionRetry.hidden=true;
       updateActivation();
       if(!protectionPending)return;
+      const read=protectionRead=new AbortController();
       try{
-        const reviews=await Promise.all(proposed.map(p=>proposalProtection(p.id,p===policy?selected:[])));
-        if(request!==protectionRequest||!body.isConnected)return;
+        const reviews=await Promise.all(proposed.map(p=>proposalProtection(p.id,p===policy?selected:[],read.signal)));
+        if(protectionRead!==read)return;
         const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
         protection.hidden=!weakened.size;
         needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
         protectionStatus.replaceChildren();
-      }catch{
-        if(request!==protectionRequest||!body.isConnected)return;
+      }catch(error){
+        if(protectionRead!==read)return;
         protectionFailed=true;
-        protectionStatus.textContent='Could not check safety protection.';
+        protectionStatus.textContent=error instanceof ApiError&&error.code==='READ_TIMEOUT'
+          ?error.message:'Could not check safety protection.';
         protectionRetry.hidden=false;
       }finally{
-        if(request===protectionRequest){protectionPending=false;updateActivation();}
+        if(protectionRead===read){stopProtection();protectionPending=false;updateActivation();}
       }
     };
     replacing?.wrap.addEventListener('change',()=>void reviewProtection());

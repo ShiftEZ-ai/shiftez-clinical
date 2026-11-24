@@ -94,7 +94,7 @@ def test_review_and_activation_compare_the_selected_older_copy(h, monkeypatch):
     unchanged = reviewer_client.post(path, json={})
     reduction = reviewer_client.post(path, json=decision)
     assert unchanged.status_code == reduction.status_code == 200
-    assert unchanged.json() == {'policy_id': proposal['id']}
+    assert unchanged.json() == {'policy_id': proposal['id'], 'weakens_safety': False}
     assert reduction.json() == {'policy_id': proposal['id'], 'weakens_safety': True}
     assert h.client('staff').post(path, json=decision).status_code == 403
     assert any(p['id'] == current['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])

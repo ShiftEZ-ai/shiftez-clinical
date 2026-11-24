@@ -179,6 +179,7 @@ def test_template_numbers_are_edited_as_rows_and_old_copies_group_into_one_rule(
 
 
 def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_server, h):
+    from .test_browser import wait_held
     from .test_rule_catalogue_api import approve
 
     payload = {'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
@@ -188,7 +189,16 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         'definition': {'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
     assert not new['definition'].get('replaces_id') and not new['definition'].get('merged_ids')
     context, page = sign_in(browser, live_server, 'approver')
+    held = []
+
+    def hold_first_preview(route):
+        if route.request.method == 'POST' and not held:
+            held.append(route)
+        else:
+            route.continue_()
+
     try:
+        page.route(f"**/api/policies/{new['id']}/review", hold_first_preview)
         navigate(page, 'rules')
         row = page.locator(f'.rule-item[data-rule-ids~="{new["id"]}"]')
         row.get_by_role('button', name=re.compile(r'^Review(?: 1)?$')).click()
@@ -197,6 +207,15 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         activate = review.get_by_role('button', name='Activate', exact=True)
         warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
         expect(replacement).to_be_checked()
+        wait_held(page, held)
+        expect(activate).to_be_disabled()
+        retry = review.get_by_role('button', name='Retry', exact=True)
+        expect(retry).to_have_count(0)
+        page.clock.fast_forward(60_000)
+        expect(review.get_by_text('Didn’t load in 1:00.', exact=True)).to_be_visible()
+        expect(retry).to_be_visible()
+        expect(activate).to_be_disabled()
+        retry.click()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
         expect(activate).to_have_accessible_description(warning)
         replacement.uncheck()

@@ -210,8 +210,12 @@ export type Review={policy_id:string;relations:Record<string,Relation>;effect:Ef
   /** Why no check was needed (maintenance: lines only of people who left before them), said instead of an empty effect. */summary?:string|null};
 const proposalReviewPath=(policyId:string)=>`/api/policies/${encodeURIComponent(policyId)}/review`;
 export const proposalReview=(policyId:string)=>get<Review>(proposalReviewPath(policyId));
-export const proposalProtection=(policyId:string,replaces:readonly string[])=>request<Pick<Review,'policy_id'|'weakens_safety'>>(
-  proposalReviewPath(policyId),{method:'POST',body:JSON.stringify({replaces_ids:replaces})});
+export async function proposalProtection(policyId:string,replaces:readonly string[],signal:AbortSignal){
+  const result=await request<Required<Pick<Review,'policy_id'|'weakens_safety'>>>(proposalReviewPath(policyId),
+    {method:'POST',question:true,body:JSON.stringify({replaces_ids:replaces}),signal});
+  if(result?.policy_id!==policyId||typeof result.weakens_safety!=='boolean')throw new Error('Safety protection result unavailable.');
+  return result;
+}
 /** Starts the effect check of one overlapping draft (the existing feasibility job, this rule's change only). */
 export const checkEffect=(policyId:string,revision:number,x:Effect)=>command('job.create',
   {workspace_id:x.workspace_id,kind:'feasibility',rule_changes:[{policy_id:policyId,expected_revision:revision}]},undefined,x.revision);

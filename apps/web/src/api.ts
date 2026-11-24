@@ -34,14 +34,16 @@ let serverDown=false,health='ok';
 // The request path also runs without a page (Node checks of api.ts): the event only where a window is.
 function sayHealth(){const now=serverDown?'down':'ok';if(now!==health){health=now;if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('server-health',{detail:now}));}}
 export const serverHealth=()=>health;
-export function request<T>(path:string, options:RequestInit = {}, renewed=false):Promise<T> {
+type RequestOptions=RequestInit & {question?:true};
+const readMethod=(method?:string)=>!method||method==='GET'||method==='HEAD';
+export function request<T>(path:string, options:RequestOptions = {}, renewed=false):Promise<T> {
   // DL-045: every read ends. One with no answer by READ_TIMEOUT is aborted (the server stops sending) and rejects
   // READ_TIMEOUT, which readFailed shows as "Didn’t load in 1:00." with Retry. Slow is not down: no health change.
   // A 202 "updating" is an answer: maintenance's own wait (projectionReady) pauses the clock; each re-read gets a full limit.
   const stop=new AbortController(),own=options.signal,limit=readTimeout(path);let late=false,timer:ReturnType<typeof setTimeout>|undefined;
   const arm=(on:boolean)=>{clearTimeout(timer);timer=on?setTimeout(()=>{late=true;stop.abort();},limit):undefined;};
   const health=(down:boolean|null,waiting?:boolean)=>{if(down!==null){serverDown=down;sayHealth();}if(waiting!==undefined)arm(!waiting);};
-  if(options.method&&!['GET','HEAD'].includes(options.method))return sent<T>(path,options,renewed,health);
+  if(!options.question&&!readMethod(options.method))return sent<T>(path,options,renewed,health);
   arm(true);
   if(own){if(own.aborted)stop.abort();else own.addEventListener('abort',()=>stop.abort(),{once:true});}
   return sent<T>(path,{...options,signal:stop.signal},renewed,health)
@@ -73,18 +75,19 @@ async function projectionReady(path:string,busy:CatalogueUpdating,header:string|
     const t=window.setTimeout(end,catalogueRetryDelay(header??String(busy.retry_after_seconds),attempt));
     window.addEventListener('catalogue-changed',end);signal?.addEventListener('abort',end);});
 }
-async function sent<T>(path:string, options:RequestInit, renewed:boolean, answered:(down:boolean|null,waiting?:boolean)=>void, catalogueAttempt=0):Promise<T> {
-  const generation=sessionGeneration,reading=!options.method||['GET','HEAD'].includes(options.method);
+async function sent<T>(path:string, options:RequestOptions, renewed:boolean, answered:(down:boolean|null,waiting?:boolean)=>void, catalogueAttempt=0):Promise<T> {
+  const {question,...http}=options;
+  const generation=sessionGeneration,reading=question||readMethod(http.method);
   const headers=new Headers(options.headers);headers.set('Accept','application/json');
   // A JSON command or form; a FormData body sets its own multipart boundary and a File its own type (branding images).
   if(typeof options.body==='string'&&!headers.has('Content-Type'))headers.set('Content-Type','application/json');
-  if(options.method && !['GET','HEAD'].includes(options.method)){headers.set('X-CSRF-Token',csrf());inflight.clear();}
+  if(!readMethod(http.method)){headers.set('X-CSRF-Token',csrf());if(!question)inflight.clear();}
   // Big reads (catalogues, a rota's detail) revalidate with their ETag: unchanged data is not sent again.
   // Kept in memory only, cleared on sign-out; nothing is written to the browser's disk cache.
   const cached=!options.method&&kept.get(path),epoch=keptEpoch;if(cached){if(cached.tag)headers.set('If-None-Match',cached.tag);kept.delete(path);kept.set(path,cached);}
   let response:Response;
   const left=()=>{if(options.signal?.aborted)throw new ApiError('PAGE_LEFT','The page that asked for this was left.',0);};
-  try {response=await fetch(path,{...options,headers,credentials:'same-origin',cache:'no-store'});}
+  try {response=await fetch(path,{...http,headers,credentials:'same-origin',cache:'no-store'});}
   catch {
     if(!options.signal?.aborted)answered(true);
     requireSession(generation);left();
@@ -93,7 +96,7 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
     const lost=(code:string,message:string)=>new ApiError(code,message,0);
     if(path==='/api/policies/check')throw lost('CHECK_NOT_RECEIVED','Rule check unavailable. No changes were saved. Try again when connected.');
     if(path==='/api/planner/preview'||path==='/api/catalogue/preview'||path==='/api/planner/staffing-suggestions')throw lost('PREVIEW_NOT_RECEIVED','The preview was not received. Previews never save changes; retry to recalculate.');
-    if(!options.method||['GET','HEAD'].includes(options.method))throw lost('READ_UNAVAILABLE','Connection lost. The server could not be reached.');
+    if(reading)throw lost('READ_UNAVAILABLE','Connection lost. The server could not be reached.');
     // A write with no response may have committed: navigator.onLine read after the failure cannot prove it was not sent.
     throw lost('NETWORK_UNCERTAIN','Connection lost. A save may have committed. Retry the same operation; do not re-enter it as a new action.');
   }
@@ -101,8 +104,8 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
   // maintenance: a projection being rebuilt (the rule catalogue after an approval) answers 202 {state:'updating'}: never data.
   if(response.status===202){const text=await response.text().catch(()=>'');let busy:CatalogueUpdating|null=null;
     try{const p=JSON.parse(text);if(p?.state==='updating')busy=p;}catch{/* not the envelope: read below as any 202 */}
-    // A decision (a check, a proposal, an approval) is never run against rules being rebuilt, nor sent again by itself.
-    if(busy&&!reading){answered(false);requireSession(generation);throw new ApiError('RULES_UPDATING',RULES_UPDATING,202,busy);}
+    // Only ordinary reads wait for a rebuilt projection. Decisions and questions return control to their caller.
+    if(busy&&(!reading||question)){answered(false);requireSession(generation);throw new ApiError('RULES_UPDATING',RULES_UPDATING,202,busy);}
     if(busy){answered(false,true);requireSession(generation);left();await projectionReady(path,busy,response.headers.get('Retry-After'),catalogueAttempt,options.signal);
       requireSession(generation);left();answered(null,false);return sent<T>(path,options,renewed,answered,catalogueAttempt+1);}
     response=new Response(text,{status:202,headers:response.headers});}
@@ -131,7 +134,7 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
     const said=list.length&&list.every(own)&&details?details:`${error.message}${details?' '+details:''}`;
     // ME-16: a write refused for its stale CSRF token (a tab left open over a new sign-in) renews the session's tokens and
     // is sent once more with the same body (its idempotency key too). Still refused: sign in again, the page is kept.
-    if(response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
+    if(!question&&response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
       if(!renewed&&await refreshSession()){requireSession(generation);return request<T>(path,options,true);}
       window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
       throw new ApiError(error.code,'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
