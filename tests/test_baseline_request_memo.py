@@ -150,6 +150,41 @@ def test_catalogue_preview_verifies_each_draft_baseline_once(h, monkeypatch, cou
 
 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+def test_preview_reverifies_a_different_trial_baseline(h, monkeypatch):
+    from apps.api.services import catalogue_preview
+
+    draft, = _drafts(h, 1)
+    client = h.client("admin")
+    original_write, original_verify = catalogue_preview.write_catalogue, workspace_baselines.verify
+    seen, replacement = [], []
+
+    def write(db, *args, **kwargs):
+        result = original_write(db, *args, **kwargs)
+        baseline = workspace_baselines.latest(db, draft["id"])
+        columns = m.WorkspaceBaseline.__table__.c.keys()
+        values = {key: getattr(baseline, key) for key in columns if key not in {"id", "workspace_revision"}}
+        payload = {**baseline.canonical_payload, "integrity_probe": True}
+        row = m.WorkspaceBaseline(**{**values, "workspace_revision": baseline.workspace_revision + 1,
+            "canonical_payload": payload, "payload_hash": snapshots.snapshot_hash(payload)})
+        db.add(row)
+        db.flush()
+        replacement.append((row.id, row.payload_hash))
+        return result
+
+    def verify(row):
+        seen.append((row.id, row.payload_hash))
+        return original_verify(row)
+
+    monkeypatch.setattr(catalogue_preview, "write_catalogue", write)
+    monkeypatch.setattr(workspace_baselines, "verify", verify)
+    response = client.post("/api/catalogue/preview", json=_assignment_type_change(h, "violet"))
+    assert response.status_code == 200, response.text
+    assert len(seen) == 2 and seen[1:] == replacement and seen[0] != seen[1]
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.WorkspaceBaseline, replacement[0][0]) is None
+
+
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
 @pytest.mark.parametrize("count", [2, 8])
 def test_rule_review_verifies_each_draft_baseline_once(h, monkeypatch, count):
     _drafts(h, count)

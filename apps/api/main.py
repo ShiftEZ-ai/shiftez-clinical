@@ -1748,9 +1748,34 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/catalogue/preview")
     def catalogue_preview(command: s.Command, request: Request):
-        from .services.catalogue_preview import prepare_preview, evaluate_preview
-        prepared = retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command))
-        return evaluate_preview(prepared)
+        from .services.catalogue_preview import StaleBeforeCapture, build_preview, capture_before, prepare_preview, evaluate_preview
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+
+        def capture_and_trial(*, skip_contact_snapshots):
+            with transaction(reader) as db:
+                if not postgres:
+                    db.execute(text('BEGIN'))
+                db.info['_request_parents'] = {}
+                before = capture_before(db, actor_for(request, db, write=True), command,
+                                        skip_contact_snapshots=skip_contact_snapshots)
+            return retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command, before))
+
+        def prepare():
+            prepared = capture_and_trial(skip_contact_snapshots=True)
+            if prepared is None:
+                # The contact trial changed a scheduling input. Capture its baseline after releasing the writer.
+                prepared = capture_and_trial(skip_contact_snapshots=False)
+            return prepared
+
+        try:
+            prepared = prepare()
+        except StaleBeforeCapture:
+            if command.expected_fingerprint:
+                raise
+            log.info("catalogue_preview_recapture", extra={"correlation_id": request.state.correlation_id})
+            prepared = prepare()
+        return evaluate_preview(build_preview(engine, prepared))
 
     @app.get("/api/catalogues/{kind}/{object_id}/history")
     def catalogue_history(kind: str, object_id: str, request: Request):
