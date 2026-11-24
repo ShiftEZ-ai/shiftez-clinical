@@ -32,7 +32,8 @@ def test_rota_status_takes_its_tone_from_the_one_palette():
 
 def test_month_cell_pills_keep_a_24px_pitch():
     """WCAG 2.2 SC 2.5.8 spacing exception: Month draws its pills at --pill-h-compact (under 24 px), so they stack at the
-    cell's one pill gap and every pitch is at least 24 px; no rule gives a day cell a narrower gap of its own."""
+    cell's one pill gap and every pitch is at least 24 px; no screen rule gives a day cell a narrower gap of its own.
+    Paper (the export) has no pointer targets, so the Month export keeps its denser gap and its fit-page scale."""
     css = (SRC.parent / 'public/assets/app.css').read_text(encoding='utf-8')
     tokens = {k: int(v) for k, v in re.findall(r'--(pill-h-compact|pill-gap):(\d+)px', css)}
     assert tokens['pill-h-compact'] + tokens['pill-gap'] >= 24, tokens
@@ -40,6 +41,6 @@ def test_month_cell_pills_keep_a_24px_pitch():
     for selector, body in re.findall(r'([^{}]*)\{([^{}]*)\}', css):
         parts = [p.strip() for p in selector.split('*/')[-1].split(',')]
         gap = re.search(r'(?:^|;)gap:([^;]+)', body)
-        if gap and any(re.search(r'\.wk-cell(?:[.:][\w-]+)*$', p) for p in parts):
+        if gap and any(re.search(r'\.wk-cell(?:[.:][\w-]+)*$', p) and not p.startswith('.export-body ') for p in parts):
             gaps.append((selector.split('*/')[-1].strip(), gap.group(1).strip()))
     assert gaps == [('.wk-cell', 'var(--pill-gap)')], gaps

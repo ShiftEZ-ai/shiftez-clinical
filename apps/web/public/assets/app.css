@@ -5324,6 +5324,7 @@ button.tl-ag-item{cursor:pointer}
 .export-body .wk-cell{flex-direction:row;flex-wrap:wrap;align-items:flex-start;align-content:flex-start}
 .export-body .wk-cell>*{flex:1 1 100%}
 .export-body .wk-cell>.pchip{flex:0 1 auto;max-width:100%}
+.export-body .wk-grid.mo .wk-cell{gap:3px}  /* paper has no pointer targets: Month keeps its denser fit-page scale */
 .export-offscreen{position:fixed;left:-100000px;top:0}
 @media(max-width:720px){.export-split{flex-direction:column}.export-form{width:auto;max-height:none}.export-preview{flex:none;height:40vh}}
 @media print{
