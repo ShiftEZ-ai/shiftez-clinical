@@ -278,6 +278,19 @@ def test_changes_by_cause_name_the_cause_each_change_clears(client_modules):
     assert empty == ''
 
 
+def test_still_to_fix_prefers_the_kept_absence_card(client_modules):
+    absence = {**finding('UNAVAILABLE', 'p1', '', shift='s1'), 'protected': True}
+    result = {'issues': [absence], 'fix_list_after': {'summary': {**FACTS['after'], 'must': 2},
+              'causes': [cause(PROPOSAL[1]), cause(absence)]}}
+    out = run(client_modules,
+              "const f=m.runFacts(a), issue={severity:'error',words:'On leave or away',session:'Morning session'};"
+              "const panel=m.stillToFix(f,{},()=>{},f.keptAbsence?issue:undefined);"
+              "console.log(JSON.stringify({code:f.keptAbsence?.code,card:panel.querySelector('.issue-card')?.textContent,"
+              "more:panel.querySelector('.link-button')?.textContent}));", {'result': result})
+    assert out == {'code': 'UNAVAILABLE', 'card': 'On leave or awayMorning session',
+                   'more': '1 more cause in the Fix list'}
+
+
 @pytest.mark.parametrize(('issues', 'said'), [
     ([{'code': 'OUTSIDE_HOURS'}], 'Not run: the draft has 1 conflict the run must keep'),
     ([{'code': 'A'}, {'code': 'B'}], 'Not run: the draft has 2 conflicts the run must keep'),

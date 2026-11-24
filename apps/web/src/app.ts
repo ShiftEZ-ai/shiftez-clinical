@@ -4227,12 +4227,16 @@ const issueHooks=():IssuesHooks=>({name,find,rows,zone,source:referencePolicy,lo
   // The rota's job list is the Schedule's (read with its sessions); Resolve issues shows the proposal it holds.
   // Its draft read is the one the draft-edit guard (guardDraftEdits) asks about, as the Schedule's is.
   proposal:data=>{scheduleCache.drafts.set(data.workspace.id,data);return readJobs(data).then(()=>proposalNote(data));}});
+// Run results prefix older messages with the person and session, which the card already names.
+const runIssueWords=(f:Row)=>{const m=String(f.message),i=m.indexOf(': ');return f.protected&&!f.technical&&(f.shift_id||f.person_id)&&i>=0?m.slice(i+2):m;};
+function runIssueCard(data:WorkspaceData,f:Row,s:Row|undefined,done:()=>void,interactive=true):Issue{
+  const finding={...f,severity:f.severity||'error',message:runIssueWords(f)};
+  return findingCard(finding,s,interactive?findingActions(data,finding,s,done):[]);
+}
 /** Problems an auto-schedule run reported (ones it must keep and cannot start with, or ones outside its sessions), said
  *  as issue cards: one per person and session, grouped by kind with counts, the first few of each kind shown. */
 function runIssues(data:WorkspaceData,found:Row[],label:string,done:()=>void=()=>{}):HTMLElement{
   const byId=new Map(data.shifts.map(s=>[s.id,s])),FIRST=5;
-  // Run results put "<duty day time> · <person>: " before the message; the card says who and which session itself.
-  const plain=(f:Row)=>{const m=String(f.message),i=m.indexOf(': ');return f.protected&&!f.technical&&(f.shift_id||f.person_id)&&i>=0?m.slice(i+2):m;};
   const cards=new Map<string,Row[]>();
   for(const f of found){const k=f.shift_id||f.person_id?`${f.shift_id}|${f.person_id}`:`${f.code}|${f.start}|${f.message}`;cards.set(k,[...(cards.get(k)||[]),f]);}
   const kinds=new Map<string,Issue[]>(),byKey=new Map(found.map(f=>[issueKey(f),f])),grouped=new Set<string>();
@@ -4243,10 +4247,10 @@ function runIssues(data:WorkspaceData,found:Row[],label:string,done:()=>void=()=
   const total=cards.size;
   for(const k of grouped)cards.delete(k);
   for(const list of cards.values()){
-    const f:Row={...list[0],severity:list[0].severity||'error',message:plain(list[0])},s=f.shift_id?byId.get(f.shift_id):undefined;
-    const issue=findingCard(f,s,findingActions(data,f,s,done)),also=[...new Set(list.slice(1).map(plain))].filter(m=>m!==f.message);
+    const f=list[0],s=f.shift_id?byId.get(f.shift_id):undefined;
+    const issue=runIssueCard(data,f,s,done),also=[...new Set(list.slice(1).map(runIssueWords))].filter(m=>m!==runIssueWords(f));
     if(also.length)issue.detail=[issue.detail,'Also: '+also.join('; ')].filter(Boolean).join(' · ');
-    const kind=issueKind(f,f.rule_id?find('policies',f.rule_id)?.name:undefined);
+    const kind=issueKind({...f,message:runIssueWords(f)},f.rule_id?find('policies',f.rule_id)?.name:undefined);
     kinds.set(kind,[...(kinds.get(kind)||[]),issue]);
   }
   const groups=[...kinds].sort((a,b)=>b[1].length-a[1].length);
@@ -7086,7 +7090,9 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   const notApplied=((r.not_applied||[]) as Row[]).map(x=>String(x.message));
   // A3/A4: the run in Fix-list terms (autoschedule_result.ts) once the result carries the Fix list; the clash and a
   // rota that changed during the run are said in either layout.
-  const facts=runFacts(job),saved=s.score_saved??s.score,fixed=resultHead(facts,{changes,scoreDelta:saved?scoreDelta(s.score_before,saved):null,stale:drifted(job),optimality:o.optimality,strict:o.strict});
+  const facts=runFacts(job),saved=s.score_saved??s.score,absence=facts.keptAbsence;
+  const retained=data&&absence?runIssueCard(data,absence,byId.get(absence.shift_id),close,o.strict):undefined;
+  const fixed=resultHead(facts,{changes,scoreDelta:saved?scoreDelta(s.score_before,saved):null,stale:drifted(job),optimality:o.optimality,strict:o.strict,nextIssue:retained?.words});
   const clash=isClash(facts)&&data?clashCard(facts.conflict!,clashHooks(data,close)):'';
   const changed=data?inputsChanged(job,facts,{person:id=>name('people',id),session:id=>{const x=byId.get(id);return x?dayName(x.start):'';}}):null;
   const drift=driftNote(job)||'';
@@ -7102,7 +7108,7 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
   const breaks=breaksNote(r);
   // The outcome leads (A3); the breaks, like the basic scheduler's fact, are the line after the numbers.
   if(fixed)return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?changed.nodes:[fixed.nodes[0]]),...fixed.nodes.slice(1),breaks,basicFact,clash,
-    data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);}):'',completionLine(job),
+    data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
   return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
