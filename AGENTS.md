@@ -45,6 +45,7 @@ reused everywhere:
   rule-and-scheduling scenario pack; extend it, never start a second one. Department-scale fixtures stay in
   `tests/scheduler_departments.py`.
 - Rule reach: `packages/domain/rule_map.py`.
+- Tenancy and data ownership: `packages/contracts/tenancy.py` (the design note every tenancy change follows).
 - Contracts: `packages/contracts/schemas.py` → `scripts/generate_contracts.py` → `apps/web/src/generated.ts`. Kinds,
   fields, limits and roles (`ROLE_NAMES`) come from the contracts or the API, never copied into the frontend.
 - Branding: `BRANDING_DEFAULTS` in `packages/contracts/schemas.py` is the only place a brand string is written.
@@ -118,33 +119,20 @@ UI rules (detail in DESIGN.md, owned by the Design Lead):
 ## Who decides
 - Only the owner decides: money; access only he can grant (admin access included); secrets; production
   deployments; destructive operations on real data; making private things public; closing the project.
-- Safety, approval and exception rule changes: the Master Lead, with one independent full-diff review (a risk path).
+- Safety, approval and exception rule changes: the Master Lead.
 - DESIGN.md principles and mockups: the Design Lead.
 - Release and data-safety policy: the Delivery Lead (DELIVERY.md).
 - Changing AGENTS.md: the Master Lead.
 
-## Risk paths (need one independent review before landing)
-Only a change whose mistake would be irreversible, silent or public is a risk path. It gets one independent review of
-the full PR diff (merge base to exact head), recorded as a verdict that names the head. One review per change: a fix to
-a review finding is checked by tests, not by another review round, unless the fix itself touches a risk path. A re-cut
-that only merges `main` keeps the verdict when the Delivery Lead confirms a clean merge. Everything else, including
-docs, design, UI without data exposure, tests, dependency bumps and refactors, lands on green checks. The risk paths:
-- Safety rules and rule resolution: `packages/domain/conditions.py`, `packages/domain/rule_lines.py`,
-  `packages/domain/solver_rules.py`, `packages/contracts/rule_catalogue.py`, `SAFETY_*` in
-  `packages/contracts/schemas.py`. Changing safety, approval or exception rules goes to the Master Lead.
-- Sign-in, permissions and secrets: `apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`,
-  `apps/api/services/workspace_access.py`, `apps/api/services/auth_configuration.py`, `PERMISSIONS` in
-  `packages/contracts/schemas.py`, credential handling, and anything that makes something public.
-- Privacy: `apps/api/data_crypto.py`, read filtering of personal data, API response shapes and queries that decide
-  which personal data a role sees, exports, prints and outbound messages that carry personal data, and adding a
-  dependency or an install script.
-- Data loss: `migrations/`, audit and history (`packages/contracts/audit.py`), backups and restore (`scripts/backup*`),
-  and any command that deletes, rewrites or restores data.
-- Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, the `scripts` section of `package.json`, test-runner or build
-  configuration only where it decides which tests run or whether a failure counts, and deleting, skipping or
-  weakening a test.
-- Production configuration and deploys: `infra/`, `apps/api/settings.py`. The engineering standard's "High risk" is the
-  definition; this list fits inside it.
+## Critical changes (one independent review before landing)
+Only a critical change gets a review, meaning a change whose failure would be irreversible, silent or public. Everything else is opened and merged by the thread that made it once the required checks are green, with no second review or sign-off. Critical paths in this repository:
+- Data loss: `migrations/`, any command that deletes or rewrites data, retention, audit and history tables (`packages/contracts/audit.py`), backups and restore.
+- Data exposure: sign-in and permissions (`apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`, `apps/api/services/workspace_access.py`, `apps/api/services/auth_configuration.py`, `PERMISSIONS` in `packages/contracts/schemas.py`); privacy and secrets (`apps/api/data_crypto.py`, read filtering of personal data); API response shapes and queries that change which personal data a role sees; exports, prints and outbound messages that carry personal data; new dependencies or install scripts; making anything public; network or access-control changes.
+- Clinical safety rules: `packages/domain/conditions.py`, `packages/domain/rule_lines.py`, `packages/domain/solver_rules.py`, `packages/contracts/rule_catalogue.py`, `SAFETY_*` in `packages/contracts/schemas.py`. These become CI-only once the golden scenarios cover every safety rule kind and option (#743).
+- Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, test-runner and build configuration, the scripts in `package.json`, and deleting, skipping or weakening a test.
+- Production: `infra/`, `apps/api/settings.py`, production deploys.
+
+A critical change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict that names the head. A re-cut that only merges `main` keeps the earlier verdict only when the Delivery Lead confirms a clean merge. No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion.
 
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,
