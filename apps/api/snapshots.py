@@ -644,24 +644,65 @@ def tag_data(db, department_ids, *, acquired=None) -> dict:
     return tags
 
 
-def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False):
-    """Active rules at `when`; approved retired catalogue versions may supply reconstruction lineage only."""
-    ids = [p["id"] for p in policies]
-    H = m.DefinitionHistory
-    # Rank metadata before loading JSON: publication reconstruction needs one version per policy,
-    # never every historical definition. The ordering matches the former chronological overwrite.
+def _policy_lineage_ids(db, policies, bindings):
+    """Retain predecessor links and the descendants of bound catalogue destinations."""
+    replaces = policies.c.definition['replaces_id'].as_string()
+    merged = policies.c.definition['merged_ids']
+    current = policies.c.status.in_(('active', 'proposed'))
+    parents, children = {}, defaultdict(list)
+    current_ids = []
+    for ident, is_current, previous, merged_ids in db.execute(
+            select(policies.c.policy_id, current, replaces, merged).where(
+                or_(current, replaces.is_not(None), merged[0].as_string().is_not(None)))):
+        parents[ident] = [parent for parent in (previous, *(merged_ids or ())) if parent]
+        for parent in parents[ident]:
+            children[parent].append(ident)
+        if is_current:
+            current_ids.append(ident)
+
+    destinations = [item['id'] for binding in bindings for item in binding['destinations']
+                    if item['kind'] == 'policy']
+    descendants = set()
+    while destinations:
+        ident = destinations.pop()
+        if ident not in descendants:
+            descendants.add(ident)
+            destinations.extend(children[ident])
+    pending = current_ids + list(descendants) + [binding['source_policy_id'] for binding in bindings]
+    retained = set()
+    while pending:
+        ident = pending.pop()
+        if ident not in retained:
+            retained.add(ident)
+            pending.extend(parents.get(ident, ()))
+    return retained.difference(current_ids)
+
+
+def policies_as_of(db, policies, department_ids, when, bindings):
+    """Resolve this publication's pins even when it receives workspace-less shared inputs."""
+    P, H = m.Policy, m.DefinitionHistory
+    eligible = (select(P.id).where(P.department_id.in_(department_ids)) if policies is None
+                else [policy['id'] for policy in policies])
+    # Rank metadata before loading JSON, and test status only after choosing the version.
     latest = select(H.id, func.row_number().over(partition_by=H.object_id,
         order_by=(H.created_at.desc(), H.object_revision.desc())).label('position')).where(
-            H.kind == 'policy', H.object_id.in_(ids), H.created_at <= when).subquery()
-    then = {ident: snapshot for ident, snapshot in db.execute(select(H.object_id, H.snapshot)
-        .join(latest, H.id == latest.c.id).where(latest.c.position == 1))}
-    out = []
-    for policy in policies:
-        version = then.get(policy["id"], {})
-        if version.get("status") == "active" or (keep_catalogue_lineage and version.get("status") == "retired"
-                and version.get("approved_by") and version.get("definition", {}).get("rule", {}).get("kind") == "catalogue"):
-            out.append(version)
-    return out
+            H.kind == 'policy', H.object_id.in_(eligible), H.created_at <= when).subquery()
+    versions = select(H.object_id.label('policy_id'), H.snapshot, H.snapshot['status'].as_string().label('status'),
+        H.snapshot['definition'].label('definition')).join(
+            latest, H.id == latest.c.id).where(latest.c.position == 1).subquery()
+    active = versions.c.status == 'active'
+    where = active
+    if bindings:
+        lineage = ((versions.c.status == 'retired') & versions.c.snapshot['approved_by'].as_string().is_not(None)
+                   & (versions.c.definition['rule']['kind'].as_string() == 'catalogue'))
+        linked = select(versions.c.policy_id, versions.c.status, versions.c.definition).where(
+            or_(active, lineage)).subquery()
+        where = or_(active, lineage & versions.c.policy_id.in_(_policy_lineage_ids(db, linked, bindings)))
+    query = select(versions.c.policy_id, versions.c.snapshot).where(where)
+    if policies is None:
+        return [version for _, version in db.execute(query.join(P, P.id == versions.c.policy_id).order_by(P.seq))]
+    then = {ident: version for ident, version in db.execute(query)}
+    return [then[policy['id']] for policy in policies if policy['id'] in then]
 
 
 def exceptions_as_of(db, exceptions, publication):
@@ -962,6 +1003,15 @@ def prepared_snapshot_inputs(db, org):
     return value
 
 
+def _snapshot_policy_where(db, department_ids, binding_where):
+    P, B = m.Policy, m.RuleSourceBinding
+    department = P.department_id.in_(department_ids)
+    policies = select(P.id.label('policy_id'), P.status, P.definition).where(department).subquery()
+    bindings = list(db.scalars(select(B.data).where(binding_where)))
+    retained = _policy_lineage_ids(db, policies, bindings)
+    return department & or_(P.status.in_(('active', 'proposed')), P.id.in_(retained))
+
+
 def _snapshot_inputs(db, org):
     """Shared current records for a read-only batch of snapshots in one transaction."""
     department_ids = snapshot_department_ids(db, org.id)
@@ -973,6 +1023,7 @@ def _snapshot_inputs(db, org):
     sources['people'] = (m.Person, m.Person.organisation_id == org.id)
     sources['departments'] = (m.Department, m.Department.organisation_id == org.id)
     sources.update(scheduling_sources(department_ids))
+    sources['policies'] = (m.Policy, _snapshot_policy_where(db, department_ids, sources['source_bindings'][1]))
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
@@ -1124,6 +1175,19 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                 shared_inputs = saved_inputs
             else:
                 shared_inputs = saved_inputs
+            if workspace.status == 'draft' and current_mandatory:
+                # A captured active policy can be retired without a successor.
+                # Its current row still drives the draft's changed-rule explanation.
+                current_ids = {row['id'] for row in (live_inputs or {}).get('policies', [])}
+                captured_ids = {row['id'] for row in saved_inputs.get('policies', []) if
+                                row['status'] == 'active' and row.get('active', True)
+                                and row['department_id'] == workspace.department_id}
+                if missing := captured_ids - current_ids:
+                    retired = [record(row) for row in db.scalars(select(m.Policy).where(
+                        m.Policy.department_id == workspace.department_id,
+                        m.Policy.id.in_(missing), m.Policy.status == 'retired'))]
+                    if retired:
+                        live_inputs = {**live_inputs, 'policies': live_inputs['policies'] + retired}
             from .workspace_baselines import live_safety_inputs
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
                                               include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,
@@ -1211,8 +1275,8 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                               if 'date_sets' in own_publication.snapshot
                               else date_set_data(db, department_ids, own_publication.created_at))
         result.update(scheduling_inputs(db, department_ids, own_publication.created_at))
-        result["policies"] = policies_as_of(db, result["policies"], own_publication.created_at,
-            keep_catalogue_lineage=bool(result["source_bindings"]))
+        result["policies"] = policies_as_of(db, result["policies"] if baseline is not None else None,
+            department_ids, own_publication.created_at, result["source_bindings"])
         result["exceptions"] = exceptions_as_of(db, result["exceptions"], own_publication)
         if 'leadership' in own_publication.snapshot:
             evidence = own_publication.snapshot['leadership']
