@@ -16,6 +16,27 @@ def test_named_inline_foreign_key_is_additive():
                        'CONSTRAINT fk_events_email_sender REFERENCES identities(id)')['class'] == 'additive'
 
 
+@pytest.mark.parametrize('actions,expected', [
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'additive'),
+    ("DROP CONSTRAINT role_check; ALTER TABLE items ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'additive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('ONE', 'two', 'three'))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', NULL))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check CASCADE, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three')), DROP COLUMN other",
+     'destructive'),
+    ("DROP CONSTRAINT role_check; INSERT INTO items VALUES ('three'); "
+     "ALTER TABLE items ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))", 'destructive'),
+], ids=['atomic', 'adjacent', 'changed-literal', 'null', 'cascade', 'extra-action', 'interleaved-write'])
+def test_check_constraint_replacement_uses_named_sql_definition(actions, expected):
+    old = "CREATE TABLE items (role VARCHAR(32) CONSTRAINT role_check CHECK (role IN ('one', 'two'))); "
+    assert analyze_sql(old + 'ALTER TABLE items ' + actions)['class'] == expected
+
+
 @pytest.mark.parametrize('suffix,kind', [('', 'destructive'), ('DELETE FROM history;', 'destructive')])
 def test_sql_control_flow_requires_review_even_for_privileges(suffix, kind):
     sql = """DO $$ BEGIN

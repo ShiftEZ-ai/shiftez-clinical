@@ -30,6 +30,42 @@ ROOT = Path(__file__).resolve().parents[1]
 HEAD = '0043_announcements_workers'  # last revision the grandfather inventory was taken at
 
 
+@pytest.mark.parametrize('expression,name,table,expected', [
+    ("role IN ('two', 'three', 'one')", 'role_check', 'items', 'additive'),
+    ("role IN ('two', 'one')", 'role_check', 'items', 'destructive'),
+    ("role IN ('one')", 'role_check', 'items', 'destructive'),
+    ("role IN ('one', 'three')", 'role_check', 'items', 'destructive'),
+    ("other IN ('one', 'two', 'three')", 'role_check', 'items', 'destructive'),
+    ("role IN ('one', 'two', 'three') AND enabled", 'role_check', 'items', 'destructive'),
+    ("role IN ('one', 'two', 'three')", 'other_check', 'items', 'destructive'),
+    ("role IN ('one', 'two', 'three')", 'role_check', 'other_items', 'destructive'),
+    (None, 'role_check', 'items', 'destructive'),
+], ids=['widens', 'equal', 'narrows', 'changes-values', 'other-column', 'extra-predicate',
+        'other-name', 'other-table', 'drop-only'])
+def test_check_constraint_replacement_uses_ancestor_definition(tmp_path, expression, name, table, expected):
+    (tmp_path / 'prior.py').write_text('''from alembic import op
+import sqlalchemy as sa
+revision = 'prior'
+down_revision = None
+def upgrade():
+    op.create_table('items', sa.Column('role', sa.String()),
+                    sa.CheckConstraint("role IN ('one', 'two')", name='role_check'))
+''', encoding='utf-8')
+    body = '    op.drop_constraint("role_check", "items", type_="check")\n'
+    if expression is not None:
+        body += f'    op.create_check_constraint({name!r}, {table!r}, {expression!r})\n'
+    path = tmp_path / 'current.py'
+    for predecessor, kind in [('prior', expected), ('missing', 'destructive')]:
+        path.write_text(f'''from alembic import op
+revision = 'current'
+down_revision = {predecessor!r}
+SAFETY_CLASS = {kind!r}
+def upgrade():
+{body}''', encoding='utf-8')
+        assert not safety.declaration_errors(path)
+        assert safety.needs_confirmation(path) is (kind == 'destructive')
+
+
 def test_oidc_department_choice_migration_preserves_existing_flows_and_all_data(session_limits_database):
     from .migration_support import historical_seed
     url = session_limits_database
