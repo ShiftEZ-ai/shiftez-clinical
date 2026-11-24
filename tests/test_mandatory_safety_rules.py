@@ -5,6 +5,7 @@ from packages.contracts.schemas import PolicyDefinition
 from packages.domain.cp_sat import generate
 from packages.domain.generation import generate as greedy_generate
 from packages.domain.rule_groups import is_cap
+from packages.domain.rule_lines import weakens_safety_rules
 from packages.domain.score import schedule_score
 from packages.domain.time import aware
 from packages.domain.validation import evaluate
@@ -21,6 +22,53 @@ CASES = [
     ('minimum_cover', 'people_per_session', 'min', 'SCOPED_COVERAGE_GAP'),
     ('maximum_participants', 'people_per_session', 'max', 'SCOPED_PARTICIPANT_LIMIT'),
 ]
+
+
+@pytest.mark.parametrize('kind,field,old,stronger', [('min_rest', 'hours', 11, 12),
+                                                     ('maximum_participants', 'maximum', 3, 2)])
+def test_effective_safety_comparison_preserves_bounds_and_dates(kind, field, old, stronger):
+    def policy(value, starts_on='2026-10-01'):
+        definition = PolicyDefinition.model_validate({'rule': {'kind': kind, field: value}}).model_dump(mode='json')
+        return {'id': 'safety', 'kind': kind, 'active': True, 'status': 'active',
+                'department_id': 'd', 'starts_on': starts_on, 'definition': definition}
+
+    before, after = policy(old), policy(stronger)
+    assert not weakens_safety_rules([before], [after])
+    assert weakens_safety_rules([after], [before])
+    assert weakens_safety_rules([before], [policy(stronger, '2026-10-02')])
+    assert weakens_safety_rules([before], [{**after, 'active': False}])
+
+
+@pytest.mark.parametrize('hours,on,weaker', [(9, True, True), (11, False, True), (12, True, False)])
+def test_self_approval_cannot_weaken_an_active_safety_line(h, monkeypatch, hours, on, weaker):
+    from .governance_support import identity
+
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    who = 'rule_reviewer'
+    reviewer = identity(h, who, ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
+              'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'reason': 'Temporary review cover'})
+    catalogue = 'rest_between_duties'
+    original = line(numbers={'min': {'value': 11, 'level': 'mandatory'}})
+    current = approve(h, propose(h, catalogue, [original])['record'])
+    change = h.command(who, 'rule.propose', {'catalogue_id': catalogue, 'on': on,
+        'lines': [{**original, 'numbers': {'min': {'value': hours, 'level': 'mandatory'}}}],
+        'expected_policy_id': current['id'], 'expected_revision': current['revision'],
+        'reason': 'Adjust the rest limit'})['record']
+    reply = h.command(who, 'policy.activate', {'reason': 'Temporary review cover'}, change['id'], change['revision'],
+                      status=403 if weaker else 200)
+    if weaker:
+        assert reply['error']['code'] == 'SELF_APPROVAL'
+        assert 'weakens a safety rule' in reply['error']['message']
+        assert entry(h, catalogue)['rule']['id'] == current['id']
+        assert approve(h, change)['status'] == 'active'
+    else:
+        activated = reply['record']
+        assert activated['status'] == 'active'
+        refusal = h.command(who, 'policy.retire', {'reason': 'Restore the previous limit'},
+                            activated['id'], activated['revision'], status=403)
+        assert 'weakens a safety rule' in refusal['error']['message']
+        assert entry(h, catalogue)['rule']['id'] == activated['id']
 
 
 def rule_for(h, kind):
