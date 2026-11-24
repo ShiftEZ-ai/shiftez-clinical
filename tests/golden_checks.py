@@ -213,6 +213,30 @@ def check_interaction(data, ids, spec):
             'bindings': {key: len(value) for key, value in bound.items()}}
 
 
+def check_weekly_limit(data, ids, spec):
+    expected = spec['expect']
+    sid, first, second, rid = ids['s2'], ids['p0'], ids['p1'], ids['workload']
+    broken = copy.deepcopy(data)
+    place(broken, sid, [first])
+    findings = {(row['code'], row['person_id']) for row in finding_observations(evaluate(broken))
+                if row.get('rule_id') == rid}
+    assert findings == {(expected['validator']['limit'], first), (expected['validator']['missing'], second)}
+
+    broad_only = copy.deepcopy(data)
+    for policy in broad_only['policies']:
+        if policy['id'] == rid:
+            policy['definition']['rule']['lines'] = policy['definition']['rule']['lines'][:1]
+    sessions = [ids[f's{index}'] for index in range(len(expected['assignment']))]
+    binding = 0
+    for seed in expected['seed_robustness']['seeds']:
+        candidate = feasible(data, solve(data, seed))
+        assignment = [[p['person_id'] for p in shift(candidate, session)['participants']] for session in sessions]
+        assert assignment == [[ids[key]] for key in expected['assignment']]
+        assert solve(broad_only, seed)['status'] == expected['counterfactual']['without_person_line']
+        binding += 1
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': binding}}
+
+
 def check_scenario(data, ids, spec):
     if 'safety' in spec['expect']:
         from tests.golden_safety import check_safety
@@ -223,5 +247,5 @@ def check_scenario(data, ids, spec):
     if spec['id'] == 'A-PREF-01':
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
-    return {'A-REST-01': check_rest, 'A-COVER-01': check_cover,
+    return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-WEEKLY-LIMIT-01': check_weekly_limit,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

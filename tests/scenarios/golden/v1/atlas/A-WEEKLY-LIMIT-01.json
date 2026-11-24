@@ -1,0 +1,343 @@
+{
+  "id": "A-WEEKLY-LIMIT-01",
+  "revision": 1,
+  "title": "Weekly maximum with an inherited minimum",
+  "intent": "A more specific weekly maximum replaces only the broad maximum.",
+  "pressure": "Two fixed duties use the individual maximum. The shared minimum still requires one duty for the other person.",
+  "covers": {
+    "kind.block_quota": [
+      "validator"
+    ],
+    "kind.max_duties": [
+      "validator"
+    ]
+  },
+  "commands": [
+    {
+      "key": "rank",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "categories",
+        "value": {
+          "name": "A-WEEKLY-LIMIT-01 Clinician",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-WEEKLY-LIMIT-01 Continuity clinic",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location_kind",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "location_types",
+        "value": {
+          "name": "A-WEEKLY-LIMIT-01 Clinic room",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-WEEKLY-LIMIT-01 Duty room",
+          "starts_on": "2020-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 3
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "p0",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-WEEKLY-LIMIT-01 Clinician 1",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member0",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p0",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible0",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p1",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-WEEKLY-LIMIT-01 Clinician 2",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member1",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p1",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible1",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "A-WEEKLY-LIMIT-01 Half-day clinic",
+          "starts_on": "2020-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 1
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workspace",
+      "role": "coordinator",
+      "kind": "workspace.create",
+      "payload": {
+        "name": "A-WEEKLY-LIMIT-01 Weekly workload",
+        "starts_on": "2027-01-04",
+        "ends_on": "2027-01-07"
+      }
+    },
+    {
+      "key": "workload",
+      "role": "coordinator",
+      "kind": "rule.propose",
+      "payload": {
+        "catalogue_id": "duties_per_week",
+        "catalogue_version": 1,
+        "lines": [
+          {
+            "id": "00000000-0000-4000-8000-000000009120",
+            "who": {
+              "conditions": [
+                {
+                  "field": "category_ids",
+                  "values": [
+                    "$rank"
+                  ]
+                }
+              ]
+            },
+            "starts_on": "2027-01-04",
+            "ends_on": "2027-01-07",
+            "settings": {
+              "block_quota": {
+                "window_alignment": "calendar_week"
+              }
+            },
+            "numbers": {
+              "min": {
+                "value": 1,
+                "level": "mandatory"
+              },
+              "max": {
+                "value": 1,
+                "level": "mandatory"
+              }
+            }
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000009121",
+            "who": {
+              "conditions": [
+                {
+                  "field": "person_ids",
+                  "values": [
+                    "$p0"
+                  ]
+                }
+              ]
+            },
+            "starts_on": "2027-01-04",
+            "ends_on": "2027-01-07",
+            "numbers": {
+              "max": {
+                "value": 2,
+                "level": "mandatory"
+              }
+            }
+          }
+        ],
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workload_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "target": "$workload",
+      "revision": "$workload.revision",
+      "payload": {
+        "acknowledge_unresolved": true,
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "s0",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-04T08:00:00+03:00",
+        "end": "2027-01-04T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p0",
+            "start": "2027-01-04T08:00:00+03:00",
+            "end": "2027-01-04T12:00:00+03:00",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "s1",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-05T08:00:00+03:00",
+        "end": "2027-01-05T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p0",
+            "start": "2027-01-05T08:00:00+03:00",
+            "end": "2027-01-05T12:00:00+03:00",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "s2",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-06T08:00:00+03:00",
+        "end": "2027-01-06T12:00:00+03:00",
+        "participants": []
+      }
+    }
+  ],
+  "expect": {
+    "binding_rules": [
+      "workload"
+    ],
+    "validator": {
+      "limit": "MAX_DUTIES",
+      "missing": "QUOTA_BELOW_MINIMUM"
+    },
+    "counterfactual": {
+      "without_person_line": "requirements_conflict"
+    },
+    "assignment": [
+      "p0",
+      "p0",
+      "p1"
+    ],
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1,
+      "orders": "shuffle inputs for each seed"
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0
+    }
+  }
+}
