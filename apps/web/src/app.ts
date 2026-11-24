@@ -7121,9 +7121,11 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
-  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
+  const reviewStatus=facts.fixListMissing
+    ?outcome('warn',facts.fixListMissing,'Run auto-schedule again to get the detailed Fix list.')
+    :status;
+  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[reviewStatus]),breaks,clash,
     basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
-    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
