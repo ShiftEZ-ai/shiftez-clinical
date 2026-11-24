@@ -53,7 +53,7 @@ def _audit_refs(db, actor, source_ids):
 def _preview_plan(candidate):
     """Navigation and review summary; immutable definitions stay in the full receipt."""
     return {**{key: value for key, value in candidate.items()
-               if key not in {'source_manifest', 'targets', 'scheduling_facts', 'bindings', 'proof'}},
+               if key not in {'source_manifest', 'census', 'targets', 'scheduling_facts', 'bindings', 'proof'}},
         'targets': [{'catalogue_id': target['catalogue_id'], 'row': {'id': target['row']['id']}}
                     for target in candidate['targets']],
         'scheduling_facts': [{key: fact.get(key) for key in ('id', 'kind', 'person_id', 'calendar_entry_id')}
