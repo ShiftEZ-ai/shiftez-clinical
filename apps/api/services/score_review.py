@@ -14,7 +14,9 @@ from .rota_summary import reusable_check
 def read(db, actor, workspace_id):
     require_role(actor, *s.PERMISSIONS['schedule.read_team'])
     workspace = scoped(db, m.Workspace, workspace_id, actor)
-    data = domain_snapshot(db, workspace, current_generation_defaults=workspace.status == 'published')
+    # Review checks currency using the fingerprint alone. Source evidence belongs to retained checks.
+    data = domain_snapshot(db, workspace, current_generation_defaults=workspace.status == 'published',
+                           include_manifest_sources=False)
     options = data.get('generation_options')
     if reusable_check(workspace.validation, data['fingerprint'], options):
         validation = workspace.validation

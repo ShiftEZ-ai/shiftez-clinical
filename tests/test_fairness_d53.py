@@ -123,7 +123,18 @@ def test_legacy_pooling_flag_is_readable_but_only_explicit_comparison_pools():
     assert len(f.goal_reports(data)) == 1
 
 
-def test_supervisable_sessions_count_eligible_attendance_once_and_recompute_after_assignment():
+def test_supervisable_sessions_count_eligible_attendance_once_and_recompute_after_assignment(monkeypatch):
+    from collections import Counter
+    from packages.domain import validation
+
+    reads = Counter()
+    trainee_intervals = validation.trainee_intervals
+
+    def counted(data, shift, participant):
+        reads[id(shift), id(participant)] += 1
+        return trainee_intervals(data, shift, participant)
+
+    monkeypatch.setattr(validation, 'trainee_intervals', counted)
     data = supervision_world()
     goal = data['policies'][0]
     goal['definition']['rule']['share_by'] = 'supervisable_sessions'
@@ -131,6 +142,7 @@ def test_supervisable_sessions_count_eligible_attendance_once_and_recompute_afte
         shift['participants'] = [p for p in shift['participants'] if p['person_id'] != B]
     amounts = f.supervisable_amounts(data, goal, SUPERVISORS)
     assert amounts == dict(zip(SUPERVISORS, (8, 2, 8, 8)))
+    assert max(reads.values()) == 1
     data['shifts'][0]['participants'].append({**data['shifts'][0]['participants'][-1], 'person_id': uid(999)})
     assert f.supervisable_amounts(data, goal, SUPERVISORS) == amounts
     data['shifts'][1]['participants'] = [p for p in data['shifts'][1]['participants'] if p['person_id'] != TRAINEE]
