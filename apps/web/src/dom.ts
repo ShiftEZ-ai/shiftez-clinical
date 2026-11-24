@@ -653,8 +653,8 @@ export function fitRow(row:HTMLElement,steps=['tight','tighter'],clipped=()=>row
   // forcing a layout of the page that is still being built.
   // Relabelled or newly visible actions must refit too; ignore the fitting classes to avoid observing our own work.
   const unsize=observeSize(row.parentElement||row,()=>{row.dataset.fitted='1';if(row.isConnected)fit();});kids.observe(row,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['hidden']});
-  const entry={born:now,seen:false,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
-  setTimeout(()=>{entry.seen=row.isConnected;},0);
+  const entry={born:now,seen:row.isConnected,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
+  if(!entry.seen)setTimeout(()=>{entry.seen=row.isConnected;},0);
 }
 /** The latest reading of a typed or pasted text (Paste names, Paste from Excel): `start()` begins one and outdates
  *  every earlier one at once (call it on each input, before any debounce, and when a reading begins); `current(t)`

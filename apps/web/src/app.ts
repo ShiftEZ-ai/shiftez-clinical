@@ -2694,11 +2694,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   }
   const planning=w?planningOf(whole):null;
   const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
-  // Phones always take the smallest step: icon + count pills and icon-only actions on one row under the title.
-  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // A load that finishes after you have moved on must not take over the new page's top bar.
   if(mySerial!==renderSerial)return;
   swapPlannerBar(bar,target);
+  // Fit after the swap so fitRow can release the outgoing toolbar's observers.
+  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // The bar now names the new rota or view. A body still on screen from another rota or view goes to its skeleton at
   // once, toolbar included, so the two states never mix while this one loads (S-27); a live redraw of the same view
   // keeps what it shows.
