@@ -45,6 +45,7 @@ reused everywhere:
   rule-and-scheduling scenario pack; extend it, never start a second one. Department-scale fixtures stay in
   `tests/scheduler_departments.py`.
 - Rule reach: `packages/domain/rule_map.py`.
+- Tenancy and data ownership: `packages/contracts/tenancy.py` (the design note every tenancy change follows).
 - Contracts: `packages/contracts/schemas.py` → `scripts/generate_contracts.py` → `apps/web/src/generated.ts`. Kinds,
   fields, limits and roles (`ROLE_NAMES`) come from the contracts or the API, never copied into the frontend.
 - Branding: `BRANDING_DEFAULTS` in `packages/contracts/schemas.py` is the only place a brand string is written.
