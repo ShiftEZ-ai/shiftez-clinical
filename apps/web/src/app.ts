@@ -348,6 +348,16 @@ function patchDraft(r:Row,kind:string):boolean{
   // SW3-B-03b: a return or a reopen too (workspace.reopen); a refused decision's re-read rota as well (rota-conflict).
   const lifecycle=ROTA_DECISIONS.has(kind)&&kind!=='workspace.publish';
   if(lifecycle)forgetChanges(r?.workspace?.base_publication_id);
+  // Final swap approval can publish the rota in the same command. Hand off both publication replies before refreshing.
+  if((kind==='workspace.publish'||kind==='workspace.approve')&&r?.publication_id){
+    if(id&&workspaceId===id&&view==='schedule'&&!schedSubPage()&&location.hash===routeSeen){
+      workspaceId='';sourcePublication='';draftNone=true;
+      writeRoute();
+      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill(r.workspace));
+      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
+    }
+    return false;  // The published schedule and rota list both need fresh reads.
+  }
   // P0 edit latency (live capture, 7 Nov 2026): a rota past the list's first page has no row in it; its held draft is
   // patched all the same (the dates it is checked against are the draft's), not dropped and read whole after every edit.
   const was=row||held?.workspace;
@@ -3530,16 +3540,10 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
       const result=await command('workspace.publish',{reason:why},w.id,w.revision);
       let discarded=0;
       for(const {d,discard} of competing)if(discard?.input.checked)await command('workspace.archive',{reason:`Not used: ${w.name} was published`},d.id,(await rotaMeta(d.id)).workspace.revision).then(()=>{discarded++;},reportError);
-      // The rota just published is shown as it now is (the published layer on its days), not whichever draft is next.
-      workspaceId='';draftNone=true;
       const stale=(result.outdated_drafts||[]) as Row[];
       // The Undo here (if any) is the discards': publishing itself is not undone. The dialog closes first, so the
       // confirmation is said on the published rota, not inside a closing dialog behind "Saving…" (ME-24).
       form.closest('dialog')?.remove();
-      // SW3-A-14: the header shows it published at once, with no Publish… or Reopen to press again; the redraw that
-      // follows (minutes under load) draws the published rota.
-      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill({...w,status:'published'}));
-      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
       // SW3-B-07: said as soon as the server confirms, not after the reads that redraw the page (minutes under load).
       const said=refresh();
       notify('Published · staff are told.'+(discarded?` Undo restores the ${discarded===1?'discarded draft':`${discarded} discarded drafts`}.`:'')+(stale.length?` ${stale.map(x=>x.name).join(', ')} now overlap${stale.length===1?'s':''} a published rota; open ${stale.length===1?'it':'them'} to choose how ${stale.length===1?'it fits':'they fit'}.`:''));
