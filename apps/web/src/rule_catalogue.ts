@@ -2308,7 +2308,7 @@ export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CA
  *  under a self-approval permission (mayDecide). */
 export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
   refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
-function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:Row)=>string,open?:(rule:Row)=>void,
+function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,levels:(rule:Row)=>string[],open?:(rule:Row)=>void,
     effectCell:(rule:Row)=>Child=effect){
   if(!rows.length)return null;
   return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
@@ -2318,18 +2318,25 @@ function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:R
         defaults:{wrap:['name','effect']},
         columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):labelOf(p)},
           {key:'effect',label:'Effect',text:effect,cell:effectCell},
-          {key:'level',label:'Level',text:level,cell:p=>level(p)?levelBadge(level(p),p.severity_reason):''},
-          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
+          {key:'level',label:'Level',text:p=>levels(p).map(levelWords).join(', '),
+            cell:p=>el('span',{},...levels(p).map(level=>levelBadge(level,p.severity_reason)))},
+          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on||''} ${p.ends_on?dayBefore(p.ends_on):''}`,
+            cell:p=>dateUnits(p.starts_on?[formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')]:
+              [p.ends_on?'Until '+formatDate(dayBefore(p.ends_on)):'Ongoing'])}]}).root)}),
     'secondary'),'layers');
 }
 export function capturedRulesContext(ctx:Context,data:Catalogue){
   const name=recordName(ctx),names=namer(ctx);
   const effect=(p:Row)=>ruleSentence(p.definition.rule,p.definition,name);
+  const entryOf=(rule:Row)=>(rule.catalogue_version===2?RULE_CATALOGUE_V2:RULE_CATALOGUE).find(e=>e.id===rule.id);
+  const levels=(p:Row)=>{
+    const rule=p.definition.rule,entry=rule.kind==='catalogue'?entryOf(rule):undefined;
+    return entry?ruleLevels(entry,rule.lines):[p.effective_severity??p.definition.severity];
+  };
   const lines=(p:Row):string[]=>{
     const definition=p.definition,rule=definition.rule;
     if(rule.kind==='catalogue'){
-      const catalogue=rule.catalogue_version===2?RULE_CATALOGUE_V2:RULE_CATALOGUE;
-      const entry=catalogue.find(e=>e.id===rule.id);
+      const entry=entryOf(rule);
       return entry?(rule.lines as RuleLine[]).map(l=>lineWords(entry,l,names,Infinity,rule.settings)):[];
     }
     return (definition.per_person||[]).map((l:Row)=>[
@@ -2338,7 +2345,7 @@ export function capturedRulesContext(ctx:Context,data:Catalogue){
       lineNumbers(rule,l),lineSessions(l,name),daysText(l as RuleLine),validText(l as RuleLine),
     ].filter(Boolean).join(' · '));
   };
-  return otherDepartmentRules(data.captured_other_rules||[],effect,p=>p.definition.severity,undefined,p=>{
+  return otherDepartmentRules(data.captured_other_rules||[],effect,levels,undefined,p=>{
     const rows=lines(p),summary=effect(p);
     return rows.length?el('details',{},el('summary',{},summary||plural(rows.length,'line')),el('ol',{},...rows.map(text=>el('li',{},text)))):summary;
   });
@@ -2350,7 +2357,7 @@ export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>P
   const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
   const context=otherDepartmentRules(kept,p=>ruleSentence(p.definition.rule,p.definition,name),
-    p=>p.effective_severity??p.definition.severity,o.openRule);
+    p=>[p.effective_severity??p.definition.severity],o.openRule);
   if(!pending.length)return context;
   const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};

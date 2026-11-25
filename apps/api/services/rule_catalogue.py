@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from threading import Event, RLock
 from types import SimpleNamespace as Line
 from typing import NamedTuple
+from uuid import UUID
 
 from sqlalchemy import case, func, literal, select, tuple_
 from sqlalchemy.sql.elements import BindParameter
@@ -634,6 +635,7 @@ def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id
         data['_person_rows'] = index_person_rows(data)
         result = explain_rules(data, rota=False)
         conflicts = explained_conflicts(data, starts_on=day, ends_on=day + timedelta(days=1))
+        people_table = _people_table(data, result['rules'], actor)
     return {'at': day, 'status': None, 'groups': _question_groups(),
             'rules': [{'rule_id': rule['rule_id'], 'catalogue_id': rule.get('catalogue_id'),
                        'question_group': _question_group_key(rule['question_group']),
@@ -643,7 +645,7 @@ def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id
                        'unexplained': bool(rule.get('unexplained')),
                        'line_ids': rule.get('line_ids') or []} for rule in result['rules']],
             'conflicts': conflicts,
-            'people_table': _people_table(data, result['rules'], actor)}
+            'people_table': people_table}
 
 
 def _line_overlaps(row, would, *, outranked=None, both=None):
@@ -844,6 +846,10 @@ def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
     seeds = [row for row in records('policy_seed_lines', [])
              if row.get('department_id') == actor.department_id and row.get('policy_id') in policy_ids]
     with _captured_projection():
+        for exception in inputs['exceptions']:
+            if (not all(str(UUID(exception[key])) == exception[key] for key in ('id', 'person_id'))
+                    or date.fromisoformat(exception['starts_on']) >= date.fromisoformat(exception['ends_on'])):
+                raise _captured_rules_problem()
         fact_ids = {row['id'] for row in inputs['scheduling_facts']}
         target_ids = {'policy': policy_ids, 'fact': fact_ids}
         bindings = []
@@ -1081,6 +1087,15 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
     for issue in issues:
         issue['safety'] = safety.get(issue['rule_id'], False)
     pending = [issue for issue in issues if not issue.get('acknowledged')]
+    source = {}
+    if capture is not None:
+        # Stored rows retain ended and folded lines. Effective rows also include independently approved facts.
+        other_rules = {row['id']: row for row in in_force}
+        other_rules.update({row['id']: row for row in capture.policies if row['status'] == 'active'})
+        source = {'source': {'kind': 'snapshot', 'workspace_id': capture.workspace_id,
+                             'baseline_id': capture.baseline_id, 'captured_at': capture.captured_at},
+                  'captured_other_rules': [_captured_rule_details(row) for ident, row in other_rules.items()
+                                           if ident not in primary_ids]}
     for entry in entries:
         entry['numbers'] = _display_safety_slots(entry['numbers'])
         for key in ('rule', 'proposed'):
@@ -1094,14 +1109,23 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
             "families": [{"id": f, "name": n} for f, n in FAMILIES], "entries": entries,
             'not_on_catalogue': not_on_catalogue if catalogue_id is None else [], "day": str(day),
             "attention": issues, "attention_counts": attention_counts(pending),
-            **({'source': {'kind': 'snapshot', 'workspace_id': capture.workspace_id, 'baseline_id': capture.baseline_id,
-                           'captured_at': capture.captured_at},
-                'captured_other_rules': [
-                    {**{key: row.get(key) for key in ('id', 'name', 'starts_on', 'ends_on')},
-                     'definition': stored_definition(row['definition'])}
-                    for row in capture.policies if row['status'] == 'active' and row['id'] not in primary_ids
-                ]} if capture is not None else
+            **(source if capture is not None else
                {'_live_definitions': live_definitions} if shared_body else {'source_options': source_options})}
+
+
+def _captured_rule_details(row):
+    definition = row['definition']
+    kind = definition['rule']['kind']
+    details = {key: row.get(key) for key in ('id', 'name', 'starts_on', 'ends_on')}
+    if kind == 'catalogue':
+        definition = _display_safety_levels(row)['definition']
+    else:
+        stored = definition.get('severity', 'mandatory')
+        level = effective_severity(kind, stored)
+        details['effective_severity'] = level
+        if level != stored:
+            details['severity_reason'] = s.SAFETY_MANDATORY_REASON
+    return {**details, 'definition': stored_definition(definition)}
 
 
 def _safety_reason(slot):

@@ -141,7 +141,9 @@ def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
-@pytest.mark.parametrize('corruption', ['missing-definition', 'scalar-number', 'binding', 'destination-kind', 'fact'])
+@pytest.mark.parametrize('corruption', [
+    'missing-definition', 'scalar-number', 'binding', 'destination-kind', 'fact', 'exception-id', 'exception-date',
+])
 def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch, corruption):
     draft = h.workspace('Unusable capture')
     verify = workspace_baselines.verify
@@ -159,6 +161,13 @@ def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch
             if corruption == 'fact':
                 fact = {'id': str(uuid4()), 'department_id': policy['department_id'], 'data': {'catalogue_id': 'fair_share'}}
                 return {**payload, 'scheduling_facts': [fact]}
+            if corruption.startswith('exception'):
+                exception = {'department_id': policy['department_id'], 'policy_id': policy['id'],
+                             'person_id': h.seed['people'][0], 'status': 'approved',
+                             'starts_on': '2026-10-04', 'ends_on': '2026-10-06'}
+                if corruption == 'exception-date':
+                    exception.update(id=str(uuid4()), ends_on='2026-10-03')
+                return {**payload, 'exceptions': [exception]}
             destination = {'id': policy['id'], 'kind': 'fact' if corruption == 'destination-kind' else 'policy'}
             binding = {'source': policy, 'source_policy_id': policy['id'], 'destinations': [destination]}
             if corruption == 'destination-kind':
@@ -204,6 +213,7 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
 
     people = h.seed['people']
     legacy = activate(h, propose_legacy(h, {'kind': 'max_hours', 'hours': 7, 'window': 'day'}, ends_on='2029-12-31'))
+    safety = h.stored_advisory_safety({'kind': 'min_rest', 'hours': 10})
     folded = approve(h, propose(h, 'duties_per_week', [
         line(who=person(people[0]), numbers={'max': {'value': 3}}),
         line(who=person(people[1]), numbers={'max': {'value': 5}}),
@@ -214,3 +224,21 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
     records = {row['id']: row for row in h.get('coordinator', url)['captured_other_rules']}
     assert [row['numbers']['max']['value'] for row in records[folded['id']]['definition']['rule']['lines']] == [3, 5]
     assert records[legacy['id']]['definition']['rule']['hours'] == 7
+    assert records[safety['id']]['effective_severity'] == 'mandatory'
+
+
+def test_captured_catalogue_retains_independently_approved_workload_fact(h):
+    from .test_scheduling_facts_api import decide, replace, workload
+
+    proposed = h.command('coordinator', 'person.workload.propose', workload(h))['fact']
+    original = decide(h, proposed)['fact']
+    draft = h.workspace('Captured personal workload rule')
+    successor = decide(h, replace(h, original, 4))['fact']
+    url = '/api/rules/catalogue?version=2'
+    live = h.get('coordinator', url)
+    assert any(row['id'] == successor['id'] for entry in live['entries'] for row in entry['also_in_force'])
+    captured = h.get('coordinator', f'{url}&workspace_id={draft["id"]}')
+    rows = {row['id']: row for row in captured['captured_other_rules']}
+    assert successor['id'] not in rows
+    line_numbers = rows[original['id']]['definition']['rule']['lines'][0]['numbers']
+    assert line_numbers['max']['value'] == 2
