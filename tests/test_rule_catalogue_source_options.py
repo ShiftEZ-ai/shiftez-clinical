@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import date, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -214,33 +215,37 @@ def test_captured_catalogue_ignores_other_department_and_rota_rules(h, monkeypat
         assert foreign_seed not in result
 
 
-def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h, monkeypatch):
+def historical_weekly_limit(h, *, on=True):
     from .test_rule_catalogue_api import approve, person, propose
-    from .test_rule_templates import activate, propose as propose_legacy
 
     people = h.seed['people']
+    inherited = line(who=person(people[1]), numbers={'max': {'value': 5}})
+    defaulted = line(who=person(people[2]), numbers={'max': {'value': 6}})
+    policy = approve(h, propose(h, 'duties_per_week', [
+        line(numbers={'max': {'value': 3, 'level': 'critical'}}), inherited, defaulted,
+    ], on=on)['record'])
+    with transaction(h.app.state.engine, write=True) as db:
+        row = db.get(m.Policy, policy['id'])
+        definition = deepcopy(row.definition)
+        maxima = {saved['id']: saved['numbers']['max'] for saved in definition['rule']['lines']}
+        # Today the editor fills both strengths before saving. Seed the historical shapes before capture.
+        maxima[inherited['id']]['level'] = None
+        maxima[defaulted['id']].pop('level', None)
+        row.definition = definition
+    return policy, inherited['id']
+
+
+def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
+    from .test_rule_catalogue_api import approve, propose
+    from .test_rule_templates import activate, propose as propose_legacy
+
     legacy = activate(h, propose_legacy(h, {'kind': 'max_hours', 'hours': 7, 'window': 'day'}, ends_on='2029-12-31'))
     safety = h.stored_advisory_safety({'kind': 'min_rest', 'hours': 10})
-    defaulted = line(who=person(people[2]), numbers={'max': {'value': 6}})
-    folded = approve(h, propose(h, 'duties_per_week', [
-        line(numbers={'max': {'value': 3, 'level': 'critical'}}),
-        line(who=person(people[1]), numbers={'max': {'value': 5, 'level': None}}),
-        defaulted,
-    ])['record'])
+    folded, _ = historical_weekly_limit(h)
     switched_off = approve(h, propose(h, 'duties_per_month', [
         line(numbers={'max': {'value': 2}}),
     ], on=False)['record'])
     draft = h.workspace('Historical rules source')
-    verify = workspace_baselines.verify
-
-    def with_historical_number(row):
-        payload = verify(row)
-        policy = next(p for p in payload['policies'] if p['id'] == folded['id'])
-        saved = next(ln for ln in policy['definition']['rule']['lines'] if ln['id'] == defaulted['id'])
-        saved['numbers']['max'].pop('level', None)
-        return payload
-
-    monkeypatch.setattr(workspace_baselines, 'verify', with_historical_number)
     query = f'day=2030-01-01&workspace_id={draft["id"]}'
     primary = next(entry['rule'] for entry in h.get('coordinator', f'/api/rules/catalogue?{query}')['entries']
                    if entry['id'] == 'duties_per_week')

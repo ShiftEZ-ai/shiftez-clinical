@@ -613,7 +613,7 @@ def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_serv
 
 @pytest.mark.parametrize('legacy_rule', [False, True], ids=['catalogue-v2', 'legacy'])
 def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser, live_server, h, legacy_rule):
-    from .test_rule_catalogue_api import approve, person, propose as propose_catalogue
+    from .test_rule_catalogue_source_options import historical_weekly_limit
     from .test_rule_templates import activate, propose
 
     flag(h, legacy=False)
@@ -621,11 +621,7 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
         {'person_id': h.seed['people'][0], 'amount': 3},
         {'person_id': h.seed['people'][1], 'amount': 4},
     ])) if legacy_rule else None
-    inherits = line({'max': {'value': 5, 'level': None}}, who=person(h.seed['people'][1]))
-    weekly_rule = approve(h, propose_catalogue(h, 'duties_per_week', [
-        line({'max': {'value': 3, 'level': 'critical'}}), inherits,
-        line({'max': {'value': 6}}, who=person(h.seed['people'][2])),
-    ], on=bool(legacy))['record'])
+    weekly_rule, inherited_id = historical_weekly_limit(h, on=legacy_rule)
     draft = h.workspace('Saved rules source')
     if not legacy:
         h.command('approver', 'policy.retire', {'reason': 'End the old rule'}, weekly_rule['id'], weekly_rule['revision'])
@@ -671,7 +667,7 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
             toggle = weekly_row.locator('.rt-toggle')
             if toggle.get_attribute('aria-expanded') == 'false':
                 toggle.click()
-            inherited = weekly_item.locator(f'li.rt-ln[data-line="{inherits["id"]}"]')
+            inherited = weekly_item.locator(f'li.rt-ln[data-line="{inherited_id}"]')
             expect(inherited.get_by_text('Inherited strength', exact=True)).to_be_visible()
             expect(inherited.get_by_text('Mandatory', exact=True)).to_have_count(0)
             rules_action(page, re.compile('^Other department rules'))
