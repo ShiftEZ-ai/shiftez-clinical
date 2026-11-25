@@ -945,7 +945,12 @@ def activation_shared_inputs(db, org):
 
 
 def prepared_snapshot_inputs(db, org):
-    """Reuse frozen preparation inputs; independently reacquire them in the final writer."""
+    """Reuse frozen preparation inputs or the fast edit writer's own input projection."""
+    memo = db.info.get('_assignment_reply_inputs')
+    if memo is not None:
+        if org.id not in memo:
+            memo[org.id] = snapshot_inputs(db, org)
+        return memo[org.id]
     state = db.info.get('_planning_preparation')
     if state is None or state['replay']:
         return snapshot_inputs(db, org)
