@@ -7,6 +7,7 @@ The client owns the wording; each item is {key, count,...} in priority order (mo
 from datetime import timedelta
 from collections import OrderedDict
 from copy import deepcopy
+from math import ceil
 from threading import Lock
 from zoneinfo import ZoneInfo
 from sqlalchemy import and_, case, func, or_, select
@@ -63,7 +64,9 @@ def _home_stamp(db, actor, now, max_days):
                 W.status == 'submitted', W.archived_at.is_(None), D.delegation_id.is_not(None))
             # A completed interval has a different stamp from the time before it started.
             edge = case((G.expires_at <= now, G.expires_at), (G.starts_at <= now, G.starts_at))
-            future = case((G.starts_at > now, G.starts_at), (G.expires_at > now, G.expires_at))
+            # Viewers may know their own grant times. Other used grants only invalidate the cache here.
+            future = case((G.delegate_id != actor.identity_id, None),
+                          (G.starts_at > now, G.starts_at), (G.expires_at > now, G.expires_at))
             delegation_edge, review_refresh_at = db.execute(
                 select(func.max(edge), func.min(future)).where(G.department_id == actor.department_id,
                     G.revoked.is_(False), or_(G.delegate_id == actor.identity_id, G.id.in_(used)))).one()
@@ -113,6 +116,7 @@ def rota_strip(db, actor, start, end, limit, offset):
 def _home_uncached(db, actor, *, max_days, now=None):
     org = db.get(m.Organisation, actor.organisation_id)
     now = m.now() if now is None else now
+    review_expires_at = None
     today = now.astimezone(ZoneInfo(org.timezone)).date()
     dept = actor.department_id
     can = actor.permits
@@ -235,10 +239,19 @@ def _home_uncached(db, actor, *, max_days, now=None):
             from apps.api.auth import held_roles
             context = {'held': held_roles(db, actor.identity_id, actor.department_id),
                        'permissions': active_permissions(db, actor.department_id), 'now': now}
+            used_delegations = set()
             for w in live:
-                if w.status == 'submitted' and w.id not in outdated and reviews.viewer_progress(
-                        db, actor, w, current_fingerprint=current_inputs[w.id], context=context)['can_decide']:
+                if w.status != 'submitted' or w.id in outdated:
+                    continue
+                progress = reviews.viewer_progress(db, actor, w, current_fingerprint=current_inputs[w.id], context=context)
+                if progress['can_decide']:
                     mine.append(w)
+                    used_delegations.update(reviewer['delegation_id'] for step in progress['steps']
+                                            for reviewer in step['reviewers'] if reviewer.get('delegation_id'))
+            if used_delegations:
+                G = m.ReviewDelegation
+                review_expires_at = db.scalar(select(func.min(G.expires_at)).where(
+                    G.department_id == dept, G.id.in_(used_delegations), G.expires_at > now))
             # ME-28: an amendment says what it is (its changes and their reasons), read from its one change list.
             amendment = {}
             if mine and mine[0].base_publication_id:
@@ -394,7 +407,8 @@ def _home_uncached(db, actor, *, max_days, now=None):
             mine.append(summary)
 
     return {"attention": [item for _, item in sorted(items, key=lambda x: x[0])], "rotas": rotas,
-            "my_requests": mine, "recent_changes": recent}
+            "my_requests": mine, "recent_changes": recent,
+            **({'_review_expires_at': aware(review_expires_at).isoformat()} if review_expires_at else {})}
 
 
 def home(db, actor, *, settings=None):
@@ -411,29 +425,32 @@ def home(db, actor, *, settings=None):
     revisions, review_refresh_at = _home_stamp(db, actor, now, max_days)
     stamp = (revisions, settings.publish_test_people_only, is_test_identity(actor))
 
-    def build():
-        value = _home_uncached(db, actor, max_days=max_days, now=now)
-        if review_refresh_at is not None:
-            value['review_refresh_at'] = aware(review_refresh_at).isoformat()
-        return value
+    def response(value):
+        data = dict(value)
+        deadlines = (review_refresh_at, data.pop('_review_expires_at', None))
+        deadline = min((aware(at) for at in deadlines if at is not None), default=None)
+        if deadline is not None:
+            data['review_refresh_in_ms'] = max(0, ceil((deadline - m.now()).total_seconds() * 1000))
+        return data
 
     from .read_projections import cached_department
     if db is not None:
-        return cached_department(db, actor, 'home', digest([stamp, max_days]), build,
-                                 audience_values=('home', max_days))
+        return response(cached_department(db, actor, 'home', digest([stamp, max_days]),
+                                          lambda: _home_uncached(db, actor, max_days=max_days, now=now),
+                                          audience_values=('home', max_days)))
     key = (actor.department_id, actor.identity_id, tuple(sorted(actor.roles)), max_days, stamp)
     with _HOME_CACHE_LOCK:
         cached = _HOME_CACHE.get(key)
         if cached is not None:
             _HOME_CACHE.move_to_end(key)
-            return deepcopy(cached)
-    value = build()
+            return response(deepcopy(cached))
+    value = _home_uncached(db, actor, max_days=max_days, now=now)
     with _HOME_CACHE_LOCK:
         _HOME_CACHE[key] = deepcopy(value)
         _HOME_CACHE.move_to_end(key)
         while len(_HOME_CACHE) > _HOME_CACHE_LIMIT:
             _HOME_CACHE.popitem(last=False)
-    return value
+    return response(value)
 
 
 def swap_sample(db, dept, where):

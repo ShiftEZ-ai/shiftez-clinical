@@ -51,7 +51,7 @@ interface Item {key:string;count:number;classification?:string;rota_id?:string;r
   /** A draft row (home.py): false while its check is out of date or running; its fix_list is then the last check's. */checked?:boolean;sample?:Row[];link_target?:string;fix_list?:{summary?:unknown};action?:PublishedOperationalAction|null;
   /** ME-28: the first rota to review amends a published one: its changes and their reasons (Sick, Leave…). */
   amendment?:{changes:number;reasons:string[]}}
-interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[];review_refresh_at?:string}
+interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[];review_refresh_in_ms?:number}
 /** One row of Needs you: a count pill (tone and number), a title, one muted line of context and one action. */
 type Need={tone:BadgeTone;count:number;title:string;context:string;action:string;go:()=>void;to?:string;/** Shown on a phone too (a person's own published duty, a draft's blocking tasks and open places). */phone?:boolean;/** The server's key (a test and agent hook: data-need) */key?:string;
   /** G-02: several duties under one title, each line with its own action (then the row has none of its own). */items?:NeedItem[]};
@@ -385,9 +385,8 @@ function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<Hom
       const failed=loadFailed('what needs you',data,again,'needs');
       void put(body,[failed]);if(retried)failed.querySelector('button')?.focus();return;}
     recovered('needs');const every=needsOf(ctx,hooks,data);rows=every.filter(n=>!phone||onPhone(n));away=every.filter(n=>phone&&!onPhone(n));draw();if(retried)heading.focus();
-    const at=Date.parse(data.review_refresh_at||'');
-    if(Number.isFinite(at)){
-      const delay=Math.min(Math.max(1000,at-Date.now()),2**31-1);
+    if(typeof data.review_refresh_in_ms==='number'){
+      const delay=Math.min(Math.max(1,data.review_refresh_in_ms),2**31-1);
       reviewTimer=window.setTimeout(()=>{if(node.isConnected&&!lifetime.aborted)read(false,true);},delay);
     }};
   // A failure's Retry (and a timeout's: api.ts READ_TIMEOUT) reads /api/home again.

@@ -923,9 +923,23 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
         context.close()
 
 
-def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, live_server, h, monkeypatch):
-    clock = clock_now()
-    freeze_clock(monkeypatch, lambda: clock)
+@pytest.fixture
+def delegation_test_server(request, monkeypatch, tmp_path):
+    clock = tmp_path / 'clock.txt'
+    change = tmp_path / 'clock-next.txt'
+
+    def set_clock(moment):
+        change.write_text(moment.isoformat(), encoding='utf-8')
+        change.replace(clock)
+
+    set_clock(clock_now())
+    freeze_clock(monkeypatch, lambda: datetime.fromisoformat(clock.read_text(encoding='utf-8')))
+    return request.getfixturevalue('live_server'), set_clock
+
+
+def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, h, delegation_test_server):
+    live_server, set_clock = delegation_test_server
+    clock = m.now()
     identity(h, 'programme', ['programme_lead'])
     review = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'}])
     rota = submitted(h)
@@ -944,12 +958,12 @@ def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, 
         row = card.locator('[data-need="reviews"]')
         expect(row).to_have_count(0)
 
-        clock = starts
-        page.clock.fast_forward(max(1, int(starts.timestamp() * 1000) - page.evaluate('Date.now()')) + 50)
+        set_clock(starts)
+        page.clock.fast_forward(120_050)
         expect(row).to_contain_text(rota['name'])
 
-        clock = expires
-        page.clock.fast_forward(max(1, int(expires.timestamp() * 1000) - page.evaluate('Date.now()')) + 50)
+        set_clock(expires)
+        page.clock.fast_forward(120_050)
         expect(row).to_have_count(0)
     finally:
         context.close()

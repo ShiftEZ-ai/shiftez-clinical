@@ -118,13 +118,34 @@ def test_home_review_card_follows_delegation_start_and_expiry(h, monkeypatch):
 
     def home_review():
         home = h.get('approver', '/api/home')
-        return [item['rota_id'] for item in home['attention'] if item['key'] == 'reviews'], home.get('review_refresh_at')
+        return [item['rota_id'] for item in home['attention'] if item['key'] == 'reviews'], home.get('review_refresh_in_ms')
 
-    assert home_review() == ([], start.isoformat())
+    assert home_review() == ([], 600_000)
+    clock += timedelta(seconds=1)
+    assert home_review() == ([], 599_000)
     clock = start
-    assert home_review() == ([w['id']], expiry.isoformat())
+    assert home_review() == ([w['id']], 600_000)
     clock = expiry
     assert home_review() == ([], None)
+
+
+def test_home_refresh_uses_another_delegation_only_for_an_actionable_review(h):
+    identity(h, 'programme', ['programme_lead'])
+    identity(h, 'next_approver', ['approver'])
+    identity(h, 'other_programme', ['programme_lead'])
+    review = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'},
+                       {'key': 'clinical', 'label': 'Clinical review', 'role': 'approver'}])
+    grant = delegation(h, review)
+    rota = submitted(h)
+    h.command('approver', 'workspace.approve', {'reason': 'Delegated review', 'delegation_id': grant['id']},
+              rota['id'], rota['revision'])
+
+    actionable = h.get('next_approver', '/api/home')
+    assert any(item['key'] == 'reviews' and item['rota_id'] == rota['id'] for item in actionable['attention'])
+    assert actionable['review_refresh_in_ms'] > 0
+    unrelated = h.get('other_programme', '/api/home')
+    assert not any(item['key'] == 'reviews' for item in unrelated['attention'])
+    assert 'review_refresh_in_ms' not in unrelated
 
 
 def test_scoped_delegation_is_real_authority_and_remains_revocable(h):
