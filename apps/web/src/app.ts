@@ -96,7 +96,7 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList} from './generated.js';
+import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
@@ -1500,7 +1500,7 @@ async function loadLists(full=false){
     // Unread contacts fail the whole reply (never an empty directory): its versions are not kept, so the next refresh
     // reads the people and their contacts again.
     const contacts=new Map((await background<{people:Row[]}>('/api/directory')).people.map(d=>[d.id,d]));
-    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section}:p;});
+    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section,contacts:d.contacts}:p;});
   }
   // Replies apply in the order the reads started: one that started earlier and lands later (a refresh overtaken by a
   // sign-in or role change) is dropped, never merged over fresher lists.
@@ -5217,6 +5217,23 @@ async function peoplePage(target:HTMLElement){
     {key:'code',label:'Short code',field:'short_code',text:p=>shortCode(p),cell:p=>el('span',{class:'mono'},p.short_code||el('span',{class:'muted'},'Automatic')),
       edit:inlineField('people','short_code',{kind:'text',maxLength:6})},
   ];
+  // Build optional columns and search terms only from contacts already disclosed to this reader.
+  const contactTypes=new Map<string,VisibleContact>();
+  const contactValues=new Map(people.map(p=>{
+    const values=new Map<string,string>();
+    for(const c of (p.contacts||[]) as VisibleContact[]){
+      if(c.legacy_field==='work_phone'||c.legacy_field==='work_extension')continue;
+      contactTypes.set(c.contact_type_id,c);
+      values.set(c.contact_type_id,c.value);
+    }
+    return [p.id,values] as const;
+  }));
+  const extraContacts:Column<Row>[]=[...contactTypes.values()]
+    .sort((a,b)=>a.sort_order-b.sort_order||a.name.localeCompare(b.name)||a.contact_type_id.localeCompare(b.contact_type_id))
+    .map(c=>{
+      const text=(p:Row)=>contactValues.get(p.id)?.get(c.contact_type_id)||'';
+      return {key:'contact_'+c.contact_type_id,label:c.name,text,cell:p=>text(p)||none()};
+    });
   const contact:Column<Row>[]=[
     // The title shown: the recorded one, else the current rank (display_title; the directory sends it as title).
     // The recorded title only: the rank is its own column (P-02).
@@ -5224,6 +5241,7 @@ async function peoplePage(target:HTMLElement){
     {key:'section',label:'Section',field:'directory_section',text:sectionLabel,facet:sectionLabel,cell:p=>sectionLabel(p)||none()},
     {key:'phone',label:'Hospital phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
     {key:'ext',label:'Extension',field:'work_extension',text:p=>String(p.work_extension||''),cell:p=>extensions(p.work_extension)},
+    ...extraContacts,
   ];
   // Columns follow the role: contacts for everyone; ranks, eligibility and skills for planners; what a credentialer authorises.
   const hidden=!full?[]:manager?['title','section','programme','code','status','review']:cred?['title','section','rank','programme','tags','code','status','review']:['title','section','skills','programme','code','status'];  // tags show: their chips open the tag read-only
@@ -5255,7 +5273,7 @@ async function peoplePage(target:HTMLElement){
       {key:'order',label:'Directory order',hidden:true,cell:()=>null,sort:p=>Number(p.directory_order??1000)},
     ],
     // Active people by default (leavers stay one filter away); the directory keeps its own order.
-    defaults:{hidden:timeline?[...hidden,'works_in_area']:hidden,...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
+    defaults:{hidden:[...hidden,...extraContacts.map(c=>c.key),...(timeline?['works_in_area']:[])],...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
     bulk:permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.CREDENTIALER)?ids=>peopleBulkActions(ids):undefined,
     // The row opens the person's side panel; one visible button per row.
     onOpen:(p,position)=>personDetails(p,position),
