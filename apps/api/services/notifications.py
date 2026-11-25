@@ -13,11 +13,14 @@ from .common import expected
 def _scope(db, actor):
     from .notification_audience import source_visibility
     content_id = m.Outbox.payload["content_id"].as_string()
+    roles = getattr(actor, 'roles', None)
+    generation = (m.Outbox.kind != 'generation_finished',) if roles is not None and 'coordinator' not in roles else ()
     # Legacy announcement envelopes without a source ID must still fail closed.
     return (m.Notification.identity_id == actor.identity_id, m.Outbox.department_id == actor.department_id,
         ((m.Outbox.kind != "announcement") & content_id.is_(None))
             | source_visibility(db, actor, m.DepartmentContent, content_id),
-        (m.Outbox.kind != "event") | source_visibility(db, actor, m.Event, m.Outbox.payload["event_id"].as_string()))
+        (m.Outbox.kind != "event") | source_visibility(db, actor, m.Event, m.Outbox.payload["event_id"].as_string()),
+        *generation)
 
 
 def _kind():

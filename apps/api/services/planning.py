@@ -1892,9 +1892,13 @@ def save_shift(db, actor, command, update=False):
     if stamped_reply:
         require(bool(prior), 'STALE_INPUTS', 'The session could not be captured; refresh before saving again',
                 409, {'recoverable': True})
+    previous = {p['person_id']: p for p in prior.get('participants', [])}
+    for participant in value.participants:
+        supervisor_id = previous.get(participant.person_id, {}).get('supervisor_person_id')
+        if supervisor_id is not None and 'supervisor_person_id' not in participant.model_fields_set:
+            participant.supervisor_person_id = supervisor_id
     proposed = {**prior, 'id': existing.id if existing else None,
                 **value.model_dump(mode='json', include=set(s.ShiftInput.model_fields))}
-    previous = {p['person_id']: p for p in prior.get('participants', [])}
     for participant, parsed in zip(proposed['participants'], value.participants):
         if 'fixed' not in parsed.model_fields_set:
             participant['fixed'] = previous.get(parsed.person_id, {}).get('fixed', False)
@@ -1924,7 +1928,10 @@ def save_shift(db, actor, command, update=False):
         # The preimage already has every other own session. Reacquire the edited row after
         # the assignment write and automatic supervisor pairing, in canonical schedule order.
         own = [shift for shift in before['shifts'] if shift['id'] != row.id]
-        own.extend(snapshots.shift_records(db, [row]))
+        captured = snapshots.shift_records(db, [row])
+        require(len(captured) == 1 and captured[0].get('id') == row.id, 'STALE_INPUTS',
+                'The saved session could not be captured; refresh before saving again', 409, {'recoverable': True})
+        own.extend(captured)
         own.sort(key=lambda shift: (aware(shift['start']), shift['id']))
         db.info['_prepared_shift_edit'] = workspace.id, own
     admission = None
@@ -2810,7 +2817,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
-                                    effective_until=effective_until,
+                                    effective_until=effective_until, calendar_lineage=True,
                                     snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)

@@ -684,7 +684,7 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       if(!previous.some(r=>r.id===id)){const w=(await rotaMeta(id).catch(()=>null))?.workspace;if(!w)return;previous.push(w);source.input.append(el('option',{value:w.id},rotaChoice(w).label));}
       source.input.value=id;fitSource();};
     const people=check('Include assigned people',false);
-    const automate=check('Run auto-schedule after setup',true);
+    const automate=check('Run auto-schedule after setup',false);
     const activeTemplates=all(ctx,'recurring_series').filter(r=>r.active);
     const allTemplates=check('Use all active recurring sessions',true);
     const templates=multi('Recurring sessions',options(activeTemplates));

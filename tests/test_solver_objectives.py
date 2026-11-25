@@ -48,6 +48,34 @@ def test_reserved_hours_balance_and_configurable_stability_weight(h):
     assert balanced['objective_components']['fairness']['value'] == 1
 
 
+def test_fairness_weight_only_balances_duties_with_a_goal(h):
+    first, second = h.seed['people'][:2]
+    # The default one-duty tolerance would accept the initial two-to-zero split.
+    goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share', 'period': 'rota',
+                     'tolerance_units': 0, 'tolerance_percent': 0}, severity='advisory')
+    duty_type = h.configure('assignment_types', {'name': 'Single place duty', 'starts_on': '2020-01-01',
+                            'definition': {'requirements': [{'minimum': 1, 'target': 1, 'maximum': 1}]}})['record']
+    w = h.workspace()
+    for day in (4, 5):
+        w = h.shift(w, typ=duty_type['id'], start=f'2026-10-0{day}T08:00:00+03:00',
+                    end=f'2026-10-0{day}T12:00:00+03:00', people=[first])['workspace']
+    data = h.snapshot(w)
+    data['people'] = {pid: data['people'][pid] for pid in (first, second)}
+    data['generation_options'] = {'mode': 'rebalance', 'scoring': {'weights': {'fairness': 20}}}
+
+    unbalanced = generate({**data, 'policies': []}, 5, deterministic=True)
+    assert unbalanced['weighted_status'] == 'OPTIMAL'
+    assert unbalanced['additions'] == unbalanced['removals'] == []
+    assert unbalanced['compiled_component_values']['fairness'] is None
+    assert unbalanced['summary']['score']['score'] == 100
+
+    balanced = generate({**data, 'policies': [goal]}, 5, deterministic=True)
+    assert balanced['weighted_status'] == 'OPTIMAL'
+    assert len(balanced['removals']) == 1
+    assert [row['participant']['person_id'] for row in balanced['additions']] == [second]
+    assert balanced['compiled_component_values']['fairness'] == 1
+
+
 def test_a_small_quota_miss_no_longer_outweighs_an_unfilled_seat(h):
     # A desired seat on a 30-minute session against an advisory 6-minute hours cap. The quota counted in tenths
     # of an hour cost 4 units against the seat's 1, so the seat stayed empty; desired cover now precedes weighted quality.

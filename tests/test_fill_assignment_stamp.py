@@ -90,7 +90,8 @@ def test_fill_panel_assign_runs_once_under_writer_then_worker_checks_and_undo_re
     assert [row['person_id'] for row in second['participants']] == [next_candidate['person_id']]
 
 
-def test_stamp_refuses_assignment_when_the_before_session_is_missing(h, monkeypatch):
+@pytest.mark.parametrize('missing', ['before', 'after'])
+def test_stamp_refuses_assignment_when_the_session_capture_is_missing(h, monkeypatch, missing):
     freeze_clock(monkeypatch)
     w = h.shift(h.workspace(), people=[], typ=optional_type(h))['workspace']
     shift, = h.detail(w)['shifts']
@@ -98,8 +99,19 @@ def test_stamp_refuses_assignment_when_the_before_session_is_missing(h, monkeypa
     result = options(h, w, shift['id'])
     candidate = next(row for row in result['candidates'] if row['status'] == 'ok')
     content = planning.workspace_content
+    shift_records = snapshots.shift_records
+
+    def omit_saved_session(db, rows, **kwargs):
+        rows = list(rows)
+        if any(isinstance(row, m.Shift) and row.id == shift['id'] and row.revision > shift['revision'] for row in rows):
+            return []
+        return shift_records(db, rows, **kwargs)
+
     with monkeypatch.context() as patch:
-        patch.setattr(planning, 'workspace_content', lambda *args: {**content(*args), 'shifts': []})
+        if missing == 'before':
+            patch.setattr(planning, 'workspace_content', lambda *args: {**content(*args), 'shifts': []})
+        else:
+            patch.setattr(snapshots, 'shift_records', omit_saved_session)
         refused = edit(h, w, shift, [{**result['slot'], 'person_id': candidate['person_id']}],
                        expected_fingerprint=result['assignment_stamp'], status=409)
     assert refused['error']['code'] == 'STALE_INPUTS'
