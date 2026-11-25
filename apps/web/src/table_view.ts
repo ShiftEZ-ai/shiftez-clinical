@@ -1029,7 +1029,8 @@ export function dataTable<T>(spec:TableSpec<T>){
     group:(ids:string[],label:string)=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${label}`}) as HTMLInputElement;
       setTriState(b,triStateOf(ids.filter(id=>ext.set.has(id)).length,ids.length));b.addEventListener('click',e=>e.stopPropagation());
       b.addEventListener('change',()=>{for(const id of ids)b.checked?ext.set.add(id):ext.set.delete(id);extBoxes.forEach((x,id)=>x.checked=ext.set.has(id));extSync();ext.changed();});return b;}}:null;
-  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?bulk.box(spec.rowId(r),label(r)):null;
+  const selectionTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
+  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?selectionTarget(bulk.box(spec.rowId(r),label(r))):null;
   const root=el('div',{class:'dt','data-table':spec.id});
   // "Show changed · N" is on: only the rows the last bulk change changed (read by matches(), so declared first).
   let onlyChanged=false;
@@ -1296,7 +1297,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     body.querySelector<HTMLElement>(`thead th[data-col="${CSS.escape(c.key)}"] .dt-sort`)?.focus({preventScroll:true});});}
   function tableOf(items:T[],groupKey:string){
     const cols=colsOf(items,groupKey);
-    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||bulk.all)]:[]),...cols.map((c,i)=>{
+    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||selectionTarget(bulk.all))]:[]),...cols.map((c,i)=>{
       const cls=[c.num?'num':'',c.class||'',v.wrap.includes(c.key)?'dt-wrap':''].join(' ').trim();
       const on=v.sort?.[0]===c.key,dir=on?v.sort![1]:null;
       // One menu per column header (table_menu.ts): sort, filter, group, wrap, hide, move; saved with the view.
