@@ -1374,7 +1374,10 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
    "Anesthesiology" mid-word, D-156); what does not fit goes behind "+N" (dom.ts legend), which lists every entry in
    full. Only a first entry wider than the key on its own is cut, with room kept for "+N". Print shows every entry. */
 .view-legend li{flex:none}.view-legend li:first-child{max-width:calc(100% - 56px)}.view-legend li[hidden]{display:none}
-.view-legend .lg-more .pill-more{height:18px;font-size:11px}.lg-pop{display:flex;align-items:center;gap:5px}
+.view-legend .lg-more>.pill-more{display:grid;place-items:center;height:18px;padding:0;border:0;background:none;font-size:11px}
+.view-legend .lg-more-mark{display:grid;place-items:center;height:18px;font-size:11px}
+.view-legend .pill-more:is(:hover,.is-open)>.lg-more-mark{background:var(--hover)}
+.lg-pop{display:flex;align-items:center;gap:5px}
 @media print{.view-legend{flex-wrap:wrap}.view-legend li[hidden]{display:flex}.view-legend .lg-more{display:none}}
 .view-legend .lg-words{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media print{.view-legend .lg-words{white-space:normal}}
@@ -2072,7 +2075,8 @@ td small.mono{font-size:12px}
 
 /* Bulk selection: row checkboxes and a floating action bar */
 .bulk-check{width:16px;height:16px;margin:0 10px 0 0;flex:none;accent-color:var(--accent);cursor:pointer}
-th .bulk-check,td>.bulk-check{margin:0}
+th .bulk-check,td>.bulk-check,td>.dt-check-hit>.bulk-check{margin:0}
+.dt-check-hit{display:contents}
 @media(max-width:720px){.bulk-check{width:24px;height:24px}}  /* WCAG 2.5.8 target size on phones */
 @media print{.selection-bar,.bulk-check{display:none}}
 
@@ -4409,7 +4413,7 @@ tr.is-explained>td{background:var(--accent-soft)}
 .pill-list>.pill-item>*{min-width:0;max-width:100%}
 .pill-list>.pill-item>.rp{max-width:220px}
 .pill-over{display:none}
-.pill-more{flex:none;height:24px;padding:0 7px;border:1px dashed var(--control-line);border-radius:var(--r-full);background:transparent;color:var(--ink-2);font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+.pill-more,.lg-more-mark{flex:none;height:24px;padding:0 7px;border:1px dashed var(--control-line);border-radius:var(--r-full);background:transparent;color:var(--ink-2);font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
 .pill-more:hover,.pill-more.is-open{background:var(--hover)}
 .pill-pop ol{margin:0;padding:4px 4px 4px 28px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto}
 .pill-pop li::marker{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
@@ -6235,6 +6239,17 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   :root :is(.dt-tool,.pv-tab){justify-content:center}
   :root .mobile-account{align-items:center;justify-content:center}
   :root .dt-search{align-self:stretch;height:auto}  /* the field's whole box takes the tap */
+  :root label:has(>input:is([type=checkbox],[type=radio])):not(.wk-check-hit){min-width:var(--target);min-height:var(--target)}
+  :root .checkbox{align-items:center}
+  /* The native label activates the small selection box across its whole slot. */
+  :root .dt-check-hit{display:inline-grid;width:var(--target);height:var(--target);place-items:center;vertical-align:middle;cursor:pointer}
+  :root .dt-check-hit>.bulk-check,:root .dt-check-head>.bulk-check{margin:0}
+  :root .dt-table:has(.dt-check-hit):not(:has(.dt-check-head)){--dt-check-w:var(--target)}
+  :root .dt-table .dt-check:has(.dt-check-hit){padding:0!important;text-align:center}
+  /* The one-line legend reserves the whole overflow target while retaining the painted pill. */
+  :root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}
+  :root .view-legend .lg-more>.pill-more{min-width:var(--target);height:var(--target);border-radius:0}
+  :root .view-legend li:first-child{max-width:calc(100% - var(--target) - 14px)}
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark:not(.cov-cell>*),.app-footer :is(button,a[href])){position:relative}  /* an absolute mark already holds its ::after */
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark,.app-footer :is(button,a[href]))::after{content:'';position:absolute;inset:min(0px,calc(50% - var(--target)/2))}
   :root .health-pills:has(>button){row-gap:calc(var(--target) - 28px)}  /* wrapped pills' targets never overlap */
