@@ -7,7 +7,7 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -1096,21 +1096,21 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
  *  (and, for a server error, its message and Report this problem). Shared by every page (it sits above the page's own
- *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing says only
- *  that it didn't load. */
+ *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing shows
+ *  readFailed() instead. */
 let stale=false,staleError:unknown=null,freshAt=Date.now(),staleBanner:{text:string;node:HTMLElement}|null=null;
 function showStale(on:boolean,error?:unknown){
   if(!on){stale=false;staleError=null;freshAt=Date.now();}else{if(!stale)staleError=null;stale=true;if(error)staleError=error;}
   const main=document.querySelector<HTMLElement>('#main');main?.querySelector(':scope>.stale-banner')?.remove();
   if(!stale||!main?.hasAttribute('data-loaded-view')||['restricted','desktop-only'].includes(main.dataset.loadedView||''))return;
-  // One line (N-11): what failed and how old the data is; a server's own message follows it as text (read on touch and
-  // by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
+  // One line (N-11): what failed and how old the data is; a server's own words (errorWords) follow it as text (read on
+  // touch and by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
   // Worded again when offline becomes a server error.
-  const server=staleError instanceof ApiError&&staleError.status>=500;
-  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' '+(staleError as Error).message:'');
+  const server=staleError instanceof ApiError&&staleError.status>=500,said=server?errorWords(staleError):'';
+  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' · '+said:'');
   // The same banner is put back on each redraw: its error is recorded (feedback's recent errors) once, not per draw.
   if(staleBanner?.text!==key){const banner=note(text,server?'error':'warning',server?staleError:undefined);banner.classList.add('stale-banner');banner.setAttribute('role','status');
-    if(server)banner.querySelector(':scope>span')?.append(' · '+(staleError as Error).message);
+    if(said)banner.querySelector(':scope>span')?.append(' · '+said);
     banner.prepend(icon('alert'));banner.append(button('Retry',retryRefresh,'secondary small'));staleBanner={text:key,node:banner};}
   main.prepend(staleBanner.node);
 }
@@ -7795,7 +7795,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     feedback.querySelector('.auto-paused')?.remove();
     // A refresh failure keeps the panel's last state, including a run still in progress; a failed START takes the
     // separate "The run didn't start" path in queue() and never reaches this note.
-    const n=note(`Couldn't refresh. Showing the last result. ${(e as Error).message}`,'warning');n.classList.add('auto-paused');
+    const said=errorWords(e),n=note(`Couldn't refresh. Showing the last result.${said?' '+said:''}`,'warning');n.classList.add('auto-paused');
     n.append(' ',button('Retry',()=>{n.remove();void load().catch(failed);},'link-button'));
     // Forget the drawn key: the next good read redraws the footer (Apply enabled) even when its jobs are unchanged.
     jobsKey='';feedback.prepend(n);for(const b of foot.querySelectorAll<HTMLButtonElement>('button.primary'))b.disabled=true;};
