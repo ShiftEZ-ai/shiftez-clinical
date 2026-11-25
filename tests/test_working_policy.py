@@ -631,10 +631,11 @@ def pytest_runtest_makereport(item, call):
             output = Path(folder) / "output"
             fetched = []
             with patch.object(policy, "event", return_value=data), patch.object(policy, "git", return_value=head.encode()), \
+                 patch.object(policy, "pr_test_base", return_value=before), \
                  patch.object(policy, "tree", return_value="c" * 40), \
                  patch.object(policy, "fetch", side_effect=lambda name: fetched.append(name) or "d" * 40), \
                  patch.object(policy, "accepted_dev_commit", return_value=accepted), \
-                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": kind, "GITHUB_REF": "refs/heads/" + ref,
+                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": kind, "GITHUB_REF": "refs/heads/" + ref, "TRUSTED_BOOTSTRAP": "false",
                                          "GITHUB_OUTPUT": str(output)}):
                 policy.ci_context()
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
@@ -1182,6 +1183,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             if args[0] == "show": return json.dumps(after if args[1] == candidate+":"+policy.KNOWN else before).encode()
             if args[:4] == ("rev-list", "--parents", "-n", "1"):
                 return (f"{candidate} {target} {head}" if args[4] == candidate else f"{head} {'6' * 40}").encode()
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                self.assertIn(args[2:], [(target, target), (target, "refs/remotes/origin/" + branch)])
+                return b""
             if args == ("rev-parse", "HEAD"): return trusted.encode()
             if args[0] == "rev-parse": return tree.encode()
             raise AssertionError(args)
@@ -1274,7 +1278,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                     with patch.dict(os.environ, {"CANDIDATE_SHA": selected.call_args.args[0]["candidate_sha"]}):
                         verifier.main()
                     with patch.dict(os.environ, {"CANDIDATE_SHA": head, "GITHUB_SHA": head}):
-                        with self.assertRaisesRegex(ValueError, "PR candidate must be the event merge"):
+                        with self.assertRaisesRegex(ValueError, "event head second"):
                             verifier.main()
                 else:
                     verifier.main()

@@ -83,7 +83,10 @@ def test_department_preview_and_proposal_are_summaries_with_full_evidence_on_dem
     assert 'payload' not in preview['targets'][0] and 'source' not in preview['bindings'][0]
     assert len(full['source_manifest']) == 1137 and full['plan_hash'] == preview['plan_hash']
     assert sum(len(t['payload']['definition']['rule']['lines']) for t in full['targets']) == 292
-    assert shown_response.json()['record']['proof'] == conversion._preview_proof(proof)
+    shown = shown_response.json()['record']
+    assert all('census' not in plan for plan in (preview, changed['plan'], shown['plan']))
+    assert detailed['plan']['census'] == full['census']
+    assert shown['proof'] == conversion._preview_proof(proof)
     assert detailed['proof'] == proof
     assert listed[0]['id'] == changed['id']
 

@@ -409,7 +409,9 @@ export function legend(label='Legend'){
     const lis=[...root.querySelectorAll<HTMLElement>(':scope>li[data-lg-entry]')];for(const l of lis)l.hidden=false;
     const list=()=>lis.map(l=>{const i=items.get(l.dataset.lgK||'');return i?el('span',{class:'lg-pop'},...entry({...i,mark:i.mark.cloneNode(true) as HTMLElement})):'';});
     for(let i=lis.length-1,n=1;i>0&&root.scrollWidth>root.clientWidth+1;i--,n++){lis[i].hidden=true;root.querySelector(':scope>.lg-more')?.remove();
-      root.append(el('li',{class:'lg-more'},overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list})));}};
+      const more=overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list});
+      more.replaceChildren(el('span',{class:'lg-more-mark','aria-hidden':'true'},more.textContent));
+      root.append(el('li',{class:'lg-more'},more));}};
   legendFits.set(root,fit);
   observeSize(root,()=>{if(root.clientWidth!==width)fit();});
   const add=(key:string,mark:string|HTMLElement,text:string,order=1,use?:LegendUse)=>{
@@ -564,10 +566,15 @@ export const holdsLists=(c:Catalogues)=>'_versions' in c;
 /** The words for a read the server refused this role (403): information, never an empty state or an error. */
 export const ROLE_REFUSED='Not available for your role.';
 export const refused=(e:unknown)=>e instanceof ApiError&&e.status===403;
-/** DL-045: the words for a read that failed, "Couldn’t load <name>." and the error's own message: `name` is the area's
- *  own name ("the score review", "rotas"), never "data" or "this section". The only place these words are written
- *  (tests/test_web_read_errors.py); a toast for a failed read says them too. */
-export const couldntLoad=(name:string,e?:unknown)=>`Couldn’t load ${name}.${e instanceof Error&&e.message?' '+e.message:''}`;
+/** An error's own words when they are a sentence for people (the server's problem detail, our own connection words),
+ *  else '': a bare status phrase ("Service unavailable"), a code or one word says nothing the notice does not
+ *  (DESIGN.md › Interaction contract). */
+const STATUS_PHRASE=/^(bad request|unauthori[sz]ed|forbidden|not found|method not allowed|request time-?out|conflict|gone|too many requests|(internal )?server error|not implemented|bad gateway|service (temporarily )?unavailable|gateway time-?out)\.?$/i;
+export const errorWords=(e:unknown)=>{const m=e instanceof Error?e.message.trim():'';return /\s/.test(m)&&!STATUS_PHRASE.test(m)?m:'';};
+/** DL-045: the words for a read that failed, "Couldn’t load <name>." and the error's own words (errorWords): `name` is
+ *  the area's own name ("the score review", "rotas"), never "data" or "this section". The only place these words are
+ *  written (tests/test_web_read_errors.py); a toast for a failed read says them too. */
+export const couldntLoad=(name:string,e?:unknown)=>{const said=errorWords(e);return `Couldn’t load ${name}.${said?' '+said:''}`;};
 /** The one note for a read that failed (maintenance): a refusal says ROLE_REFUSED (info, no Retry); a read that timed out
  *  (api.ts READ_TIMEOUT) says only "Didn’t load in 1:00." in the warning tone; any other failure says couldntLoad(name,
  *  e) in the error tone, then `after` (what that leaves, "The list is grouped by family."). Both with Retry inside the
