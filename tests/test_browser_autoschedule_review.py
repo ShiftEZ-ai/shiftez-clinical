@@ -333,6 +333,21 @@ def test_review_counts_places_numbers_and_week_ranges(browser, cp_server, h, vie
         context.close()
 
 
+@pytest.mark.parametrize('view,scheme', TWO)
+def test_run_priorities_link_to_the_fair_share_rule(browser, cp_server, h, view, scheme):
+    w = h.shift(h.workspace(), people=[])['workspace']
+    context, page, panel = _open(browser, cp_server, h, w, view, scheme)
+    try:
+        priorities = panel.get_by_role('radiogroup', name='Priorities')
+        expect(priorities).to_have_accessible_description('Fairness balances duties only where a Fair share rule applies.')
+        link = panel.get_by_role('link', name='Fair share', exact=True)
+        expect(link).to_be_visible()
+        link.click()
+        expect(page.locator('#main').get_by_role('heading', name='Fair share', exact=True)).to_be_visible()
+    finally:
+        context.close()
+
+
 def test_run_priorities_are_presets_and_scoring_lives_in_configuration(browser, cp_server, h):
     w = h.shift(h.workspace('FM presets only'), people=[])['workspace']
     context, page = sign_in(browser, cp_server, 'admin', viewport=DESKTOP)

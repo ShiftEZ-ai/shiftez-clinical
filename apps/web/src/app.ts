@@ -102,7 +102,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -7613,14 +7613,18 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Priorities: real run overrides; score weights and wish budgets stay with department Configuration.
   // D76 (run card): the presets are one segmented choice (the contract's presets, arrow keys as every radiogroup); the
   // chosen one's weights are the line under it.
-  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'});
-  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId},...PRESETS.map(p=>{
+  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'}),fairnessHelpId=presetId+'-help';
+  const fairShare=RULE_CATALOGUE_V2.find(e=>e.id==='fair_share')!;
+  const fairnessHelp=el('p',{class:'hint',id:fairnessHelpId},`${SCORE_WEIGHT_LABELS.fairness} balances duties only where a `,
+    allowed('rules')&&ruleCatalogueOn()?el('a',{href:routeHash('rules',[fairShare.id]),class:'link-button'},fairShare.name):fairShare.name,
+    ' rule applies.');
+  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId,'aria-describedby':fairnessHelpId},...PRESETS.map(p=>{
     const b=el('button',{type:'button',role:'radio','data-preset':p.key},p.label);
     b.addEventListener('click',()=>{st().preset=p.key;keptSetup(st());paintPresets();});return b;}));
   const paintPresets=()=>{for(const b of presets.querySelectorAll<HTMLElement>('[role=radio]')){const on=b.dataset.preset===st().preset;b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;}
     weights.textContent=weightSummary(defaults,st().preset);};
   paintPresets();
-  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
+  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,fairnessHelp,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
       permits(CAPABILITY.ADMIN)?withIcon(button('Change scoring settings',()=>navigate('configuration/auto_schedule'),'ghost small'),'settings'):''):'';
   const presetName=()=>PRESETS.find(p=>p.key===st().preset)?.label||PRESETS[0].label;
   /** A run under review is said as it was run (its job: who, what it kept, its priorities), never as the setup now:
