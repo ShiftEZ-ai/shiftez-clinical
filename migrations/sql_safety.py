@@ -3,6 +3,7 @@ import re
 
 MAX_BATCH = 1000
 CURRENT_SCHEMA = '__migration_current_schema__'
+SQLITE_PUBLICATION_GUARD = 'publications_calendar_lineage_guard'
 EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'guard_targets',
                     'current_schema', 'nullable_added_columns')
 _IDENT = re.compile(r'[A-Za-z_][A-Za-z_0-9$]*\Z|"(?:[^"]|"")+"\Z')
@@ -670,7 +671,8 @@ def sqlite_nullable_update_guard(sql):
     if not trigger:
         return None
     name, table, events, tail = trigger
-    if '.' in name or '.' in table or events[:1] != ['UPDATE'] or 'BEGIN' not in tail:
+    if (name != SQLITE_PUBLICATION_GUARD or '.' in table
+            or events[:1] != ['UPDATE'] or 'BEGIN' not in tail):
         return None
     if tail[:3] == ['FOR', 'EACH', 'ROW']:
         tail = tail[3:]
@@ -848,10 +850,15 @@ def analyze_sql(sql, *, schema=None):
             _parts(tokens, ',')  # Reject malformed or injected parenthesis boundaries.
             proof = schema if schema is not None else {}
             _forget_function(tokens, proof)
+            if 'retained_publication_guard' in proof and tokens[:2] == ['CREATE', 'TRIGGER']:
+                name_at = 5 if tokens[2:5] == ['IF', 'NOT', 'EXISTS'] else 2
+                name, _ = _name(tokens[name_at:])
+                if not name or name.rsplit('.', 1)[-1].lower() == SQLITE_PUBLICATION_GUARD:
+                    proof.pop('retained_publication_guard')
             if 'retained_publication_guard' in proof and tokens[:2] in (['ALTER', 'TABLE'], ['CREATE', 'TABLE']):
                 relation = tokens[5:] if tokens[2:5] == ['IF', 'NOT', 'EXISTS'] else tokens[2:]
                 table, _ = _name(relation)
-                if table and table.rsplit('.', 1)[-1] == 'publications':
+                if table and table.rsplit('.', 1)[-1].lower() == 'publications':
                     proof.pop('retained_publication_guard')
             if (_additive_routine(tokens) or _grant(tokens) or _schema_statement(tokens)
                     or (tokens[:1] == ['SELECT'] and _read_expression(tokens))):

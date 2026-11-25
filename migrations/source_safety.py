@@ -12,6 +12,7 @@ from migrations.sql_safety import (CURRENT_SCHEMA, analyze_sql, clear_execution_
 CLASSES = ('additive', 'fill_only', 'destructive')
 # Source-bound proof of the published closure, including both merge revisions. The trigger installed
 # in 0002 calls the function replaced in 0050, which compares the whole row except current and effective_until.
+# The same sealed SQLite history leaves the calendar lineage trigger name unused.
 # ponytail: only this audited historical guard is seeded. New guard shapes need their own source proof.
 PUBLICATION_GUARD_CHECKPOINT = '0152_feasibility_results'
 PUBLICATION_GUARD_HISTORY = 'ad3ec2b570a972a0193024b5d89eef7506619353d039e03f9f89cae2ca494e2b'
@@ -339,6 +340,8 @@ class Analyzer(ast.NodeVisitor):
                 or len(upgrade.body) != 2 or upgrade.body[1] is not node or not isinstance(upgrade.body[0], ast.Expr)):
             return None
         metadata = {'revision', 'down_revision', 'branch_labels', 'depends_on', 'SAFETY_CLASS'}
+        if self.aliases.keys() & (metadata | {'upgrade', 'downgrade'}):
+            return None
         if not all(statement is upgrade or isinstance(statement, (ast.Import, ast.ImportFrom))
                    or (isinstance(statement, ast.Assign) and self.literal(statement.value)
                        and all(isinstance(target, ast.Name) and target.id in metadata for target in statement.targets))
@@ -512,7 +515,7 @@ class Analyzer(ast.NodeVisitor):
             return
         if self.function != 'upgrade':
             return
-        if method == 'create_table' and table.rsplit('.', 1)[-1] == 'publications':
+        if method == 'create_table' and table.rsplit('.', 1)[-1].lower() == 'publications':
             self.schema.pop('retained_publication_guard', None)
         parent = self.parents.get(node)
         direct = isinstance(parent, (ast.Expr, ast.Assign, ast.AnnAssign)) and parent.value is node
@@ -553,12 +556,12 @@ class Analyzer(ast.NodeVisitor):
                             and name not in fact['columns'] and (known is None or name not in known)):
                         self.schema.setdefault('nullable_added_columns', set()).add((table, name))
                     if known is not None:
-                        if name in known and not any(key.arg == 'if_not_exists' and self.value(key.value) is True
+                        if name.lower() in known and not any(key.arg == 'if_not_exists' and self.value(key.value) is True
                                                      for key in node.keywords):
                             self.schema.pop('retained_publication_guard')
                         else:
-                            known.add(name)
-                    elif table.rsplit('.', 1)[-1] == 'publications':
+                            known.add(name.lower())
+                    elif table.rsplit('.', 1)[-1].lower() == 'publications':
                         self.schema.pop('retained_publication_guard', None)
                 if name not in fact['columns']:
                     fact['columns'].append(name)
@@ -679,6 +682,9 @@ class Analyzer(ast.NodeVisitor):
                 self.issue(self.retained_guard_use, MISSING_RETAINED_GUARD)
             elif self.rank:
                 self.issue(self.retained_guard_use, 'dialect-only update guard requires a shared additive schema')
+            else:
+                # The SQLite trigger name is no longer available in descendants.
+                self.schema.pop('retained_publication_guard')
         if self.unproved:
             self.invalidate()
         return {'class': CLASSES[self.rank], 'findings': self.findings, 'needs_schema': self.needs_schema}
