@@ -6,7 +6,6 @@ from apps.api.errors import require
 from apps.api.serialization import record, generation_defaults_record
 from .common import scoped, expected, history, range_overlaps, bump_inputs
 from .bulk_settings import limits as bulk_limits
-from .events import invalidate_audience_inputs
 
 
 SWAP_AUTOMATION_ISSUER = "fmuc:swap-automation"
@@ -339,7 +338,6 @@ def access_command(db, actor, command, settings):
             for link in open_links(db, identity.id):
                 link.revoked_at, link.revision = m.now(), link.revision + 1
         history(db, actor, "access", row, value.reason)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row)}
     if command.kind == "role.revoke":
         value = s.Decision.model_validate(command.payload)
@@ -359,7 +357,6 @@ def access_command(db, actor, command, settings):
         from .auth_configuration import protect_break_glass
         protect_break_glass(db, settings)
         history(db, actor, "access", row, value.reason)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row)}
     if command.kind in {"identity.disable", "identity.enable"}:
         s.Decision.model_validate(command.payload)  # the reason is kept in the audit log
@@ -390,6 +387,5 @@ def access_command(db, actor, command, settings):
             except IdentityStoreError as exc:
                 # Disabling always succeeds here: the app already refuses this identity on every request.
                 require(not enable, "SIGN_IN_SERVICE_UNAVAILABLE", str(exc), 503)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row, exclude=("password_hash",))}
     require(False, "UNKNOWN_COMMAND", "Unknown access command")
