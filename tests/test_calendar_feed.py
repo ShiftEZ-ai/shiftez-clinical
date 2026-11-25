@@ -419,6 +419,37 @@ def test_replacement_reusing_a_moved_dutys_slot_keeps_both_identities(h):
         assert events(client.get(path)) == [after[1]]
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_replacement_keeps_the_surviving_reservation_uid_in_a_shared_slot(h):
+    person = h.get('staff', '/api/me')['person_id']
+    path = h.command('staff', 'calendar_feed.create', {})['path']
+    first_day, last_day = '2026-10-06', '2026-10-11'
+    start, middle, end = ('2026-10-06T08:00:00+03:00', '2026-10-06T10:00:00+03:00',
+                          '2026-10-06T12:00:00+03:00')
+    first = {'person_id': person, 'start': start, 'end': middle}
+    second = {'person_id': person, 'start': middle, 'end': end}
+    original = h.shift(h.workspace(), start, end, people=[first])['workspace']
+    original = h.publish(h.shift(original, start, end, people=[second])['workspace'])
+
+    with TestClient(h.app, base_url=h.settings.public_origin) as client:
+        removed, kept = events(client.get(path))
+        assert removed['DTEND'] == kept['DTSTART'] and removed['UID'] != kept['UID']
+        replacement = h.command('coordinator', 'workspace.create', {
+            'name': 'Keep the later reservation', 'starts_on': first_day, 'ends_on': last_day,
+            'replaces_publication_id': original['publication_id'],
+        })['workspace']
+        published = h.publish(h.shift(replacement, start, end, people=[second])['workspace'])
+        current, = events(client.get(path))
+        assert current['UID'] == kept['UID']
+        assert (current['DTSTART'], current['DTEND']) == (kept['DTSTART'], kept['DTEND'])
+
+        amendment = h.workspace('Amend retained reservation', start=first_day, end=last_day,
+                                base=published['publication_id'])
+        h.publish(amendment)
+        amended, = events(client.get(path))
+        assert amended['UID'] == kept['UID']
+
+
 def test_new_publication_changes_etag(h, subscription):
     client, path, _, _ = subscription
     first = client.get(path)

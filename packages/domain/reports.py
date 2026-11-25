@@ -418,6 +418,10 @@ def date_set_events(snapshot, sequence, publication_stamp):
     return result
 
 
+def _reservation_times(participant):
+    return aware(participant['start']), aware(participant['end'])
+
+
 def _calendar_duties(shifts, person_id):
     duties = defaultdict(list)
     for shift in shifts:
@@ -429,9 +433,32 @@ def _calendar_duties(shifts, person_id):
                 duties[key].append((shift, participant))
     for key, matches in duties.items():
         # Without lineage, personal reservation times distinguish copies that share a session key.
-        matches.sort(key=lambda duty: (aware(duty[1]["start"]), aware(duty[1]["end"])))
+        matches.sort(key=lambda duty: _reservation_times(duty[1]))
         for occurrence, (shift, participant) in enumerate(matches, 1):
-            yield uuid5(NAMESPACE_URL, f"rota.invalid/{key}/{occurrence}"), shift, participant
+            yield key, uuid5(NAMESPACE_URL, f"rota.invalid/{key}/{occurrence}"), shift, participant
+
+
+def _replacement_duty_ids(previous_slots, duties, replace_from):
+    current_slots = defaultdict(list)
+    for slot, _, shift, participant in duties:
+        if slot in previous_slots and aware(shift['start']) >= replace_from:
+            current_slots[slot].append((shift['id'], _reservation_times(participant)))
+
+    inherited = {}
+    for slot, current in current_slots.items():
+        prior = previous_slots[slot]
+        if len(prior) == len(current) == 1:
+            inherited[current[0][0]] = prior[0][1]
+            continue
+        # Ordinals can change when a replacement removes one of several reservations in a slot.
+        prior_counts = Counter(reservation for reservation, _ in prior)
+        current_counts = Counter(reservation for _, reservation in current)
+        by_reservation = {reservation: uid for reservation, uid in prior if prior_counts[reservation] == 1}
+        inherited.update({
+            ident: by_reservation[reservation] for ident, reservation in current
+            if current_counts[reservation] == 1 and reservation in by_reservation
+        })
+    return inherited
 
 
 def publication_duty_ids(history, person_id):
@@ -440,26 +467,27 @@ def publication_duty_ids(history, person_id):
     ids = {}
     for shifts, use_lineage, replace_from in history:
         duties = list(_calendar_duties(shifts, person_id))
-        lineages = {shift['id']: shift.get('lineage_id') or shift['id'] for _, shift, _ in duties}
+        lineages = {shift['id']: shift.get('lineage_id') or shift['id'] for _, _, shift, _ in duties}
         counts = Counter(lineages.values())
-        replaced_slots = {}
+        replacement_ids = {}
         if replace_from is not None:
             # Only a duty actually removed by the replacement can lend its identifier.
-            replaced_slots = {slot: ident for slot, (start, ident) in previous_slots.items() if start >= replace_from}
+            replacement_ids = _replacement_duty_ids(previous_slots, duties, replace_from)
             previous = {}
 
         if use_lineage:
             ids = {ident: previous[lineage] for ident, lineage in lineages.items()
                    if counts[lineage] == 1 and lineage in previous}
-            for slot, shift, _ in duties:
-                ident = shift['id']
+            for ident in lineages:
                 if ident not in ids:
-                    ids[ident] = replaced_slots.get(slot) or uuid5(NAMESPACE_URL, f"rota.invalid/duty/{ident}")
+                    ids[ident] = replacement_ids.get(ident) or uuid5(NAMESPACE_URL, f"rota.invalid/duty/{ident}")
         else:
             # Anchor to what a legacy publication already emitted at rollout.
-            ids = {shift['id']: slot for slot, shift, _ in duties}
+            ids = {shift['id']: legacy_uid for _, legacy_uid, shift, _ in duties}
         previous = {lineage: ids[ident] for ident, lineage in lineages.items() if counts[lineage] == 1}
-        previous_slots = {slot: (aware(shift['start']), ids[shift['id']]) for slot, shift, _ in duties}
+        previous_slots = defaultdict(list)
+        for slot, _, shift, participant in duties:
+            previous_slots[slot].append((_reservation_times(participant), ids[shift['id']]))
     return ids
 
 
@@ -475,7 +503,7 @@ def calendar_feed(snapshots: list, person_id: str, name: str, *, events=()) -> s
         markers.update(date_set_events(snapshot, sequence, publication_stamp))
         segmented = metric_version(snapshot) != "scheduled-v1"
         inherited = snapshot.get('_calendar_duty_ids', {})
-        for default_id, shift, p in _calendar_duties(snapshot["shifts"], person_id):
+        for _, default_id, shift, p in _calendar_duties(snapshot["shifts"], person_id):
             duty_id = inherited.get(shift.get('id'), default_id)
             intervals = presence_intervals(p) if segmented else [(aware(p["start"]), aware(p["end"]))]
             for index, (start, end) in enumerate(intervals, 1):
