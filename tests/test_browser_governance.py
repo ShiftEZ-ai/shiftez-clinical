@@ -671,6 +671,47 @@ def release(page, held):
     page.unroute('**/api/schedule/overlaps?*')
 
 
+def test_final_approval_updates_the_schedule_header_before_the_detail_read(browser, live_server, h):
+    name = "Rota ready to publish"
+    w = h.lifecycle(h.shift(h.workspace(name))["workspace"], "submit")["workspace"]
+    context, page = sign_in(browser, live_server, "approver", viewport={"width": 1440, "height": 900})
+    try:
+        navigate(page, "planner/" + w["id"])
+        bar = page.locator(".planner-bar")
+        status = bar.locator(".rota-status")
+        approve = bar.get_by_role("button", name="Approve rota", exact=True)
+        publish = bar.get_by_role("button", name="Publish…", exact=True)
+        expect(status).to_have_text("Waiting for approval")
+        expect(publish).to_have_count(0)
+        approve.click()
+        dialog = page.get_by_role("dialog", name="Approve rota", exact=True)
+        expect(dialog).to_be_visible()
+        detail = f"**/api/workspaces/{w['id']}?*"
+        held = []
+        page.route(detail, lambda route: held.append(route))
+        try:
+            dialog.get_by_role("button", name="Approve rota", exact=True).click()
+            wait_held(page, held)
+            expect(status).to_have_text("Approved")
+            expect(approve).to_have_count(0)
+            expect(dialog).to_have_count(0)
+            expect(page.locator(".toast").filter(has_text="Approved · ready to publish")).to_be_visible()
+            expect(publish).to_be_enabled()
+            publish.click()
+            publication = page.get_by_role("dialog", name=f"Publish {name}", exact=True)
+            expect(publication).to_be_visible()
+        finally:
+            for route in held:
+                route.continue_()
+            page.unroute(detail)
+
+        # The button opened before the detail read resumed. Its dialog must publish the approved revision.
+        save_dialog(publication, "Publish")
+        assert h.detail(w)["workspace"]["status"] == "published"
+    finally:
+        context.close()
+
+
 def test_approve_rota_opened_from_home_is_held_and_a_press_joins_it(browser, live_server, h):
     """#1041: while Home's "Rota to review" (?approve=) reads the review, Approve rota is held and says it is busy; a
     press joins that opening (one read, one dialog), never a second, stacked Approve dialog."""

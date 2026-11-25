@@ -1,5 +1,5 @@
 import {statusLabel,el,field,area,select,check,button,note,badge,empty,sectionHead,table,formDialog,showDialog,confirmAction,notify,dateUnits,formatDate,formatTime,toLocal,roleLabel,statusBadge,footerStatus,plural,formatDay,armed,type Tone,hasAccess,capabilityForRole,CAPABILITY,roleForCapability,icon,helpButton,factLine,PAGE_WHY} from './dom.js';
-import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
+import {couldntLoad,reportError} from './dom.js';  // a failed read's words (DL-045)
 import {failedNote} from './dom.js';  // a failed check: refused (403) or an error with Retry (maintenance)
 import {working} from './loading.js';
 import {dateRange,lastDayIncluded} from './date_picker.js';
@@ -278,7 +278,8 @@ export async function approvalDialog(ctx:Context,data:WorkspaceData,summary:(for
         // An approved swap amendment may publish itself (Department settings); otherwise publishing is a separate step.
         // Said before the page reads again (SW3-B-03): the approval is saved whatever that read does.
         notify(result.publication_id?'Approved · the swap is published':result.workspace.status==='approved'?'Approved · ready to publish':result.workspace.status==='draft'?'Returned to the coordinator with your decisions':'Review step saved · another review is required');
-        await ctx.refresh();};
+        // Let the successful approval form close while Schedule reads its remaining details.
+        if(result.workspace.status==='approved')void ctx.refresh().catch(reportError);else await ctx.refresh();};
     },noun);
 }
 

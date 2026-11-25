@@ -361,6 +361,16 @@ function patchDraft(r:Row,kind:string):boolean{
   // P0 edit latency (live capture, 7 Nov 2026): a rota past the list's first page has no row in it; its held draft is
   // patched all the same (the dates it is checked against are the draft's), not dropped and read whole after every edit.
   const was=row||held?.workspace;
+  if(kind==='workspace.approve'&&r?.workspace?.status==='approved'&&plannerRota?.id===id&&
+    plannerRota.revision<r.workspace.revision&&workspaceId===id&&view==='schedule'&&!schedSubPage()&&location.hash===routeSeen){
+    const bar=document.querySelector('.planner-bar[data-rota="'+CSS.escape(id)+'"]');
+    const approved:Row={...plannerRota,...r.workspace,validation:r.validation};
+    // Approval leaves the sessions intact. A whole read is still needed if we lack the reviewed revision.
+    const data=held&&!held.partial&&held.workspace.revision===approved.revision-1?{...held,workspace:approved,change_diff:r.change_diff}:null;
+    const openPublish=async()=>{const current=data??await wholeRota(id);if(current.workspace.status==='approved')await publishDialog(current);};
+    bar?.querySelector('.rota-status')?.replaceWith(rotaStatusPill(approved));
+    bar?.querySelector('.rota-decisions')?.replaceChildren(...approvedRotaActions(approved,false,openPublish));
+  }
   if(!r?.health&&!lifecycle||!was||was.starts_on!==r.workspace.starts_on||was.ends_on!==r.workspace.ends_on)return false;
   // A new row, not the old one changed: the draft on screen shares it until the draft is read again.
   // RESP-REVIEW: a reply with its delta (edit, Undo, Redo) patches the draft held, so the redraw reads nothing; any
@@ -2558,7 +2568,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
     // Named after the step that happens next: a draft is submitted for review; an approved rota is published.
-    const step=w.status==='draft'?'Submit for review…':'Publish…',sandbox=w.purpose==='sandbox',rota=sandbox?rotaFor(w,work):null;
+    const sandbox=w.purpose==='sandbox',rota=sandbox?rotaFor(w,work):null;
     // maintenance: your own draft merges into the period's rota instead of being submitted (a sandbox is never submitted).
     if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
       ring:ids=>{for(const n of document.querySelectorAll('.cause-ring'))n.classList.remove('cause-ring');for(const id of ids)for(const n of document.querySelectorAll(`[data-session~="${CSS.escape(id)}"]`))n.classList.add('cause-ring');},
@@ -2567,16 +2577,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // button). aria-disabled keeps its focus and tip; pressing it says why, with the setting for an admin.
     else if(sandbox&&draft&&permits(CAPABILITY.COORDINATOR)){const why=mergeBlocked();
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
-    else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
-    else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
-    // One predicate for Reopen: the note below shows exactly when the button does not.
-    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
-    if(mayReopen)workflow.append(outdated
-      // Outdated: the reason is known, so the note is optional.
-      ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
-      :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
-    // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
-    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+    else if(!sandbox&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR))workflow.append(publishRotaButton(withDraft(publishDialog),'Submit for review…','Check it, then send it to an approver. Publish it here once approved.'));
+    if(w.status==='approved')workflow.append(...approvedRotaActions(w,outdated,withDraft(publishDialog)));
+    if(w.status==='submitted'&&permits(CAPABILITY.COORDINATOR))workflow.append(reopenRotaButton(w,outdated));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
     statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
@@ -2686,7 +2689,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       queueMicrotask(()=>adoptPopover('schedule-tools',tools!));}
   }
   const planning=w?planningOf(whole):null;
-  const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
+  const bar=el('div',{class:'planner-bar review-bar','data-rota':w?.id},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
   // Phones always take the smallest step: icon + count pills and icon-only actions on one row under the title.
   fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // A load that finishes after you have moved on must not take over the new page's top bar.
@@ -3499,6 +3502,28 @@ function rotaReviewSummary(form:HTMLElement,data:WorkspaceData,{o,fix}:Awaited<R
   form.append(...shown.nodes);
   queueMicrotask(sync);
   return state;
+}
+function publishRotaButton(open:()=>unknown,label:string,tip?:string){
+  return compact(button(label,open,'secondary',{'aria-label':label,'data-busy':'Checking…','data-tip':tip}),'send');
+}
+function reopenRotaButton(w:Row,outdated:boolean){
+  const label='Reopen as draft';
+  const description=outdated
+    ?'Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.'
+    :'Reopening invalidates review and approval. Published history is not changed.';
+  return compact(button(label,()=>confirmAction(label,description,async reason=>{
+    await command('workspace.reopen',{reason:outdated&&reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);
+    notify(outdated?'Reopened as a draft. Check it, then submit it again.':'Reopened as a draft.');await refresh();
+  },label,undefined,outdated),outdated?'primary':'secondary'));
+}
+function approvedRotaActions(w:Row,outdated:boolean,openPublish:()=>unknown){
+  const actions:HTMLElement[]=[];
+  const coordinator=permits(CAPABILITY.COORDINATOR);
+  const coordinatorCanPublish=coordinator&&w.purpose!=='sandbox';
+  if(!outdated&&(coordinatorCanPublish||permits(CAPABILITY.APPROVER)))actions.push(publishRotaButton(openPublish,'Publish…',coordinatorCanPublish?'Check again, then publish to staff':undefined));
+  if(coordinator)actions.push(reopenRotaButton(w,outdated));
+  else if(outdated)actions.push(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+  return actions;
 }
 async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   let w=data.workspace;
