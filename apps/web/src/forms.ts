@@ -1139,7 +1139,7 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
           body:{item_kind:'availability.record',common,items:ids.map(id=>({payload:{person_id:id}})),reason:'Leave recorded for several people'}});return;}
       if(many&&!many.values().length)throw new Error('Choose at least one person.');
       const result=await command<{message:string;approval_required?:boolean;warnings?:string[]}>(requestOnly?'request.create':'availability.record',await body(many?many.values()[0]:person.input.value));
-      if(result.approval_required)notify(result.message,'warning');
+      if(result.approval_required)notify(result.message);
       else notify(requestOnly?['Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);
       await ctx.refresh();};
 }

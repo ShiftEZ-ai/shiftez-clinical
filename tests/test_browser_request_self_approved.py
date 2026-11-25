@@ -110,7 +110,8 @@ def record_and_check_leave(browser, live_server, h, *, pending):
         expect(dialog).to_be_hidden()
         row = page.locator('#main [data-row]').filter(has=page.get_by_text('Self-approved', exact=True))
         if pending:
-            expect(page.locator('.toast').get_by_text('Submitted for approval', exact=False)).to_be_visible()
+            toast = page.locator('.toast', has_text='Submitted for approval')
+            expect(toast.get_by_role('button', name='Undo', exact=True)).to_be_visible()
             expect(row).to_have_count(0)
             return
         expect(row).to_have_count(1)
