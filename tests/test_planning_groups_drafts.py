@@ -413,7 +413,13 @@ def test_generation_rejects_broader_populations_and_accepts_owned_conditions(h):
     selected = h.command('admin', 'job.create', {**payload, 'planning_group_version_id': group_row['id'],
         'lookahead': 'none'}, revision=workspace['revision'])['job']
     assert selected['status'] == 'queued'
+    assert 'outside_group_count' not in selected['planning_context']
     h.command('admin', 'job.cancel', {'reason': REASON}, selected['id'])
+    partial = h.command('admin', 'job.create', {**payload, **broad, 'planning_group_version_id': group_row['id'],
+        'lookahead': 'none'}, revision=workspace['revision'])['job']
+    assert partial['planning_context']['outside_group_count'] == 1
+    assert h.get('admin', '/api/jobs/' + partial['id'])['job']['planning_context']['outside_group_count'] == 1
+    h.command('admin', 'job.cancel', {'reason': REASON}, partial['id'])
     unrestricted = h.command('admin', 'job.create', payload, revision=workspace['revision'])['job']
     assert unrestricted['status'] == 'queued'
 
