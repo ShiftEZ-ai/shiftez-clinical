@@ -949,6 +949,7 @@ def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, 
         'route_id': review['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
         'starts_at': starts.isoformat(), 'expires_at': expires.isoformat(), 'reason': 'Bounded independent delegation',
     })
+    assert h.detail(rota)['review_progress']['stale_inputs'] is False
     context, page = sign_in(browser, live_server, 'approver', DESKTOP)
     try:
         navigate(page, 'home')

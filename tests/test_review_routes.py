@@ -115,6 +115,8 @@ def test_home_review_card_follows_delegation_start_and_expiry(h, monkeypatch):
         'route_id': r['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
         'starts_at': start.isoformat(), 'expires_at': expiry.isoformat(), 'reason': 'Bounded independent delegation',
     })
+    # A delegation write changes the catalogue stamp. Confirm scheduling currency before testing time alone.
+    assert h.detail(w)['review_progress']['stale_inputs'] is False
 
     def home_review():
         home = h.get('approver', '/api/home')
