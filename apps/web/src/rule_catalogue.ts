@@ -341,11 +341,11 @@ export const whenWords=(e:RuleCatalogueEntry,l:RuleLine,rule:Settings={})=>{cons
 const dayBefore=(iso:string)=>new Date(Date.parse(iso+'T12:00:00Z')-86400000).toISOString().slice(0,10);
 const addDays=(iso:string,n:number)=>new Date(Date.parse(iso+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 /** When a line holds: "Always", "1 Sep → 30 Nov" (the end shown is the last day included), "From 1 Sep", "Until 30 Nov". */
-function validParts(l:RuleLine):string[]{
+function validParts(l:Pick<RuleLine,'starts_on'|'ends_on'>):string[]{
   const a=l.starts_on&&formatDate(l.starts_on),b=l.ends_on&&formatDate(dayBefore(l.ends_on));
   return a&&b?[a,`→ ${b}`]:a?[`From ${a}`]:b?[`Until ${b}`]:['Always'];
 }
-export const validText=(l:RuleLine):string=>validParts(l).join(' ');
+export const validText=(l:Pick<RuleLine,'starts_on'|'ends_on'>):string=>validParts(l).join(' ');
 /** Wrap between complete dates when a column is wrapped, never between a day, month and year. */
 export const validNode=(l:RuleLine):HTMLElement=>dateUnits(validParts(l),'rule-valid');
 /** The rule page's Valid cell: as validNode, and "From" / "Until" may also wrap before their date (a narrow column). */
@@ -2345,7 +2345,9 @@ export function capturedRulesContext(ctx:Context,data:Catalogue){
     return (definition.per_person||[]).map((l:Row)=>[
       l.person_id?name('people',l.person_id):'',l.programme_id?name('programmes',l.programme_id):'',
       ...(l.category_ids||[]).map((id:string)=>name('categories',id)),
-      lineNumbers(rule,l),lineSessions(l,name),daysText(l as RuleLine),validText(l as RuleLine),
+      lineNumbers(rule,l),lineSessions(l,name),
+      daysText({weekdays:l.weekdays,start_time:l.start_time,end_time:l.end_time}),
+      validText({starts_on:l.starts_on,ends_on:l.ends_on}),
     ].filter(Boolean).join(' · '));
   };
   return otherDepartmentRules(data.captured_other_rules||[],effect,levels,undefined,p=>{
