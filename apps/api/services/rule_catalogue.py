@@ -5,6 +5,7 @@ import json
 import copy
 import hashlib
 from collections import OrderedDict
+from contextlib import contextmanager, nullcontext
 from datetime import date, timedelta
 from threading import Event, RLock
 from types import SimpleNamespace as Line
@@ -628,9 +629,11 @@ def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id
                           'starts_on': day.isoformat(), 'ends_on': (day + timedelta(days=1)).isoformat(),
                           'status': None}, 'department': record(department)}
     from packages.domain.conditions import with_tags
-    data = with_tags(data)
-    data['_person_rows'] = index_person_rows(data)
-    result = explain_rules(data, rota=False)
+    with _captured_projection() if capture is not None else nullcontext():
+        data = with_tags(data)
+        data['_person_rows'] = index_person_rows(data)
+        result = explain_rules(data, rota=False)
+        conflicts = explained_conflicts(data, starts_on=day, ends_on=day + timedelta(days=1))
     return {'at': day, 'status': None, 'groups': _question_groups(),
             'rules': [{'rule_id': rule['rule_id'], 'catalogue_id': rule.get('catalogue_id'),
                        'question_group': _question_group_key(rule['question_group']),
@@ -639,7 +642,7 @@ def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id
                        'summary_short': rule.get('summary_short') or rule['summary_sentence'] or (rule['sentences'][0]['text'] if rule['sentences'] else ''),
                        'unexplained': bool(rule.get('unexplained')),
                        'line_ids': rule.get('line_ids') or []} for rule in result['rules']],
-            'conflicts': explained_conflicts(data, starts_on=day, ends_on=day + timedelta(days=1)),
+            'conflicts': conflicts,
             'people_table': _people_table(data, result['rules'], actor)}
 
 
@@ -775,6 +778,15 @@ def _captured_rules_problem():
     return Problem(409, 'RULES_SNAPSHOT_UNAVAILABLE', 'This draft baseline does not contain readable rules')
 
 
+@contextmanager
+def _captured_projection():
+    """Translate malformed stored inputs at the captured read boundary."""
+    try:
+        yield
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
+        raise _captured_rules_problem() from error
+
+
 def _captured_payload(baseline):
     from apps.api.workspace_baselines import verify
     try:
@@ -788,7 +800,7 @@ def _captured_payload(baseline):
 def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
     """Read only the department rules and their retained dependencies from a visible draft."""
     from apps.api.workspace_baselines import latest
-    from packages.domain.rule_lines import seeded_policies
+    from packages.domain.rule_lines import fact_policy, seeded_policies
     from .common import scoped
 
     require(actor.permits(*s.PERMISSIONS['planning.read']), 'NOT_FOUND', 'Record not found', 404)
@@ -817,7 +829,8 @@ def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
             raise _captured_rules_problem()
         if row['department_id'] != actor.department_id:
             continue
-        if not (all(isinstance(row.get(key), str) for key in ('id', 'status', 'name', 'kind'))
+        if not (all(isinstance(row.get(key), str) for key in ('id', 'name', 'kind'))
+                and row.get('status') in ('active', 'proposed', 'retired')
                 and isinstance(rule, dict) and isinstance(rule.get('kind'), str)):
             raise _captured_rules_problem()
         if row['status'] in ('active', 'retired') and not definition.get('workspace_id'):
@@ -830,21 +843,25 @@ def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
                             if row.get('status') == 'approved' and row.get('policy_id') in policy_ids]
     seeds = [row for row in records('policy_seed_lines', [])
              if row.get('department_id') == actor.department_id and row.get('policy_id') in policy_ids]
-    try:
-        destination_ids = policy_ids | {row['id'] for row in inputs['scheduling_facts']}
+    with _captured_projection():
+        fact_ids = {row['id'] for row in inputs['scheduling_facts']}
+        target_ids = {'policy': policy_ids, 'fact': fact_ids}
         bindings = []
         for binding in records('source_bindings', []):
             source = binding['source']
-            if (source['department_id'] == actor.department_id and not source['definition'].get('workspace_id')
-                    and binding['destinations'] and all(row['id'] in destination_ids for row in binding['destinations'])):
-                bindings.append(binding)
+            if source['department_id'] != actor.department_id or source['definition'].get('workspace_id'):
+                continue
+            if (source['id'] != binding['source_policy_id'] or source['id'] not in policy_ids
+                    or type(binding['source_order']) is not int
+                    or not isinstance(binding['destinations'], list)
+                    or any(link['id'] not in target_ids[link['kind']] for link in binding['destinations'])):
+                raise _captured_rules_problem()
+            bindings.append(binding)
         inputs['source_bindings'] = bindings
         policies = seeded_policies(policies, seeds)
-        for policy in policies:
+        for policy in [*policies, *(fact_policy(row) for row in inputs['scheduling_facts'])]:
             definition = stored_definition(policy['definition'])
             s.PolicyDefinition.model_validate_json(json.dumps(definition), strict=True, context={'historical': True})
-    except (AttributeError, KeyError, TypeError, ValueError) as error:
-        raise _captured_rules_problem() from error
     inputs['policy_seed_lines'] = []
     captured_at = (baseline.provenance or {}).get('captured_at')
     if captured_at is None and baseline.created_at is not None:
@@ -1078,7 +1095,12 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
             'not_on_catalogue': not_on_catalogue if catalogue_id is None else [], "day": str(day),
             "attention": issues, "attention_counts": attention_counts(pending),
             **({'source': {'kind': 'snapshot', 'workspace_id': capture.workspace_id, 'baseline_id': capture.baseline_id,
-                           'captured_at': capture.captured_at}} if capture is not None else
+                           'captured_at': capture.captured_at},
+                'captured_other_rules': [
+                    {**{key: row.get(key) for key in ('id', 'name', 'starts_on', 'ends_on')},
+                     'definition': stored_definition(row['definition'])}
+                    for row in capture.policies if row['status'] == 'active' and row['id'] not in primary_ids
+                ]} if capture is not None else
                {'_live_definitions': live_definitions} if shared_body else {'source_options': source_options})}
 
 
@@ -1172,7 +1194,8 @@ def catalogue(db, actor, version=1, include_hidden=False, day=None, *, catalogue
     require_catalogue_read(actor, None if in_force_only else 'policies')
     if workspace_id is not None:
         capture = rules_source(db, actor, workspace_id)
-        return _catalogue_uncached(db, actor, version, include_hidden, day, capture=capture)
+        with _captured_projection():
+            return _catalogue_uncached(db, actor, version, include_hidden, day, capture=capture)
     if (people is not None
             or db is not None and (db.connection().info.get('rota_write') or db.new or db.dirty)):
         return _catalogue_uncached(db, actor, version, include_hidden, day, catalogue_id=catalogue_id, people=people,

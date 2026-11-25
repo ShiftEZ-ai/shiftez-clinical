@@ -141,7 +141,7 @@ def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
-@pytest.mark.parametrize('corruption', ['missing-definition', 'scalar-number'])
+@pytest.mark.parametrize('corruption', ['missing-definition', 'scalar-number', 'binding', 'destination-kind', 'fact'])
 def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch, corruption):
     draft = h.workspace('Unusable capture')
     verify = workspace_baselines.verify
@@ -152,10 +152,18 @@ def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch
             policy = next(policy for policy in payload['policies'] if policy['status'] == 'active')
             definition = policy['definition']
             if corruption == 'missing-definition':
-                definition = None
-            else:
+                return {**payload, 'policies': [{**policy, 'definition': None}]}
+            if corruption == 'scalar-number':
                 definition = {**definition, 'rule': {**definition['rule'], 'lines': [line(numbers={'target': 3})]}}
-            payload = {**payload, 'policies': [{**policy, 'definition': definition}]}
+                return {**payload, 'policies': [{**policy, 'definition': definition}]}
+            if corruption == 'fact':
+                fact = {'id': str(uuid4()), 'department_id': policy['department_id'], 'data': {'catalogue_id': 'fair_share'}}
+                return {**payload, 'scheduling_facts': [fact]}
+            destination = {'id': policy['id'], 'kind': 'fact' if corruption == 'destination-kind' else 'policy'}
+            binding = {'source': policy, 'source_policy_id': policy['id'], 'destinations': [destination]}
+            if corruption == 'destination-kind':
+                binding['source_order'] = 1
+            return {**payload, 'source_bindings': [binding]}
         return payload
 
     monkeypatch.setattr(workspace_baselines, 'verify', corrupt)
@@ -188,3 +196,21 @@ def test_captured_catalogue_ignores_other_department_and_rota_rules(h, monkeypat
         assert other_id not in result
         assert private_id not in result
         assert foreign_seed not in result
+
+
+def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
+    from .test_rule_catalogue_api import approve, person, propose
+    from .test_rule_templates import activate, propose as propose_legacy
+
+    people = h.seed['people']
+    legacy = activate(h, propose_legacy(h, {'kind': 'max_hours', 'hours': 7, 'window': 'day'}, ends_on='2029-12-31'))
+    folded = approve(h, propose(h, 'duties_per_week', [
+        line(who=person(people[0]), numbers={'max': {'value': 3}}),
+        line(who=person(people[1]), numbers={'max': {'value': 5}}),
+    ])['record'])
+    draft = h.workspace('Historical rules source')
+    verify_date = '2030-01-01'
+    url = f'/api/rules/catalogue?version=2&day={verify_date}&workspace_id={draft["id"]}'
+    records = {row['id']: row for row in h.get('coordinator', url)['captured_other_rules']}
+    assert [row['numbers']['max']['value'] for row in records[folded['id']]['definition']['rule']['lines']] == [3, 5]
+    assert records[legacy['id']]['definition']['rule']['hours'] == 7

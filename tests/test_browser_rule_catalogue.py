@@ -611,9 +611,15 @@ def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_serv
         context.close()
 
 
-def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser, live_server, h):
+@pytest.mark.parametrize('legacy_rule', [False, True], ids=['catalogue-v2', 'legacy'])
+def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser, live_server, h, legacy_rule):
+    from .test_rule_templates import activate, propose
+
     flag(h, legacy=False)
-    legacy = h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
+    legacy = activate(h, propose(h, {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}, per_person=[
+        {'person_id': h.seed['people'][0], 'amount': 3},
+        {'person_id': h.seed['people'][1], 'amount': 4},
+    ])) if legacy_rule else None
     draft = h.workspace('Saved rules source')
     context, page = sign_in(browser, live_server, 'coordinator')
     captured = re.compile('^Saved rules source, as captured')
@@ -630,33 +636,38 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
     def view_settings():
         page.get_by_role('button', name='View settings', exact=True).click()
 
+    live_action = page.locator('#main .rt-item').first.get_by_role('switch') if legacy else page.get_by_role('button', name='Add rule', exact=True)
     try:
         page.route(re.compile(rf'/api/rules/catalogue\?.*workspace_id={draft["id"]}'), captured_catalogue)
         navigate(page, 'rules')
-        expect(page.get_by_role('button', name='Add rule', exact=True)).to_be_visible()
+        expect(live_action).to_be_visible()
         view_settings()
         page.get_by_role('button', name='Live rules', exact=True).click()
         page.get_by_role('option', name=captured).click()
         expect(page.locator('#main .read-failed')).to_contain_text('This draft baseline does not contain readable rules')
-        expect(page.get_by_role('button', name='Add rule', exact=True)).to_have_count(0)
+        expect(live_action).to_have_count(0)
         page.get_by_role('button', name='Retry', exact=True).click()
         expect(page.locator('.app-footer .dt-count')).to_contain_text('Saved rules source, as captured')
         expect(page.locator('#main .rt-item').first).to_be_visible()
-        expect(page.get_by_role('button', name='Add rule', exact=True)).to_have_count(0)
+        expect(live_action).to_have_count(0)
         first = page.locator('#main .rt-item').first
         first.locator('.rt-toggle').click()
         expect(first.locator('.rt-ln').first).to_be_visible()
         expect(first.get_by_role('button', name=re.compile('^Open line'))).to_have_count(0)
-        rules_action(page, re.compile('^Other department rules'))
-        expect(page.get_by_text(legacy['name'], exact=True)).to_be_visible()
-        expect(page.get_by_role('button', name=legacy['name'], exact=True)).to_have_count(0)
-        page.keyboard.press('Escape')
+        if legacy:
+            rules_action(page, re.compile('^Other department rules'))
+            expect(page.get_by_text(legacy['name'], exact=True)).to_be_visible()
+            page.get_by_text('At most 5 duties per week.', exact=True).click()
+            expect(page.get_by_text(re.compile(r'\bmaximum 3\b'))).to_be_visible()
+            expect(page.get_by_text(re.compile(r'\bmaximum 4\b'))).to_be_visible()
+            expect(page.get_by_role('button', name=legacy['name'], exact=True)).to_have_count(0)
+            page.keyboard.press('Escape')
         assert len(requests) == 2
         assert requests[0] == requests[1]
         view_settings()
         page.get_by_role('button', name=captured).click()
         page.get_by_role('option', name='Live rules', exact=True).click()
-        expect(page.get_by_role('button', name='Add rule', exact=True)).to_be_visible()
+        expect(live_action).to_be_visible()
     finally:
         context.close()
 

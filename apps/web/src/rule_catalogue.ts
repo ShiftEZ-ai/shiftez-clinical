@@ -22,9 +22,9 @@ import {highlightRule} from './planner_rules.js';
 import {tagRef,membersOf} from './tags.js';
 import {ruleConditionFields,safetyRule,catalogueEntryOf,type Context} from './forms.js';
 import {rulesDatabase,ruleTreeViews} from './rules_tree.js';
-import {departmentRules,forgetDepartmentRules,type CapturedRulesSource,type DepartmentRules} from './rules_explained.js';
+import {departmentRules,forgetDepartmentRules,type CapturedRulesSource} from './rules_explained.js';
 import {conversions,readsSimplify} from './rule_simplify.js';
-import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,ruleSentence,type NumberPart} from './rule_view.js';
+import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,lineNumbers,lineSessions,ruleSentence,type NumberPart} from './rule_view.js';
 import {ruleReview} from './rule_review.js';
 import {RULE_FAMILIES,RULE_CATALOGUE,RULE_CATALOGUE_V2,MAX_SCORE_INPUT,NEVER_OVERRIDDEN,type Conditions,type Condition,type RuleCatalogueEntry,type RuleLine,type WorkloadPeriod,type RuleLineValidity,type RuleLineReplacement,type RuleAttentionCounts} from './generated.js';
 import type {Row} from './types.js';
@@ -37,7 +37,6 @@ import {moreWords} from './dom.js';  // the one "+N" and its words (UX › contr
 import {routeHash} from './routes.js';
 
 export type Entry=RuleCatalogueEntry&{rule:Row|null;proposed:(Row&{diff:Row})|null;reach:Record<string,number>;people:number;overlaps:number;
-  also_in_force?:Row[];
   /** Line id → the lines it overlaps: who both hold today and which line applies. */line_overlaps?:Record<string,{line_id:string;people:number;winner:string|null}[]>;
   /** Line id → the numbers it leaves blank and takes from a broader line. */inherited?:Record<string,Inherited>;
   /** Line id → how specific its who is (the server's rule_lines.tier). */line_specificity?:Record<string,number>;
@@ -51,7 +50,7 @@ export type Issue={id:string;kind:string;rule_id:string;catalogue_id:string;line
   fingerprint:string;acknowledged:{by:string;by_id:string;at:string;note:string}|null};
 type RulesSourceOption={workspace_id:string|null;label:string;captured_at:string|null;changed:number|null};
 export type Catalogue={families:{id:string;name:string}[];entries:Entry[];day:string;attention:Issue[];catalogue_version?:number;
-  source_options?:RulesSourceOption[];source?:CapturedRulesSource;not_on_catalogue?:Row[];
+  source_options?:RulesSourceOption[];source?:CapturedRulesSource;captured_other_rules?:Row[];
   /** Unique rules and lines with an unacknowledged issue (rule_catalogue.attention_counts), hidden lines included. */attention_counts?:RuleAttentionCounts};
 /** A line with the rule it belongs to (the rule page). */
 export type LineRow={entry:Entry;line:RuleLine;n:number};
@@ -2309,7 +2308,8 @@ export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CA
  *  under a self-approval permission (mayDecide). */
 export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
   refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
-function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:Row)=>string,open?:(rule:Row)=>void){
+function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:Row)=>string,open?:(rule:Row)=>void,
+    effectCell:(rule:Row)=>Child=effect){
   if(!rows.length)return null;
   return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
     build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
@@ -2317,16 +2317,31 @@ function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:R
         searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:open,
         defaults:{wrap:['name','effect']},
         columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):labelOf(p)},
-          {key:'effect',label:'Effect',text:effect,cell:effect},
+          {key:'effect',label:'Effect',text:effect,cell:effectCell},
           {key:'level',label:'Level',text:level,cell:p=>level(p)?levelBadge(level(p),p.severity_reason):''},
           {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
     'secondary'),'layers');
 }
-export function capturedRulesContext(data:Catalogue,explained:DepartmentRules|null){
-  const entries=data.entries.flatMap(e=>e.also_in_force||[]);
-  const rows=[...new Map([...entries,...(data.not_on_catalogue||[])].map(row=>[row.id,row])).values()];
-  const summaries=new Map(explained?.rules.map(rule=>[rule.rule_id,rule]));
-  return otherDepartmentRules(rows,p=>summaries.get(p.id)?.summary_sentence||'',p=>summaries.get(p.id)?.level||'');
+export function capturedRulesContext(ctx:Context,data:Catalogue){
+  const name=recordName(ctx),names=namer(ctx);
+  const effect=(p:Row)=>ruleSentence(p.definition.rule,p.definition,name);
+  const lines=(p:Row):string[]=>{
+    const definition=p.definition,rule=definition.rule;
+    if(rule.kind==='catalogue'){
+      const catalogue=rule.catalogue_version===2?RULE_CATALOGUE_V2:RULE_CATALOGUE;
+      const entry=catalogue.find(e=>e.id===rule.id);
+      return entry?(rule.lines as RuleLine[]).map(l=>lineWords(entry,l,names,Infinity,rule.settings)):[];
+    }
+    return (definition.per_person||[]).map((l:Row)=>[
+      l.person_id?name('people',l.person_id):'',l.programme_id?name('programmes',l.programme_id):'',
+      ...(l.category_ids||[]).map((id:string)=>name('categories',id)),
+      lineNumbers(rule,l),lineSessions(l,name),daysText(l as RuleLine),validText(l as RuleLine),
+    ].filter(Boolean).join(' · '));
+  };
+  return otherDepartmentRules(data.captured_other_rules||[],effect,p=>p.definition.severity,undefined,p=>{
+    const rows=lines(p),summary=effect(p);
+    return rows.length?el('details',{},el('summary',{},summary||plural(rows.length,'line')),el('ol',{},...rows.map(text=>el('li',{},text)))):summary;
+  });
 }
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{

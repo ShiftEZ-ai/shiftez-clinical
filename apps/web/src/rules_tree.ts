@@ -198,7 +198,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   // The button waits for the work (busy while the check runs) and reports what stops it: never a silent press.
   const proposeBtn=proposeButton(()=>proposeAll());
   const discardBtn=armed(button('Discard changes',()=>{for(const e of changedRules(all))discardDraft(e.id);applied.clear();redraw();},'secondary'),'Discard all?');
-  const context=captured?capturedRulesContext(data,byQuestion):otherRulesContext(ctx,keptRules(ctx),o,refresh);
+  const context=captured?capturedRulesContext(ctx,data):otherRulesContext(ctx,keptRules(ctx),o,refresh);
   const pendingExceptions=(ctx.catalogues.exceptions||[]).filter(r=>r.status==='proposed').length;
   // How many are shown (E13: one place, the footer, as on every list); the totals follow it.
   const status=el('span',{class:'footer-total'}),count=el('span',{class:'dt-count muted',role:'status'});
