@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, integrity_problem
+from .errors import Problem, integrity_problem, problem_payload, require, safe_message, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -152,10 +152,6 @@ class BodyLimitMiddleware:
                 return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
             return await receive()
         return await self.app(scope, replay, send)
-
-
-# Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
-INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
@@ -373,9 +369,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                  'correlation_id': request.state.correlation_id}, status_code=400)
         request.state.error_code = "SCHEMA_INVALID"
         # Field path, message and type only; never the input value or context (they can carry private or secret text).
-        errors = [{"field": ".".join(str(x) for x in e["loc"])[:200], "code": e["type"],
-                   "message": safe_message(e["msg"]) if e["type"] in INPUT_ECHOING or "error" in (e.get("ctx") or {}) else e["msg"][:300]}
-                  for e in exc.errors()[:50]]
+        errors = validation_issues(exc.errors())
         return JSONResponse({"error": {"code": "SCHEMA_INVALID", "message": "Review the highlighted fields", "details": errors}, "correlation_id": request.state.correlation_id}, status_code=422)
 
     @app.exception_handler(ValueError)
@@ -1947,7 +1941,13 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post("/api/planner/why", response_model=s.WhyResult, response_model_exclude_unset=True)
     def planner_why(value: s.WhyInput, request: Request):
         from .services.staffing import prepare_why, why
-        with transaction(engine) as db:
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+        with transaction(reader) as db:
+            if not postgres:
+                db.execute(text('BEGIN'))
+            # Authentication and input capture can share the department row from this read view.
+            db.info['_request_parents'] = {}
             actor = actor_for(request, db)
             source, options = prepare_why(db, actor, value)
         result = why(source, options, value)

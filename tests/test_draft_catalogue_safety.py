@@ -33,6 +33,23 @@ def finding(report, code, **detail):
                for row in report['findings'])
 
 
+@pytest.mark.parametrize('replacement', [{'assignment_type_id': 'replacement'}, {'type_revision': 2}],
+                         ids=['duty-type', 'revision'])
+def test_prepared_draft_staffing_only_applies_to_the_session_version(replacement):
+    captured = {'requirements': [{'role': 'clinician', 'minimum': 1}]}
+    current = {'requirements': [{'role': 'clinician', 'minimum': 2}]}
+    shift = {'id': 'session', 'workspace_id': 'draft', 'assignment_type_id': 'original', 'type_revision': 1,
+             'type_snapshot': {'definition': captured}, 'start': '2026-10-04T08:00:00+00:00',
+             'end': '2026-10-04T12:00:00+00:00'}
+    data = {'workspace': {'id': 'draft'}, 'organisation': {'timezone': 'UTC'},
+            'types': {'original': {'revision': 2, 'definition': current}}}
+    data['_draft_type_safety'] = validation.prepare_draft_type_safety(data, [shift])
+
+    assert validation.effective_type_definition(data, shift)['requirements'] == current['requirements']
+    replaced = {**shift, **replacement}
+    assert validation.effective_type_definition(data, replaced)['requirements'] == captured['requirements']
+
+
 @pytest.mark.parametrize('captured, live', [(1, 2), (2, 1)], ids=['tightened', 'loosened'])
 def test_minimum_cover_checks_and_schedules_to_the_stricter_value(store, captured, live, monkeypatch):
     h = store

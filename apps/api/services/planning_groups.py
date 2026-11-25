@@ -457,14 +457,16 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
             lambda: population_candidates(requested, selected), final=True, refresh_on_replay=True,
             input_token=state.get('generation_snapshot_key'), options=(requested['generation_scope'], sorted(selected)))
     if versions is not None:
-        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope,
-                                            candidates=candidates)
+        population, outside_group_count = _generation_population(
+            snapshot, requested, selected, versions, actor, selected_group, default_scope, candidates=candidates)
     if check_nonempty:
         requested['generation_session_ids'] = selected
         require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',
                 'No people match this group during the selected duties; change the population or duty selection', 422)
     if selected_group:
         metadata['planning_context']['selected_session_ids'] = sorted(selected)
+        if outside_group_count:
+            metadata['planning_context']['outside_group_count'] = outside_group_count
         if not enqueue and not frozen:
             snapshot.update({**metadata,
                 'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
@@ -480,6 +482,8 @@ def _generation_population(snapshot, requested, selected, versions, actor, selec
     resolver = GroupResolver(snapshot, versions)
     admin = actor.permits('admin')
     population = {}
+    outside_group = set()
+    admitted = set()
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
             continue
@@ -490,12 +494,15 @@ def _generation_population(snapshot, requested, selected, versions, actor, selec
             primary = resolver.primary(pid, shift)
             if selected_group is not None and (default_scope or admin) and (
                     primary is None or primary['group_id'] != selected_group['group_id']):
+                if admin:
+                    outside_group.add(pid)
                 continue
             require(primary is not None and (admin or actor.identity_id in primary['editor_identity_ids'])
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
-    return population
+            admitted.add(pid)
+    return population, len(outside_group - admitted)
 
 
 def guard_frozen_generation(db, actor, workspace, snapshot):

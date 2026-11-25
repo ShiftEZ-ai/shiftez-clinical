@@ -3963,7 +3963,7 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
    out-of-range grey; the draft starts where the grey ends ("Draft starts" on the month view). */
 :is(.sd-ctx,.wk-cell.mo-out){background:var(--sub)!important}
 .sd-greychip,.sd-ctx .pchip:not(.gap){--duty-bg:var(--sub);--duty-ink:var(--ink-2)}
-.sd-ctx .wk-day-top strong,.sd-ctx .wk-cov{color:var(--muted)}
+.sd-ctx .wk-day-top strong,.sd-ctx .wk-cov,.wk-day.mo-out .wk-day-top strong{color:var(--muted)}  /* a token, never opacity: 4.5:1 on the grey in both themes */
 .sd-start{background:var(--accent-soft)}
 .sd-start-key{display:inline-block;width:14px;height:12px;border-radius:3px;background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-ring)}
 .sd-flag{font-size:11px;font-weight:600;color:var(--accent-text)}
@@ -4090,7 +4090,6 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .wk-grid.mo .wk-rowhead{flex-direction:row;flex-wrap:nowrap;align-items:flex-start;gap:6px;padding:8px 8px 8px 10px}  /* SX-14: the dot stays beside a name that wraps */
 .wk-grid.mo .wk-rowhead>.wk-swatch{margin-top:4px}
 .wk-grid.mo .wk-rowhead>.clamp-2{flex:1;min-width:0;font-size:12.5px;font-weight:600;color:var(--duty-ink);line-height:1.3}
-.wk-day.mo-out,.wk-cell.mo-out{opacity:.55}
 .mo-more{display:flex;flex-direction:column;gap:4px;padding:8px 12px 12px;max-width:320px}
 /* The key stays pinned under the schedule, one line with "+N" like every key (DL-063). */
 .page-planner .view-legend{position:sticky;bottom:0;z-index:3;flex:none;margin:0;padding:6px 12px;background:var(--surface)}

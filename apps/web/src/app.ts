@@ -83,7 +83,7 @@ import {issuesPage,issueKey,type IssuesHooks} from './issues.js';
 import {setIssueNav,issueList,sessionChips,dayLabels,findingIssue as findingItem,type Issue,type SessionChip} from './issue_marker.js';
 import {ASSIGN_KINDS,actionLabel,deltaWords,fixListPage,fixPanelNodes,lastFixList,applyFixDelta,fixDeltaOf,fixPills,fixGate,fixRow,fixLevel,mustWords,couldWords,reviewItemsOf,reviewedWithRota,fixSummaryOf,readFixList,heldFixList,type FixCause,type FixHooks,type FixList,type FixSummary,type FixStep} from './fix_list.js';
 import {scoreReview} from './score_review.js';
-import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt} from './autoschedule_result.js';
+import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
 import {scoreCheckPage,scoreCheckTitle,type Step as ScoreStep} from './score_check.js';
 import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
@@ -672,10 +672,11 @@ async function showLogin(reason='',resume=''){
       waitTimer=window.setInterval(()=>{left--;if(!form.isConnected||left<=0){window.clearInterval(waitTimer);submit.disabled=false;error.replaceChildren();return;}count.textContent=String(left);},1000);};
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
     const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s)wait(s);else error.replaceChildren(note((err as Error).message,'error',err));};
-    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal says why under the
-    // password, keeps what was typed and puts focus back there; success opens the app frame at once (boot).
+    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal keeps what was
+    // typed and shows its reason; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
-      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();pw.input.removeAttribute('aria-invalid');
+      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();
+      pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');
       const accountActions=[...formWrap.querySelectorAll<HTMLButtonElement>('.login-account button,.login-switch')];accountActions.forEach(b=>{b.disabled=true;});
       if(department)department.input.disabled=true;
       const done=busy(submit,identified?'Signing in…':'Continuing…');
@@ -694,6 +695,8 @@ async function showLogin(reason='',resume=''){
           form.insertBefore(department.wrap,remember.wrap);announce('Choose a department to continue.');department.input.focus();return;
         }
         refused(err);
+        if(err instanceof ApiError&&err.code==='FORBIDDEN'){department?.input.focus();return;}
+        if(err instanceof ApiError&&err.code==='UNPROVISIONED_IDENTITY')return;
         pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby','login-error');pw.input.focus();pw.input.select();return;}
       rotatedNow();
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);
@@ -2201,7 +2204,7 @@ function openRotaPanel(rotaId:string,ruleId=''){
   if(openRotaRulesFor(rotaId,ruleId))return;
   workspaceId=rotaId;draftNone=false;void navigate(routeHash('schedule',[schedView,planDay],{edit:rotaId}).slice(1));
 }
-type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
+type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean;mandatory?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
 const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>();
 /** A draft's baseline against current department changes: the one call for the bar's count and the review dialog. */
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
@@ -4976,7 +4979,12 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
   const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
-  if(items.length&&aboutOf(catalogueKind))head.querySelector('h2')!.append(' ',helpButton('About '+kindLabel(catalogueKind),aboutOf(catalogueKind),'field-help'));
+  const about=aboutOf(catalogueKind);
+  if(items.length&&about){
+    const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
+    heading.replaceWith(title);
+    title.append(heading,helpButton('About '+kindLabel(catalogueKind),about,'field-help'));
+  }
   target.append(head);
   // One empty state everywhere (C-03): what is missing, why it matters, and the one action that adds it.
   // A kind that needs another first (a recurring session needs a duty type) offers that step instead of a Create that
@@ -6838,10 +6846,12 @@ const STALE_WORDS:Record<Currency,string>={'':'',rota:'The rota changed since th
   unknown:'This older run cannot be confirmed as current, so it cannot be applied. Run auto-schedule again to get a result you can apply.',
   superseded:'A newer run replaced this one. Review the latest run.'};
 /** Apply refused because a newer run replaced this one (RUN_SUPERSEDED): said once, with the way to the latest run; the
- *  refusal itself has nothing more to report. Any other error goes on as it was. */
-function supersededRun(e:unknown,workspace:string):never{
+ *  refusal itself has nothing more to report. Any other error goes on as it was. `here` says it in the open results
+ *  dialog instead, so the press that was refused never just closes it. */
+function supersededRun(e:unknown,workspace:string,here?:()=>void):never{
   if(!(e instanceof ApiError&&e.code===RUN_SUPERSEDED))throw e;
-  closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});void refresh();
+  if(here)here();else{closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});}
+  void refresh();
   throw new ApiError('PAGE_LEFT','',0);
 }
 /** A stored proposal can be reviewed at any time; only a current candidate can change a draft. */
@@ -7111,9 +7121,11 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
-  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
+  const reviewStatus=facts.fixListMissing
+    ?outcome('warn',facts.fixListMissing,'Run auto-schedule again to get the detailed Fix list.')
+    :status;
+  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[reviewStatus]),breaks,clash,
     basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
-    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7168,6 +7180,8 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
   // Support detail (timing, evidence, the whole rota check) is one disclosure at the end: the result comes first.
   const details=el('details',{class:'auto-run-details'},el('summary',{},'Run details'),el('p',{class:'run-metrics'},jobTiming(result)));
   const r:Row|null=result.result;
+  const outsideGroup=outsideGroupLine(result);
+  if(outsideGroup)body.append(outsideGroup);
   if(r?.phase_timings){
     const stages=generationPhaseTimings(r.phase_timings,runSeconds);
     if(r.first_solution_seconds!=null)stages.push(`first candidate after ${runSeconds(Number(r.first_solution_seconds))}`);
@@ -7236,7 +7250,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
     const pickAdd=new Set<string>(additions.map((_:Row,i:number)=>String(i))),pickRemove=new Set<string>(removals.map((_:Row,i:number)=>'r'+i));
     const actions=el('div',{class:'actions'});
     const applyJob=async(additionIndexes?:number[],removalIndexes?:number[])=>{
-      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined);
+      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined,()=>{
+        selectionHint.hidden=true;proposal=null;
+        actions.replaceWith(outcome('warn',SUPERSEDED.state,STALE_WORDS.superseded,button(SUPERSEDED.next,()=>{close();reviewLatestRun(result.workspace_id);},'secondary small')));});
       // Nothing written: the dialog stays, saying so where Apply was (nothing is left to apply).
       if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...NOTHING_APPLIED));proposal=null;await refresh();return;}
       if(applyNeedsReview(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('warn',...APPLY_NOT_CONFIRMED));proposal=null;await refresh();return;}
@@ -7285,9 +7301,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
 // Proposals the coordinator discarded in this browser session (the job itself stays in history).
 const dismissedJobs=new Set<string>();
 // The rota's revision is the one this page last read or changed (a reply carries it); it reads it only when it holds none.
-async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]}){
+async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]},here?:()=>void){
   const revision=knownRevision(job.workspace_id)??(await rotaMeta(job.workspace_id)).workspace.revision;
-  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id));
+  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id,here));
 }
 const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{
   const reply=await sendGenerationApply(job,pick);proposal=null;
@@ -7930,6 +7946,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       sub.textContent=w.name||'';
       const receipt=latest.kind==='generation'&&result?solverReceipt(latest):null;
       if(receipt)feedback.append(receipt);
+      const outsideGroup=outsideGroupLine(latest);
+      if(outsideGroup)feedback.append(outsideGroup);
       // A result that still applies (not stale, discarded or applied) opens on Review; otherwise What to fill.
       if(!st().step)st().step=reviewable||(latest.status==='succeeded'&&!stale&&!discarded)?3:1;
       staleNote=stale?text:'';
