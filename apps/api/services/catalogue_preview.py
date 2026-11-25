@@ -13,14 +13,15 @@ from apps.api.serialization import json_value, record
 from apps.api.snapshots import domain_snapshot, prepared_event_currency_matches, snapshot_hash, snapshot_inputs, tag_data
 from apps.api.workspace_baselines import baseline_rows, verified_baseline_keys
 from packages.contracts.schemas import CATALOGUE_SCHEMAS, PersonInput
-from packages.domain.time import local_midnight
+from packages.domain.time import aware, local_midnight
 from packages.domain.validation import evaluate
 from packages.domain.finding_identity import finding_key, finding_index, recited_findings
 from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped
-from .catalogue import CatalogueWrite, programme_write_access, write_catalogue
+from .catalogue import CatalogueWrite, end_relationship, programme_write_access, withdraw_relationship, write_catalogue
 from .schedule import LIVE
 
-KINDS = {"catalogue.create", "catalogue.update"}
+RANK_WRITES = {"membership.end": end_relationship, "membership.withdraw": withdraw_relationship}
+KINDS = {"catalogue.create", "catalogue.update", *RANK_WRITES}
 CONTACT_FIELDS = {"title", "work_phone", "work_extension", "pager", "directory_section", "directory_order"}
 
 
@@ -75,7 +76,7 @@ def limits(db):
     return settings.catalogue_preview_max_workspaces, settings.catalogue_preview_max_sessions
 
 
-def scope(db, actor, *, day=None):
+def scope(db, actor, *, day=None, rank_preview=False):
     """Exact SQL totals for the forward scope, and the workspaces to evaluate when it fits the bounds.
 
     Sessions are counted from the organisation-local day onwards: those are what a configuration change can reach.
@@ -85,6 +86,8 @@ def scope(db, actor, *, day=None):
     # long-running current publications make a fitting preview slow.
     day = day or operational_day(db, actor)
     candidate_query = _candidate_query(actor, day)
+    if rank_preview:
+        candidate_query = candidate_query.where(m.Workspace.archived_at.is_(None))
     query = candidate_query.subquery()
     zone = db.get(m.Organisation, actor.organisation_id).timezone
     workspace_count = db.scalar(select(func.count()).select_from(query)) or 0
@@ -137,8 +140,10 @@ def assert_precondition(db, actor, command):
 
 def _preview_source(db, actor, command):
     from apps.api.commands import command_roles
-    require(command.kind in KINDS, "PREVIEW_UNSUPPORTED", "This preview supports catalogue create/update only")
+    require(command.kind in KINDS, "PREVIEW_UNSUPPORTED", "This change does not support an impact preview")
     require_role(actor, *command_roles(command))
+    if command.kind in RANK_WRITES:
+        return None, record(scoped(db, m.Membership, command.target_id, actor))
     payload = CatalogueWrite.model_validate(command.payload)
     require(payload.catalogue in CATALOGUES, "UNKNOWN_CATALOGUE", "Unsupported catalogue")
     source = scoped(db, CATALOGUES[payload.catalogue], command.target_id, actor) if command.kind.endswith("update") else None
@@ -172,16 +177,18 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
     payload, before_record = _preview_source(db, actor, command)
     day = operational_day(db, actor)
     token = _preview_token(db, actor, command, day)
-    if payload.catalogue == 'recurring_series' or (
-            skip_contact_snapshots and contact_update(command, payload, before_record)):
+    if payload is not None and (payload.catalogue == 'recurring_series' or (
+            skip_contact_snapshots and contact_update(command, payload, before_record))):
         return None
     currency = _capture_currency(db, actor, token)
-    rows, _ = scope(db, actor, day=day)
+    rank_preview = command.kind in RANK_WRITES
+    rows, _ = scope(db, actor, day=day, rank_preview=rank_preview)
     shared = snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id)) if rows else None
     snapshots, event_windows = {}, []
     for row in rows:
         event_window = []
-        snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared, _event_currency=event_window)
+        snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared,
+                                            live_memberships=rank_preview, _event_currency=event_window)
         if event_window:
             event_windows.append(event_window)
     # Publication currency in this reader is matched under the writer before this evidence is used.
@@ -192,6 +199,8 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
 def prepare_preview(db, actor, command, before):
     """Verify the baseline and capture proposed inputs before rolling back the trial write."""
     payload, before_record = _preview_source(db, actor, command)
+    rank_write = RANK_WRITES.get(command.kind)
+    pattern = payload is not None and payload.catalogue == 'recurring_series'
     captured_at = m.now()
     day = operational_day(db, actor, now=captured_at)
     token = _preview_token(db, actor, command, day)
@@ -202,7 +211,7 @@ def prepare_preview(db, actor, command, before):
     # Pattern versions do not alter materialised duties. Applying/reconciling the
     # pattern has its own draft preview and validator; avoid rechecking every rota.
     rows, totals = (([], {"workspace_count": 0, "session_count": 0, "partial": False})
-                    if payload.catalogue == "recurring_series" else scope(db, actor, day=day))
+                    if pattern else scope(db, actor, day=day, rank_preview=rank_write is not None))
     if before is not None:
         _require_current(before.snapshots.keys() == {row.id for row in rows}, before_capture=True)
     metadata_only = False
@@ -220,7 +229,8 @@ def prepare_preview(db, actor, command, before):
             return None
         savepoint = db.begin_nested()
         try:
-            result = write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True)
+            result = (rank_write(db, actor, command) if rank_write else
+                      write_catalogue(db, actor, command, update=command.kind.endswith("update"), preview_only=True))
             if rows:
                 captured = capture_catalogue_sources(db, actor.organisation_id, rows, captured_at=captured_at,
                                                      issued_sources=before.issued_sources,
@@ -228,12 +238,12 @@ def prepare_preview(db, actor, command, before):
         finally:
             savepoint.rollback()
     output = {"preview": True, "committed": False, "contract": "catalogue-impact-v1",
-        **({key: result[key] for key in ('conflicts', 'conflict_token')} if payload.catalogue == 'recurring_series' else {}),
+        **({key: result[key] for key in ('conflicts', 'conflict_token')} if pattern else {}),
         "source_fingerprint": token, "before": before_record, "proposed": result["record"],
         **totals,
         "scope_starts_on": day.isoformat(),
         "scope": "Ongoing/future workspaces and current publications in this department (period end after the organisation-local date). Completed periods, discarded drafts and other departments are outside this forward operational preview. Historical issued snapshots remain unchanged.",
-        "inventory_only": payload.catalogue in {"cohorts", "recurring_series"},
+        "inventory_only": payload is not None and payload.catalogue in {"cohorts", "recurring_series"},
         "message": "Contact details checked. Scheduling inputs are unchanged; no rota validation is needed. Nothing saved or approved." if metadata_only else
             ("Impact not calculated: the upcoming sessions are more than this check covers. Nothing saved or approved; saving still validates each rota."
              if totals["partial"] else
@@ -241,7 +251,8 @@ def prepare_preview(db, actor, command, before):
     from .leave_disclosure import overlap_labels
     from .contacts import redact_reply
     return {"response": redact_reply(db, actor, overlap_labels(db, actor, output)),
-            "actor": actor, "before": before, "captured": captured}
+            "actor": actor, "before": before, "captured": captured,
+            "rank_preview_at": captured_at if rank_write else None}
 
 
 def build_preview(engine, prepared):
@@ -258,19 +269,43 @@ def build_preview(engine, prepared):
             .outerjoin(m.WorkspaceBaseline, m.WorkspaceBaseline.workspace_id == m.Workspace.id)
             .where(m.Workspace.id.in_(before.snapshots)))}
         memo = baseline_rows(db)
+        rank_preview = prepared['rank_preview_at'] is not None
         for ident, previous in before.snapshots.items():
             _require_current(ident in replayed)
             w, baseline = replayed[ident]
             memo[(ident, w.revision)] = baseline
             workspaces.append({"workspace_id": w.id, "name": w.name, "status": w.status, "before": previous,
-                "after": domain_snapshot(db, w, operational=True, shared_inputs=shared, _event_now=captured_at),
+                "after": domain_snapshot(db, w, operational=True, shared_inputs=shared,
+                                         live_memberships=rank_preview, _event_now=captured_at),
                 "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False, _event_now=captured_at)
-                if w.status in LIVE else None})
+                if w.status in LIVE and not rank_preview else None})
     return prepared
+
+
+def rank_cover_impact(workspaces, at):
+    published, drafts = [], []
+    for workspace in workspaces:
+        before, after = workspace['before'], workspace['after']
+        old = finding_index(evaluate(before, explain_findings=False))
+        new = finding_index(evaluate(after, explain_findings=False))
+        invalidated = {new[key].get('shift_id') for key in new.keys() - old.keys()
+                       if new[key]['severity'] == 'error'} & set(after['focus_ids'])
+        target = published if workspace['status'] == 'published' else drafts
+        for duty in after['shifts']:
+            if duty['id'] in invalidated and aware(duty['end']) > at:
+                target.append({'shift_id': duty['id'], 'workspace_id': workspace['workspace_id'],
+                               'rota_name': workspace['name'], 'type': duty['type_snapshot']['name'],
+                               'start': duty['start'], 'end': duty['end']})
+    for duties in (published, drafts):
+        duties.sort(key=lambda duty: (aware(duty['start']), duty['shift_id']))
+    return {'published_impact': {'count': len(published), 'sessions': published},
+            'draft_impact': {'count': len(drafts), 'sessions': drafts}}
 
 
 def evaluate_preview(prepared):
     """Evaluate the captured proposal after its transaction released the shared write lock."""
+    if (at := prepared.get('rank_preview_at')) is not None:
+        return json_value({**prepared['response'], 'rank_cover': rank_cover_impact(prepared['workspaces'], at)})
     impacts = []
     for w in prepared["workspaces"]:
         previous = evaluate(w["before"], explain_findings=False)

@@ -258,9 +258,10 @@ class ImporterV34Tests(unittest.TestCase):
                     setup['run'].splitlines(),
                 )
             if name == 'ci.yml':
-                # A label added by a person must not start a new run and cancel the running one.
+                # A label added by a person must not start a new run and cancel the running one, and marking a
+                # draft ready must not run the same head again (drafts already run CI on opened and synchronize).
                 self.assertEqual(doc['on']['pull_request']['types'],
-                                 ['opened', 'synchronize', 'reopened', 'ready_for_review'])
+                                 ['opened', 'synchronize', 'reopened'])
                 self.assertEqual(jobs['nightly-budget']['permissions'], {'actions': 'read', 'contents': 'read'})
                 self.assertEqual(jobs['checks']['needs'], 'nightly-budget')
                 plan = next(step for step in jobs['checks']['steps'] if step.get('id') == 'plan')

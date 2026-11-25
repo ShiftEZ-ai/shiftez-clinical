@@ -43,6 +43,7 @@ CLASSES += [s.ConditionResolution, s.ConditionDateMatch, s.ConditionDateParseRes
 CLASSES += [s.ConditionResolveBatchInput, s.ConditionResolveBatchResult, s.TimeResolveBatchInput, s.TimeResolveBatchResult]
 CLASSES += [s.FairnessExposure]
 CLASSES += [s.FixListDelta]
+CLASSES += [s.AccountOnboardingRow, s.AccountOnboarding, s.AccountOnboardingApply]
 CLASSES += [s.ObservedRuleEffect, s.CatalogueWorkspaceImpact]
 CLASSES += [s.NotificationList, s.NotificationReadResult, s.NotificationUnack, s.AuditPage]
 CLASSES += [s.PublishedOperationalSummary, s.PublishedOperationalAttention, s.FairnessMetricTotal]
@@ -226,6 +227,7 @@ def render():
     content += "export const FEEDBACK_STATUSES = " + json.dumps(list(s.FEEDBACK_STATUSES)) + " as const;\n"
     content += "export const FEEDBACK_LIMITS = " + json.dumps(s.FEEDBACK_LIMITS) + " as const;\n"
     content += "export const SWAP_LIMITS = " + json.dumps(s.SWAP_LIMITS) + " as const;\n"
+    content += "export const ACCOUNT_ONBOARDING_LIMITS = " + json.dumps(s.ACCOUNT_ONBOARDING_LIMITS) + " as const;\n"
     content += "export const MONITOR_LIMITS = " + json.dumps(s.MONITOR_LIMITS) + " as const;\n"
     content += "export const MAX_COUNT_BUCKETS = " + str(s.MAX_COUNT_BUCKETS) + ";\n"
     content += "export const CONTENT_PAGE_SIZE = " + str(s.CONTENT_PAGE_SIZE) + ";\n"

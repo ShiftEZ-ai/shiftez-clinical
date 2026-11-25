@@ -209,6 +209,10 @@ def test_the_shard_evidence_upload_is_retried_once():
     assert retry["uses"] == first["uses"]
     assert {**first["with"], "overwrite": "true"} == retry["with"]
 
+    paths = set(first["with"]["path"].splitlines())
+    assert {"candidate/.run/reports/", "candidate/.run/traces/", "candidate/.run/api-logs/"} <= paths
+    assert "${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}" in paths
+
 
 def test_pull_request_checks_run_the_pipeline_tests_as_a_merge_group():
     jobs = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
