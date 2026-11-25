@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -152,10 +152,6 @@ class BodyLimitMiddleware:
                 return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
             return await receive()
         return await self.app(scope, replay, send)
-
-
-# Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
-INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
@@ -373,9 +369,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                  'correlation_id': request.state.correlation_id}, status_code=400)
         request.state.error_code = "SCHEMA_INVALID"
         # Field path, message and type only; never the input value or context (they can carry private or secret text).
-        errors = [{"field": ".".join(str(x) for x in e["loc"])[:200], "code": e["type"],
-                   "message": safe_message(e["msg"]) if e["type"] in INPUT_ECHOING or "error" in (e.get("ctx") or {}) else e["msg"][:300]}
-                  for e in exc.errors()[:50]]
+        errors = validation_issues(exc.errors())
         return JSONResponse({"error": {"code": "SCHEMA_INVALID", "message": "Review the highlighted fields", "details": errors}, "correlation_id": request.state.correlation_id}, status_code=422)
 
     @app.exception_handler(ValueError)
