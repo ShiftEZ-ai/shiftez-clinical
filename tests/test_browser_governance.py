@@ -475,18 +475,25 @@ def test_a_manually_prepared_swap_publishes_itself_when_only_publication_is_auto
         expect(main).to_have_attribute("data-loaded-view", "schedule")
         state = approver.locator(".planner-bar .rota-status")
         expect(state).to_have_text("Amendment · Waiting for approval")
+        approver.get_by_role("button", name="Approve changes", exact=True).click()
+        dialog = approver.get_by_role("dialog", name="Approve changes", exact=True)
+        dialog.get_by_label("Note", exact=True).fill("Independent UI acceptance review")
         held = []
         approver.route("**/api/workspaces?*", lambda route: held.append(route))
         try:
             with approver.expect_request(lambda request: "/api/workspaces?" in request.url):
-                decide(approver, "Approve changes")
+                dialog.get_by_role("button", name="Approve changes", exact=True).click()
+                armed = dialog.locator("button.armed")
+                if armed.count():
+                    armed.click()
             expect(state).to_have_text("Amendment · Published")
-            expect(approver.get_by_role("button", name="Approve changes", exact=True)).to_have_count(0)
+            expect(approver.locator(".planner-bar .rota-decisions")).to_be_empty()
         finally:
             for route in held:
                 route.continue_()
             approver.unroute("**/api/workspaces?*")
 
+        expect(dialog).to_have_count(0)
         expect(main).to_have_attribute("data-loaded-view", "schedule")
         expect(main.locator("#schedule-view")).to_be_visible()
         expect(approver.locator(".planner-bar").get_by_role("heading", name="Schedule", exact=True)).to_be_visible()
