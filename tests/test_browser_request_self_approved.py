@@ -8,6 +8,7 @@ from .test_availability_patterns import pattern
 from .test_browser import browser, live_server, sign_in, navigate, whole_list  # noqa: F401
 from .test_request_decide_many import request_row
 from .test_request_self_approved_mark import GRANT
+from .test_rotation_leave_policy import resident
 
 pytestmark = pytest.mark.browser
 
@@ -62,9 +63,19 @@ def test_an_independent_request_decision_wears_no_self_approved_badge(browser, l
 
 
 def test_record_leave_announces_self_approval_for_the_selected_person(browser, live_server, h):
+    record_and_check_leave(browser, live_server, h, pending=False)
+
+
+def test_record_leave_requiring_rotation_approval_announces_the_pending_request(browser, live_server, h):
+    record_and_check_leave(browser, live_server, h, pending=True)
+
+
+def record_and_check_leave(browser, live_server, h, *, pending):
     person, other = h.seed['people'][:2]
     coordinator = identity(h, 'leave_coordinator', ['coordinator'], person=person)
     h.command('admin', 'self_approval.grant', {'identity_id': coordinator, **GRANT})
+    if pending:
+        resident(h, 'needs_approval')
     context, page = sign_in(browser, live_server, 'leave_coordinator')
     try:
         navigate(page, 'requests')
@@ -75,25 +86,33 @@ def test_record_leave_announces_self_approval_for_the_selected_person(browser, l
         people = dialog.locator('fieldset[name="People"]')
         own = people.locator(f'input[value="{person}"]')
         independent = people.locator(f'input[value="{other}"]')
-        mark = dialog.get_by_text('Self-approved', exact=True)
+        message = dialog.get_by_text('Your leave is self-approved only if it can be recorded without separate review.',
+                                     exact=True)
         independent.check()
-        expect(mark).to_be_hidden()
+        expect(message).to_be_hidden()
         expect(dialog.get_by_label('Reason', exact=True)).to_be_visible()
         own.check()
-        expect(mark).to_be_visible()
-        expect(dialog.locator('.request-details').get_by_text(
-            'Your leave will be self-approved when recorded.', exact=True)).to_be_visible()
+        expect(message).to_be_visible()
+        expect(dialog.get_by_text('Self-approved', exact=True)).to_have_count(0)
         own.uncheck()
-        expect(mark).to_be_hidden()
+        expect(message).to_be_hidden()
         independent.uncheck()
         own.check()
         reason = dialog.get_by_label('Reason for self-approval', exact=True)
         expect(reason).to_have_js_property('required', True)
         dialog.get_by_label('Type', exact=True).select_option(label='Annual')
+        if pending:
+            dialog.get_by_label('All day', exact=True).uncheck()
+            dialog.get_by_label('Unavailable from', exact=True).fill('2026-10-04T08:00')
+            dialog.get_by_label('Unavailable until', exact=True).fill('2026-10-04T12:00')
         reason.fill('Reviewed with a colleague by phone')
         dialog.get_by_role('button', name='Record leave', exact=True).click()
         expect(dialog).to_be_hidden()
         row = page.locator('#main [data-row]').filter(has=page.get_by_text('Self-approved', exact=True))
+        if pending:
+            expect(page.locator('.toast').get_by_text('Submitted for approval', exact=False)).to_be_visible()
+            expect(row).to_have_count(0)
+            return
         expect(row).to_have_count(1)
         row.locator('td[data-col=type], .dt-card-title').first.click()
         expect(page.locator('.request-panel .request-status').get_by_text('Self-approved', exact=True)).to_be_visible()
