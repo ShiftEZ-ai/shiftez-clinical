@@ -40,9 +40,11 @@ def test_proposed_sign_in_name_fits_the_username_contract(client_modules, email,
 def test_link_file_lists_each_person_once_and_neutralises_formulas(client_modules):
     rows = [{'person_id': 'p1', 'person_label': 'Staff One', 'one_time_link': 'https://app.example.test/invite/one'},
             {'person_id': 'p2', 'person_label': '=HYPERLINK("x")', 'one_time_link': 'https://app.example.test/invite/two'}]
-    text = run(client_modules, 'm.invitationsCsv(input)', rows)
+    sign_in_names = [['p2', '002'], ['p1', '02']]
+    text = run(client_modules, 'm.invitationsCsv(input.rows,new Map(input.names))', {'rows': rows, 'names': sign_in_names})
     assert text.startswith('\ufeff')  # Excel reads it as UTF-8
     parsed = list(csv.reader(io.StringIO(text[1:])))
     assert parsed[0] == ['Person', 'One-time link']
     assert [r[1] for r in parsed[1:]] == [r['one_time_link'] for r in rows]
-    assert parsed[1][0] == 'Staff One' and not parsed[2][0].startswith('=')
+    assert parsed[1][0] == 'Staff One (02)'
+    assert parsed[2][0] == '\'=HYPERLINK("x") (002)'

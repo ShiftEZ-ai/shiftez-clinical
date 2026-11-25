@@ -16,25 +16,29 @@ from apps.api.db import transaction
 from packages.contracts.schemas import ACCOUNT_ONBOARDING_LIMITS
 from .test_browser import browser, expect_loaded, holding, live_server, navigate, reconnect, sign_in, wait_held  # noqa: F401
 from .test_browser_accounts import users_file  # noqa: F401
-from .test_browser_remaining_controls import _account_action
 from .governance_support import developer
 
 pytestmark = pytest.mark.browser
 WAVE = min(ACCOUNT_ONBOARDING_LIMITS["rows"], ACCOUNT_ONBOARDING_LIMITS["wave"])
+STAFF = "Onboard Staff"
 
 
-def staff(h, count):
+def staff(h, count, *, shared_name=False):
     """Synthetic people in the active department, each with a work email and no sign-in."""
+    ids = []
     with transaction(h.app.state.engine, write=True) as db:
         department = db.get(m.Department, h.seed["department_id"])
         category_id = db.scalar(select(m.Category.id).where(m.Category.department_id == department.id).limit(1))
         for index in range(count):
-            person = m.Person(organisation_id=department.organisation_id, display_name=f"Onboard Staff {index + 1}",
+            person = m.Person(organisation_id=department.organisation_id,
+                              display_name=STAFF if shared_name else f"{STAFF} {index + 1}",
                               work_email=f"onboard.staff{index + 1}@example.test")
             db.add(person)
             db.flush()
+            ids.append(person.id)
             db.add(m.Membership(department_id=department.id, category_id=category_id, person_id=person.id,
                                 starts_on=date(2020, 1, 1)))
+    return ids
 
 
 def bulk(panel):
@@ -55,7 +59,10 @@ def open_panel(page):
     pytest.param(None, "light", True, id="escape-during-refresh"),
 ])
 def test_preview_create_download_once_then_resend(users_file, browser, live_server, h, viewport, scheme, dismiss):  # noqa: F811
-    staff(h, 3)
+    person_ids = staff(h, 3, shared_name=True)
+    first, second = "onboard.staff1", "onboard.staff2"
+    recipients = {person_ids[0]: first, person_ids[1]: second}
+    labels = {f"{STAFF} ({username})": username for username in recipients.values()}
     context, page = sign_in(browser, live_server, developer(h), viewport=viewport)
     with closing(context), holding(page) as held:
         pulse = "**/api/pulse"
@@ -67,12 +74,15 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
             held.hold(pulse)
         page.emulate_media(color_scheme=scheme)
         panel = open_panel(page)
-        for n in (1, 2):
-            panel.get_by_role("checkbox", name=f"Select Onboard Staff {n}", exact=True).check()
+        for person_id in recipients:
+            panel.locator(f'[data-row="{person_id}"]').get_by_role("checkbox", name=f"Select {STAFF}", exact=True).check()
         bulk(panel).get_by_role("button", name="Preview", exact=True).click()
         # The batch summary, not the result table's own row count (also a status).
         expect(panel.get_by_role("status").filter(has_text=re.compile(r"^2 to create$"))).to_be_visible()
         expect(panel.get_by_text("Select up to", exact=False)).to_have_count(0)
+        for person_id, username in recipients.items():
+            row = panel.locator(f'[data-row="{person_id}"]')
+            expect(row.get_by_text(f"{STAFF} ({username})", exact=True)).to_be_visible()
         create = panel.get_by_role("button", name="Create 2 accounts", exact=True)
         create.focus()
         page.keyboard.press("Enter")  # armed: the first press asks, the same button confirms
@@ -83,15 +93,20 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         assert saved.suggested_filename == "staff-invitations.csv"
         rows = list(csv.reader(io.StringIO(Path(saved.path()).read_text(encoding="utf-8-sig"))))
         assert rows[0] == ["Person", "One-time link"]
-        assert sorted(r[0] for r in rows[1:]) == ["Onboard Staff 1", "Onboard Staff 2"]
+        assert sorted(r[0] for r in rows[1:]) == sorted(labels)
         invitation_url = re.compile(re.escape(live_server) + r"/invite/([A-Za-z0-9_-]{43})")
+        def link_info(token):
+            return context.request.get(live_server + "/api/account-links/" + token)
+
         tokens = {}
-        for person, link in rows[1:]:
+        for label, link in rows[1:]:
             match = invitation_url.fullmatch(link)
             assert match is not None, "The downloaded invitation must use the configured public origin"
-            tokens[person] = match.group(1)
-        live = lambda token: context.request.get(live_server + "/api/account-links/" + token).status  # noqa: E731
-        assert [live(t) for t in tokens.values()] == [200, 200]
+            username = labels[label]
+            tokens[username] = match.group(1)
+            info = link_info(tokens[username])
+            assert info.status == 200
+            assert info.json()["username"] == username
         expect(panel.get_by_text("Links downloaded for 2 people.", exact=True)).to_be_visible()
         expect(panel.get_by_role("status").filter(has_text=re.compile(r"^2 created$"))).to_be_visible()
         # The links are only in the file: never on the page, in storage, or offered for a second download.
@@ -123,13 +138,16 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         expect(panel).to_be_hidden()
 
         # The existing per-person Resend gives that one person a new link and retires the downloaded one.
-        _account_action(page, "Onboard Staff 1", "Resend invitation")
+        page.get_by_role("button", name=f"More actions for {STAFF} {first}", exact=True).click()
+        page.get_by_role("menuitem", name="Resend invitation", exact=True).click()
         shown = page.get_by_role("dialog", name="Invitation link", exact=True)
         resent = shown.get_by_label("One-time link", exact=True)
         expect(resent).to_have_value(re.compile(r"/invite/[A-Za-z0-9_-]{43}$"))
         token = resent.input_value().rsplit("/", 1)[1]
         assert token not in tokens.values()
-        assert [live(token), live(tokens["Onboard Staff 1"]), live(tokens["Onboard Staff 2"])] == [200, 404, 200]
+        replacement = link_info(token)
+        assert [replacement.status, link_info(tokens[first]).status, link_info(tokens[second]).status] == [200, 404, 200]
+        assert replacement.json()["username"] == first
 
 
 def test_selection_over_the_batch_cap_says_why(users_file, browser, live_server, h):  # noqa: F811
@@ -139,7 +157,7 @@ def test_selection_over_the_batch_cap_says_why(users_file, browser, live_server,
     page.on("request", lambda r: sent.append(r.url) if "/api/account-onboarding/" in r.url else None)
     try:
         panel = open_panel(page)
-        panel.get_by_role("searchbox", name="Search people").fill("Onboard Staff")
+        panel.get_by_role("searchbox", name="Search people").fill(STAFF)
         panel.get_by_role("checkbox", name="Select all people shown", exact=True).check()
         expect(panel.get_by_text("Select up to", exact=False)).to_have_count(0)  # the reason shows only once the cap is hit
         bulk(panel).get_by_role("button", name="Preview", exact=True).click()

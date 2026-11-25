@@ -1,6 +1,6 @@
 /** Sign-in accounts: the public invitation / password-reset page, changing your own password, and the admin's
  *  invitation, one-time link and session-limit dialogs (Access & roles). Passwords only ever go to the API. */
-import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability,armed,badge,plural,type Tone} from './dom.js';
+import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability,armed,badge,bidi,plural,type Tone} from './dom.js';
 import {request,command,ApiError} from './api.js';
 import {dataTable} from './table_view.js';
 import {dockPanel} from './side_panel.js';
@@ -111,9 +111,12 @@ export const usernameFrom=(email:string)=>{
   const name=email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g,'').replace(/^[._-]+/,'').slice(0,63);
   return name.length>=2?name:'';};
 
-/** The private list an onboarding apply returns, as a spreadsheet: each person and their one-time link. */
-export const invitationsCsv=(rows:{person_label:string;one_time_link:string}[])=>
-  '\uFEFF'+csvText([['Person','One-time link'],...rows.map(r=>[r.person_label,r.one_time_link])]);
+type Invitation={person_id:string;person_label:string;one_time_link:string};
+const signInSuffix=(username:string|undefined)=>username?` (${username})`:'';
+
+/** Keep the sign-in name with the person's text so a spreadsheet preserves numeric sign-in names. */
+export const invitationsCsv=(rows:Invitation[],signInNames:ReadonlyMap<string,string>)=>
+  '\uFEFF'+csvText([['Person','One-time link'],...rows.map(r=>[r.person_label+signInSuffix(signInNames.get(r.person_id)),r.one_time_link])]);
 
 const WAVE=Math.min(ACCOUNT_ONBOARDING_LIMITS.rows,ACCOUNT_ONBOARDING_LIMITS.wave);
 const RESULT:Record<string,[string,Tone]>={ready:['Gets an account','info'],already_linked:['Already has an account','neutral'],
@@ -125,7 +128,7 @@ const COUNTED:Record<keyof Counts,string>={ready:'to create',already_linked:'alr
 type Ledger=Record<string,{status:string;code?:string}>;
 type Counts={ready:number;already_linked:number;created:number;conflict:number;stopped:number};
 type Preview={expected_fingerprint:string;people:Record<string,string>;ledger:Ledger;counts:Counts};
-type Applied={ledger:Ledger;counts:Counts;invitations:{person_id:string;person_label:string;one_time_link:string}[]};
+type Applied={ledger:Ledger;counts:Counts;invitations:Invitation[]};
 const post=<T>(path:string,body:AccountOnboarding|AccountOnboardingApply)=>request<T>(path,{method:'POST',body:JSON.stringify(body)});
 
 /** Onboard staff (Access & roles): pick people without a sign-in, preview who gets an account, create them with a
@@ -147,22 +150,24 @@ export function onboardingPanel(people:Row[],linked:Set<string>,refresh:(quiet?:
           const rows=open.filter(p=>ids.includes(p.id)).map(p=>({person_id:p.id,username:usernameFrom(email(p)),email:email(p)}));
           return review({rows,reason:'Staff onboarding'});}}]}).root);};
     // Who the batch reaches, in the server's words for each person.
-    const outcome=(labels:Record<string,string>,ledger:Ledger)=>dataTable<[string,{status:string;code?:string}]>({id:'staff-onboarding-result',
-      noun:['person','people'],rows:Object.entries(ledger),rowId:([id])=>id,searchLabel:'Search people',searchPlaceholder:'Name',
-      columns:[{key:'person',label:'Person',text:([id])=>personName(id,labels[id]),cell:([id])=>nameText(id,labels[id])},
+    const outcome=(labels:Record<string,string>,ledger:Ledger,signInNames:ReadonlyMap<string,string>)=>dataTable<[string,{status:string;code?:string}]>({id:'staff-onboarding-result',
+      noun:['person','people'],rows:Object.entries(ledger),rowId:([id])=>id,searchLabel:'Search people',searchPlaceholder:'Name or sign-in',
+      columns:[{key:'person',label:'Person',text:([id])=>personName(id,labels[id])+signInSuffix(signInNames.get(id)),
+          cell:([id])=>el('span',{},nameText(id,labels[id]),bidi(signInSuffix(signInNames.get(id))))},
         {key:'result',label:'Result',facet:([,r])=>(RESULT[r.status]||[r.status])[0],cell:([,r])=>el('div',{},badge(...(RESULT[r.status]||[r.status,'neutral'] as [string,Tone])),
           r.code?el('div',{class:'muted cell-note'},CONFLICT[r.code]||r.code.replaceAll('_',' ').toLowerCase()):'')}]}).root;
     const summary=(c:Counts)=>el('div',{class:'import-summary',role:'status'},...(Object.keys(COUNTED) as (keyof Counts)[]).filter(k=>c[k])
       .map(k=>el('span',{class:'import-stat'+(k==='conflict'?' error':'')},el('b',{},String(c[k])),' '+COUNTED[k])));
     const review=async(selection:AccountOnboarding,said:Node|string='')=>{
       const view=await post<Preview>('/api/account-onboarding/preview',selection),c=view.counts;
+      const signInNames=new Map(selection.rows.filter(r=>Object.hasOwn(view.people,r.person_id)).map(r=>[r.person_id,r.username]));
       const create=c.ready&&!c.conflict?armed(button(`Create ${plural(c.ready,'account')}`,async()=>{
         const done=await post<Applied>('/api/account-onboarding/apply',{...selection,expected_fingerprint:view.expected_fingerprint})
           .catch((e:unknown)=>{if(e instanceof ApiError&&e.code==='STALE_PREVIEW')return null;throw e;});
         if(!done){await review(selection,note('Accounts or people changed since this preview, so nothing was created. Check it again.','warning'));return;}
         changed=true;
         // The links leave only as this file, once; nothing here keeps them.
-        if(done.invitations.length)save(new Blob([invitationsCsv(done.invitations)],{type:'text/csv'}),'staff-invitations.csv');
+        if(done.invitations.length)save(new Blob([invitationsCsv(done.invitations,signInNames)],{type:'text/csv'}),'staff-invitations.csv');
         const doneButton=button('Done',async()=>{
           changed=false;
           // Wait for Access, but leave a menu alone if the panel closes while the read is in flight.
@@ -170,9 +175,9 @@ export function onboardingPanel(people:Row[],linked:Set<string>,refresh:(quiet?:
           if(body.isConnected)close();},'secondary');
         body.replaceChildren(el('div',{class:'import-head'},summary(done.counts),doneButton),
           done.invitations.length?note(`Links downloaded for ${plural(done.invitations.length,'person','people')}.`,'success'):'',
-          outcome(view.people,done.ledger));},'primary')):null;
+          outcome(view.people,done.ledger,signInNames));},'primary')):null;
       body.replaceChildren(el('div',{class:'import-head'},summary(c),el('div',{class:'actions'},button('Back',pick,'secondary'),...(create?[create]:[]))),said,
-        c.conflict?note('Clear the people with a conflict, then preview again.','error'):'',outcome(view.people,view.ledger));};
+        c.conflict?note('Clear the people with a conflict, then preview again.','error'):'',outcome(view.people,view.ledger,signInNames));};
     pick();
   }});
 }
