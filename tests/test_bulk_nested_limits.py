@@ -100,4 +100,4 @@ def test_malformed_nested_aggregate_is_the_handlers_row_issue(h, person_ids):
     checked = preview(h, 'coordinator', body)
     assert checked['items'][0]['result'] == 'problem'
     assert checked['items'][0]['issues'][0]['code'] == 'SCHEMA_INVALID'
-    assert checked['items'][0]['issues'][0]['message'] == 'Input should be a valid list'
+    assert checked['items'][0]['issues'][0]['message'] == 'person_ids: Input should be a valid list'
