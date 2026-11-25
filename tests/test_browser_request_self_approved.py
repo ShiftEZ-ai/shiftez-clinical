@@ -86,7 +86,7 @@ def record_and_check_leave(browser, live_server, h, *, pending):
         people = dialog.locator('fieldset[name="People"]')
         own = people.locator(f'input[value="{person}"]')
         independent = people.locator(f'input[value="{other}"]')
-        message = dialog.get_by_text('Your leave is self-approved only if it can be recorded without separate review.',
+        message = dialog.locator('form').get_by_text('Your leave is self-approved only if it can be recorded without separate review.',
                                      exact=True)
         independent.check()
         expect(message).to_be_hidden()
