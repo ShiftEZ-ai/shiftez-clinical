@@ -6556,6 +6556,10 @@ class AccountInvite(Schema):
 AccountOnboardingFingerprint = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 
 
+# rows: one request's ceiling; wave: the most people the admin screen sends in one batch.
+ACCOUNT_ONBOARDING_LIMITS = {"rows": 200, "wave": 25}
+
+
 class AccountOnboardingRow(Schema):
     person_id: ID
     username: Username
@@ -6563,7 +6567,7 @@ class AccountOnboardingRow(Schema):
 
 
 class AccountOnboarding(Schema):
-    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=200)
+    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=ACCOUNT_ONBOARDING_LIMITS["rows"])
     reason: Reason
 
 

@@ -125,7 +125,7 @@ import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
-import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,sessionsPanel} from './accounts.js';
+import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,onboardingPanel,sessionsPanel} from './accounts.js';
 import {installFeedback,openFeedback,feedbackPage,SHORTCUT as FEEDBACK_KEY} from './feedback.js';
 import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
@@ -8259,7 +8259,8 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
   const accounts:Record<string,Row>=access.accounts||{};
   const admin=permits(CAPABILITY.ADMIN);
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
-  target.append(sectionHead('People who can sign in','',invite,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
+  const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
+  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
   /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
    *  identity.bind checks against): shown, not typed. Without one there is nothing to bind to: the settings say how. */
   async function hospitalSignIn(){

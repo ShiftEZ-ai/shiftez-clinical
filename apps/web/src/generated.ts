@@ -29,6 +29,23 @@ export type AccountInvite = {
   "reason": string;
 };
 
+export type AccountOnboarding = {
+  "rows": Array<AccountOnboardingRow>;
+  "reason": string;
+};
+
+export type AccountOnboardingApply = {
+  "rows": Array<AccountOnboardingRow>;
+  "reason": string;
+  "expected_fingerprint": string;
+};
+
+export type AccountOnboardingRow = {
+  "person_id": string;
+  "username": string;
+  "email": string;
+};
+
 export type AdjustmentEffectInput = {
   "expected_revision": number;
   "adjustment": RuleAdjustmentInput;
@@ -6464,6 +6481,7 @@ export const FEEDBACK_KINDS = ["problem", "suggestion", "confusing", "question"]
 export const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "fixed", "wont_fix", "duplicate"] as const;
 export const FEEDBACK_LIMITS = {"message": 4000, "expected": 2000, "view_state_bytes": 16384, "screenshot_bytes": 2097152, "body_bytes": 3145728, "recent_errors": 20, "recent_routes": 10, "route": 2000, "request_ids": 20, "user_agent": 300, "reports_per_hour": 10, "screenshot_days": 180, "duplicate_days": 30, "page_size": 50} as const;
 export const SWAP_LIMITS = {"minimum": 1, "maximum": 2147483647, "offer_window_days": 7, "open_offer_cap": 25} as const;
+export const ACCOUNT_ONBOARDING_LIMITS = {"rows": 200, "wave": 25} as const;
 export const MONITOR_LIMITS = {"body_bytes": 65536, "page_size": 50, "status_bytes": 1048576, "alert_lines": 200} as const;
 export const MAX_COUNT_BUCKETS = 500;
 export const CONTENT_PAGE_SIZE = 200;
