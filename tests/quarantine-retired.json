@@ -63,5 +63,6 @@
   "tests/test_golden_coverage.py::test_golden_coverage",
   "tests/test_shared_search.py::test_selected_reference_is_scoped_and_does_not_depend_on_query_label",
   "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]",
+  "tests/test_browser_terms.py::test_coordinator_follows_the_setup_guide_without_admin_actions",
   "tests/test_generation_department.py::test_repeat_supervisor_limit_blocks_manual_and_guides_allocation"
 ]
