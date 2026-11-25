@@ -163,11 +163,11 @@ jobs:
     - name: Check text and workflow privacy for the affected unit scope
       if: steps.affected-scope.outputs.scope == 'quota-unit-expectation'
       env:
-        BASE_SHA: ${{ steps.affected-scope.outputs.base }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
       run: |
-        python3 -I "$GITHUB_WORKSPACE/.trusted-controls/scripts/privacy_check.py" "$BASE_SHA" HEAD --event "$GITHUB_EVENT_PATH"
+        python3 -I "$GITHUB_WORKSPACE/.trusted-controls/scripts/privacy_check.py" "$PR_BASE" HEAD --event "$GITHUB_EVENT_PATH"
         python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
-        git diff --check "$BASE_SHA" HEAD
+        git diff --check "$PR_BASE" HEAD
     - name: Plan unit and browser shards by committed duration
       id: plan
       if: steps.affected-scope.outputs.scope == ''

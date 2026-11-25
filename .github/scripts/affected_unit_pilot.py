@@ -86,20 +86,25 @@ def run_unit(base):
             status = trusted_ci.invocation([TEST], "unit", report, [], "0", [TEST])
             selected = policy.decode(report.with_suffix(".selection.json").read_bytes())
             census = policy.decode((reports / "base-census.json").read_bytes())
-            cases = ET.parse(report).iter("testcase")
-            if (status or len(selected) != 4 or sorted(selected) != sorted(census["nodes"])
-                    or any(trusted_ci.canaries.outcome(case) != "passed" for case in cases)):
-                raise ValueError("The affected unit checks did not pass with unchanged node coverage")
+            verify_unit_report(status, selected, census["nodes"], list(ET.parse(report).iter("testcase")))
             print(f"Affected unit pilot passed: {len(selected)} nodes")
         finally:
             policy.git("worktree", "remove", "--force", str(base_dir))
+
+
+def verify_unit_report(status, selected, base_nodes, cases):
+    observed = sorted(trusted_ci.canaries.node(case) for case in cases)
+    if (status or len(selected) != 4 or len(set(selected)) != 4
+            or observed != sorted(selected) or observed != sorted(base_nodes)
+            or any(trusted_ci.canaries.outcome(case) != "passed" for case in cases)):
+        raise ValueError("The affected unit checks did not pass with unchanged node coverage")
 
 
 if __name__ == "__main__":
     base = qualified_base()
     if sys.argv[1:] == ["scope"]:
         if base is not None:
-            trusted_ci.output({"scope": SCOPE, "base": base})
+            trusted_ci.output({"scope": SCOPE})
     elif sys.argv[1:] == ["test"] and base is not None:
         run_unit(base)
     else:

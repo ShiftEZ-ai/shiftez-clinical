@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 import yaml
 from unittest.mock import patch
@@ -83,14 +84,29 @@ class ImporterV34Tests(unittest.TestCase):
                 self.assertEqual(nightly_budget.can_start(running), admitted)
 
     def test_affected_unit_pilot_accepts_only_the_pinned_fixture_expression(self):
-        source = (HELPERS.parents[1] / pilot.TEST).read_bytes()
+        source = (b"def test_rolling():\n"
+                  b"    assert len(windows(rule, '2026-10-11', '2026-10-12')) == 7\n")
+        digest = hashlib.sha256(source.replace(b"== 7", b"== 0")).hexdigest()
         positive = source.replace(b"'2026-10-11', '2026-10-12')) == 7", b"'2026-10-12', '2026-10-13')) == 7")
         negative = positive.replace(b"')) == 7", b"')) == 8")
-        self.assertTrue(pilot.quota_expectation_change(source, positive))
-        self.assertTrue(pilot.quota_expectation_change(source, negative))
-        for changed in (source, source + b"\n# comment\n", positive.replace(b"== 7", b"== 0 or True"),
-                        positive.replace(b"== 7", b"== 07"), positive.replace(b"2026-10-13", b"2027-10-13")):
-            self.assertFalse(pilot.quota_expectation_change(source, changed))
+        with patch.object(pilot, 'SOURCE_SHA256', digest):
+            self.assertTrue(pilot.quota_expectation_change(source, positive))
+            self.assertTrue(pilot.quota_expectation_change(source, negative))
+            self.assertTrue(pilot.quota_expectation_change(positive, negative))
+            for changed in (source, source + b"\n# comment\n", positive.replace(b"== 7", b"== 0 or True"),
+                            positive.replace(b"== 7", b"== 07"), positive.replace(b"2026-10-13", b"2027-10-13")):
+                self.assertFalse(pilot.quota_expectation_change(source, changed))
+
+    def test_affected_unit_report_refuses_missing_or_duplicated_cases(self):
+        cases = [ET.Element('testcase', classname='tests.test_fixture', name=f'test_{i}') for i in range(4)]
+        nodes = [f'tests/test_fixture.py::test_{i}' for i in range(4)]
+        pilot.verify_unit_report(0, nodes, nodes, cases)
+        for invalid in ([], cases[:-1], [*cases[:-1], cases[0]]):
+            with self.assertRaisesRegex(ValueError, 'unchanged node coverage'):
+                pilot.verify_unit_report(0, nodes, nodes, invalid)
+        ET.SubElement(cases[0], 'failure')
+        with self.assertRaisesRegex(ValueError, 'unchanged node coverage'):
+            pilot.verify_unit_report(0, nodes, nodes, cases)
 
     def test_affected_unit_scope_requires_the_bound_path_and_rechecked_owners(self):
         event = {'repository': {'default_branch': 'main', 'id': 1},
