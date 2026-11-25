@@ -48,19 +48,29 @@ def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.delenv("TRUSTED_BOOTSTRAP", raising=False)
     monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: f"{head}\n{tree}")
-    monkeypatch.setattr(trusted_ci.policy, "event", lambda: {})
+    event = {"repository": {"default_branch": "main"}, "pull_request": {"base": {"ref": "main"}}}
+    monkeypatch.setattr(trusted_ci.policy, "event", lambda: event)
     monkeypatch.setattr(trusted_ci, "test_inventory", lambda: inventory)
     verified = []
-    monkeypatch.setattr(trusted_ci, "require_pr_merge", lambda event, git, sha: verified.append(sha))
+
+    def resolve_parent(data, sha):
+        verified.append((data, sha))
+        return base
+
+    monkeypatch.setattr(trusted_ci.policy, "pr_test_base", resolve_parent)
     rebuilt = object()
     monkeypatch.setattr(trusted_ci, "plan", lambda base, measurement: rebuilt)
 
     seal = hosted_ci.digest(candidate)
     run = trusted_ci.runner_plan
     assert run(base, False, "browser", 1, seal) == candidate
-    assert verified == [head]
+    assert verified == [(event, head)]
     assert run(base, False, "unit", 1, seal) is rebuilt
     assert run(base, True, "browser", 1, seal) is rebuilt
+    with monkeypatch.context() as context:
+        context.setattr(trusted_ci.policy, "pr_test_base", lambda data, sha: "d" * 40)
+        with pytest.raises(ValueError, match="verified target parent"):
+            run(base, False, "browser", 1, seal)
 
     with pytest.raises(ValueError, match="plan identity"):
         run(base, False, "browser", 1, "0" * 64)
@@ -79,6 +89,11 @@ def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
     assert run(base, False, "browser", 1, seal) is rebuilt
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    with monkeypatch.context() as context:
+        context.setattr(trusted_ci.policy, "event", lambda: {
+            "repository": {"default_branch": "dev"}, "pull_request": {"base": {"ref": "preview"}},
+        })
+        assert run(base, False, "browser", 1, seal) is rebuilt
     monkeypatch.delenv("CI_CHECKS_PLAN")
     assert run(base, False, "browser", 1, seal) is rebuilt
 

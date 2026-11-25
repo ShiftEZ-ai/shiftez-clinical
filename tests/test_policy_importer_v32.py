@@ -173,6 +173,7 @@ class PublicV32Cases(unittest.TestCase):
                    'repository': {'default_branch': 'dev'}}
         git_rows = {
             'rev-list': f'{candidate} {base} {head}'.encode(),
+            'merge-base': b'',
             'diff': b'',
         }
         env = {'GITHUB_EVENT_NAME': event, 'GITHUB_SHA': candidate, 'TRUSTED_BOOTSTRAP': 'false'}
