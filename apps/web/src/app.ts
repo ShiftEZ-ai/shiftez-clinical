@@ -7,7 +7,8 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -102,7 +103,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -348,6 +349,16 @@ function patchDraft(r:Row,kind:string):boolean{
   // SW3-B-03b: a return or a reopen too (workspace.reopen); a refused decision's re-read rota as well (rota-conflict).
   const lifecycle=ROTA_DECISIONS.has(kind)&&kind!=='workspace.publish';
   if(lifecycle)forgetChanges(r?.workspace?.base_publication_id);
+  // Final swap approval can publish the rota in the same command. Hand off both publication replies before refreshing.
+  if((kind==='workspace.publish'||kind==='workspace.approve')&&r?.publication_id){
+    if(id&&workspaceId===id&&view==='schedule'&&!schedSubPage()&&location.hash===routeSeen){
+      workspaceId='';sourcePublication='';draftNone=true;
+      writeRoute();
+      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill(r.workspace));
+      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
+    }
+    return false;  // The published schedule and rota list both need fresh reads.
+  }
   // P0 edit latency (live capture, 7 Nov 2026): a rota past the list's first page has no row in it; its held draft is
   // patched all the same (the dates it is checked against are the draft's), not dropped and read whole after every edit.
   const was=row||held?.workspace;
@@ -1086,21 +1097,21 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
  *  (and, for a server error, its message and Report this problem). Shared by every page (it sits above the page's own
- *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing says only
- *  that it didn't load. */
+ *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing shows
+ *  readFailed() instead. */
 let stale=false,staleError:unknown=null,freshAt=Date.now(),staleBanner:{text:string;node:HTMLElement}|null=null;
 function showStale(on:boolean,error?:unknown){
   if(!on){stale=false;staleError=null;freshAt=Date.now();}else{if(!stale)staleError=null;stale=true;if(error)staleError=error;}
   const main=document.querySelector<HTMLElement>('#main');main?.querySelector(':scope>.stale-banner')?.remove();
   if(!stale||!main?.hasAttribute('data-loaded-view')||['restricted','desktop-only'].includes(main.dataset.loadedView||''))return;
-  // One line (N-11): what failed and how old the data is; a server's own message follows it as text (read on touch and
-  // by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
+  // One line (N-11): what failed and how old the data is; a server's own words (errorWords) follow it as text (read on
+  // touch and by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
   // Worded again when offline becomes a server error.
-  const server=staleError instanceof ApiError&&staleError.status>=500;
-  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' '+(staleError as Error).message:'');
+  const server=staleError instanceof ApiError&&staleError.status>=500,said=server?errorWords(staleError):'';
+  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' · '+said:'');
   // The same banner is put back on each redraw: its error is recorded (feedback's recent errors) once, not per draw.
   if(staleBanner?.text!==key){const banner=note(text,server?'error':'warning',server?staleError:undefined);banner.classList.add('stale-banner');banner.setAttribute('role','status');
-    if(server)banner.querySelector(':scope>span')?.append(' · '+(staleError as Error).message);
+    if(said)banner.querySelector(':scope>span')?.append(' · '+said);
     banner.prepend(icon('alert'));banner.append(button('Retry',retryRefresh,'secondary small'));staleBanner={text:key,node:banner};}
   main.prepend(staleBanner.node);
 }
@@ -3530,16 +3541,10 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
       const result=await command('workspace.publish',{reason:why},w.id,w.revision);
       let discarded=0;
       for(const {d,discard} of competing)if(discard?.input.checked)await command('workspace.archive',{reason:`Not used: ${w.name} was published`},d.id,(await rotaMeta(d.id)).workspace.revision).then(()=>{discarded++;},reportError);
-      // The rota just published is shown as it now is (the published layer on its days), not whichever draft is next.
-      workspaceId='';draftNone=true;
       const stale=(result.outdated_drafts||[]) as Row[];
       // The Undo here (if any) is the discards': publishing itself is not undone. The dialog closes first, so the
       // confirmation is said on the published rota, not inside a closing dialog behind "Saving…" (ME-24).
       form.closest('dialog')?.remove();
-      // SW3-A-14: the header shows it published at once, with no Publish… or Reopen to press again; the redraw that
-      // follows (minutes under load) draws the published rota.
-      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill({...w,status:'published'}));
-      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
       // SW3-B-07: said as soon as the server confirms, not after the reads that redraw the page (minutes under load).
       const said=refresh();
       notify('Published · staff are told.'+(discarded?` Undo restores the ${discarded===1?'discarded draft':`${discarded} discarded drafts`}.`:'')+(stale.length?` ${stale.map(x=>x.name).join(', ')} now overlap${stale.length===1?'s':''} a published rota; open ${stale.length===1?'it':'them'} to choose how ${stale.length===1?'it fits':'they fit'}.`:''));
@@ -5354,8 +5359,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const entries=(source[kind]||[]).filter(r=>r.person_id===p.id).sort((a,b)=>order.indexOf(stateOf(a))-order.indexOf(stateOf(b))||String(b.starts_on).localeCompare(String(a.starts_on)));
     if(!entries.length&&optional&&!add)return null;
     // F14 (maintenance): which published duties a shorter clinic eligibility leaves without cover (read only, nothing saved);
-    // shared by End and Change dates. Only eligibilities have the server's preview (memberships and grants have none).
-    type Impact={count?:number;sessions?:Row[]};type Impacts={published_impact?:Impact;draft_impact?:Impact};
+    // Shared by End and Change dates. Rank end and withdrawal use the catalogue evaluator.
     // The server lists every duty left uncovered after the new dates, also ones this record never covered (after its old
     // end): only duties overlapping the days removed from THIS record count. null: unknown (no preview, or a cut list).
     const coverPreview=async(r:Row,dates:{starts_on?:string;ends_on?:string|null},why:string):Promise<Impacts|null>=>{
@@ -5375,18 +5379,6 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(Number(g?.count||0)>list.length)return undefined;const kept=list.filter(hit);return {count:kept.length,sessions:kept};};
       const published=only(res.published_impact),draft=only(res.draft_impact);
       return published&&draft?{published_impact:published,draft_impact:draft}:null;};
-    const coverLines=(r:Impacts)=>{
-      // SW-24: the person is named once (it is their eligibility), each line says the duty and when; the rest open in place.
-      // Published duties lose cover; duties in shared drafts and rotas in review are listed too (maintenance draft_impact).
-      const part=(g:Impact|undefined,one:string,many:string,draft=false)=>{const list=g?.sessions||[],n=Number(g?.count||list.length);if(!n)return [];
-        const who=new Set(list.map(x=>x.person).filter(Boolean)),only=who.size===1?[...who][0]:'';
-        const items=list.map((x,i)=>el('li',{hidden:i>=10},[draft?x.rota_name:'',only?'':x.person,x.type,x.start?`${formatDate(String(x.start),zone())} ${formatTime(String(x.start),zone())}`:''].filter(Boolean).join(' · ')));
-        const rest=el('li',{class:'muted'}),more=list.length>10?button(`Show ${list.length-10} more`,()=>{items.forEach(x=>{x.hidden=false;});more!.parentElement!.remove();},'link-button'):null;
-        if(more)rest.append(more);else if(n>list.length)rest.textContent=`${n-list.length} more`;
-        return [note(`${only?only+'’s ':''}${plural(n,one,many)} would need cover:`,'warning'),el('ul',{class:'impact-list'},...items,...(rest.childNodes.length?[rest]:[]))];};
-      const lines=[...part(r.published_impact,'published duty','published duties'),...part(r.draft_impact,'duty in a draft','duties in drafts',true)];
-      // SW3-D-27: nothing affected is said too (an empty preview read as not worked out).
-      return lines.length?lines:[note('No duties need cover.','info')];};
     const lostCover=(hit:number)=>hit?` ${plural(hit,'published duty','published duties')} now need${hit===1?'s':''} cover; the coordinators are told.`:'';
     const verb=kind==='grants'?'Revoke':'End',live=(r:Row)=>['Current','Upcoming'].includes(stateOf(r));
     const end=(r:Row)=>can&&kind!=='programme_memberships'&&live(r)?button(verb,()=>formDialog(`${verb} ${named(r[key])}`,'The earlier record stays in the history.',form=>{
@@ -5397,12 +5389,17 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         const preview=async()=>{const on=day.input.value;if(!on||on===asked)return;asked=on;
           const r=await coverPreview(r0,{ends_on:addDays(on,1)},reason.input.value);
           if(asked!==on||!r)return;
-          impact.replaceChildren(...coverLines(r));};
+          impact.replaceChildren(...coverLines(r,zone()));};
         const r0=r;day.input.addEventListener('change',()=>void preview());queueMicrotask(()=>void preview());}
-      return async()=>{const done=await command<{published_impact?:{count?:number}}>(kind==='memberships'?'membership.end':kind==='eligibilities'?'eligibility.end':'grant.revoke',{ends_on:addDays(day.input.value,1),reason:reason.input.value},r.id,r.revision);await refresh();
+      const payload=()=>({ends_on:day.input.value?addDays(day.input.value,1):null,reason:reason.input.value});
+      const saveRank=kind==='memberships'?configurationImpact(form,()=>({kind:'membership.end',payload:payload(),target_id:r.id,expected_revision:r.revision})):null;
+      return async()=>{let hit=0;
+        if(saveRank)await saveRank();
+        else{const done=await command<{published_impact?:{count?:number}}>(kind==='eligibilities'?'eligibility.end':'grant.revoke',payload(),r.id,r.revision);
+          hit=Number(done?.published_impact?.count||0);}
+        await refresh();
         // Said, with Undo (P-10): the server's own reverse, through the one Undo registry (api.ts). F14: the published
         // duties it leaves without cover are said too (the coordinators are told separately).
-        const hit=Number(done?.published_impact?.count||0);
         notify(`${named(r[key])} ${kind==='grants'?'revoked':'ends'} ${formatDate(day.input.value)}.${lostCover(hit)}`,hit?'warning':'success');};},verb),
       'ghost small',{'aria-label':`${verb} ${named(r[key])}`}):'';
     // DL-071: Extend is folded into Change dates (a later or empty last day), one path for a clinic's dates.
@@ -5410,8 +5407,16 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const withdrawn:Record<string,string>={memberships:'membership.withdraw',eligibilities:'eligibility.withdraw',programme_memberships:'programme_membership.withdraw'};
     const withdrawable=(r:Row)=>can&&kind in withdrawn&&stateOf(r)==='Upcoming'&&(kind!=='programme_memberships'||programmeMembershipWritable(r));
     // A required reason and the armed press, then Undo (the server's restore of the same record), as Archive does.
-    const withdraw=(r:Row)=>confirmAction(`Withdraw ${named(r[key])}?`,"It won't apply. Published rotas keep it.",async reason=>{
-      await command(withdrawn[kind],{reason},r.id,r.revision);await refresh();notify(`${named(r[key])} withdrawn.`,'success');},'Withdraw',undefined,false,false);  // D1: one press + Undo (no published rota changes)
+    const withdraw=(r:Row)=>{
+      const title=`Withdraw ${named(r[key])}?`,done=async()=>{await refresh();notify(`${named(r[key])} withdrawn.`,'success');};
+      if(kind==='memberships'){
+        formDialog(title,'The rank will no longer apply. Published duties stay in place.',form=>{
+          const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=500;form.append(reason.wrap);
+          const save=configurationImpact(form,()=>({kind:'membership.withdraw',payload:{reason:reason.input.value},target_id:r.id,expected_revision:r.revision}));
+          return async()=>{await save();await done();};},'Withdraw');
+        return;}
+      confirmAction(title,"It won't apply. Published rotas keep it.",async reason=>{
+        await command(withdrawn[kind],{reason},r.id,r.revision);await done();},'Withdraw',undefined,false,false);};
     // A skill can be limited to one clinic; the clinic is part of what it says.
     const scope=(r:Row)=>kind==='grants'?(r.service_id?labelOf(source.services?.find(s=>s.id===r.service_id)):'All clinics'):'';
     // Change dates (M1): the start and last day, by the same command and roles the Bulk editor uses (its update_dates).
@@ -5436,7 +5441,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(kind!=='eligibilities'||!(removesStart()||removesEnd()))return;
         const res=await coverPreview(r,{...(first.input.value!==r.starts_on?{starts_on:first.input.value}:{}),...(e!==(r.ends_on||null)?{ends_on:e}:{})},reason.input.value);
         if(asked!==key||!res)return;
-        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res));sync();};
+        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res,zone()));sync();};
       for(const f of [first,last])f.input.addEventListener('change',()=>void preview());
       queueMicrotask(()=>{const s=submit();if(s)armed(s,'Confirm?',()=>(removesEnd()||removesStart())&&lost!==0);void preview();});
       return async()=>{const e=ends();
@@ -7609,14 +7614,18 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Priorities: real run overrides; score weights and wish budgets stay with department Configuration.
   // D76 (run card): the presets are one segmented choice (the contract's presets, arrow keys as every radiogroup); the
   // chosen one's weights are the line under it.
-  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'});
-  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId},...PRESETS.map(p=>{
+  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'}),fairnessHelpId=presetId+'-help';
+  const fairShare=RULE_CATALOGUE_V2.find(e=>e.id==='fair_share')!;
+  const fairnessHelp=el('p',{class:'hint',id:fairnessHelpId},`${SCORE_WEIGHT_LABELS.fairness} balances duties only where a `,
+    allowed('rules')&&ruleCatalogueOn()?el('a',{href:routeHash('rules',[fairShare.id]),class:'link-button'},fairShare.name):fairShare.name,
+    ' rule applies.');
+  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId,'aria-describedby':fairnessHelpId},...PRESETS.map(p=>{
     const b=el('button',{type:'button',role:'radio','data-preset':p.key},p.label);
     b.addEventListener('click',()=>{st().preset=p.key;keptSetup(st());paintPresets();});return b;}));
   const paintPresets=()=>{for(const b of presets.querySelectorAll<HTMLElement>('[role=radio]')){const on=b.dataset.preset===st().preset;b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;}
     weights.textContent=weightSummary(defaults,st().preset);};
   paintPresets();
-  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
+  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,fairnessHelp,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
       permits(CAPABILITY.ADMIN)?withIcon(button('Change scoring settings',()=>navigate('configuration/auto_schedule'),'ghost small'),'settings'):''):'';
   const presetName=()=>PRESETS.find(p=>p.key===st().preset)?.label||PRESETS[0].label;
   /** A run under review is said as it was run (its job: who, what it kept, its priorities), never as the setup now:
@@ -7787,7 +7796,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     feedback.querySelector('.auto-paused')?.remove();
     // A refresh failure keeps the panel's last state, including a run still in progress; a failed START takes the
     // separate "The run didn't start" path in queue() and never reaches this note.
-    const n=note(`Couldn't refresh. Showing the last result. ${(e as Error).message}`,'warning');n.classList.add('auto-paused');
+    const said=errorWords(e),n=note(`Couldn't refresh. Showing the last result.${said?' '+said:''}`,'warning');n.classList.add('auto-paused');
     n.append(' ',button('Retry',()=>{n.remove();void load().catch(failed);},'link-button'));
     // Forget the drawn key: the next good read redraws the footer (Apply enabled) even when its jobs are unchanged.
     jobsKey='';feedback.prepend(n);for(const b of foot.querySelectorAll<HTMLButtonElement>('button.primary'))b.disabled=true;};
