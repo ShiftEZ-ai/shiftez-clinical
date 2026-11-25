@@ -426,10 +426,22 @@ def test_replacement_keeps_the_surviving_reservation_uid_in_a_shared_slot(h):
     first_day, last_day = '2026-10-06', '2026-10-11'
     start, middle, end = ('2026-10-06T08:00:00+03:00', '2026-10-06T10:00:00+03:00',
                           '2026-10-06T12:00:00+03:00')
-    first = {'person_id': person, 'start': start, 'end': middle}
-    second = {'person_id': person, 'start': middle, 'end': end}
-    original = h.shift(h.workspace(), start, end, people=[first])['workspace']
-    original = h.publish(h.shift(original, start, end, people=[second])['workspace'])
+
+    def historical_bounds(mapper, connection, publication):
+        # Older publications could store a reservation shorter than its session.
+        publication.snapshot = {**publication.snapshot, 'shifts': [
+            {**shift, 'start': start, 'end': end} for shift in publication.snapshot['shifts']
+        ]}
+
+    def publish_historical(draft):
+        event.listen(m.Publication, 'before_insert', historical_bounds)
+        try:
+            return h.publish(draft)
+        finally:
+            event.remove(m.Publication, 'before_insert', historical_bounds)
+
+    original = h.shift(h.workspace(), start, middle, people=[person])['workspace']
+    original = publish_historical(h.shift(original, middle, end, people=[person])['workspace'])
 
     with TestClient(h.app, base_url=h.settings.public_origin) as client:
         removed, kept = events(client.get(path))
@@ -438,14 +450,19 @@ def test_replacement_keeps_the_surviving_reservation_uid_in_a_shared_slot(h):
             'name': 'Keep the later reservation', 'starts_on': first_day, 'ends_on': last_day,
             'replaces_publication_id': original['publication_id'],
         })['workspace']
-        published = h.publish(h.shift(replacement, start, end, people=[second])['workspace'])
+        published = publish_historical(h.shift(replacement, middle, end, people=[person])['workspace'])
         current, = events(client.get(path))
         assert current['UID'] == kept['UID']
         assert (current['DTSTART'], current['DTEND']) == (kept['DTSTART'], kept['DTEND'])
 
         amendment = h.workspace('Amend retained reservation', start=first_day, end=last_day,
                                 base=published['publication_id'])
-        h.publish(amendment)
+        copied, = h.detail(amendment)['shifts']
+        payload = {key: copied[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'attributes')}
+        payload.update(workspace_id=amendment['id'], shift_id=copied['id'], start=middle, end=end,
+                       participants=[{'person_id': person, 'start': middle, 'end': end}])
+        edited = h.command('coordinator', 'shift.update', payload, revision=amendment['revision'])['workspace']
+        h.publish(edited)
         amended, = events(client.get(path))
         assert amended['UID'] == kept['UID']
 
