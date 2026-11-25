@@ -295,7 +295,9 @@ def test_after_setting_a_password_sign_in_offers_the_new_account(users_file, bro
         expect(chip).to_contain_text('Set-up Person (test)')  # taken to sign-in, offering the new account
         expect(chip).to_contain_text('setup.person')
         expect(chip).not_to_contain_text(previous)
-        expect(page.get_by_text('Continue where you left off.', exact=True)).to_be_visible()
+        # Design verdict A-2 retired the "Continue where you left off." line: the account card and Continue say it.
+        expect(page.get_by_text('Continue where you left off.', exact=True)).to_have_count(0)
+        expect(page.get_by_role('button', name='Continue', exact=True)).to_be_visible()
         expect(page.get_by_label('Username or email', exact=True)).to_have_value('setup.person')
         kept = page.evaluate("Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)]))")
         assert 'rota.board.view' not in kept  # the previous account's device memory is gone
