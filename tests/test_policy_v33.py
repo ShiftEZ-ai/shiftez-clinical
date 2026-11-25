@@ -135,7 +135,8 @@ class V33Tests(unittest.TestCase):
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(doc['on']['push']['branches'], ['dev', 'main', 'release/*'])
         for job in ('unit', 'browser', 'static'):
-            self.assertEqual(doc['jobs'][job]['if'], "always() && !cancelled() && needs.checks.result == 'success'")
+            self.assertEqual(doc['jobs'][job]['if'], "always() && !cancelled() && needs.checks.result == 'success'"
+                             " && needs.checks.outputs.quota_scope == ''")
         self.assertEqual(doc['jobs']['ci-gate']['if'], "always()")
 
     def test_duplicate_yaml_keys_refused(self):
