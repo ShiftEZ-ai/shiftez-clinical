@@ -53,6 +53,12 @@ def open_links(db, identity_id, purpose=None):
     return [link for link in db.scalars(query) if aware(link.expires_at) > m.now()]
 
 
+def lock_link_account(db, identity_id):
+    # Link writers and acceptance share this row lock, including liveness writes.
+    return db.scalar(select(m.Account).where(m.Account.identity_id == identity_id).with_for_update()
+                     .execution_options(populate_existing=True))
+
+
 def issue_link(db, actor, identity_id, purpose, settings):
     """A new one-time link (older open links of the same purpose stop working). The raw token leaves only through
     db.info, so the command bus returns it to the admin once without storing it in the receipt."""
@@ -64,6 +70,11 @@ def issue_link(db, actor, identity_id, purpose, settings):
         or_(m.RoleBinding.ends_on.is_(None), m.RoleBinding.ends_on > today(db, actor.department_id))).limit(1))
     if protected:
         require_permission(actor, "access.system_roles")
+    account = lock_link_account(db, identity_id)
+    require(account is not None, "ACCOUNT_NOT_MANAGED", "This sign-in is not managed by this app", 409)
+    if purpose == "invite":
+        require(account.accepted_at is None, "ALREADY_ACCEPTED",
+                "This invitation was already accepted; send a password reset link instead", 409)
     moment = m.now()
     for old in open_links(db, identity_id, purpose):
         old.revoked_at, old.revision = moment, old.revision + 1
@@ -124,6 +135,7 @@ def account_command(db, actor, command, settings):
         return {"record": record(identity, exclude=("password_hash",)),
                 "ended": end_sessions(db, identity.id, actor=actor)}
     if kind == "account.revoke_invite":
+        lock_link_account(db, identity.id)
         links = open_links(db, identity.id, "invite")
         require(bool(links), "NO_OPEN_INVITE", "There is no open invitation to revoke", 409)
         for link in links:
@@ -226,18 +238,27 @@ def account_rows(db, identity_ids):
 INVALID = "This link is not valid: it may have expired, been replaced or been used already. Ask your admin for a new one."
 
 
-def find_link(db, token):
+def find_link(db, token, *, for_update=False):
     require(isinstance(token, str) and 20 <= len(token) <= 100, "LINK_INVALID", INVALID, 404)
     hashed = digest(token)
-    link = db.scalar(select(m.AccountLink).where(m.AccountLink.token_hash == hashed))
+    query = select(m.AccountLink).where(m.AccountLink.token_hash == hashed)
+    account = None
+    if for_update:
+        identity_id = db.scalar(query.with_only_columns(m.AccountLink.identity_id).where(
+            m.AccountLink.used_at.is_(None), m.AccountLink.revoked_at.is_(None), m.AccountLink.expires_at > m.now()))
+        require(identity_id is not None, "LINK_INVALID", INVALID, 404)
+        account = lock_link_account(db, identity_id)
+    link = db.scalar(query)
     valid = link is not None and secrets.compare_digest(link.token_hash, hashed) and link.used_at is None \
         and link.revoked_at is None and aware(link.expires_at) > m.now()
     require(valid, "LINK_INVALID", INVALID, 404)
     identity = db.get(m.Identity, link.identity_id)
-    account = db.scalar(select(m.Account).where(m.Account.identity_id == link.identity_id))
+    if not for_update:
+        account = db.scalar(select(m.Account).where(m.Account.identity_id == link.identity_id))
     if identity is not None:
         require_sign_in(identity)
     require(identity is not None and account is not None and not identity.disabled, "LINK_INVALID", INVALID, 404)
+    require(link.purpose != "invite" or account.accepted_at is None, "LINK_INVALID", INVALID, 404)
     return link, identity, account
 
 
@@ -265,7 +286,7 @@ def audit(db, department_id, identity_id, action, reason, correlation_id, **deta
 
 
 def accept_link(db, token, password, settings, correlation_id):
-    link, identity, account = find_link(db, token)
+    link, identity, account = find_link(db, token, for_update=True)
     problems = password_problems(password, account)
     require(not problems, "PASSWORD_WEAK", "; ".join(problems), 422)
     users = store(settings)
@@ -286,10 +307,9 @@ def accept_link(db, token, password, settings, correlation_id):
     return {"accepted": True, "sign_in": "/"}
 
 
-def change_password(db, actor, value, settings, correlation_id):
+def change_password(db, actor, value, settings, correlation_id, *, account):
     require_sign_in(db.get(m.Identity, actor.identity_id))
-    account = db.scalar(select(m.Account).where(m.Account.identity_id == actor.identity_id))
-    require(account is not None, "ACCOUNT_NOT_MANAGED",
+    require(account is not None and account.identity_id == actor.identity_id, "ACCOUNT_NOT_MANAGED",
             "Your sign-in is managed by your organisation's identity service; change your password there.", 409)
     users = store(settings)
     require(written(lambda: users.verify(account.username, value.current_password)), "PASSWORD_INCORRECT",

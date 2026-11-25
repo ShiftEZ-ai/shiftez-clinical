@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services import calendar_feeds, schedule
-from packages.domain.reports import calendar_feed
+from packages.domain.reports import calendar_feed, publication_duty_ids
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -28,7 +28,10 @@ def test_subscription_projects_frozen_personal_duties_and_matches_full_snapshot(
         pub = db.get(m.Publication, publication['publication_id'])
         if trimmed:
             set_committed_value(pub, 'effective_until', date(2026, 10, 6))
-        expected = calendar_feed([(schedule.in_force_snapshot(db, pub), pub.sequence, pub.created_at)], me, 'My duties')
+        snapshot = dict(schedule.in_force_snapshot(db, pub))
+        assert pub.calendar_lineage is True
+        snapshot['_calendar_duty_ids'] = publication_duty_ids([(pub.snapshot['shifts'], True, None)], me)
+        expected = calendar_feed([(snapshot, pub.sequence, pub.created_at)], me, 'My duties')
         # The cutoff row is a read-only test input; immutable publication fields are never changed.
         cutoff = pub.effective_until
         db.expunge(pub)
