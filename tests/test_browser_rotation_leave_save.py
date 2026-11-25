@@ -65,11 +65,13 @@ def test_rotation_saved_without_leave_shows_no_clash(browser, live_server, h):
         context.close()
 
 
-def test_import_review_and_rotation_show_the_retained_leave_conflict(browser, live_server, h, monkeypatch):
+def test_import_review_and_rotation_show_the_retained_leave_conflict(browser, h, monkeypatch, request):
     from apps.api.services import independence
     from .test_rotation_leave_policy import record_away, resident
 
     monkeypatch.setattr(independence, 'today', lambda db, department_id: date(2026, 11, 1))
+    # Start the forked server after pinning the import date.
+    live_server = request.getfixturevalue('live_server')
     _, value, _ = resident(h, create=False)
     record_away(h)
     context, page = sign_in(browser, live_server, 'coordinator', {'width': 1440, 'height': 900})
