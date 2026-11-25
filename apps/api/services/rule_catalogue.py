@@ -432,9 +432,10 @@ def _question_groups():
             for order, label in enumerate(QUESTION_GROUP_ORDER)]
 
 
-def _people_table(data, explained, actor=None):
+def _people_table(data, explained, actor, lo, hi, *, captured=False):
     """Build the D-group table from the same server-authored explainer cells; missing children inherit."""
     from packages.domain.rule_explainer import _scope_values
+    from packages.domain.validation import exception_for
 
     workload = [row for row in explained
                 if not row.get('unexplained')
@@ -452,6 +453,8 @@ def _people_table(data, explained, actor=None):
         by_person.setdefault(membership['person_id'], []).append(membership)
 
     def actions(rule_id, line_id, safety, *, exception=False):
+        if captured:
+            return []
         can_adjust = bool(actor and (actor.permits('coordinator') or actor.permits('admin')))
         result = [{'action': 'open_rule', 'label': 'Open rule', 'enabled': True, 'line_id': line_id}]
         if safety:
@@ -529,13 +532,9 @@ def _people_table(data, explained, actor=None):
 
     def cell_for(key, person_id=None, rank_id=None):
         column = column_values[key]
-        policy_ids = set(column['rule_ids'])
-        if person_id:
-            at = data.get('workspace', {}).get('starts_on')
-            exception = next((item for item in data.get('exceptions') or ()
-                              if item.get('policy_id') in policy_ids and item.get('person_id') == person_id
-                              and item.get('status') == 'approved'
-                              and item.get('starts_on') <= at < item.get('ends_on')), None)
+        if person_id and data['exceptions']:
+            exception = next((matched for rule_id in column['rule_ids'] if rule_id in originals
+                              and (matched := exception_for(data, originals[rule_id], person_id, lo, hi))), None)
             if exception:
                 rule_id = exception['policy_id']
                 return {'display': 'Approved exception', 'cell': 'Approved exception', 'short': None,
@@ -635,7 +634,7 @@ def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id
         data['_person_rows'] = index_person_rows(data)
         result = explain_rules(data, rota=False)
         conflicts = explained_conflicts(data, starts_on=day, ends_on=day + timedelta(days=1))
-        people_table = _people_table(data, result['rules'], actor)
+        people_table = _people_table(data, result['rules'], actor, lo, hi, captured=capture is not None)
     return {'at': day, 'status': None, 'groups': _question_groups(),
             'rules': [{'rule_id': rule['rule_id'], 'catalogue_id': rule.get('catalogue_id'),
                        'question_group': _question_group_key(rule['question_group']),
@@ -841,15 +840,25 @@ def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
     inputs = {key: [row for row in records(key, []) if row.get('department_id') == actor.department_id]
               for key in ('exceptions', 'scheduling_facts', 'type_lead_ownership')}
     policy_ids = {policy['id'] for policy in policies}
-    inputs['exceptions'] = [row for row in inputs['exceptions']
-                            if row.get('status') == 'approved' and row.get('policy_id') in policy_ids]
-    seeds = [row for row in records('policy_seed_lines', [])
-             if row.get('department_id') == actor.department_id and row.get('policy_id') in policy_ids]
     with _captured_projection():
+        seeds = [row for row in records('policy_seed_lines', [])
+                 if row.get('department_id') == actor.department_id and row.get('policy_id') in policy_ids]
+        approved = []
         for exception in inputs['exceptions']:
-            if (not all(str(UUID(exception[key])) == exception[key] for key in ('id', 'person_id'))
-                    or date.fromisoformat(exception['starts_on']) >= date.fromisoformat(exception['ends_on'])):
+            if exception.get('status') != 'approved':
+                continue
+            if str(UUID(exception['policy_id'])) != exception['policy_id']:
                 raise _captured_rules_problem()
+            if exception['policy_id'] not in policy_ids:
+                continue
+            first, last = (date.fromisoformat(exception[key]) for key in ('starts_on', 'ends_on'))
+            if (not all(str(UUID(exception[key])) == exception[key] for key in ('id', 'person_id'))
+                    or type(exception['policy_revision']) is not int or exception['policy_revision'] < 1
+                    or first.isoformat() != exception['starts_on'] or last.isoformat() != exception['ends_on']
+                    or first >= last):
+                raise _captured_rules_problem()
+            approved.append(exception)
+        inputs['exceptions'] = approved
         fact_ids = {row['id'] for row in inputs['scheduling_facts']}
         target_ids = {'policy': policy_ids, 'fact': fact_ids}
         bindings = []
@@ -1118,7 +1127,11 @@ def _captured_rule_details(row):
     kind = definition['rule']['kind']
     details = {key: row.get(key) for key in ('id', 'name', 'starts_on', 'ends_on')}
     if kind == 'catalogue':
+        from packages.contracts.rule_catalogue import workload_fields
         definition = _display_safety_levels(row)['definition']
+        rule = definition['rule']
+        definition = {**definition, 'rule': {**rule, 'lines': [
+            {**line, **workload_fields(rule, line)} for line in rule['lines']]}}
     else:
         stored = definition.get('severity', 'mandatory')
         level = effective_severity(kind, stored)

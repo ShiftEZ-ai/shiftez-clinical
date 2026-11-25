@@ -2308,7 +2308,7 @@ export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CA
  *  under a self-approval permission (mayDecide). */
 export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
   refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
-function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,levels:(rule:Row)=>string[],open?:(rule:Row)=>void,
+function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,levels:(rule:Row)=>(string|null)[],open?:(rule:Row)=>void,
     effectCell:(rule:Row)=>Child=effect){
   if(!rows.length)return null;
   return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
@@ -2329,9 +2329,12 @@ export function capturedRulesContext(ctx:Context,data:Catalogue){
   const name=recordName(ctx),names=namer(ctx);
   const effect=(p:Row)=>ruleSentence(p.definition.rule,p.definition,name);
   const entryOf=(rule:Row)=>(rule.catalogue_version===2?RULE_CATALOGUE_V2:RULE_CATALOGUE).find(e=>e.id===rule.id);
-  const levels=(p:Row)=>{
-    const rule=p.definition.rule,entry=rule.kind==='catalogue'?entryOf(rule):undefined;
-    return entry?ruleLevels(entry,rule.lines):[p.effective_severity??p.definition.severity];
+  const levels=(p:Row):(string|null)[]=>{
+    const rule=p.definition.rule;
+    if(rule.kind!=='catalogue')return [p.effective_severity??p.definition.severity];
+    // A stored blank inherits its strength; the captured panel cannot read that as an explicit Mandatory bound.
+    return [...new Set((rule.lines as RuleLine[]).flatMap(line=>Object.entries(line.numbers)
+      .map(([key,number])=>line.mandatory_reasons?.[key]?'mandatory':number?.level??null)))];
   };
   const lines=(p:Row):string[]=>{
     const definition=p.definition,rule=definition.rule;
