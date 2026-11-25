@@ -338,8 +338,10 @@ class Analyzer(ast.NodeVisitor):
         if (self.function != 'upgrade' or self.dialect is not None or not isinstance(upgrade, ast.FunctionDef)
                 or len(upgrade.body) != 2 or upgrade.body[1] is not node or not isinstance(upgrade.body[0], ast.Expr)):
             return None
+        metadata = {'revision', 'down_revision', 'branch_labels', 'depends_on', 'SAFETY_CLASS'}
         if not all(statement is upgrade or isinstance(statement, (ast.Import, ast.ImportFrom))
-                   or isinstance(statement, ast.Assign) and self.literal(statement.value)
+                   or (isinstance(statement, ast.Assign) and self.literal(statement.value)
+                       and all(isinstance(target, ast.Name) and target.id in metadata for target in statement.targets))
                    or isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
                    or (isinstance(statement, ast.FunctionDef) and statement.name == 'downgrade'
                        and len(statement.body) == 1 and isinstance(statement.body[0], ast.Raise))

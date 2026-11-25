@@ -275,6 +275,7 @@ def test_retained_publication_guard_protects_new_nullable_column(publication_his
     ('ON publications', 'ON other'),
     ('BEFORE UPDATE', 'AFTER UPDATE'),
     ('RAISE(ABORT', 'RAISE(FAIL'),
+    ('immutable marker', 'immutable :marker'),
     ("BEGIN SELECT", "BEGIN UPDATE publications SET marker = NULL; SELECT"),
     ("END", "END; DELETE FROM publications"),
     ('WHEN', '/* outer /* nested */ marker */ WHEN'),
@@ -331,6 +332,14 @@ def test_retained_nullable_guard_refuses_ddl_outside_upgrade(publication_history
     path = retained_guard_revision(publication_history)
     with path.open('a', encoding='utf-8') as source:
         source.write(extra)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('entry_point', ['upgrade', 'downgrade'])
+def test_retained_nullable_guard_refuses_rebound_entry_point(publication_history, entry_point):
+    path = retained_guard_revision(publication_history)
+    with path.open('a', encoding='utf-8') as source:
+        source.write(f'\n{entry_point} = None\n')
     assert safety.analyze(path)['class'] == 'destructive'
 
 
