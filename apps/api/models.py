@@ -1331,6 +1331,7 @@ class RequestRecord(InsertionOrdered, Record, DepartmentRecord, Base):
     start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     private_reason: Mapped[str] = mapped_column(String(1000))
+    private_undo_note: Mapped[str | None] = mapped_column(String(1000), deferred=True)
     status: Mapped[str] = mapped_column(String(24), default="submitted")
     created_by: Mapped[str] = mapped_column(ForeignKey("identities.id"))
     decided_by: Mapped[str | None] = mapped_column(ForeignKey("identities.id"))
@@ -1872,6 +1873,10 @@ class Job(InsertionOrdered, Record, DepartmentRecord, Base):
                 refreshed = job_read_metadata(frozen, job_result_with_reconciliation(job, job.result))
                 metadata = {**metadata, 'input_snapshot': refreshed['input_snapshot'],
                             **({'result': refreshed['result']} if frozen.get('generation_manifest') else {})}
+                if refreshed.get('_generation_authority_pending'):
+                    metadata['_generation_authority_pending'] = True
+                else:
+                    metadata.pop('_generation_authority_pending', None)
             if state.attrs.input_fingerprint.history.has_changes():
                 metadata = {**metadata, 'input_fingerprint': job.input_fingerprint}
             if state.attrs.result.history.has_changes() or state.attrs.kind.history.has_changes():

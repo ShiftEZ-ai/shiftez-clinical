@@ -1276,8 +1276,7 @@ def _change_points(data, person_id):
     def dates(rows):
         return {local_midnight(date.fromisoformat(str(r[f])), zone) for r in rows
                 for f in ('starts_on', 'ends_on') if r.get(f)}
-    rows = list(data.get('generation_role_bindings', {}).get(person_id, ()))
-    definitions = []
+    rows, definitions = [], []
     for name, fields in (('memberships', (('category_id', 'categories'),)),
                          ('grants', (('capability_id', 'capabilities'),)),
                          ('programme_memberships', (('programme_id', 'programmes'),)),
@@ -1297,8 +1296,11 @@ def _condition_points(data, tree, person_id, a, b):
     if not tree:
         return points
     cache = data.get('_line_index_cache')
-    sources = _source_points(selector_sources(data.get('policies', []), tree, cache),
-                             a, b, data['organisation']['timezone'], cache)
+    zone = data['organisation']['timezone']
+    sources = _source_points(selector_sources(data.get('policies', []), tree, cache), a, b, zone, cache)
+    if person_id is not None and has_session_lines(tree, {'roles'}):
+        roles = data.get('generation_role_bindings', {}).get(person_id, ())
+        sources.update(_source_points(roles, a, b, zone))
     return sorted(set(points) | sources) if sources else points
 
 

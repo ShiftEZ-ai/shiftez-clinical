@@ -107,7 +107,7 @@ def test_generation_role_lookup_is_dated_and_read_only(h):
     with transaction(h.app.state.engine, write=True) as db:
         binding = db.scalar(select(m.RoleBinding).where(
             m.RoleBinding.identity_id == h.seed['identities']['staff'], m.RoleBinding.role == 'staff'))
-        binding.ends_on = date(2026, 10, 5)
+        binding.starts_on, binding.ends_on = date(2026, 10, 4), date(2026, 10, 5)
     with transaction(h.app.state.engine) as db:
         bindings = snapshots.generation_role_bindings(db, db.get(m.Workspace, workspace['id']))
     data = {'organisation': {'timezone': 'UTC'}, 'generation_role_bindings': bindings}
@@ -116,10 +116,15 @@ def test_generation_role_lookup_is_dated_and_read_only(h):
     tomorrow = tuple(at + timedelta(days=1) for at in morning)
     assert rule_holds(data, person_id, None, *morning)('roles') == {'staff'}
     assert rule_holds(data, person_id, None, *tomorrow)('roles') == set()
-    midnight = aware('2026-10-05T00:00:00+00:00')
+    start = aware('2026-10-03T20:00:00+00:00')
+    begins = aware('2026-10-04T00:00:00+00:00')
+    ends = aware('2026-10-05T00:00:00+00:00')
     role_scope = scope('roles', 'staff')
-    assert list(scope_segments(data, role_scope, person_id, None, morning[0], tomorrow[1])) == [
-        (morning[0], midnight, True), (midnight, tomorrow[1], False)]
+    assert list(scope_segments(data, role_scope, person_id, None, start, tomorrow[1])) == [
+        (start, begins, False), (begins, ends, True), (ends, tomorrow[1], False)]
+    without_roles = {'organisation': data['organisation']}
+    assert list(scope_segments(without_roles, role_scope, person_id, None, start, tomorrow[1])) == [
+        (start, tomorrow[1], False)]
     assert data == original
 
 
@@ -185,6 +190,7 @@ def test_implicit_group_selection_stays_implicit_after_preparation(h, control, p
         assert row.input_snapshot['_generation_request'] == original
 
 
+@pytest.mark.parametrize('h', DATABASES, indirect=True)
 def test_scope_run_supersedes_only_after_worker_authority(h):
     workspace, _, selected = integrated(h)
     settings(h, group_lookahead='none')
@@ -201,13 +207,18 @@ def test_scope_run_supersedes_only_after_worker_authority(h):
         row.status, row.completed_at, row.result = 'succeeded', m.now(), {'status': 'candidate_feasible'}
     newer = h.command('coordinator', 'job.create', payload, revision=workspace['revision'])['job']
     with transaction(engine) as db:
-        assert db.get(m.Job, newer['id']).supersedes == []
+        pending = db.get(m.Job, newer['id'])
+        assert pending.supersedes == []
+        assert pending.read_metadata['_generation_authority_pending'] is True
         require_latest_run(db, db.get(m.Job, older['id']))
     with transaction(engine, write=True) as db:
         claim = claim_job(db)
     prepare_deferred_generation(engine, claim, h.settings)
     with transaction(engine) as db:
-        assert db.get(m.Job, newer['id']).supersedes == [older['id']]
+        admitted = db.get(m.Job, newer['id'])
+        assert admitted.supersedes == [older['id']]
+        assert '_generation_authority_pending' not in admitted.read_metadata
+        require_latest_run(db, admitted)
 
 def test_generation_scope_fields_refuse_outside_and_accept_owned_population(h):
     from datetime import date

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -85,7 +86,7 @@ def profile_worker(job_id):
 
 
 @pytest.mark.postgres
-def test_generation_profile_at_department_scale(pg, request):
+def test_generation_profile_at_department_scale(pg, request, tmp_path):
     harness = pg
     data = seed_department_preparation(harness)
     for client in harness.clients.values():
@@ -112,12 +113,14 @@ def test_generation_profile_at_department_scale(pg, request):
     job, timings['worker_request'] = queue(harness, workspace, role='admin', generation_options={'search_minutes': 1})
 
     env = {**os.environ, 'TEST_POSTGRES_URL': harness.settings.database_url}
-    child = subprocess.run([sys.executable, '-m', 'tests.test_generation_profile', job['id']],
-                           check=True, env=env, stdout=subprocess.PIPE, text=True)
+    worker_report = tmp_path / 'worker.json'
+    subprocess.run([sys.executable, '-m', 'tests.test_generation_profile', job['id'], str(worker_report)],
+                   check=True, env=env)
     measurement = {'people': len(data['people']), 'sessions': len(data['shifts']),
-                   'rule_versions': len(data['policies']), 'queue': timings, 'worker': json.loads(child.stdout)}
+                   'rule_versions': len(data['policies']), 'queue': timings, 'worker': json.loads(worker_report.read_text(encoding='utf-8'))}
     request.node.user_properties.append(('generation_profile', json.dumps(measurement)))
 
 
 if __name__ == '__main__':
-    print(json.dumps(profile_worker(sys.argv[1])))
+    job_id, output = sys.argv[1:]
+    Path(output).write_text(json.dumps(profile_worker(job_id)), encoding='utf-8')

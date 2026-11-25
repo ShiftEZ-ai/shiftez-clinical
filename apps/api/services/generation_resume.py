@@ -89,7 +89,8 @@ def resume_expired(job, days):
 
 
 def generation_admitted(job):
-    return job.input_snapshot['_generation_authority_pending'].as_boolean().is_not(True)
+    # Older rows predate deferred authority and have no pending marker.
+    return job.read_metadata['_generation_authority_pending'].as_boolean().is_not(True)
 
 
 def resume_current(db, job, *, days=None):
