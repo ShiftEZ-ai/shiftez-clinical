@@ -508,7 +508,7 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
     w = h.workspace('Legend touch targets')
     for day in range(4, 8):
         duty = h.configure('assignment_types', {'name': f'Fictional duty {day} with a long title',
-                                                'starts_on': '2020-01-01'})['record']['id']
+                                                'starts_on': '2020-01-01', 'definition': {}})['record']['id']
         w = h.shift(w, f'2026-10-0{day}T08:00:00+03:00', f'2026-10-0{day}T12:00:00+03:00',
                     people=[], typ=duty)['workspace']
     context, page = sign_in(browser, live_server, 'coordinator', PHONE, has_touch=True)
@@ -517,6 +517,10 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
         legend = page.locator('#schedule-view .view-legend:visible')
         more = legend.locator('.lg-more .pill-more')
         expect(more).to_be_visible()
+        mark = more.locator('.lg-more-mark')
+        hit = more.bounding_box()
+        assert hit and min(hit['width'], hit['height']) >= 44, hit
+        assert more.evaluate('button => button.scrollWidth <= button.clientWidth + 1')
         assert legend.evaluate("""key => {
           const bounds = key.getBoundingClientRect();
           const items = [...key.children].filter(item => !item.hidden).map(item => item.getBoundingClientRect());
@@ -526,7 +530,7 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
         }""")
         panel = page.get_by_role('dialog', name=f"All {legend.get_attribute('aria-label')}", exact=True)
         for corner in TARGET_CORNERS:
-            tap_corner(page, more, more, corner)
+            tap_corner(page, more, mark, corner)
             expect(panel).to_be_visible()
             page.keyboard.press('Escape')
             expect(panel).not_to_be_visible()
