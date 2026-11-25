@@ -8,7 +8,7 @@ import {tableColumnMenus} from './table_menu.js';
 import {recordError,unisolated} from './feedback_context.js';
 import {BULK_COLLECTIONS,CAPABILITIES,PERMISSIONS,ROLE_NAMES,ROLE_LABELS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS} from './generated.js';
 import {staleFault} from './stale_bundle.js';
-import {brand,brandSize,suppliedLogo} from './brand.js';
+import {brand,brandImage,paintWordmark} from './brand.js';
 const iconPaths = {
   // Something deviates from the general rule here (an exception, an override, a rota-only change).
   fork:'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12-12a9 9 0 0 1-9 9',
@@ -703,18 +703,18 @@ export function iconButton(label: string, name: IconName, action: (event: MouseE
   b.addEventListener('click',event=>{try{const r=action(event);if(r instanceof Promise)r.catch(e=>{reportError(e);});}catch(e){reportError(e);}});
   return b;
 }
-/** The app's and institution's brand as currently applied (brand.ts: the deployment's branding, else the generated
- *  defaults): the emblem (compact: the navigation) and the wordmark (sign-in). New branding repaints these in place. */
-const brandImage=(cls:string,url:string,alt:string)=>{const size=brandSize(url);
-  return el('img',{class:cls+(suppliedLogo(url)?' brand-supplied':''),src:url,alt,...(size?{width:size[0],height:size[1]}:{}),decoding:'async'});};
 /** Decorative beside the app's name (the link or heading it sits in names it). */
 export const brandEmblem=()=>brandImage('brand-mark brand-emblem',brand().emblem_url,brand().emblem_alt);
 /** The product's short name in a heading drawn before the branding may have answered: it follows the branding. */
 export const brandShort=()=>el('span',{'data-brand-short':''},brand().short_name);
 /** The start-up screen's mark (index.html draws the same before the app runs; failures keep it): the emblem, centred. */
 export const bootEmblem=()=>brandImage('boot-emblem brand-emblem',brand().emblem_url,brand().emblem_alt);
-/** The sign-in and account-link screens' brand: the institution's wordmark over the app's name. */
-export const brandRow=()=>el('div',{class:'brand login-brand'},brandImage('brand-wordmark',brand().wordmark_url,brand().wordmark_alt),el('strong',{'data-brand-name':''},brand().app_name));
+/** The app's name with an optional wordmark on sign-in, account linking and department selection. */
+export const brandRow=()=>{
+  const row=el('div',{class:'brand login-brand'},el('strong',{'data-brand-name':''},brand().app_name));
+  paintWordmark(row);
+  return row;
+};
 /** Production or test, as an icon (the footer, sign-in): keyed on the deployment, not ROTA_ENV (DEV runs ROTA_ENV=production
  *  for strict security but is a test deployment). `text` is its name and tooltip; test is gold, production plain.
  *  Not a Tab stop: it does nothing (maintenance, WCAG 2.4.3); its name is read with the footer. */
