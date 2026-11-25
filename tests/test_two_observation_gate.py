@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -230,6 +231,55 @@ class TwoObservationGateTests(unittest.TestCase):
                 maker.evaluate(self.current, self.current, runs, **output)
             self.assertEqual(json.loads(artifact.read_text()), report)
 
+    def test_pr_merge_base_uses_target_history_and_exact_event_head(self):
+        import trusted_ci
+
+        def git(*args, **kwargs):
+            return subprocess.check_output(["git", "-C", str(self.folder),
+                                            "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                            *args], **kwargs)
+
+        git("init", "-q")
+        tree = git("mktree", input=b"").decode().strip()
+
+        def revision(name, *parents):
+            args = [arg for parent in parents for arg in ("-p", parent)]
+            return git("commit-tree", tree, *args, "-m", name).decode().strip()
+
+        event_base = revision("Event base")
+        base = revision("Generated merge base", event_base)
+        tip = revision("Current target tip", base)
+        head = revision("PR head", event_base)
+        candidate = revision("Generated merge", base, head)
+        different_head = revision("Different head merge", base, event_base)
+        unrelated = revision("Unrelated history")
+        git("update-ref", "refs/remotes/origin/main", tip)
+        output = self.folder / "output"
+
+        def payload(sha):
+            return {"pull_request": {"base": {"ref": "main", "sha": sha}, "head": {"sha": head}},
+                    "repository": {"default_branch": "main"}}
+
+        policy = trusted_ci.policy
+        with patch.object(policy, "git", side_effect=git), \
+             patch.object(policy, "event", return_value=payload(event_base)), \
+             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": candidate,
+                                     "GITHUB_OUTPUT": str(output), "TRUSTED_BOOTSTRAP": "false"}):
+            git("update-ref", "HEAD", candidate)
+            policy.ci_context()
+            self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()),
+                             {"base_sha": base, "census_base_sha": base, "release": "false"})
+            with self.assertRaisesRegex(ValueError, "match the event merge commit"):
+                policy.pr_test_base(payload(event_base), different_head)
+            with self.assertRaisesRegex(ValueError, "does not contain the event base"):
+                policy.pr_test_base(payload(unrelated), candidate)
+            with patch.dict(os.environ, {"GITHUB_SHA": different_head}), \
+                 self.assertRaisesRegex(ValueError, "event head second"):
+                policy.pr_test_base(payload(event_base), different_head)
+            git("update-ref", "refs/remotes/origin/main", revision("Diverged target", event_base))
+            with self.assertRaisesRegex(ValueError, "not on the target branch"):
+                policy.pr_test_base(payload(event_base), candidate)
+
     def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci
         owner = "tests/test_quick_owner.py"
@@ -305,12 +355,17 @@ class TwoObservationGateTests(unittest.TestCase):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
                     (self.folder / "tests/test_unreadable.py").mkdir()
-                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": branch},
+                event_base = "d" * 40 if event == "pull_request" and branch == default and path == shared else base
+                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": event_base, "ref": branch},
                                             "labels": [{"name": label} for label in labels]},
                            "repository": {"default_branch": default}}
                 def event_git(*args):
                     if args[0] == "rev-list":
                         return f"{candidate} {base} {head}".encode()
+                    if args[0] == "merge-base":
+                        self.assertIn(args, [("merge-base", "--is-ancestor", event_base, base),
+                                             ("merge-base", "--is-ancestor", base, "refs/remotes/origin/" + branch)])
+                        return b""
                     self.assertEqual(args[-3:], (base, candidate, "--"))
                     changed = [path, owner] if path == shared else [path]
                     return ("\0".join(changed) + "\0").encode()
@@ -335,7 +390,7 @@ class TwoObservationGateTests(unittest.TestCase):
                                   default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
                                              "GITHUB_REF": "refs/heads/" + branch}), \
-                     patch.object(maker, "at_revision", return_value=self.current), \
+                     patch.object(maker, "at_revision", return_value=self.current) as at_revision, \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
                      patch.object(trusted_ci.subprocess, "check_output", return_value=head), \
@@ -348,8 +403,11 @@ class TwoObservationGateTests(unittest.TestCase):
                     single = event in ("pull_request", "merge_group") or (event == "push" and branch == default)
                     replicas = [1] if single else [1, 2]
                     self.assertEqual(maker.context(base)["replicas"], replicas)
-                    plan = trusted_ci.plan(base, False)
+                    at_revision.reset_mock()
+                    plan = trusted_ci.plan(event_base, False)
                     self.assertEqual(plan["sha"], candidate)
+                    self.assertEqual(plan["base_sha"], base)
+                    self.assertEqual(at_revision.call_args_list[0].args, (base,))
                     self.assertEqual(plan["replicas"], replicas)
                     self.assertEqual(maker.retry_run(plan), single)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
