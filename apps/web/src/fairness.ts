@@ -312,7 +312,7 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
     wanted=new Set();
     root.className='fx-page'+(view.density==='compact'?' compact':'');
     const [first,last]=periodDates(view,today);
-    const month=monthInView(),chosenMonth=rotaMonth;
+    const month=monthInView(),chosenMonth=rotaMonth,implicitPeriod=!periodChosen&&!viewId;
     const common={who:tree(view.who),starts_on:first,ends_on:last};
     const work=workParams(view),filters=WISH(view.metric)?{}:work;
     // Grouping by what the work was needs the same kind of filter or none (and wishes have no clinic or duty type).
@@ -346,8 +346,10 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
     // it covers that month (a draft being planned too), else that month's published rota; with none, the server's
     // default. Another draft's goals are never shown before it is published.
     const goalsRead=(planner?read('/api/home/rotas?'+query({start:month+'-01',end:monthAfter(month)+'-01',limit:'100'})).then(r=>{
-      const rotas=((r.workspaces||[]) as Row[]).filter(x=>chosenMonth||x.starts_on>=first&&x.starts_on<last),focus=links.focus?.();
-      return (focus&&rotas.find(x=>x.id===focus.id))||rotas.find(x=>x.status==='published');},()=>undefined):Promise.resolve(undefined))
+      const rotas=(r.workspaces||[]) as Row[],focus=links.focus?.();
+      const inScope=(x:Row)=>!!chosenMonth||x.starts_on>=first&&x.starts_on<last;
+      return (focus&&rotas.find(x=>x.id===focus.id&&(implicitPeriod||inScope(x))))||
+        rotas.find(x=>x.status==='published'&&inScope(x));},()=>undefined):Promise.resolve(undefined))
       .then(rota=>read('/api/fairness/goals?'+query({...common,workspace_id:rota?.id})));
     if(hasSections)goalsRead.then(async g=>{
       if(!live())return;
@@ -364,7 +366,7 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
           const showUpcoming=()=>{rotaMonth=workspace.starts_on.slice(0,7);
             change({period:'custom',starts_on:workspace.starts_on,ends_on:workspace.ends_on});};
           // Change the visible period before showing the upcoming rota's figures.
-          if(!periodChosen&&!viewId&&!rotaMonth&&view.period===DEFAULT.period){showUpcoming();return;}
+          if(implicitPeriod&&!chosenMonth&&view.period===DEFAULT.period){showUpcoming();return;}
           action=button('Show upcoming published rota',showUpcoming,'secondary small');
         }
       }
