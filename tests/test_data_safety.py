@@ -11,6 +11,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from textwrap import indent
 import uuid
 from alembic import command
 import pytest
@@ -30,6 +31,28 @@ ROOT = Path(__file__).resolve().parents[1]
 HEAD = '0043_announcements_workers'  # last revision the grandfather inventory was taken at
 
 
+CHECK_TABLE = '''op.create_table('items', sa.Column('role', sa.String()),
+                sa.CheckConstraint("role IN ('one', 'two')", name='role_check'))
+'''
+CHECK_DROP = 'op.drop_constraint("role_check", "items", type_="check")\n'
+
+
+def postgres_upgrade(body):
+    return "if op.get_bind().dialect.name == 'postgresql':\n" + indent(body, '    ')
+
+
+def check_revision(directory, revision, parent, body, *, kind='additive', before_upgrade=''):
+    path = directory / f'{revision}.py'
+    path.write_text(f'''from alembic import op
+import sqlalchemy as sa
+revision = {revision!r}
+down_revision = {parent!r}
+SAFETY_CLASS = {kind!r}
+{before_upgrade}def upgrade():
+{indent(body, '    ')}''', encoding='utf-8')
+    return path
+
+
 @pytest.mark.parametrize('expression,name,table,expected', [
     ("role IN ('two', 'three', 'one')", 'role_check', 'items', 'additive'),
     ("role IN ('two', 'one')", 'role_check', 'items', 'destructive'),
@@ -43,55 +66,30 @@ HEAD = '0043_announcements_workers'  # last revision the grandfather inventory w
 ], ids=['widens', 'equal', 'narrows', 'changes-values', 'other-column', 'extra-predicate',
         'other-name', 'other-table', 'drop-only'])
 def test_check_constraint_replacement_uses_ancestor_definition(tmp_path, expression, name, table, expected):
-    (tmp_path / 'prior.py').write_text('''from alembic import op
-import sqlalchemy as sa
-revision = 'prior'
-down_revision = None
-def upgrade():
-    op.create_table('items', sa.Column('role', sa.String()),
-                    sa.CheckConstraint("role IN ('one', 'two')", name='role_check'))
-''', encoding='utf-8')
-    body = '    op.drop_constraint("role_check", "items", type_="check")\n'
+    check_revision(tmp_path, 'prior', None, CHECK_TABLE)
+    body = CHECK_DROP
     if expression is not None:
-        body += f'    op.create_check_constraint({name!r}, {table!r}, {expression!r})\n'
-    path = tmp_path / 'current.py'
+        body += f'op.create_check_constraint({name!r}, {table!r}, {expression!r})\n'
     for predecessor, kind in [('prior', expected), ('missing', 'destructive')]:
-        path.write_text(f'''from alembic import op
-revision = 'current'
-down_revision = {predecessor!r}
-SAFETY_CLASS = {kind!r}
-def upgrade():
-{body}''', encoding='utf-8')
+        path = check_revision(tmp_path, 'current', predecessor, postgres_upgrade(body), kind=kind)
         assert not safety.declaration_errors(path)
         assert safety.needs_confirmation(path) is (kind == 'destructive')
 
 
-@pytest.mark.parametrize('merged', [False, True], ids=['parallel-heads', 'joined-by-merge'])
+@pytest.mark.parametrize('merged', [False, True, 'list', 'three'],
+                         ids=['parallel-heads', 'joined-by-merge', 'list-parents', 'three-children'])
 def test_check_replacement_beside_a_parallel_branch_needs_confirmation(tmp_path, merged):
     # Sibling a widens the CHECK to add 'four'; sibling b only sees the parent and sets 'three', which drops 'four'.
-    (tmp_path / 'parent.py').write_text('''from alembic import op
-import sqlalchemy as sa
-revision = 'parent'
-down_revision = None
-def upgrade():
-    op.create_table('items', sa.Column('role', sa.String()),
-                    sa.CheckConstraint("role IN ('one', 'two')", name='role_check'))
-''', encoding='utf-8')
+    check_revision(tmp_path, 'parent', None, CHECK_TABLE)
     for revision, values in [('a', "'one', 'two', 'four'"), ('b', "'one', 'two', 'three'")]:
-        (tmp_path / f'{revision}.py').write_text(f'''from alembic import op
-revision = {revision!r}
-down_revision = 'parent'
-SAFETY_CLASS = 'destructive'
-def upgrade():
-    op.drop_constraint("role_check", "items", type_="check")
-    op.create_check_constraint("role_check", "items", "role IN ({values})")
-''', encoding='utf-8')
+        body = CHECK_DROP + f'op.create_check_constraint("role_check", "items", "role IN ({values})")\n'
+        check_revision(tmp_path, revision, 'parent', postgres_upgrade(body), kind='destructive')
     if merged:
-        (tmp_path / 'merge.py').write_text('''revision = 'merge'
-down_revision = ('a', 'b')
-def upgrade():
-    pass
-''', encoding='utf-8')
+        parents = ('a', 'b')
+        if merged == 'three':
+            check_revision(tmp_path, 'c', 'parent', 'pass\n')
+            parents += ('c',)
+        check_revision(tmp_path, 'merge', list(parents) if merged == 'list' else parents, 'pass\n')
     for revision in ['a', 'b']:
         path = tmp_path / f'{revision}.py'
         assert safety.analyze(path)['class'] == 'destructive'
@@ -100,27 +98,75 @@ def upgrade():
 
 
 @pytest.mark.parametrize('split', [False, True], ids=['single-alter', 'adjacent-calls'])
-def test_postgres_check_widening_can_use_a_definition_in_the_upgrade(tmp_path, split):
-    old = "CREATE TABLE items (role VARCHAR(32) CONSTRAINT role_check CHECK (role IN ('one', 'two')))"
-    drop = 'ALTER TABLE items DROP CONSTRAINT role_check'
+@pytest.mark.parametrize('constraint', ['role_check', '"Role_Check"'], ids=['plain', 'quoted'])
+def test_postgres_check_widening_can_use_a_definition_in_the_upgrade(tmp_path, split, constraint):
+    old = f"CREATE TABLE items (role VARCHAR(32) CONSTRAINT {constraint} CHECK (role IN ('one', 'two')))"
+    drop = f'ALTER TABLE items DROP CONSTRAINT {constraint}'
     new = "role IN ('one', 'two', 'three')"
     if split:
-        replacement = f"op.execute({drop!r})\n        op.create_check_constraint('role_check', 'items', {new!r})"
+        name = constraint.strip('"')
+        replacement = f"op.execute({drop!r})\nop.create_check_constraint({name!r}, 'items', {new!r})\n"
     else:
-        sql = drop + f', ADD CONSTRAINT role_check CHECK ({new})'
-        replacement = f'op.execute({sql!r})'
-    path = tmp_path / 'current.py'
-    path.write_text(f'''from alembic import op
-revision = 'current'
-down_revision = None
-SAFETY_CLASS = 'additive'
-def upgrade():
-    op.execute({old!r})
-    if op.get_bind().dialect.name == 'postgresql':
-        {replacement}
-''', encoding='utf-8')
+        sql = drop + f', ADD CONSTRAINT {constraint} CHECK ({new})'
+        replacement = f'op.execute({sql!r})\n'
+    path = check_revision(tmp_path, 'current', None, f'op.execute({old!r})\n' + postgres_upgrade(replacement))
     assert not safety.declaration_errors(path)
     assert not safety.needs_confirmation(path)
+
+
+CHECK_WIDEN_SQL = ("ALTER TABLE items DROP CONSTRAINT role_check, "
+                   "ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))")
+CHECK_WIDEN_CALL = f'op.execute({CHECK_WIDEN_SQL!r})\n'
+
+
+@pytest.mark.parametrize('case', ['unguarded-operations', 'unguarded-sql', 'extra-statement', 'downgrade-first'])
+def test_check_widening_needs_a_postgres_upgrade_block(tmp_path, case):
+    check_revision(tmp_path, 'prior', None, CHECK_TABLE)
+    body = {
+        'unguarded-operations': CHECK_DROP + 'op.create_check_constraint("role_check", "items", '
+                                '"role IN (\'one\', \'two\', \'three\')")\n',
+        'unguarded-sql': CHECK_WIDEN_CALL,
+        'extra-statement': postgres_upgrade(CHECK_WIDEN_CALL + 'op.execute("SELECT 1")\n'),
+        'downgrade-first': postgres_upgrade(CHECK_WIDEN_CALL.replace("'three'", "'three', 'four'")),
+    }[case]
+    downgrade = 'def downgrade():\n' + indent(postgres_upgrade(CHECK_WIDEN_CALL), '    ') if case == 'downgrade-first' else ''
+    path = check_revision(tmp_path, 'current', 'prior', body, before_upgrade=downgrade)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize(('prior_body', 'prior_class'), [
+    ('op.execute("DELETE FROM items")\n', 'destructive'),
+    (postgres_upgrade(CHECK_DROP), 'destructive'),
+    (postgres_upgrade(CHECK_WIDEN_CALL), 'additive'),
+], ids=['destructive-ancestor', 'separate-drop', 'dialect-specific-ancestor'])
+def test_widening_requires_a_still_proven_ancestor_check(tmp_path, prior_body, prior_class):
+    check_revision(tmp_path, 'prior', None, CHECK_TABLE)
+    prior = check_revision(tmp_path, 'changed', 'prior', prior_body, kind=prior_class)
+    assert safety.analyze(prior)['class'] == prior_class
+    wider = CHECK_WIDEN_SQL.replace("'three'", "'three', 'four'")
+    path = check_revision(tmp_path, 'current', 'changed', postgres_upgrade(f'op.execute({wider!r})\n'))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize(('sibling', 'expected'), [
+    (None, 'additive'), ('literal', 'destructive'), ('annotated', 'destructive'),
+], ids=['closed-fork', 'hidden-fork', 'unreadable-parent'])
+def test_check_replacement_accounts_for_forks_before_a_merge(tmp_path, sibling, expected):
+    check_revision(tmp_path, 'root', None, 'pass\n')
+    check_revision(tmp_path, 'left', 'root', 'pass\n')
+    check_revision(tmp_path, 'right', 'root', 'pass\n')
+    check_revision(tmp_path, 'merge', ('left', 'right'), 'pass\n')
+    check_revision(tmp_path, 'prior', 'merge', CHECK_TABLE)
+    path = check_revision(tmp_path, 'current', 'prior', postgres_upgrade(CHECK_WIDEN_CALL), kind=expected)
+    if sibling:
+        other = CHECK_WIDEN_CALL.replace("'three'", "'four'")
+        parallel = check_revision(tmp_path, 'sibling', 'root', postgres_upgrade(other), kind='destructive')
+        if sibling == 'annotated':
+            source = parallel.read_text(encoding='utf-8')
+            parallel.write_text(source.replace('down_revision =', 'down_revision: str ='), encoding='utf-8')
+        check_revision(tmp_path, 'tip', ('current', 'sibling'), 'pass\n')
+    assert not safety.declaration_errors(path)
+    assert safety.needs_confirmation(path) is (expected == 'destructive')
 
 
 def test_oidc_department_choice_migration_preserves_existing_flows_and_all_data(session_limits_database):

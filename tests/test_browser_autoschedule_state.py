@@ -492,6 +492,7 @@ def test_a_retry_that_reads_the_same_result_enables_apply_again(browser, cp_serv
         page.clock.run_for(31_000)  # the open panel's idle read fails
         paused = panel.locator('.auto-paused')
         expect(paused).to_contain_text("Couldn't refresh. Showing the last result.")
+        expect(paused).not_to_contain_text('Service unavailable')  # a bare status phrase is not shown
         expect(apply).to_be_disabled()
         page.unroute('**/api/jobs?workspace_id=*')
         paused.get_by_role('button', name='Retry', exact=True).click()  # the same jobs come back

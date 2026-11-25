@@ -633,7 +633,7 @@ and a desktop window narrowed below it gets the same rule at once.
   Must-fix person row's ⋯, never for safety kinds) opens the line panel prefilled from the binding line; by default it
   is a rota-scoped adjustment with a required justification, applied to the draft at once and reviewed with the rota; "Change the department rule…" is the secondary, propose → approve → activate path. An approver
   decides a proposed line in the same panel: says + relation, the proposer's reason, Effect, then Decline… and one
-  "Approve and activate" that waits while the effect is checking. + New line opens the new
+  "Approve and activate" that waits while the effect is checking, saying why in words just before it. + New line opens the new
   line in the panel (through the unsaved-changes guard) with no numbers yet, so nothing is typed into the line that was
   open; it is only a draft in the panel (never in the rule's check) until it has a number: Keep change says "Add a
   minimum, maximum or target" until then, and closing drops it without a question. "This line says" follows every edit before Keep change: effective numbers (inherited ones too), their

@@ -2,15 +2,27 @@
 import ast
 from copy import deepcopy
 from functools import lru_cache
+from hashlib import sha256
 from pathlib import Path
 
 from migrations.sql_safety import (
     CURRENT_SCHEMA, analyze_sql, check_definition, check_replacement, clear_execution_proofs,
-    forget_checks, schema_template,
+    forget_checks, schema_template, sqlite_nullable_update_guard,
 )
 
 
 CLASSES = ('additive', 'fill_only', 'destructive')
+# Source-bound proof of the published closure, including both merge revisions. The trigger installed
+# in 0002 calls the function replaced in 0050, which compares the whole row except current and effective_until.
+# The same sealed SQLite history leaves the calendar lineage trigger name unused.
+# ponytail: only this audited historical guard is seeded. New guard shapes need their own source proof.
+PUBLICATION_GUARD_CHECKPOINT = '0152_feasibility_results'
+PUBLICATION_GUARD_HISTORY = 'ad3ec2b570a972a0193024b5d89eef7506619353d039e03f9f89cae2ca494e2b'
+PUBLICATION_COLUMNS = frozenset({
+    'workspace_id', 'sequence', 'starts_on', 'ends_on', 'current', 'supersedes_id', 'published_by',
+    'snapshot', 'validation', 'fingerprint', 'id', 'revision', 'created_at', 'department_id', 'effective_until',
+})
+MISSING_RETAINED_GUARD = 'dialect-only update guard lacks a proved retained PostgreSQL guard'
 TYPES = {'String', 'Text', 'Integer', 'BigInteger', 'SmallInteger', 'Boolean', 'Float', 'Numeric',
          'JSON', 'Date', 'DateTime', 'Time', 'LargeBinary', 'Enum'}
 CONSTRUCTORS = TYPES | {'table', 'Table', 'column', 'Column', 'MetaData', 'ForeignKey',
@@ -41,14 +53,18 @@ def parse(source):
     return ast.parse(source)
 
 
-def assigned(tree, name):
+def assigned(tree, name, *, default=None):
+    assignment = None
     for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
-            try:
-                return ast.literal_eval(node.value)
-            except (ValueError, TypeError):
-                return None
-    return None
+        targets = node.targets if isinstance(node, ast.Assign) else (node.target,) if isinstance(node, ast.AnnAssign) else ()
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            if assignment is not None or not isinstance(node, ast.Assign):
+                return default
+            assignment = node
+    try:
+        return ast.literal_eval(assignment.value) if assignment is not None else default
+    except (ValueError, TypeError):
+        return default
 
 
 class Analyzer(ast.NodeVisitor):
@@ -60,6 +76,7 @@ class Analyzer(ast.NodeVisitor):
         self.dialect, self.dollar_free = None, set()
         self.rank, self.findings, self.needs_schema = 0, [], False
         self.unproved = False
+        self.retained_guard_use = None
         self.globals = {}
         definitions = [node.name for node in self.tree.body if isinstance(node, ast.FunctionDef)]
         for node in self.tree.body:
@@ -92,6 +109,7 @@ class Analyzer(ast.NodeVisitor):
             fact.update(columns=[], primary_key=[], added_columns=[], new=False)
         self.schema.pop('checks', None)
         clear_execution_proofs(self.schema)
+        self.schema.pop('retained_publication_guard', None)
 
     def issue(self, node, reason):
         self.rank, self.unproved = 2, True
@@ -258,7 +276,7 @@ class Analyzer(ast.NodeVisitor):
 
     def sql_expression(self, node):
         value = self.value(node)
-        return isinstance(value, str) and analyze_sql('SELECT ' + value)['class'] == 'additive'
+        return isinstance(value, str) and analyze_sql('SELECT ' + value, replace_checks=False)['class'] == 'additive'
 
     def connection(self, node):
         node = self.resolve(node)
@@ -290,7 +308,7 @@ class Analyzer(ast.NodeVisitor):
         self.issue(node, 'unproved annotated assignment')
 
     def visit_FunctionDef(self, node):
-        if node.decorator_list or node.returns or node.args.defaults or node.args.kw_defaults \
+        if node.type_params or node.decorator_list or node.returns or node.args.defaults or node.args.kw_defaults \
                 or node.args.args or node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg or node.args.kwarg:
             self.issue(node, 'unproved function definition')
         if not isinstance(self.parents.get(node), ast.Module):
@@ -316,7 +334,7 @@ class Analyzer(ast.NodeVisitor):
         index, checks_only = 0, bool(statements)
         while index < len(statements):
             node = statements[index]
-            if self.function == 'upgrade':
+            if self.function == 'upgrade' and self.dialect == 'postgresql':
                 sql = self.check_sql(node)
                 if sql and 'DROP' in sql.upper() and 'CONSTRAINT' in sql.upper():
                     self.needs_schema = True
@@ -341,6 +359,36 @@ class Analyzer(ast.NodeVisitor):
     def visit_Return(self, node):
         self.issue(node, 'unproved control flow')
 
+    def nullable_update_guard(self, node, dialect):
+        upgrade = self.parents.get(node)
+        # Both dialects execute the same column addition. Only SQLite executes the refusal.
+        if (self.function != 'upgrade' or self.dialect is not None or not isinstance(upgrade, ast.FunctionDef)
+                or len(upgrade.body) != 2 or upgrade.body[1] is not node or not isinstance(upgrade.body[0], ast.Expr)):
+            return None
+        metadata = {'revision', 'down_revision', 'branch_labels', 'depends_on', 'SAFETY_CLASS'}
+        if self.aliases.keys() & (metadata | {'upgrade', 'downgrade'}):
+            return None
+        if not all(statement is upgrade or isinstance(statement, (ast.Import, ast.ImportFrom))
+                   or (isinstance(statement, ast.Assign) and self.literal(statement.value)
+                       and all(isinstance(target, ast.Name) and target.id in metadata for target in statement.targets))
+                   or isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+                   or (isinstance(statement, ast.FunctionDef) and statement.name == 'downgrade'
+                       and len(statement.body) == 1 and isinstance(statement.body[0], ast.Raise))
+                   for statement in self.tree.body):
+            return None
+        sqlite, postgres = (node.body, node.orelse) if dialect == 'sqlite' else (node.orelse, node.body)
+        if len(sqlite) != 1 or not isinstance(sqlite[0], ast.Expr) or any(not isinstance(s, ast.Pass) for s in postgres):
+            return None
+        call = sqlite[0].value
+        if not isinstance(call, ast.Call) or self.name(call.func) != 'alembic.op.execute' or len(call.args) != 1 or call.keywords:
+            return None
+        sql = self.value(call.args[0])
+        if isinstance(sql, str):
+            guard = sqlite_nullable_update_guard(sql)
+            if guard in self.schema.get('nullable_added_columns', ()):
+                return guard
+        return None
+
     def visit_If(self, node):
         test = node.test
         if (self.dialect == 'postgresql' and isinstance(test, ast.Compare) and len(test.ops) == 1
@@ -356,12 +404,19 @@ class Analyzer(ast.NodeVisitor):
                 and self.value(test.comparators[0]) in {'sqlite', 'postgresql'}):
             self.issue(node, 'unproved conditional execution')
             return
+        dialect_name = self.value(test.comparators[0])
+        if guard := self.nullable_update_guard(node, dialect_name):
+            self.needs_schema = True
+            if guard[0] != 'publications' or 'retained_publication_guard' not in self.schema:
+                self.issue(node, MISSING_RETAINED_GUARD)
+            else:
+                self.retained_guard_use = node
+            return
         self.schema['append_targets'], self.schema['guard_targets'] = set(), set()
         environment, dialect, dollar_free = self.env.copy(), self.dialect, self.dollar_free.copy()
         before = deepcopy(self.schema)
         baseline_rank, baseline_unproved = self.rank, self.unproved
-        selected_dialect = self.value(test.comparators[0])
-        self.dialect = selected_dialect
+        self.dialect = dialect_name
         self.rank, self.unproved = 0, False
         first_checks_only = self.visit_block(node.body)
         first = deepcopy(self.schema)
@@ -381,6 +436,8 @@ class Analyzer(ast.NodeVisitor):
         for table, checks in self.schema.get('checks', {}).items():
             other = first.get('checks', {}).get(table, {})
             self.schema['checks'][table] = {name: fact for name, fact in checks.items() if other.get(name) == fact}
+        if self.schema.get('retained_publication_guard') != first.get('retained_publication_guard'):
+            self.schema.pop('retained_publication_guard', None)
         appends = self.schema.get('append_targets', set())
         guards, first_guards = self.schema.get('guard_targets', set()), first.get('guard_targets', set())
         if appends and appends == first.get('append_targets'):
@@ -388,7 +445,7 @@ class Analyzer(ast.NodeVisitor):
             guards, first_guards = ({item for item in group if item[2]} for group in (guards, first_guards))
         pure_fill_branches = (not baseline_unproved and not first_unproved and not second_unproved
                               and first_rank == second_rank == CLASSES.index('fill_only'))
-        postgres_check_only = first_checks_only and selected_dialect == 'postgresql' and not node.orelse
+        postgres_check_only = first_checks_only and dialect_name == 'postgresql' and not node.orelse
         if ((not (appends or guards) and not (pure_fill_branches or postgres_check_only))
                 or appends != first.get('append_targets') or guards != first_guards):
             self.issue(node, 'dialect branches lack matching new-table observer or guard proofs')
@@ -486,6 +543,8 @@ class Analyzer(ast.NodeVisitor):
             return
         if self.function != 'upgrade':
             return
+        if method == 'create_table' and table.rsplit('.', 1)[-1].lower() == 'publications':
+            self.schema.pop('retained_publication_guard', None)
         parent = self.parents.get(node)
         direct = isinstance(parent, (ast.Expr, ast.Assign, ast.AnnAssign)) and parent.value is node
         if not direct:
@@ -513,6 +572,26 @@ class Analyzer(ast.NodeVisitor):
             kind = self.name(column.func).split('.')[-1]
             name = self.value(column.args[0])
             if kind == 'Column' and isinstance(name, str):
+                if method == 'add_column':
+                    known = self.schema.get('retained_publication_guard') if table == 'publications' else None
+                    column_type = self.resolve(column.args[1]) if len(column.args) == 2 else None
+                    if (self.dialect is None and isinstance(self.parents.get(parent), ast.FunctionDef)
+                            and not node.keywords
+                            and name.isascii() and name.isidentifier() and name.islower() and len(name) <= 63
+                            and isinstance(column_type, ast.Call) and self.constructor(column_type) == 'Boolean'
+                            and not column_type.args and not column_type.keywords
+                            and len(column.keywords) == 1 and column.keywords[0].arg == 'nullable'
+                            and self.value(column.keywords[0].value) is True
+                            and name not in fact['columns'] and (known is None or name not in known)):
+                        self.schema.setdefault('nullable_added_columns', set()).add((table, name))
+                    if known is not None:
+                        if name.lower() in known and not any(key.arg == 'if_not_exists' and self.value(key.value) is True
+                                                     for key in node.keywords):
+                            self.schema.pop('retained_publication_guard')
+                        else:
+                            known.add(name.lower())
+                    elif table.rsplit('.', 1)[-1].lower() == 'publications':
+                        self.schema.pop('retained_publication_guard', None)
                 if name not in fact['columns']:
                     fact['columns'].append(name)
                 if method == 'add_column' and name not in fact['added_columns']:
@@ -582,13 +661,13 @@ class Analyzer(ast.NodeVisitor):
             self.needs_schema = True
             self.schema['current_schema'] = CURRENT_SCHEMA
             try:
-                result = analyze_sql(template, schema=self.schema)
+                result = analyze_sql(template, schema=self.schema, replace_checks=False)
             finally:
                 self.schema.pop('current_schema', None)
             return result['class'], '; '.join(result['findings'])
         if isinstance(value, str):
             self.needs_schema = True
-            result = analyze_sql(value, schema=self.schema)
+            result = analyze_sql(value, schema=self.schema, replace_checks=False)
             return result['class'], '; '.join(result['findings'])
         if not self.expression(node):
             return 'destructive', 'unproved SQL expression or execution construct'
@@ -668,34 +747,107 @@ class Analyzer(ast.NodeVisitor):
     def run(self):
         for node in self.tree.body:
             self.visit(node)
+        if self.retained_guard_use is not None and not self.unproved:
+            if 'retained_publication_guard' not in self.schema:
+                self.issue(self.retained_guard_use, MISSING_RETAINED_GUARD)
+            elif self.rank:
+                self.issue(self.retained_guard_use, 'dialect-only update guard requires a shared additive schema')
+            else:
+                # The SQLite trigger name is no longer available in descendants.
+                self.schema.pop('retained_publication_guard')
         if self.unproved:
             self.invalidate()
         return {'class': CLASSES[self.rank], 'findings': self.findings, 'needs_schema': self.needs_schema}
 
 
 @lru_cache(maxsize=256)
-def schema_at(ancestors):
+def schema_at(ancestors, retained_at=0):
     if not ancestors:
         return {'tables': {}}
-    schema = deepcopy(schema_at(ancestors[:-1]))
+    schema = deepcopy(schema_at(ancestors[:-1], retained_at))
     clear_execution_proofs(schema)
     for table in schema['tables'].values():
         table['new'] = False
     Analyzer(ancestors[-1], schema).run()
     clear_execution_proofs(schema)
+    if len(ancestors) == retained_at:
+        schema['retained_publication_guard'] = set(PUBLICATION_COLUMNS)
     return schema
 
 
 @lru_cache(maxsize=512)
-def analyze_sources(source, ancestors, branched=False):
+def analyze_sources(source, ancestors, retained_at=0, *, branched=False):
     # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
-    schema = deepcopy(schema_at(ancestors))
+    schema = deepcopy(schema_at(ancestors, retained_at))
     if branched:
         # A sibling branch may have replaced a CHECK this chain cannot see, so no recorded definition is proof.
         schema.pop('checks', None)
     for table in schema['tables'].values():
         table['new'] = False
     return Analyzer(source, schema).run()
+
+
+def _published_guard_history(sources):
+    pending, reachable = [PUBLICATION_GUARD_CHECKPOINT], set()
+    while pending:
+        rev = pending.pop()
+        if rev in reachable:
+            continue
+        if rev not in sources:
+            return False
+        reachable.add(rev)
+        parents = assigned(parse(sources[rev]), 'down_revision')
+        if isinstance(parents, str):
+            pending.append(parents)
+        elif isinstance(parents, tuple) and all(isinstance(parent, str) for parent in parents):
+            pending.extend(parents)
+        elif parents is not None:
+            return False
+    digest = sha256()
+    for rev in sorted(reachable):
+        digest.update(sha256(sources[rev].encode('utf-8')).digest())
+    return digest.hexdigest() == PUBLICATION_GUARD_HISTORY
+
+
+def _linear_guard_descendant(source):
+    return all(isinstance(node.value, ast.Constant) and node.value.value is None
+               for node in parse(source).body if isinstance(node, ast.Assign)
+               and any(isinstance(target, ast.Name) and target.id == 'depends_on' for target in node.targets))
+
+
+def _revision_parents(tree):
+    parents = assigned(tree, 'down_revision', default=False)
+    if parents is None:
+        return ()
+    if isinstance(parents, str) and parents:
+        return (parents,)
+    if isinstance(parents, (tuple, list)) and parents and all(isinstance(parent, str) and parent for parent in parents):
+        return tuple(parents)
+    return None
+
+
+def _reachable(revision, links):
+    pending, seen = [revision], set()
+    while pending:
+        item = pending.pop()
+        if item not in seen:
+            seen.add(item)
+            pending.extend(links.get(item, ()))
+    return seen
+
+
+def _parallel_revisions(revision, parents):
+    if not isinstance(revision, str) or revision not in parents:
+        return True
+    children = {}
+    for child, predecessors in parents.items():
+        for parent in predecessors:
+            if parent not in parents:
+                return True
+            children.setdefault(parent, []).append(child)
+    # Follow merge parents here even though CHECK facts are read only from the linear prefix.
+    ancestors, descendants = _reachable(revision, parents), _reachable(revision, children)
+    return ancestors & descendants != {revision} or not parents.keys() <= ancestors | descendants
 
 
 def analyze(path):
@@ -705,20 +857,40 @@ def analyze(path):
     if not direct['needs_schema']:
         return direct
     previous = assigned(parse(source), 'down_revision')
-    ancestors, seen, children = [], set(), {}
+    ancestors, seen = [], set()
+    sources, ambiguous = {}, False
+    parents, unreadable = {}, False
     if previous:
-        files = {}
         for item in path.parent.glob('*.py'):
-            if item.name != '__init__.py':
-                tree = parse(item.read_text(encoding='utf-8'))
-                files[assigned(tree, 'revision')] = item
-                parents = assigned(tree, 'down_revision')
-                for parent in parents if isinstance(parents, (tuple, list)) else [parents]:
-                    children[parent] = children.get(parent, 0) + 1
-        while isinstance(previous, str) and previous not in seen and previous in files:
+            if item.name == '__init__.py':
+                continue
+            text = item.read_text(encoding='utf-8')
+            tree = parse(text)
+            rev = assigned(tree, 'revision')
+            if not isinstance(rev, str) or not rev:
+                unreadable = True
+                continue
+            ambiguous |= rev in sources
+            sources[rev] = text
+            predecessors = _revision_parents(tree)
+            if predecessors is None:
+                unreadable = True
+            else:
+                parents[rev] = predecessors
+        while isinstance(previous, str) and previous not in seen and previous in sources:
             seen.add(previous)
-            text = files[previous].read_text(encoding='utf-8')
-            ancestors.append(text)
-            previous = assigned(parse(text), 'down_revision')
-    branched = any(children.get(revision, 0) > 1 for revision in seen)
-    return analyze_sources(source, tuple(reversed(ancestors)), branched)
+            ancestors.append(previous)
+            previous = assigned(parse(sources[previous]), 'down_revision')
+    ancestors.reverse()
+    history = tuple(sources[rev] for rev in ancestors)
+    revision = assigned(parse(source), 'revision')
+    branched = bool(history) and (ambiguous or unreadable or _parallel_revisions(revision, parents))
+    result = analyze_sources(source, history, branched=branched)
+    if (ambiguous or PUBLICATION_GUARD_CHECKPOINT not in seen
+            or not any(finding.endswith(MISSING_RETAINED_GUARD) for finding in result['findings'])):
+        return result
+    retained_at = ancestors.index(PUBLICATION_GUARD_CHECKPOINT) + 1
+    if (not _linear_guard_descendant(source) or not all(map(_linear_guard_descendant, history[retained_at:]))
+            or not _published_guard_history(sources)):
+        return result
+    return analyze_sources(source, history, retained_at, branched=branched)

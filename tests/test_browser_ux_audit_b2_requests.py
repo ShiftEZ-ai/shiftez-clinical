@@ -123,8 +123,18 @@ def test_reviewer_sees_published_and_draft_duties_a_request_affects(browser, liv
         expect(panel).to_contain_text('Affects 2 duties · 1 published, 1 not yet published', timeout=20000)
         duties = panel.locator('.request-impact-list li')
         expect(duties).to_have_count(2)
+        expect(duties.filter(has_text='Requests rota').locator('.badge')).to_have_text('Published')
         expect(duties.filter(has_text='Next rota')).to_contain_text('08:00–12:00')
         expect(duties.filter(has_text='Next rota').locator('.badge')).to_have_count(1)
+        expect(duties.filter(has_text='Next rota').locator('.badge')).to_have_text('Draft')
+        cover = 'The coordinator arranges cover for its published duties.'
+        expect(panel).to_contain_text(cover)
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Approve leave')
+        expect(dialog).to_contain_text('Requests rota (Published)')
+        expect(dialog).to_contain_text('1 duty in Next rota (not yet published)')
+        expect(dialog).to_contain_text(cover)
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
         duties.first.get_by_role('button', name=re.compile('^Show .* in Schedule$')).click()
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
     finally:
@@ -141,6 +151,7 @@ def test_staff_see_only_their_published_duty_in_schedule_impact(browser, live_se
         expect(panel).to_contain_text("You're on duty", timeout=20000)  # their own request, said to them (R-25)
         expect(panel.locator('.request-impact-list li')).to_have_count(1)
         expect(panel).not_to_contain_text('Next rota')
+        expect(panel).not_to_contain_text('arranges cover')
         if viewport:
             no_horizontal_scroll(page)
     finally:
