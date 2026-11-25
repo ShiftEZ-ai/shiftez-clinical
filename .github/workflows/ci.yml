@@ -484,20 +484,46 @@ jobs:
             print("NEEDS_JSON=" + json.dumps(needs), file=env)
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             print("run_verdict=true", file=output)
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      if: steps.producers.outputs.run_verdict == 'true'
+    - name: Load protected verdict history
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.bootstrap != 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ needs.checks.outputs.trusted_sha }}
+        ref: refs/heads/${{ github.event.repository.default_branch }}
         path: .trusted-verdict
         fetch-depth: 0
         persist-credentials: false
         submodules: false
         lfs: false
+    - name: Load initial verdict controls from the exact pull request head
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'pull_request' && needs.checks.outputs.bootstrap == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        path: .trusted-verdict
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Bind the verdict controls to the exact commit used for planning
+      if: steps.producers.outputs.run_verdict == 'true'
+      working-directory: .trusted-verdict
+      env:
+        TRUSTED_SHA: ${{ needs.checks.outputs.trusted_sha }}
+      run: |
+        if [[ "$TRUSTED_BOOTSTRAP" != true ]]; then
+          if ! [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git --no-replace-objects merge-base --is-ancestor "$TRUSTED_SHA" HEAD; then
+            echo "The planned verdict controls are outside protected history"
+            exit 1
+          fi
+          git --no-replace-objects checkout --detach "$TRUSTED_SHA"
+        fi
+        test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
       with:
         ref: ${{ github.event.pull_request.base.sha }}
-        path: .trusted-unit
+        path: .trusted-controls
         fetch-depth: 0
         persist-credentials: false
         submodules: false
@@ -513,11 +539,11 @@ jobs:
         lfs: false
     - name: Install the trusted pinned Python for the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
-      working-directory: .trusted-unit
+      working-directory: .trusted-controls
       run: python3 .github/scripts/hosted_ci.py runtime --tool python
     - name: Install hash-locked dependencies for the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
-      working-directory: .trusted-unit
+      working-directory: .trusted-controls
       run: |
         python3 -m venv "$RUNNER_TEMP/affected-unit-venv"
         export PATH="$RUNNER_TEMP/affected-unit-venv/bin:$PATH"
@@ -527,7 +553,7 @@ jobs:
     - name: Verify the protected scope and run the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
       working-directory: candidate
-      run: python -I "$GITHUB_WORKSPACE/.trusted-unit/.github/scripts/affected_unit_pilot.py" test
+      run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py" test
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: always() && steps.producers.outputs.run_affected_unit == 'true'
       with:

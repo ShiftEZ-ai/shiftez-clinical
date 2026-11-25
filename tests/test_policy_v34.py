@@ -243,11 +243,20 @@ class ImporterV34Tests(unittest.TestCase):
         after_check = gate['steps'][gate['steps'].index(step) + 1:]
         affected_steps = [following for following in after_check
                           if affected in following['if'] and fallback not in following['if']]
+        history, bootstrap, pin = after_check[:3]
+        self.assertEqual(history['with']['ref'], 'refs/heads/${{ github.event.repository.default_branch }}')
+        self.assertEqual(history['if'], fallback + " && needs.checks.outputs.bootstrap != 'true'")
+        self.assertEqual(bootstrap['with']['ref'], '${{ github.event.pull_request.head.sha }}')
+        self.assertEqual(bootstrap['if'], fallback + " && github.event_name == 'pull_request'"
+                         " && needs.checks.outputs.bootstrap == 'true'")
+        self.assertEqual(pin['env']['TRUSTED_SHA'], '${{ needs.checks.outputs.trusted_sha }}')
+        self.assertLess(pin['run'].index('merge-base --is-ancestor'), pin['run'].index('checkout --detach'))
+        self.assertIn('test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"', pin['run'])
         self.assertEqual(len(affected_steps), 6)
         controls, candidate = affected_steps[:2]
         for checkout in (controls, candidate):
             self.assertEqual(checkout['if'], f"github.event_name == 'pull_request' && {affected}")
-        self.assertEqual(controls['with']['path'], '.trusted-unit')
+        self.assertEqual(controls['with']['path'], '.trusted-controls')
         self.assertEqual(controls['with']['ref'], '${{ github.event.pull_request.base.sha }}')
         self.assertEqual(candidate['with']['path'], 'candidate')
         self.assertEqual(candidate['with']['ref'], '${{ github.sha }}')
