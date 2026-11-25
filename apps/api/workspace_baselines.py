@@ -648,6 +648,14 @@ def _canonical(payload, included):
     return scoped_payload(payload, included)
 
 
+def _current_safety_inputs(db, workspace, organisation, current):
+    if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
+            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
+            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
+        return _live_safety_snapshot(db, workspace)
+    return current
+
+
 def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
                        current_mandatory=False, validity_baseline=None):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
@@ -662,10 +670,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         return frozen
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
-            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
-            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
-        current = _live_safety_snapshot(db, workspace)
+    current = _current_safety_inputs(db, workspace, organisation, current)
     result = dict(frozen)
     for key in LIVE_OPERATIONAL_KEYS:
         if current.get(key) is not None:
@@ -789,6 +794,22 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                     validity_changes.append({"catalogue": key, "record_id": ident, "name": before.get("name", ident),
                         "before": {field: before.get(field) for field in LIVE_VALIDITY_FIELDS},
                         "after": {field: after.get(field) for field in LIVE_VALIDITY_FIELDS}})
+            if key == "locations":
+                from packages.domain.validation import ancestor_ids
+
+                # Both captured and current parent capacities bind. The extra
+                # links are derived afresh and never written to the baseline.
+                captured_graph, live_graph = {"locations": captured}, {"locations": live}
+                for ident, row in tuple(overlaid.items()):
+                    ancestors = dict.fromkeys([*ancestor_ids(captured_graph, ident)[1:],
+                                               *ancestor_ids(live_graph, ident)[1:]])
+                    for parent in ancestors:
+                        if parent in live:
+                            overlaid.setdefault(parent, live[parent])
+                    projected = set(ancestor_ids(result, ident))
+                    extra = [parent for parent in ancestors if parent in overlaid and parent not in projected]
+                    if extra:
+                        row["capacity_ancestors"] = extra
             result[key] = overlaid
     result["_live_validity_changes"] = validity_changes
     # Leadership qualification is a live fact. If a replacement is active, it

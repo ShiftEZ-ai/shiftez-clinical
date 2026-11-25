@@ -3,6 +3,8 @@ from copy import deepcopy
 
 import pytest
 
+from apps.api import models as m
+from apps.api.db import transaction
 from packages.contracts.schemas import GenerationOptions
 from packages.domain import cp_sat, generation, solver_resume, validation
 from packages.domain.solver_control import SolverControl
@@ -153,3 +155,129 @@ def test_place_capacity_binds_existing_draft(store, late_change):
         checked = (h.lifecycle(draft['workspace'], 'validate')['workspace']['validation']
                    if 'workspace' in draft else draft['error']['details'])
         assert finding(checked, 'RESOURCE_CAPACITY', capacity=1, resource_id=place['id'])
+
+
+def test_place_capacity_from_parent_added_to_an_existing_draft(store):
+    h = store
+    draft = h.shift(h.workspace())['workspace']
+    draft = h.shift(draft, location=1, people=h.seed['people'][1:2])['workspace']
+    parent = h.configure('locations', {'name': 'Added common place', 'starts_on': '2020-01-01',
+        'location_type_id': h.seed['location_type'], 'capacity': 1})['record']
+    for ident in h.seed['locations']:
+        change_place(h, catalogue(h, 'locations', ident), parent_id=parent['id'])
+
+    checked = h.lifecycle(draft, 'validate')['workspace']
+    assert finding(checked['validation'], 'RESOURCE_CAPACITY', capacity=1, resource_id=parent['id'])
+    snapshot = h.snapshot(checked)
+    assert snapshot['locations'][parent['id']]['capacity'] == 1
+    for solve in (cp_sat.generate, generation.generate):
+        result = solve(snapshot, time_budget_seconds=10, deterministic=True)
+        assert result['status'] == 'invalid_inputs'
+
+
+def capacity_parent(h):
+    return h.configure('locations', {'name': 'Shared place', 'starts_on': '2020-01-01',
+        'location_type_id': h.seed['location_type'], 'capacity': 1})['record']
+
+
+def issue_overlapping_duty(h, location_id):
+    workspace = h.command('coordinator', 'workspace.create', {
+        'name': 'Issued rota fixture', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+        'purpose': 'integrated',
+    })['workspace']
+    start, end = '2026-10-04T08:00:00+03:00', '2026-10-04T12:00:00+03:00'
+    workspace = h.command('coordinator', 'shift.create', {
+        'workspace_id': workspace['id'], 'start': start, 'end': end,
+        'assignment_type_id': h.seed['type'], 'location_id': location_id,
+        'service_ids': [h.seed['services'][0]],
+        'participants': [{'person_id': h.seed['people'][1], 'start': start, 'end': end}],
+    }, revision=workspace['revision'])['workspace']
+    return h.publish(workspace)['publication_id']
+
+
+def persisted_check(h, draft):
+    job = h.command('coordinator', 'job.create', {'workspace_id': draft['id'], 'kind': 'feasibility'},
+                    revision=draft['revision'])['job']
+    with transaction(h.app.state.engine) as db:
+        return db.get(m.Job, job['id']).input_snapshot['baseline']
+
+
+def parent_findings(report, parent_id):
+    return [row for row in report['findings']
+            if row['code'] == 'RESOURCE_CAPACITY' and row['detail']['resource_id'] == parent_id]
+
+
+def shared_capacity_findings(data, own, issued, parent_id):
+    start, end = validation.aware(own['start']), validation.aware(own['end'])
+    consuming = validation.resource_sessions(data, data['shifts'], parent_id, start, end)
+    assert {row['id'] for row in consuming} == {own['id'], issued['id']}
+    assert len(consuming) == 2
+    report = validation.evaluate(data)
+    assert finding(report, 'RESOURCE_CAPACITY',
+                   scheduled_sessions=2, published_sessions=1, capacity=1, resource_id=parent_id)
+    return parent_findings(report, parent_id)
+
+
+def test_shared_capacity_counts_issued_duty_at_place_added_after_capture(store):
+    from packages.domain.validation import capacity_ancestor_ids
+
+    h = store
+    parent = capacity_parent(h)
+    own_place = change_place(h, catalogue(h, 'locations', h.seed['locations'][0]), parent_id=parent['id'])
+    draft = h.shift(h.workspace())['workspace']
+    capture = h.snapshot(draft)
+    late_place = h.configure('locations', {'name': 'Added child place', 'starts_on': '2020-01-01',
+        'location_type_id': h.seed['location_type'], 'parent_id': parent['id'], 'capacity': 2})['record']
+    assert late_place['id'] not in capture['locations']
+    issued_id = issue_overlapping_duty(h, late_place['id'])
+    issued_evidence = h.get('coordinator', '/api/publications/' + issued_id)['snapshot']
+    issued, = issued_evidence['shifts']
+    own, = capture['shifts']
+    change_place(h, own_place, parent_id=None)
+
+    checked = h.lifecycle(draft, 'validate')['workspace']
+    live = h.snapshot(checked)
+    saved = persisted_check(h, checked)
+    for data in (live, saved):
+        assert data['baseline']['snapshot_hash'] == capture['baseline']['snapshot_hash']
+        assert late_place['id'] not in data['locations']
+        sources = data['input_manifest']['sources']
+        assert all(sources['shifts:' + duty['id']]['facts']['location_id'] == duty['location_id']
+                   for duty in (own, issued))
+        assert sources['capacity_locations:' + late_place['id']]['facts'] == {
+            'id': late_place['id'], 'department_id': late_place['department_id'], 'capacity': 2,
+            'capacity_ancestors': [parent['id']],
+        }
+        assert tuple(capacity_ancestor_ids(data, own_place['id'])) == (own_place['id'], parent['id'])
+        assert tuple(capacity_ancestor_ids(data, late_place['id'])) == (late_place['id'], parent['id'])
+        assert not validation.session_matches(data, {'location_id': parent['id']}, issued)
+        assert validation.session_matches(data, {'service_id': issued['service_ids'][0]}, issued)
+        assert shared_capacity_findings(data, own, issued, parent['id']) == parent_findings(checked['validation'], parent['id'])
+    for solve in (cp_sat.generate, generation.generate):
+        assert solve(saved, time_budget_seconds=10, deterministic=True)['status'] == 'invalid_inputs'
+    assert h.get('coordinator', '/api/publications/' + issued_id)['snapshot'] == issued_evidence
+
+
+def test_shared_capacity_refuses_draft_duty_reparented_after_capture(store):
+    h = store
+    parent = capacity_parent(h)
+    change_place(h, catalogue(h, 'locations', h.seed['locations'][1]), parent_id=parent['id'])
+    draft = h.shift(h.workspace())['workspace']
+    capture = h.snapshot(draft)
+    own, = capture['shifts']
+    assert capture['locations'][own['location_id']]['parent_id'] is None
+    issued_id = issue_overlapping_duty(h, h.seed['locations'][1])
+    issued_evidence = h.get('coordinator', '/api/publications/' + issued_id)['snapshot']
+    issued, = issued_evidence['shifts']
+    change_place(h, catalogue(h, 'locations', own['location_id']), parent_id=parent['id'])
+
+    checked = h.lifecycle(draft, 'validate')['workspace']
+    assert finding(checked['validation'], 'RESOURCE_CAPACITY',
+                   scheduled_sessions=2, published_sessions=1, capacity=1, resource_id=parent['id'])
+    refusal = h.lifecycle(checked, 'submit', status=422)['error']
+    assert refusal['code'] == 'VALIDATION_FAILED'
+    assert parent_findings(refusal['details'], parent['id']) == parent_findings(checked['validation'], parent['id'])
+    saved = persisted_check(h, checked)
+    assert saved['baseline']['snapshot_hash'] == capture['baseline']['snapshot_hash']
+    assert shared_capacity_findings(saved, own, issued, parent['id']) == parent_findings(checked['validation'], parent['id'])
+    assert h.get('coordinator', '/api/publications/' + issued_id)['snapshot'] == issued_evidence

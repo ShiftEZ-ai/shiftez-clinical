@@ -1442,6 +1442,24 @@ def line_trial_snapshot(before, workspace, policy, zone):
     return after
 
 
+def _external_capacity_locations(locations, missing, live_locations):
+    """Supply ancestry for external places absent from the draft catalogue."""
+    from packages.domain.validation import ancestor_ids
+
+    graph = {'locations': live_locations}
+    evidence = {}
+    for ident in sorted(missing):
+        if ident not in live_locations:
+            continue
+        chain = [parent for parent in ancestor_ids(graph, ident) if parent in live_locations]
+        for parent in chain:
+            if parent not in locations and parent not in evidence:
+                row = live_locations[parent]
+                evidence[parent] = {key: row[key] for key in ('id', 'department_id', 'capacity')}
+        evidence[ident]['capacity_ancestors'] = chain[1:]
+    return evidence
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1552,6 +1570,15 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
     if baseline is not None:
+        if workspace.status in {"draft", "submitted", "approved"}:
+            missing = {shift['location_id'] for shift in external} - result['locations'].keys()
+            if missing:
+                from .workspace_baselines import _current_safety_inputs
+
+                current = _current_safety_inputs(db, workspace, org, live_inputs)
+                capacity_places = _external_capacity_locations(result['locations'], missing, current['locations'])
+                if capacity_places:
+                    result['capacity_locations'] = capacity_places
         from .workspace_baselines import CAPTURED_GENERATION_STATES
         if workspace.status in CAPTURED_GENERATION_STATES:
             if draft_safety := prepare_draft_type_safety(result, own):
@@ -1760,8 +1787,8 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
     # Keep issued evidence on the checked catalogue basis and scoped to this rota.
-    from packages.domain.validation import ancestor_ids
-    location_ids = {ident for shift in result['shifts'] for ident in ancestor_ids(data, shift['location_id'])}
+    from packages.domain.validation import capacity_ancestor_ids
+    location_ids = {ident for shift in result['shifts'] for ident in capacity_ancestor_ids(data, shift['location_id'])}
     service_ids = {ident for shift in result['shifts'] for ident in shift['service_ids']}
     pool_ids = {demand['resource_pool_id'] for shift in result['shifts']
                 for demand in shift['type_snapshot']['definition'].get('resources', [])}

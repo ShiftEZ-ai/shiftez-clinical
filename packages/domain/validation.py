@@ -31,7 +31,8 @@ from .generation_scope import pooled_anchor, selected_session_ids
 # 48: invalidate stored checks for actionable, grouped session overlap findings.
 # 49: bind finding causes and working-day quota amounts to validation results.
 # 50: bind conflict-aware supervision and its trial-cache dependencies to validation results.
-ENGINE_VERSION = "manual-core-52"
+# 53: invalidate checks made without both parent capacity chains.
+ENGINE_VERSION = "manual-core-53"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
 
@@ -602,6 +603,11 @@ def ancestor_ids(data, location_id):
     return ids
 
 
+def capacity_ancestor_ids(data, location_id):
+    location = data["locations"].get(location_id) or data.get("capacity_locations", {}).get(location_id, {})
+    return dict.fromkeys([*ancestor_ids(data, location_id), *location.get("capacity_ancestors", ())])
+
+
 def named_people(scope):
     """The only people a scope can ever match (its person field, or a "Person is any of" line every match needs),
     or None when it can match anyone. A cheap first test: department-sized rota checks ask about every rule x person
@@ -1095,7 +1101,7 @@ def resource_sessions(data, shifts, resource_id, a, b):
     if cached is None or cached[0] is not shifts:
         index = defaultdict(list)
         for t in shifts:
-            for rid in ancestor_ids(data, t['location_id']):
+            for rid in capacity_ancestor_ids(data, t['location_id']):
                 index[rid].append((aware(t['start']), aware(t['end']), t))
         for rows in index.values():
             rows.sort(key=lambda row: row[0])
@@ -1174,11 +1180,12 @@ def validate_session_setup(data, shift, shifts, definition, add):
     for code, message in location_validity_findings(data, loc["id"], start, end):
         add(code, message, sid)
     for resource_id in ancestor_ids(data, loc["id"]):
-        resource = data["locations"][resource_id]
         for closure in data["closures"]:
             if closure["location_id"] == resource_id and overlaps(start, end, aware(closure["start"]), aware(closure["end"])):
                 add("LOCATION_CLOSED", "A location or parent resource is closed", sid,
                     a=max(start, aware(closure["start"])), b=min(end, aware(closure["end"])))
+    for resource_id in capacity_ancestor_ids(data, loc["id"]):
+        resource = data["locations"].get(resource_id) or data["capacity_locations"][resource_id]
         consuming = resource_sessions(data, shifts, resource_id, start, end)
         if len(consuming) <= resource["capacity"]:
             continue
