@@ -78,7 +78,7 @@ let drawSerial=0;
 // maintenance: answers are kept per URL across rebuilds of the page (api.ts keptRead). The rota list and the goals follow the
 // rota in focus, a draft too: any change drops them. Every other answer counts published rotas only: a draft's own change
 // (scope workspace, an auto-schedule's jobs) keeps it. shortcut: 24 newest answers in each; past that, the oldest read again.
-const FOLLOWS_DRAFTS=/^\/api\/(home\/rotas|fairness\/goals)\?/;
+const FOLLOWS_DRAFTS=/^\/api\/(?:home\/rotas\?|fairness\/goals(?:\?|$))/;
 const DRAFT_READS:KeptReadOptions={keepScopes:[],cap:24},PUBLISHED_READS:KeptReadOptions={keepScopes:['workspace','jobs'],cap:24};
 const readsOf=(path:string)=>FOLLOWS_DRAFTS.test(path)?DRAFT_READS:PUBLISHED_READS;
 /** The page's one read of a URL: kept, or shared while on its way. (Exported for tests/test_client_fairness_reads.py.) */
@@ -88,14 +88,15 @@ export const fairnessRead=(path:string):Promise<Row>=>keptRead<Row>(path,signal=
 let view:View={...DEFAULT},viewId='',saved:SavedView<Saved>[]|null=null,find='',findOptions:SearchOptions|undefined,goalPick='';
 /** R-3: the month whose rota the score and Balance goals show ('YYYY-MM'; '' = the rota in focus, else this month). */
 let rotaMonth='';
+let periodChosen=false;
 /** Sign-out: forget the chosen view and the saved views (they belong to the account). */
-export function resetFairness(){view={...DEFAULT};viewId='';saved=null;find='';findOptions=undefined;goalPick='';rotaMonth='';}
+export function resetFairness(){view={...DEFAULT};viewId='';saved=null;find='';findOptions=undefined;goalPick='';rotaMonth='';periodChosen=false;}
 /** A checked Undo must replace this dashboard's own view and list cache before redraw. */
 export function restoreFairnessViews(done:Undone){
   for(const item of done){
     const restored=item.kind.startsWith('table_view.')&&item.result?.view;
     if(!restored||restored.table_key!=='fairness')continue;
-    view=normal(restored.definition.fairness);viewId=restored.id;saved=null;
+    view=normal(restored.definition.fairness);viewId=restored.id;saved=null;rotaMonth='';
   }
 }
 const clone=(v:View):View=>JSON.parse(JSON.stringify(v));
@@ -292,7 +293,7 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
     for(const same of alike.values())if(same.length>1)same.sort((a,b)=>Number(a.line??0)-Number(b.line??0)).forEach((g,i)=>label.set(g,`${label.get(g)} (${i+1})`));
     return label;};
   if(saved===null)saved=await fetchViews<Saved>('fairness').catch(()=>[]);
-  const open=openingView('fairness',saved);if(open!==undefined){viewId=open?.id||'';view=open?normal(open.definition.fairness):{...DEFAULT};}
+  const open=openingView('fairness',saved);if(open!==undefined){viewId=open?.id||'';view=open?normal(open.definition.fairness):{...DEFAULT};rotaMonth='';}
 
   const root=el('div',{class:'fx-page'});
   // The collection toolbar (redrawn with the page); the Distribution list repaints on Sort without a reload.
@@ -311,7 +312,7 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
     wanted=new Set();
     root.className='fx-page'+(view.density==='compact'?' compact':'');
     const [first,last]=periodDates(view,today);
-    const month=monthInView();
+    const month=monthInView(),chosenMonth=rotaMonth;
     const common={who:tree(view.who),starts_on:first,ends_on:last};
     const work=workParams(view),filters=WISH(view.metric)?{}:work;
     // Grouping by what the work was needs the same kind of filter or none (and wishes have no clinic or duty type).
@@ -345,20 +346,31 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
     // it covers that month (a draft being planned too), else that month's published rota; with none, the server's
     // default. Another draft's goals are never shown before it is published.
     const goalsRead=(planner?read('/api/home/rotas?'+query({start:month+'-01',end:monthAfter(month)+'-01',limit:'100'})).then(r=>{
-      const rotas=(r.workspaces||[]) as Row[],focus=links.focus?.();
+      const rotas=((r.workspaces||[]) as Row[]).filter(x=>chosenMonth||x.starts_on>=first&&x.starts_on<last),focus=links.focus?.();
       return (focus&&rotas.find(x=>x.id===focus.id))||rotas.find(x=>x.status==='published');},()=>undefined):Promise.resolve(undefined))
       .then(rota=>read('/api/fairness/goals?'+query({...common,workspace_id:rota?.id})));
-    if(hasSections)goalsRead.then(g=>{
+    if(hasSections)goalsRead.then(async g=>{
       if(!live())return;
+      let action:HTMLElement|null=null;
       if(g.workspace===null){
-        // Nothing to filter, group or sort yet: no toolbar, one empty state with the way forward (I-01).
-        unpublished=true;footScore.textContent='';
-        // Every empty state has its next step (LIVE-11): whoever can open the Schedule goes there.
-        root.replaceChildren(nothingPublished(links.publication?button('Open Schedule',()=>{location.hash='schedule';},'secondary'):null));
-        root.dataset.renderMs=String(Math.round(renderMs));root.dataset.ready='true';return;
+        const {workspace}=await read('/api/fairness/goals');
+        if(!live())return;
+        if(!workspace){
+          unpublished=true;footScore.textContent='';
+          root.replaceChildren(nothingPublished(links.publication?button('Open Schedule',()=>{location.hash='schedule';},'secondary'):null));
+          root.dataset.renderMs=String(Math.round(renderMs));root.dataset.ready='true';return;
+        }
+        if(planner&&workspace.starts_on>today){
+          const showUpcoming=()=>{rotaMonth=workspace.starts_on.slice(0,7);
+            change({period:'custom',starts_on:workspace.starts_on,ends_on:workspace.ends_on});};
+          // Change the visible period before showing the upcoming rota's figures.
+          if(!periodChosen&&!viewId&&!rotaMonth&&view.period===DEFAULT.period){showUpcoming();return;}
+          action=button('Show upcoming published rota',showUpcoming,'secondary small');
+        }
       }
       if(planner&&live())footScore.textContent=g.schedule?`Schedule score ${num(g.schedule.score)} / 100`:'';
-      if(need('score'))done('score',()=>scoreSection(g));if(need('goals'))done('goals',()=>goalsSection(g,first,last));
+      if(need('score'))done('score',()=>scoreSection(g,action));
+      if(need('goals'))done('goals',()=>goalsSection(g,first,last,need('score')?null:action));
       settle();
     }).catch(e=>{
       if(!live())return;
@@ -396,14 +408,15 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
   // ---- toolbar: the shared collection toolbar. Saved view → scope (period, dates, measure) → Filter → Group → Sort → View settings ----
   function toolbar(first:string,last:string){
     const period=select('Period',PERIODS,view.period);
-    period.input.addEventListener('change',()=>{const p=period.input.value as Period;change(p==='custom'?{period:p,starts_on:first,ends_on:last}:{period:p,starts_on:null,ends_on:null});});
+    period.input.addEventListener('change',()=>{const p=period.input.value as Period;periodChosen=true;rotaMonth='';
+      change(p==='custom'?{period:p,starts_on:first,ends_on:last}:{period:p,starts_on:null,ends_on:null});});
     const from=field('From','date',first,{required:true}),until=field('Until (included)','date',last,{required:true});lastDayIncluded(until.input);
     const dates=dateRange('Dates',from,until);dates.classList.add('labelled');  // dates need their words in view
     // Typing a date fires a change per keystroke: reload once the dates rest (400 ms) or the field is left, keeping
     // the toolbar (and the caret) in place.
     let timer=0;
     const apply=()=>{clearTimeout(timer);if(view.period!=='custom')return;const a=from.input.value,b=until.input.value;
-      if(a&&b&&a<b&&(a!==view.starts_on||b!==view.ends_on)){view={...view,starts_on:a,ends_on:b};draw(true);}};
+      if(a&&b&&a<b&&(a!==view.starts_on||b!==view.ends_on)){periodChosen=true;rotaMonth='';view={...view,starts_on:a,ends_on:b};draw(true);}};
     for(const f of [from,until]){for(const e of ['input','change'])f.input.addEventListener(e,()=>{clearTimeout(timer);timer=window.setTimeout(apply,400);});f.input.addEventListener('blur',apply);}
     const measure=select('Measure',MEASURES,view.metric);measure.input.addEventListener('change',()=>change({metric:measure.input.value}));
     const shownMonth=monthInView();
@@ -444,7 +457,7 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
       saved:!planner?undefined:{name:()=>saved!.find(x=>x.id===viewId)?.name||'',dirty:()=>{const a=saved!.find(x=>x.id===viewId);return !!a&&JSON.stringify(normal(a.definition.fairness))!==JSON.stringify(normal(view));},
         items:close=>savedViewItems<Saved>({key:'fairness',noun:'fairness charts',saved:saved!,activeId:viewId,
           current:()=>({fairness:clone(view)}),dirty:d=>JSON.stringify(normal(d.fairness))!==JSON.stringify(normal(view)),close,
-          apply:v=>{viewId=v?.id||'';view=v?normal(v.definition.fairness):{...DEFAULT};draw();},
+          apply:v=>{viewId=v?.id||'';view=v?normal(v.definition.fairness):{...DEFAULT};rotaMonth='';periodChosen=false;draw();},
           done:(list,id)=>{saved=list;viewId=id;draw();}})}});
     bar.root.classList.add('fx-toolbar');
     // What the filter counts, in words under the toolbar; repainted in place as the live filter changes.
@@ -457,9 +470,10 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
   }
 
   // ---- schedule score ----
-  function scoreSection(g:Row):Child[]{
+  function scoreSection(g:Row,action:Node|null):Child[]{
     const s=g.schedule,trend=(g.score_trend||[]) as Row[];
     const h=el('div',{class:'fx-head'},el('h2',{},'Schedule score'),g.workspace?el('small',{class:'muted truncate'},g.workspace.name):'');
+    if(!g.workspace)return [h,emptyLine('No published rota in this period.',action)];
     if(!s&&!trend.length)return [h,empty('No score yet','No score was stored for this published rota.',null,'chart')];
     const nameOf=(pid:string)=>fullNameOf(cat('people').find(p=>p.id===pid));
     const why=s?scoreWhy(s,nameOf):[];
@@ -473,9 +487,10 @@ export async function fairnessPage(ctx:Context,target:HTMLElement,links:Fairness
   }
 
   // ---- goals ----
-  function goalsSection(g:Row,first:string,last:string):Child[]{
+  function goalsSection(g:Row,first:string,last:string,action:Node|null):Child[]{
     const goals=(g.goals||[]) as Row[];
     const h=el('div',{class:'fx-head'},el('h2',{},'Balance goals'),el('small',{class:'muted'},g.workspace?`On ${g.workspace.name}`:''));
+    if(!g.workspace)return [h,emptyLine('No published rota in this period.',action)];
     if(!goals.length)return [h,empty('No balance goals',editor?'Add a Balance goal under Rules to track how evenly something is shared.':planner?'No goal tracks how evenly work is shared yet.':'Your coordinator has not set any goals for how evenly work is shared.',editor?button('Open rules',()=>ctx.navigate('rules'),'secondary small'):null,'rules')];
     // A card is named once ("Weekly clinical target", never "… target target"); goals of one rule that differ only by
     // their period (one per week) say which period (LIVE-42).
