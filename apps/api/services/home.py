@@ -113,7 +113,7 @@ def _home_uncached(db, actor, *, max_days):
         return db.scalar(select(func.count()).select_from(cls).where(cls.department_id == dept, *where)) or 0
 
     rotas = None
-    review_workspace_ids = []
+    review_workspace_id = None
     if can("coordinator", "approver", "programme_lead", "auditor"):
         W = m.Workspace
         rotas = count(W, W.archived_at.is_(None))
@@ -227,7 +227,7 @@ def _home_uncached(db, actor, *, max_days):
                 if w.status == 'submitted' and w.id not in outdated and reviews.viewer_progress(
                         db, actor, w, current_fingerprint=current_inputs[w.id], context=context)['can_decide']:
                     mine.append(w)
-            review_workspace_ids = [w.id for w in mine]
+            review_workspace_id = mine[0].id if mine else None
             # ME-28: an amendment says what it is (its changes and their reasons), read from its one change list.
             amendment = {}
             if mine and mine[0].base_publication_id:
@@ -294,9 +294,9 @@ def _home_uncached(db, actor, *, max_days):
         add(45, "patterns", count(AP, AP.status == "proposed", availability.decision_scope(db, actor, AP)))
         S = m.SwapRequest
         agreed = (S.status.in_(("accepted", "reviewing")), S.expires_at > now)
-        if review_workspace_ids:
-            # This viewer can already act on these swaps through their amendment review.
-            agreed += (or_(S.workspace_id.is_(None), S.workspace_id.not_in(review_workspace_ids)),)
+        if review_workspace_id:
+            # The review row opens its first amendment. Other swaps still need their own entry.
+            agreed += (or_(S.workspace_id.is_(None), S.workspace_id != review_workspace_id),)
         add(50, "swaps_to_apply", count(S, *agreed), sample=swap_sample(db, dept, agreed))
     if actor.person_id:
         # shortcut: open, unexpired swaps by stored status; a swap made stale by a newer publication still counts until opened.

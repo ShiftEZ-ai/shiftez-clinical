@@ -239,7 +239,7 @@ def agreed_home_swap(h):
     publication, first, second, _ = source_pair(h)
     row = h.command('staff', 'swap.offer', {
         'publication_id': publication, 'assignment_id': first, 'recipient_person_id': h.seed['people'][1],
-        'expires_at': (clock_now() + timedelta(hours=12)).isoformat(), 'reason': 'Offer a duty swap',
+        'expires_at': (clock_now() + timedelta(hours=1)).isoformat(), 'reason': 'Offer a duty swap',
     })['swap']
     row = transition(h, row, 'counteroffer', 'staff_two', {'assignment_id': second, 'reason': 'Offer a duty in return'})['swap']
     return transition(h, row, 'confirm')['swap']
@@ -248,8 +248,9 @@ def agreed_home_swap(h):
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_home_keeps_one_action_for_an_actionable_swap_amendment(h):
     swap_automation(h, prepare=False, publish=False)
-    original = h.workspace('A separate rota', '2026-10-11', '2026-10-18')
-    original = h.shift(original, '2026-10-12T08:00:00+03:00', '2026-10-12T12:00:00+03:00')['workspace']
+    original = h.workspace('A separate rota', '2026-10-03', '2026-10-04')
+    separate_start = '2026-10-03T12:00:00+03:00'
+    original = h.shift(original, separate_start, '2026-10-03T14:00:00+03:00')['workspace']
     publication = h.publish(original)['publication_id']
     swap = agreed_home_swap(h)
     assert swap['status'] == 'accepted' and swap['workspace_id'] is None
@@ -257,18 +258,39 @@ def test_home_keeps_one_action_for_an_actionable_swap_amendment(h):
 
     prepared = transition(h, swap, 'prepare', 'coordinator')['workspace']
     swap_amendment = h.lifecycle(prepared, 'submit')['workspace']
-    unrelated = h.workspace('Separate amendment', '2026-10-11', '2026-10-18', base=publication)
+    unrelated = h.workspace('Separate amendment', '2026-10-03', '2026-10-04', base=publication)
     unrelated = h.lifecycle(unrelated, 'submit')['workspace']
+
+    source = h.get('coordinator', '/api/publications/' + publication)['snapshot']
+    other = h.command('staff', 'swap.offer', {
+        'kind': 'give', 'publication_id': publication, 'assignment_id': source['shifts'][0]['participants'][0]['id'],
+        'recipient_person_id': h.seed['people'][1], 'expires_at': (clock_now() + timedelta(hours=2)).isoformat(),
+        'reason': 'Offer a separate duty',
+    })['swap']
+    other = transition(h, other, 'accept', 'staff_two')['swap']
+    other = transition(h, other, 'confirm')['swap']
+    assert other['status'] == 'accepted' and other['workspace_id'] is None
+
+    def admin_attention():
+        return {item['key']: item for item in h.get('admin', '/api/home')['attention']}
+
     for workspace in (swap_amendment, unrelated):
         assert h.get('admin', '/api/workspaces/' + workspace['id'])['review_progress']['can_decide']
+    admin = admin_attention()
+    assert admin['reviews']['count'] == 2 and admin['reviews']['rota_id'] == unrelated['id']
+    assert admin['swaps_to_apply']['count'] == 2
 
-    admin = {item['key']: item for item in h.get('admin', '/api/home')['attention']}
-    assert 'swaps_to_apply' not in admin
-    assert admin['reviews']['count'] == 2 and admin['reviews']['rota_id'] == swap_amendment['id']
+    h.lifecycle(unrelated, 'approve', 'approver')
+    assert h.get('admin', '/api/workspaces/' + swap_amendment['id'])['review_progress']['can_decide']
+    admin = admin_attention()
+    assert admin['reviews']['count'] == 1 and admin['reviews']['rota_id'] == swap_amendment['id']
+    remaining = admin['swaps_to_apply']
+    assert remaining['count'] == 1
+    assert datetime.fromisoformat(remaining['sample'][0]['start']) == datetime.fromisoformat(separate_start)
     coordinator = counts(h.get('coordinator', '/api/home'))
-    assert coordinator['swaps_to_apply'] == 1 and 'reviews' not in coordinator
+    assert coordinator['swaps_to_apply'] == 2 and 'reviews' not in coordinator
     approver = counts(h.get('approver', '/api/home'))
-    assert approver['reviews'] == 2 and 'swaps_to_apply' not in approver
+    assert approver['reviews'] == 1 and 'swaps_to_apply' not in approver
     assert not keys(h.get('staff', '/api/home')) & {'reviews', 'swaps_to_apply'}
 
 

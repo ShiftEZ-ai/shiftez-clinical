@@ -833,7 +833,8 @@ def test_needs_you_rule_change_deep_links(browser, live_server, h, key, target):
     try:
         page.route(re.compile(r'/api/home$'), with_item)
         page.evaluate("location.hash = 'home'; location.reload()")
-        page.locator(f'#main [data-need="{key}"]').get_by_role('button', name=re.compile('^Review, ')).click()
+        title = 'Rule change' if key == 'rules' else 'Rule exception'
+        page.locator(f'#main [data-need="{key}"]').get_by_role('button', name=f'Review, {title},').click()
         page.wait_for_function('t => location.hash.startsWith("#" + t.split("?")[0])', arg=target)
         assert page.evaluate('location.hash').startswith('#rules')
     finally:
