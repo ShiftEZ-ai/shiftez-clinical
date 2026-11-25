@@ -27,7 +27,8 @@ def _command(kind):
 def _account_action(page, name, action):
     # Managed accounts append their sign-in name to the menu's accessible label.
     row = page.get_by_role('row').filter(has=page.get_by_role('cell', name=name, exact=True))
-    row.get_by_role('button', name=re.compile('^More actions for ')).click()
+    card = page.locator('.dt-card').filter(has=page.locator('.dt-card-title').get_by_text(name, exact=True))
+    row.or_(card).get_by_role('button', name=re.compile('^More actions for ')).click()
     page.get_by_role('menuitem', name=action, exact=True).click()
 
 

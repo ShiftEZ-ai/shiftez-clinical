@@ -326,6 +326,11 @@ def access_command(db, actor, command, settings):
                 continue
             require(not range_overlaps(old.starts_on, old.ends_on, value.starts_on, value.ends_on),
                     "DUPLICATE_ROLE", "An overlapping access binding already exists", 409)
+        if value.role in s.EXPLICIT_ROLES:
+            from .accounts import lock_link_account, open_links
+            lock_link_account(db, identity.id)
+            for link in open_links(db, identity.id):
+                link.revoked_at, link.revision = m.now(), link.revision + 1
         if restoring:
             row.revoked = False
             row.revision += 1
@@ -333,10 +338,6 @@ def access_command(db, actor, command, settings):
             row = m.RoleBinding(department_id=actor.department_id, **value.model_dump(exclude={"reason"}))
             db.add(row)
             db.flush()
-        if value.role in s.EXPLICIT_ROLES:
-            from .accounts import open_links
-            for link in open_links(db, identity.id):
-                link.revoked_at, link.revision = m.now(), link.revision + 1
         history(db, actor, "access", row, value.reason)
         return {"record": record(row)}
     if command.kind == "role.revoke":
@@ -367,6 +368,8 @@ def access_command(db, actor, command, settings):
                     "Keep at least one admin: give someone else the Admin role first", 409)
         expected(row, command.expected_revision)
         require(row.disabled == enable, "IDENTITY_STATE", "Sign-in is already " + ("enabled" if enable else "disabled"), 409)
+        from .accounts import lock_link_account
+        account = lock_link_account(db, row.id)
         if not enable:
             keep_developer(db, {row.id})
         row.disabled = not enable
@@ -375,7 +378,6 @@ def access_command(db, actor, command, settings):
             from .auth_configuration import protect_break_glass
             protect_break_glass(db, settings)
         # A managed account follows in the sign-in service (an invitation not yet accepted stays disabled there).
-        account = db.scalar(select(m.Account).where(m.Account.identity_id == row.id))
         from apps.api.identity_store import store_for
         users = store_for(settings)
         require(not (db.info.get("bulk") and account and users and (not enable or account.accepted_at)),

@@ -25,6 +25,7 @@ NOTIFICATION_AUDIENCES = {
     'announcement': NotificationAudienceDefinition('The announcement audience'),
     'event': NotificationAudienceDefinition('The event audience'),
     'feedback': NotificationAudienceDefinition('The reporter and authorised operators'),
+    'generation_finished': NotificationAudienceDefinition('The person who started the auto-schedule run'),
     'credential_impact': NotificationAudienceDefinition('The affected person and authorised reviewers'),
     'bulk_review': NotificationAudienceDefinition('Independent reviewers'),
     'self_approval': NotificationAudienceDefinition('Authorised governance recipients'),
