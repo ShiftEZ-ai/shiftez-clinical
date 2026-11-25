@@ -214,26 +214,40 @@ def test_captured_catalogue_ignores_other_department_and_rota_rules(h, monkeypat
         assert foreign_seed not in result
 
 
-def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
+def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h, monkeypatch):
     from .test_rule_catalogue_api import approve, person, propose
     from .test_rule_templates import activate, propose as propose_legacy
 
     people = h.seed['people']
     legacy = activate(h, propose_legacy(h, {'kind': 'max_hours', 'hours': 7, 'window': 'day'}, ends_on='2029-12-31'))
     safety = h.stored_advisory_safety({'kind': 'min_rest', 'hours': 10})
+    defaulted = line(who=person(people[2]), numbers={'max': {'value': 6}})
     folded = approve(h, propose(h, 'duties_per_week', [
         line(numbers={'max': {'value': 3, 'level': 'critical'}}),
         line(who=person(people[1]), numbers={'max': {'value': 5, 'level': None}}),
+        defaulted,
     ])['record'])
     switched_off = approve(h, propose(h, 'duties_per_month', [
         line(numbers={'max': {'value': 2}}),
     ], on=False)['record'])
     draft = h.workspace('Historical rules source')
-    verify_date = '2030-01-01'
-    url = f'/api/rules/catalogue?version=2&day={verify_date}&workspace_id={draft["id"]}'
-    records = {row['id']: row for row in h.get('coordinator', url)['captured_other_rules']}
-    numbers = [row['numbers']['max'] for row in records[folded['id']]['definition']['rule']['lines']]
-    assert [(number['value'], number['level']) for number in numbers] == [(3, 'critical'), (5, None)]
+    verify = workspace_baselines.verify
+
+    def with_historical_number(row):
+        payload = verify(row)
+        policy = next(p for p in payload['policies'] if p['id'] == folded['id'])
+        saved = next(ln for ln in policy['definition']['rule']['lines'] if ln['id'] == defaulted['id'])
+        saved['numbers']['max'].pop('level', None)
+        return payload
+
+    monkeypatch.setattr(workspace_baselines, 'verify', with_historical_number)
+    query = f'day=2030-01-01&workspace_id={draft["id"]}'
+    primary = next(entry['rule'] for entry in h.get('coordinator', f'/api/rules/catalogue?{query}')['entries']
+                   if entry['id'] == 'duties_per_week')
+    records = {row['id']: row for row in h.get('coordinator', f'/api/rules/catalogue?version=2&{query}')['captured_other_rules']}
+    for policy in (primary, records[folded['id']]):
+        numbers = [ln['numbers']['max'] for ln in policy['definition']['rule']['lines']]
+        assert [(number['value'], number['level']) for number in numbers] == [(3, 'critical'), (5, None), (6, 'mandatory')]
     assert records[legacy['id']]['definition']['rule']['hours'] == 7
     assert records[safety['id']]['effective_severity'] == 'mandatory'
     off_rule = records[switched_off['id']]['definition']['rule']

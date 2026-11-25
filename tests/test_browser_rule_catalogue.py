@@ -621,9 +621,10 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
         {'person_id': h.seed['people'][0], 'amount': 3},
         {'person_id': h.seed['people'][1], 'amount': 4},
     ])) if legacy_rule else None
+    inherits = line({'max': {'value': 5, 'level': None}}, who=person(h.seed['people'][1]))
     weekly_rule = approve(h, propose_catalogue(h, 'duties_per_week', [
-        line({'max': {'value': 3, 'level': 'critical'}}),
-        line({'max': {'value': 5, 'level': None}}, who=person(h.seed['people'][1])),
+        line({'max': {'value': 3, 'level': 'critical'}}), inherits,
+        line({'max': {'value': 6}}, who=person(h.seed['people'][2])),
     ], on=bool(legacy))['record'])
     draft = h.workspace('Saved rules source')
     if not legacy:
@@ -662,10 +663,17 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
         expect(first.locator('.rt-ln').first).to_be_visible()
         expect(first.get_by_role('button', name=re.compile('^Open line'))).to_have_count(0)
         if legacy:
-            weekly_row = page.locator('#main [data-rule="duties_per_week"] > .rt-row')
+            weekly_item = page.locator('#main [data-rule="duties_per_week"]')
+            weekly_row = weekly_item.locator(':scope > .rt-row')
             expect(weekly_row.get_by_text('Advisory · critical', exact=True)).to_be_visible()
             expect(weekly_row.get_by_text('Inherited strength', exact=True)).to_be_visible()
-            expect(weekly_row.get_by_text('Mandatory', exact=True)).to_have_count(0)
+            expect(weekly_row.get_by_text('Mandatory', exact=True)).to_be_visible()
+            toggle = weekly_row.locator('.rt-toggle')
+            if toggle.get_attribute('aria-expanded') == 'false':
+                toggle.click()
+            inherited = weekly_item.locator(f'li.rt-ln[data-line="{inherits["id"]}"]')
+            expect(inherited.get_by_text('Inherited strength', exact=True)).to_be_visible()
+            expect(inherited.get_by_text('Mandatory', exact=True)).to_have_count(0)
             rules_action(page, re.compile('^Other department rules'))
             expect(page.get_by_text(legacy['name'], exact=True)).to_be_visible()
             page.get_by_text('At most 5 duties per week.', exact=True).click()
@@ -679,6 +687,7 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
             expect(folded.get_by_text('Off', exact=True)).to_be_visible()
             expect(folded.get_by_text('Advisory · critical', exact=True)).to_be_visible()
             expect(folded.get_by_text('Inherited strength', exact=True)).to_be_visible()
+            expect(folded.get_by_text('Mandatory', exact=True)).to_be_visible()
             page.keyboard.press('Escape')
         assert len(requests) == 2
         assert requests[0] == requests[1]

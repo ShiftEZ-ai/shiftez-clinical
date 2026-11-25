@@ -1119,7 +1119,7 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
         entry['numbers'] = _display_safety_slots(entry['numbers'])
         for key in ('rule', 'proposed'):
             if entry[key]:
-                entry[key] = _display_safety_levels(entry[key])
+                entry[key] = _display_safety_levels(entry[key], captured=capture is not None)
     return {"catalogue_version": version, "catalogue_counts": {**catalogue_counts(), 'in_force': len(in_force),
                 'lines': sum(row['lines'] for group in by_entry.values() for row in group)
                          + sum(row['lines'] for row in not_on_catalogue)},
@@ -1138,7 +1138,7 @@ def _captured_rule_details(row):
     details = {key: row.get(key) for key in ('id', 'name', 'starts_on', 'ends_on')}
     if kind == 'catalogue':
         from packages.contracts.rule_catalogue import workload_fields
-        definition = _display_safety_levels(row)['definition']
+        definition = _display_safety_levels(row, captured=True)['definition']
         rule = definition['rule']
         definition = {**definition, 'rule': {**rule, 'lines': [
             {**line, **workload_fields(rule, line)} for line in rule['lines']]}}
@@ -1161,7 +1161,7 @@ def _display_safety_slots(numbers):
                   for slot in slots] for key, slots in numbers.items()}
 
 
-def _display_safety_levels(policy):
+def _display_safety_levels(policy, *, captured=False):
     from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
     from packages.domain.rule_lines import has_value
 
@@ -1171,6 +1171,10 @@ def _display_safety_levels(policy):
     lines = []
     for line in rule.get('lines') or []:
         numbers = line.get('numbers') or {}
+        if captured:
+            default_level = s.LineNumber.model_fields['level'].default
+            numbers = {key: {'level': default_level, **number} for key, number in numbers.items()}
+            line = {**line, 'numbers': numbers}
         reasons = {}
         for key, number in numbers.items():
             if number.get('level') == 'mandatory' or not has_value(line, key):
