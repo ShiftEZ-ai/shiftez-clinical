@@ -102,6 +102,34 @@ def test_edit_clearing_an_active_attachment_supervisor(h, case, ends_on):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_edit_preserves_an_omitted_supervisor_and_honours_explicit_updates(h):
+    trainee, other, attached, typ = setup(h, 'preferred')
+    workspace = h.shift(h.workspace(), typ=typ, people=people(trainee, other, attached, paired=other))['workspace']
+    shift = h.detail(workspace)['shifts'][0]
+    original = next(p for p in shift['participants'] if p['person_id'] == trainee)
+    assert original['supervisor_person_id'] == other
+
+    omitted = people(trainee, other, attached)
+    del omitted[0]['supervisor_person_id']
+    workspace = edit_participants(h, workspace, shift, omitted)['workspace']
+    saved = h.detail(workspace)
+    shift = saved['shifts'][0]
+    assert next(p for p in shift['participants'] if p['person_id'] == trainee) == original
+
+    refused = edit_participants(h, workspace, shift, people(trainee, other, attached, paired=trainee), status=422)
+    assert refused['error']['code'] == 'EDIT_INVALID'
+    assert any(f['code'] == 'SUPERVISION_PAIRING' and f['person_id'] == trainee
+               for f in refused['error']['details']['findings'])
+    assert h.detail(workspace) == saved
+
+    for supervisor_id in (attached, None):
+        workspace = edit_participants(h, workspace, shift,
+                                      people(trainee, other, attached, paired=supervisor_id))['workspace']
+        shift = h.detail(workspace)['shifts'][0]
+        assert next(p['supervisor_person_id'] for p in shift['participants'] if p['person_id'] == trainee) == supervisor_id
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_edit_names_a_new_trainee_without_changing_existing_pair(h):
     flexible, trainee, first, second, typ = pairing_setup(h, 'required')
     people_before = participants([flexible], [first, second], explicit={flexible: second})

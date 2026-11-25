@@ -24,6 +24,7 @@ from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
+TOP_LEVEL_TEST = policy.re.compile(r"tests/test_[\w-]+\.py")
 
 
 def settings(*, plan=None):
@@ -117,7 +118,7 @@ def pr_scope(data, git, trusted_sha, base, candidate):
 def ordinary_test_module(path, before, after, inventory):
     """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
     if (after is None or path in inventory["product_imports"]
-            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
+            or not TOP_LEVEL_TEST.fullmatch(path)):
         return False
     try:
         if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
@@ -129,7 +130,10 @@ def ordinary_test_module(path, before, after, inventory):
 
 def affected_files(changed, files):
     required = PR_SMOKE | (changed & files)
-    if not PR_SMOKE <= files:
+    # The guard scans top-level Python tests without importing them.
+    if any(TOP_LEVEL_TEST.fullmatch(path) for path in changed):
+        required.add("tests/test_cpu_budget.py")
+    if not required <= files:
         return None
     if not changed:
         return required
