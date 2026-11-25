@@ -1,4 +1,6 @@
 """Enforcement and authoring of mandatory safety rules."""
+from datetime import timedelta
+
 import pytest
 
 from packages.contracts.schemas import PolicyDefinition
@@ -44,7 +46,8 @@ def test_effective_safety_comparison_preserves_bounds_and_dates(kind, field, old
 def test_self_approval_cannot_weaken_an_active_safety_line(h, monkeypatch, hours, on, weaker):
     from .governance_support import identity
 
-    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
+    # Cloned departments reuse IDs and revision counts. Each lifecycle has its own catalogue day.
+    freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00') + timedelta(days=hours))
     who = 'rule_reviewer'
     reviewer = identity(h, who, ['coordinator', 'approver'])
     h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
