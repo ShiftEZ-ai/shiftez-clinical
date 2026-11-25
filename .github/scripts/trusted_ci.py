@@ -58,14 +58,6 @@ def output(values):
             destination.write(key + "=" + str(value) + "\n")
 
 
-def require_pr_merge(data, git, candidate):
-    pr = data["pull_request"]
-    base, head = policy.commit(pr["base"]["sha"]), policy.commit(pr["head"]["sha"])
-    if (candidate != policy.commit(os.environ["GITHUB_SHA"])
-            or git("rev-list", "--parents", "-n", "1", candidate).decode().split() != [candidate, base, head]):
-        raise ValueError("PR candidate must be the event merge of the target base and head")
-
-
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     kind = os.environ["GITHUB_EVENT_NAME"]
@@ -97,13 +89,12 @@ def quarantine_revision(branch, default, base, candidate):
     return base if branch == "main" and default != "main" else candidate
 
 
-def pr_scope(data, git, trusted_sha, candidate):
+def pr_scope(data, git, trusted_sha, base, candidate):
     pr = data["pull_request"]
     branch = pr["base"]["ref"]
     if ((branch != policy.default_branch(data) and not policy.release_branch(branch))
             or any(label["name"] == "full-ci" for label in pr["labels"])):
         return None
-    base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
     if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
            or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
@@ -154,6 +145,14 @@ def affected_files(changed, files):
 def plan(base, measurement):
     candidate = hosted.git("rev-parse", "HEAD")
     candidate_tree = hosted.git("rev-parse", "HEAD^{tree}")
+    event = None
+    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+            and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
+        event = policy.event()
+        merge_base = policy.pr_test_base(event, candidate)
+        branch = event["pull_request"]["base"]["ref"]
+        if branch == policy.default_branch(event) or policy.release_branch(branch):
+            base = merge_base
     if measurement:
         root = pinned_root()
         if (candidate, candidate_tree) != (root["sha"], root["tree"]):
@@ -173,15 +172,11 @@ def plan(base, measurement):
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
     selected_files = None
-    pull_request = not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
-    if pull_request and os.getenv("TRUSTED_BOOTSTRAP") != "true":
-        event = policy.event()
-        require_pr_merge(event, policy.git, candidate)
-        if not context["bootstrap"]:
-            trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
-            changed = pr_scope(event, policy.git, trusted_sha, candidate)
-            if changed is not None:
-                selected_files = affected_files(changed, set(files))
+    if event is not None and not context["bootstrap"]:
+        trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
+        changed = pr_scope(event, policy.git, trusted_sha, base, candidate)
+        if changed is not None:
+            selected_files = affected_files(changed, set(files))
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)
