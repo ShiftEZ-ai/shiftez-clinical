@@ -13,7 +13,9 @@ from playwright.sync_api import expect
 
 from apps.api import models as m
 from apps.api.db import transaction
-from .governance_support import identity
+from .clock_support import freeze_clock
+from .governance_support import identity, route
+from .test_review_routes import submitted
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, expect_loaded  # noqa: F401
 from .test_home import big_department
 
@@ -917,6 +919,38 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
         expect(row).to_contain_text(name)
         expect(row.locator('.audit-self')).to_contain_text('Self-approved')
         assert refused == []
+    finally:
+        context.close()
+
+
+def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, live_server, h, monkeypatch):
+    clock = clock_now()
+    freeze_clock(monkeypatch, lambda: clock)
+    identity(h, 'programme', ['programme_lead'])
+    review = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'}])
+    rota = submitted(h)
+    starts = clock + timedelta(minutes=2)
+    expires = starts + timedelta(minutes=2)
+    h.command('programme', 'review_delegation.create', {
+        'route_id': review['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
+        'starts_at': starts.isoformat(), 'expires_at': expires.isoformat(), 'reason': 'Bounded independent delegation',
+    })
+    context, page = sign_in(browser, live_server, 'approver', DESKTOP)
+    try:
+        navigate(page, 'home')
+        card = page.locator('.home-needs')
+        expect(card).to_be_visible()
+        expect(card.locator('[aria-busy="true"]')).to_have_count(0)
+        row = card.locator('[data-need="reviews"]')
+        expect(row).to_have_count(0)
+
+        clock = starts
+        page.clock.fast_forward(max(1, int(starts.timestamp() * 1000) - page.evaluate('Date.now()')) + 50)
+        expect(row).to_contain_text(rota['name'])
+
+        clock = expires
+        page.clock.fast_forward(max(1, int(expires.timestamp() * 1000) - page.evaluate('Date.now()')) + 50)
+        expect(row).to_have_count(0)
     finally:
         context.close()
 

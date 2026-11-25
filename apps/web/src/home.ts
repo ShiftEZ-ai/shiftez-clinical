@@ -8,7 +8,7 @@ import {openFiltered} from './table_view.js';
 import {setupSteps,missingSetupWords,stepDone,setupCounts} from './setup_guide.js';
 import {workspaceForm,type Context} from './forms.js';
 import {upcoming,type Upcoming} from './agenda.js';
-import {get,command,sessionChanged,ApiError} from './api.js';
+import {get,command,sessionChanged,ApiError,pageReadSignal} from './api.js';
 import {summaryCheckWords} from './rule_check_api.js';
 import {publishedAbsenceLabel,leaveDates,leaveShown,leaveTypes} from './findings.js';
 import {fixSummaryOf,checkedAgo,couldWords} from './fix_list.js';
@@ -51,7 +51,7 @@ interface Item {key:string;count:number;classification?:string;rota_id?:string;r
   /** A draft row (home.py): false while its check is out of date or running; its fix_list is then the last check's. */checked?:boolean;sample?:Row[];link_target?:string;fix_list?:{summary?:unknown};action?:PublishedOperationalAction|null;
   /** ME-28: the first rota to review amends a published one: its changes and their reasons (Sick, Leave…). */
   amendment?:{changes:number;reasons:string[]}}
-interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[]}
+interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[];review_refresh_at?:string}
 /** One row of Needs you: a count pill (tone and number), a title, one muted line of context and one action. */
 type Need={tone:BadgeTone;count:number;title:string;context:string;action:string;go:()=>void;to?:string;/** Shown on a phone too (a person's own published duty, a draft's blocking tasks and open places). */phone?:boolean;/** The server's key (a test and agent hook: data-need) */key?:string;
   /** G-02: several duties under one title, each line with its own action (then the row has none of its own). */items?:NeedItem[]};
@@ -69,7 +69,8 @@ export async function homePage(ctx:Context,target:HTMLElement,hooks:HomeHooks){
   greet(ctx);offline.clear();offlineError=null;homeRoot=target;
   // The counts (/api/home) and every card's own read start together (H-09): only Needs you and the setup card wait for
   // the counts. Leaving Home aborts them all (api.ts leavePage).
-  const reading=get<HomeData>('/api/home').then(d=>d,(e:Error)=>e);
+  const reading=get<HomeData>('/api/home',{fresh:can(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)})
+    .then(d=>d,(e:Error)=>e);
   const today=toLocal(new Date().toISOString(),zone).slice(0,10);
   const phone=hooks.phone;
   const team=!phone&&can(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.CREDENTIALER,CAPABILITY.AUDITOR,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.OPERATOR);
@@ -372,15 +373,27 @@ function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<Hom
         n.items?el('ul',{class:'home-need-items'},...n.items.map((x,j)=>el('li',{},el('small',{class:'truncate',id:`${id}-${j}`,title:x.context},x.context),
           button(x.action,x.go,'secondary small',{'aria-describedby':`${id} ${id}-${j}`})))):button(n.action,n.go,'secondary small',{'aria-describedby':id}),
         {tag:'li',cls:'',attrs:{'data-need':n.key||''}});})):elsewhere?'':el('p',{class:'home-clear'},'All clear ',el('span',{'aria-hidden':'true'},'✓')),elsewhere||'']);};
+  // A delegation boundary can change Needs you without a write or a live notification.
+  const lifetime=pageReadSignal();
+  let reviewTimer:number|undefined;
+  lifetime.addEventListener('abort',()=>clearTimeout(reviewTimer),{once:true});
   const take=(data:HomeData|Error,retried=false)=>{
+    clearTimeout(reviewTimer);
+    if(lifetime.aborted||!alive(node))return;
     if(data instanceof Error){if(sessionChanged(data))return;status('What needs you is unavailable');
       const again=()=>read(true);
       const failed=loadFailed('what needs you',data,again,'needs');
       void put(body,[failed]);if(retried)failed.querySelector('button')?.focus();return;}
-    recovered('needs');const every=needsOf(ctx,hooks,data);rows=every.filter(n=>!phone||onPhone(n));away=every.filter(n=>phone&&!onPhone(n));draw();if(retried)heading.focus();};
+    recovered('needs');const every=needsOf(ctx,hooks,data);rows=every.filter(n=>!phone||onPhone(n));away=every.filter(n=>phone&&!onPhone(n));draw();if(retried)heading.focus();
+    const at=Date.parse(data.review_refresh_at||'');
+    if(Number.isFinite(at)){
+      const delay=Math.min(Math.max(1000,at-Date.now()),2**31-1);
+      reviewTimer=window.setTimeout(()=>{if(node.isConnected&&!lifetime.aborted)read(false,true);},delay);
+    }};
   // A failure's Retry (and a timeout's: api.ts READ_TIMEOUT) reads /api/home again.
-  const read=(retried:boolean)=>{void put(body,[skeleton('lines','Loading what needs you…')]);
-    void get<HomeData>('/api/home').then(d=>d,(e:Error)=>e).then(d=>take(d,retried));};
+  const read=(retried:boolean,quiet=false)=>{
+    if(!quiet)void put(body,[skeleton('lines','Loading what needs you…')]);
+    void get<HomeData>('/api/home',{fresh:true,quiet}).then(d=>d,(e:Error)=>e).then(d=>take(d,retried));};
   body.append(skeleton('lines','Loading what needs you…'));void reading.then(d=>take(d));
   return {node,notices:(pending:Row[])=>{acks=pending.map(n=>({key:'acknowledge',tone:'warn',count:1,title:'Notice to acknowledge',context:String(n.name||''),action:'Read',
     go:()=>{const at=document.querySelector<HTMLElement>(`#main [data-notice-id="${CSS.escape(String(n.id))}"]`);at?.scrollIntoView({block:'center'});at?.querySelector<HTMLElement>('.home-notice-ack')?.focus();}}));draw();}};

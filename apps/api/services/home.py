@@ -46,7 +46,7 @@ def _home_stamp(db, actor, now, max_days):
     today = now.astimezone(ZoneInfo(row.timezone)).date()
     # A worker can confirm a submitted rota without an audit or validation job change.
     review_stamps = ()
-    delegation_edge = None
+    delegation_edge = review_refresh_at = None
     if actor.permits("coordinator", "approver", "programme_lead"):
         from .read_projections import CANONICAL_AUDIENCE
         W, C = m.Workspace, m.WorkspaceReadProjection
@@ -62,12 +62,14 @@ def _home_stamp(db, actor, now, max_days):
                 W.content_revision == D.content_revision)).where(W.department_id == actor.department_id,
                 W.status == 'submitted', W.archived_at.is_(None), D.delegation_id.is_not(None))
             # A completed interval has a different stamp from the time before it started.
-            edge = case((G.expires_at <= now, G.expires_at), else_=G.starts_at)
-            delegation_edge = db.scalar(select(func.max(edge)).where(G.department_id == actor.department_id,
-                G.revoked.is_(False), G.starts_at <= now,
-                or_(G.delegate_id == actor.identity_id, G.id.in_(used))))
-    return (*row, latest_audit, today, review_stamps, delegation_edge,
-            validation_job_stamp(db, department_id=actor.department_id))
+            edge = case((G.expires_at <= now, G.expires_at), (G.starts_at <= now, G.starts_at))
+            future = case((G.starts_at > now, G.starts_at), (G.expires_at > now, G.expires_at))
+            delegation_edge, review_refresh_at = db.execute(
+                select(func.max(edge), func.min(future)).where(G.department_id == actor.department_id,
+                    G.revoked.is_(False), or_(G.delegate_id == actor.identity_id, G.id.in_(used)))).one()
+    stamp = (*row, latest_audit, today, review_stamps, delegation_edge, review_refresh_at,
+             validation_job_stamp(db, department_id=actor.department_id))
+    return stamp, review_refresh_at
 
 
 def rota_strip(db, actor, start, end, limit, offset):
@@ -406,11 +408,18 @@ def home(db, actor, *, settings=None):
     settings = settings or Settings()
     max_days = settings.workspace_read_max_days
     from .notification_audience import is_test_identity
-    stamp = (_home_stamp(db, actor, now, max_days), settings.publish_test_people_only, is_test_identity(actor))
+    revisions, review_refresh_at = _home_stamp(db, actor, now, max_days)
+    stamp = (revisions, settings.publish_test_people_only, is_test_identity(actor))
+
+    def build():
+        value = _home_uncached(db, actor, max_days=max_days, now=now)
+        if review_refresh_at is not None:
+            value['review_refresh_at'] = aware(review_refresh_at).isoformat()
+        return value
+
     from .read_projections import cached_department
     if db is not None:
-        return cached_department(db, actor, 'home', digest([stamp, max_days]),
-                                 lambda: _home_uncached(db, actor, max_days=max_days, now=now),
+        return cached_department(db, actor, 'home', digest([stamp, max_days]), build,
                                  audience_values=('home', max_days))
     key = (actor.department_id, actor.identity_id, tuple(sorted(actor.roles)), max_days, stamp)
     with _HOME_CACHE_LOCK:
@@ -418,7 +427,7 @@ def home(db, actor, *, settings=None):
         if cached is not None:
             _HOME_CACHE.move_to_end(key)
             return deepcopy(cached)
-    value = _home_uncached(db, actor, max_days=max_days, now=now)
+    value = build()
     with _HOME_CACHE_LOCK:
         _HOME_CACHE[key] = deepcopy(value)
         _HOME_CACHE.move_to_end(key)

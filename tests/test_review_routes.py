@@ -116,14 +116,15 @@ def test_home_review_card_follows_delegation_start_and_expiry(h, monkeypatch):
         'starts_at': start.isoformat(), 'expires_at': expiry.isoformat(), 'reason': 'Bounded independent delegation',
     })
 
-    def review_ids():
-        return [item['rota_id'] for item in h.get('approver', '/api/home')['attention'] if item['key'] == 'reviews']
+    def home_review():
+        home = h.get('approver', '/api/home')
+        return [item['rota_id'] for item in home['attention'] if item['key'] == 'reviews'], home.get('review_refresh_at')
 
-    assert review_ids() == []
+    assert home_review() == ([], start.isoformat())
     clock = start
-    assert review_ids() == [w['id']]
+    assert home_review() == ([w['id']], expiry.isoformat())
     clock = expiry
-    assert review_ids() == []
+    assert home_review() == ([], None)
 
 
 def test_scoped_delegation_is_real_authority_and_remains_revocable(h):
