@@ -763,7 +763,7 @@ def _catalogue_definitions(rows, department_id=None):
             continue
         definition = row.get('definition')
         rule = definition.get('rule') if isinstance(definition, dict) else None
-        if (isinstance(rule, dict) and rule.get('kind') == 'catalogue' and isinstance(rule.get('id'), str')
+        if (isinstance(rule, dict) and rule.get('kind') == 'catalogue' and isinstance(rule.get('id'), str)
                 and not definition.get('workspace_id')):
             definitions[rule['id']] = rule
     return definitions
