@@ -181,12 +181,14 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
             skip_contact_snapshots and contact_update(command, payload, before_record))):
         return None
     currency = _capture_currency(db, actor, token)
-    rows, _ = scope(db, actor, day=day, rank_preview=command.kind in RANK_WRITES)
+    rank_preview = command.kind in RANK_WRITES
+    rows, _ = scope(db, actor, day=day, rank_preview=rank_preview)
     shared = snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id)) if rows else None
     snapshots, event_windows = {}, []
     for row in rows:
         event_window = []
-        snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared, _event_currency=event_window)
+        snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared,
+                                            live_memberships=rank_preview, _event_currency=event_window)
         if event_window:
             event_windows.append(event_window)
     # Publication currency in this reader is matched under the writer before this evidence is used.
@@ -267,14 +269,16 @@ def build_preview(engine, prepared):
             .outerjoin(m.WorkspaceBaseline, m.WorkspaceBaseline.workspace_id == m.Workspace.id)
             .where(m.Workspace.id.in_(before.snapshots)))}
         memo = baseline_rows(db)
+        rank_preview = prepared['rank_preview_at'] is not None
         for ident, previous in before.snapshots.items():
             _require_current(ident in replayed)
             w, baseline = replayed[ident]
             memo[(ident, w.revision)] = baseline
             workspaces.append({"workspace_id": w.id, "name": w.name, "status": w.status, "before": previous,
-                "after": domain_snapshot(db, w, operational=True, shared_inputs=shared, _event_now=captured_at),
+                "after": domain_snapshot(db, w, operational=True, shared_inputs=shared,
+                                         live_memberships=rank_preview, _event_now=captured_at),
                 "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False, _event_now=captured_at)
-                if w.status in LIVE and prepared['rank_preview_at'] is None else None})
+                if w.status in LIVE and not rank_preview else None})
     return prepared
 
 
