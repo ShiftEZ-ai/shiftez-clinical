@@ -15,7 +15,7 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, require_pr_merge, settings
+from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, settings
 from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
 from latest_reports import earlier_reports, validate_selected_reports
 import stale_evidence
@@ -27,7 +27,7 @@ def git(*args):
 
 def policy_context(data, kind, candidate):
     if kind == "pull_request":
-        return data["pull_request"]["base"]["ref"], policy.commit(data["pull_request"]["base"]["sha"])
+        return data["pull_request"]["base"]["ref"], policy.pr_test_base(data, candidate)
     if kind == "merge_group":
         return data["merge_group"]["base_ref"].removeprefix("refs/heads/"), policy.commit(data["merge_group"]["base_sha"])
     if kind == "schedule":
@@ -157,10 +157,8 @@ def main():
     policy.git = git
     policy.fetch(candidate, candidate)
     data = policy.event()
-    branch, base = policy_context(data, os.environ["GITHUB_EVENT_NAME"], candidate)
-    kind=os.environ["GITHUB_EVENT_NAME"]
-    if kind == "pull_request" and os.getenv("TRUSTED_BOOTSTRAP") != "true":
-        require_pr_merge(data, git, candidate)
+    kind = os.environ["GITHUB_EVENT_NAME"]
+    branch, base = policy_context(data, kind, candidate)
     census_base = base
     policy.fetch(census_base,census_base)
     default = policy.default_branch(data)
@@ -174,7 +172,7 @@ def main():
     if plan["sha"] != candidate or plan["tree"] != source_tree or plan["base_sha"] != base:
         raise ValueError("Evidence is not bound to the independently resolved candidate/target")
     partial = "selection" in plan
-    scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), candidate)
+    scope = (pr_scope(data, git, policy.commit(git("rev-parse", "HEAD").decode().strip()), base, candidate)
              if partial and kind == "pull_request" else None)
     config = settings(plan=plan)
     selected_files = assert_inventory(plan, git("ls-tree", "-r", "-z", candidate, "--", "tests"),
