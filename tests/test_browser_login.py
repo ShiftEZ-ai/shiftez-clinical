@@ -4,7 +4,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 from packages.contracts.schemas import BRANDING_DEFAULTS
-from .test_browser import browser, live_server, sign_in, new_context, open_app, expect_loaded, route_fetch
+from .test_browser import browser, live_server, sign_in, new_context, open_app, expect_loaded, holding, route_fetch
 
 pytestmark = pytest.mark.browser
 
@@ -22,7 +22,13 @@ def test_sign_in_page_is_the_brand_and_the_form(browser, live_server, viewport, 
 
     context.route('**/api/branding', with_wordmark)
     try:
-        page = open_app(context, live_server)
+        # Hold the account read until the browser requests the configured image.
+        with holding(context) as held:
+            held.hold('**/api/me')
+            with context.expect_event('request', predicate=lambda request: (
+                request.resource_type == 'image' and request.url.endswith('/brand/emblem.png?wordmark')
+            )):
+                page = open_app(context, live_server)
         expect(page.get_by_role("heading", name="Sign in", level=1)).to_be_visible()
         brand = page.locator(".login-brand")
         expect(brand).to_have_text(BRANDING_DEFAULTS['app_name'])
