@@ -19,6 +19,7 @@ OUTBOX_SOURCES = {
     "occurrence_id": (m.EventOccurrence, None, None),
     "request_id": (m.RequestRecord, "created_by", None),
     "workspace_id": (m.Workspace, "created_by", None),
+    "job_id": (m.Job, "requested_by", None),
     "publication_id": (m.Publication, "published_by", None),
     "supersedes_id": (m.Publication, "published_by", None),
     "policy_id": (m.Policy, "created_by", None),
