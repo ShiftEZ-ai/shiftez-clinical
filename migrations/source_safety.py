@@ -301,7 +301,7 @@ class Analyzer(ast.NodeVisitor):
         self.issue(node, 'unproved annotated assignment')
 
     def visit_FunctionDef(self, node):
-        if node.decorator_list or node.returns or node.args.defaults or node.args.kw_defaults \
+        if node.type_params or node.decorator_list or node.returns or node.args.defaults or node.args.kw_defaults \
                 or node.args.args or node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg or node.args.kwarg:
             self.issue(node, 'unproved function definition')
         if not isinstance(self.parents.get(node), ast.Module):

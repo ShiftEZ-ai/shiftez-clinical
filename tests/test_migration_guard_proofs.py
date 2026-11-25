@@ -359,6 +359,17 @@ def test_retained_nullable_guard_refuses_rebound_entry_point(publication_history
     assert safety.analyze(path)['class'] == 'destructive'
 
 
+def test_retained_nullable_guard_refuses_type_parameter_for_dialect(publication_history):
+    path = retained_guard_revision(publication_history)
+    source = path.read_text(encoding='utf-8')
+    source = source.replace('def upgrade():', 'def upgrade[branch_labels]():')
+    source = source.replace("== 'sqlite':", '== branch_labels:')
+    path.write_text("branch_labels = 'sqlite'\n" + source, encoding='utf-8')
+    result = safety.analyze(path)
+    assert result['class'] == 'destructive'
+    assert any(finding.endswith('unproved function definition') for finding in result['findings'])
+
+
 def test_retained_nullable_guard_name_is_consumed_by_an_earlier_guard(publication_history):
     parent = nullable_guard_revision(
         publication_history, 'earlier_guard', PUBLICATION_HEAD,
