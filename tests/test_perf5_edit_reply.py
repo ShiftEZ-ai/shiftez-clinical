@@ -170,7 +170,7 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
     payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
     payload.update(workspace_id=w['id'], shift_id=shift['id'], participants=[{
         'person_id': h.seed['people'][0 if add else 1], 'start': shift['start'], 'end': shift['end']}])
-    statements, acquired, scopes = [], [], []
+    statements, acquired, scopes, snapshot_shapes = [], [], [], []
     def counted(_c, _cu, statement, _p, _ctx, _many):
         statements.append(statement.split()[0])
     def forbidden(*a, **kw):
@@ -200,6 +200,7 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
                 if _name == '_domain_snapshot':
                     assert kw.get('include_fairness') is False
                     assert kw.get('include_objectives') is False
+                    snapshot_shapes.append((kw.get('own_shifts'), kw.get('include_manifest', True)))
                 acquired.append(_name)
                 return _original(*a, **kw)
             patch.setattr(snapshots, name, acquisition)
@@ -220,7 +221,9 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
            'domain_acquisitions': acquisitions[0], 'input_acquisitions': acquisitions[1]})
     # Both additions and removals need D65's scoped safety check; neither needs a complete evaluation.
     assert statements.count('SELECT') <= (130 if add else 80) and len(statements) <= (160 if add else 100)
-    assert acquisitions == (1, 1)
+    assert acquisitions == (2 if add else 1, 1)
+    # The placement gate checks the proposed people without own sessions. Admission checks the saved edit.
+    assert snapshot_shapes == ([([], False), (None, True)] if add else [(None, True)])
     assert len(scopes) == 2  # One before and one after, reused by the reply.
     assert result['validation']['scope'] == 'command_changes'
     assert result['health']['score'] is None and result['fix_list']['summary']['checking']
