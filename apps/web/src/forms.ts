@@ -1105,7 +1105,7 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
       many.wrap.addEventListener('change',showApproval);showApproval();
     }
     // Whole days (most leave): pick dates only; it runs from the first day's start to the end of the last day.
-    const editAllDay=!!edit&&atLocalMidnight(initialStart,edit.start)&&atLocalMidnight(initialEnd,edit.end);
+    const editAllDay=!!edit&&initialStart<initialEnd&&atLocalMidnight(initialStart,edit.start)&&atLocalMidnight(initialEnd,edit.end);
     const allDay=check('All day',editAllDay);
     // All day swaps the two times for one range of days (the shared date picker), carrying the days across.
     const first=field('First day','date',initialStart.slice(0,10),{required:true});
@@ -1120,13 +1120,13 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
       else{put(start,`${first.input.value}T${times[0]}`);put(end,`${last.input.value}T${times[1]}`);}
       sync();
     });sync();
-    // The end follows the start: moving the first day moves the last by the same number of days (never before it).
+    // On a new request, moving the first day moves the last by the same number of days (never before it).
     const follow=(a:{input:HTMLInputElement},b:{input:HTMLInputElement},date:(v:string)=>string,set:(v:string,d:string)=>string)=>{let was=date(a.input.value);
       a.input.addEventListener('change',()=>{const now=date(a.input.value),end=date(b.input.value);if(!now||!was||!end){was=now;return;}
         const shift=Math.round((Date.parse(now)-Date.parse(was))/864e5),moved=shiftDays(end,shift);
         if(shift)put(b,set(b.input.value,moved<now?now:moved));was=now;});};
     const shiftDays=(d:string,n:number)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10);};
-    follow(first,last,v=>v,(_,d)=>d);follow(start,end,v=>v.slice(0,10),(v,d)=>d+v.slice(10));
+    if(!edit){follow(first,last,v=>v,(_,d)=>d);follow(start,end,v=>v.slice(0,10),(v,d)=>d+v.slice(10));}
     const lead=[...(many?[many.wrap]:canChoose&&!edit?[person.wrap]:[]),...(requestOnly?(kinds.length>1?[requestKind.wrap]:[]):[kind.wrap]),leaveType.wrap];
     // From and until stay side by side: All day takes the whole row unless a field before it fills the other half.
     const syncType=()=>{const on=isLeave();leaveType.wrap.hidden=!on;leaveType.input.disabled=!on;
