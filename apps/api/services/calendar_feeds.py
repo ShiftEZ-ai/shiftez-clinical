@@ -3,12 +3,13 @@ import hashlib
 import secrets
 from datetime import timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import JSON, column, func, select, true
+from sqlalchemy import JSON, and_, column, func, select, true
 from apps.api import models as m
 from packages.contracts import schemas as s
 from apps.api.errors import require
 from apps.api.models import now as utc_now
-from packages.domain.reports import calendar_feed
+from packages.domain.reports import calendar_feed, publication_duty_ids
+from packages.domain.time import local_midnight
 from .common import expected
 
 digest = lambda token: hashlib.sha256(token.encode()).hexdigest()
@@ -90,14 +91,45 @@ def publication_calendars(db, pubs, person_id, zone):
               func.json_each(shifts.c.value, '$.participants')).table_valued(column('value', JSON), joins_implicitly=True).alias('feed_person')
     subject = people.c.value['person_id'].as_string() if postgres else func.json_extract(people.c.value, '$.person_id')
     mine = select(1).select_from(people).where(subject == person_id).correlate(shifts).exists()
-    grouped = {p.id: [] for p in pubs}
-    for publication_id, shift in db.execute(select(P.id, shifts.c.value).select_from(P).join(shifts, true()).where(
-            P.id.in_(ids), mine).order_by(P.id, shifts.c.ordinality if postgres else shifts.c.key)):
-        grouped[publication_id].append(shift)
+    source_ids = ids
+    replacement = P.snapshot[('workspace', 'replaces_publication_id')].as_string()
+    predecessor = func.coalesce(P.supersedes_id, replacement).label('predecessor')
+    if any(pub.calendar_lineage for pub in pubs):
+        # Read same-department lineage only as far back as the first already-issued legacy version.
+        columns = (P.id, P.department_id, P.calendar_lineage, predecessor)
+        chain = select(*columns).where(P.id.in_(ids)).cte('feed_publications', recursive=True)
+        chain = chain.union(select(*columns).join(chain, and_(
+            P.id == chain.c.predecessor, P.department_id == chain.c.department_id,
+            chain.c.calendar_lineage.is_(True))))
+        source_ids = select(chain.c.id)
+    grouped, lineage = {}, {}
+    shift_rows = select(P.id, predecessor, P.calendar_lineage, P.supersedes_id, P.starts_on,
+                        P.snapshot['timezone'].as_string(), shifts.c.value).select_from(P)
+    shift_rows = shift_rows.outerjoin(shifts, mine).where(P.id.in_(source_ids))
+    for publication_id, previous_id, tracked, supersedes, starts, tz, shift in db.execute(
+            shift_rows.order_by(P.id, shifts.c.ordinality if postgres else shifts.c.key)):
+        lineage[publication_id] = (previous_id, tracked, starts if not supersedes else None, tz or zone)
+        group = grouped.setdefault(publication_id, [])
+        if shift is not None:
+            group.append(shift)
     result = []
     for pub in pubs:
         snapshot = metadata[pub.id]
         snapshot['shifts'] = in_force_shifts(pub, grouped[pub.id], snapshot.get('timezone') or zone)
+        if pub.calendar_lineage:
+            history, seen = [], set()
+            current_id = pub.id
+            while current_id in lineage and current_id not in seen:
+                seen.add(current_id)
+                previous_id, tracked, replace_from, _ = lineage[current_id]
+                cutoff = None
+                if tracked and replace_from and previous_id in lineage:
+                    cutoff = local_midnight(replace_from, lineage[previous_id][3])
+                history.append((grouped[current_id], tracked, cutoff))
+                if not tracked:
+                    break
+                current_id = previous_id
+            snapshot['_calendar_duty_ids'] = publication_duty_ids(reversed(history), person_id)
         if pub.effective_until:
             snapshot['effective_until'] = pub.effective_until.isoformat()
         result.append((snapshot, pub.sequence, pub.created_at))

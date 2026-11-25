@@ -1176,12 +1176,12 @@ export function keepSame(box:HTMLElement,kids:(Node|string)[]){
 /** One row per overlapping draft: its name and the outcome as a toned badge, or "Waiting to check · 0:14" / "Checking · 0:14" (elapsed, no ETA). */
 function effectRows(rows:Effect[],none='No rota being planned overlaps its dates'):HTMLElement[]{
   if(!rows.length)return [el('li',{class:'muted'},none)];
-  return rows.map((x,i)=>{const w=effectWords(x);
+  return rows.map(x=>{const w=effectWords(x);
     // A check that has not started (a job in the queue, or one this panel has just asked for: started_at is the asking)
     // says it waits, timed from then; only a running one reads Checking.
     const since=x.started_at||x.created_at;
     const end=w?badge(w.text,w.tone):elapsed(waitingWord(x.status)||'Checking',since?Date.parse(since):Date.now());
-    if(w?.tone==='ok')end.prepend(icon('check'));if(!w||x.activation_blocker)end.id=`rc-effect-why-${i}`;
+    if(w?.tone==='ok')end.prepend(icon('check'));
     const more=x.status==='ready'?(x.clears&&(x.new_or_worse_count||x.adds)?`Clears ${plural(x.clears,'problem')}`:'')
       :x.summary&&x.summary!==w?.text?x.summary:'';
     let problems:Child='';
@@ -1830,7 +1830,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         return box;}));
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
-      const waitsWhy='Waits until the effect of this change is known';
+      const waitsWhy='Waits until the effect of this change is known',approveWhy=el('small',{class:'why-unavailable'});
       const approve=button('Approve and activate',()=>{
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
@@ -1870,13 +1870,11 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         catch(err){reportError(err);}finally{await done();}},'secondary small'):null;
       const needsFirstCheck=(x:Effect)=>x.status==='not_checked'&&effectRecheckable(x)&&!started.has(x.workspace_id);
       let paintedEffects='';
-      const paint=()=>{if(!review){approve.disabled=true;recheck.hidden=true;if(stop)stop.hidden=true;return;}
+      const paint=()=>{if(!review){disabledWhy(approve,waitsWhy,[],approveWhy);recheck.hidden=true;if(stop)stop.hidden=true;return;}
         const effects=rows.map(x=>x.status==='not_checked'&&started.has(x.workspace_id)?{...x,status:'queued',started_at:started.get(x.workspace_id)}:x);
         // Keep the evidence open when only the acknowledgement controls repaint.
         const effectKey=JSON.stringify([effects,review.summary]);
         if(effectKey!==paintedEffects){list.replaceChildren(...effectRows(effects,review.summary||undefined));paintedEffects=effectKey;}
-        // What Approve waits for, or the finished check that refuses it, is its description.
-        const wait=list.querySelector('[id^="rc-effect-why"]');
         const fresh=rows.some(needsFirstCheck);
         recheck.textContent=fresh?'Check':'Check again';recheck.hidden=!canCheck||checking()||!rows.some(effectRecheckable);
         if(stop)stop.hidden=!rows.some(effectRunning);
@@ -1889,8 +1887,11 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
         why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
-        approve.disabled=checking()||!decidable||ask&&(!understood.input.checked||why.input.value.trim().length<3);
-        if(wait)approve.setAttribute('aria-describedby',wait.id);else approve.removeAttribute('aria-describedby');};
+        const blocker=rows.find(x=>x.activation_blocker);
+        const blockedWhy=blocker?.activation_blocker==='RULE_CHECK_UNRESOLVED'?'A safety rule needs a complete check of every draft'
+          :blocker&&effectWords(blocker)?.text;
+        disabledWhy(approve,checking()?waitsWhy:!decidable?(blockedWhy||'A draft’s check failed; check it again')
+          :ask&&!understood.input.checked?'Tick the box above first':ask&&why.input.value.trim().length<3?'Give a reason (3 characters or more)':'',[],approveWhy);};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
         if(canCheck)await start(rows.filter(needsFirstCheck));paint();
@@ -1916,7 +1917,8 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         if(held){effect.tabIndex=-1;effect.focus({preventScroll:true});}};
       const ask=()=>{const mine=++asked;effect.replaceChildren(skeleton('lines','Checking the effect…',{retry:again}));
         proposalReview(String(p.id)).then(async r=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;review=r;rows=r.effect||[];drawSays(r.relations||{});
-            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');delete approve.dataset.tip;paint();void load();},
+            effect.replaceChildren(list,failure,el('div',{class:'actions'},recheck,stop||''),canApprove?acknowledgement:'');
+            approve.removeAttribute('aria-describedby');delete approve.dataset.tip;paint();void load();},
           async err=>{if(mine!==asked)return;await release();if(mine!==asked||!d.body.isConnected)return;if(sessionChanged(err)){d.close();return;}approve.setAttribute('aria-disabled','true');
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
@@ -1924,7 +1926,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       d.body.append(says,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
         section(el('span',{},'Effect',effectHelp(one?.line||now[0]||{} as RuleLine)),effect),
         // Using a self-approval permission is said before deciding, as it is recorded.
-        el('footer',{class:'rc-lp-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approve:''));
+        el('footer',{class:'rc-lp-foot rc-decide-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approveWhy:'',canApprove?approve:''));
       paint();first();
     }});
   const o2=(id:string)=>{location.hash=`#rules/${e.id}/${id}`;};
