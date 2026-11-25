@@ -8,7 +8,7 @@ from playwright.sync_api import expect
 from packages.contracts import schemas as s
 from apps.api import models as m
 from apps.api.db import transaction
-from .test_browser import (auto_setup, browser, live_server, new_context, sign_in, navigate, open_rota,
+from .test_browser import (auto_setup, browser, live_server, new_context, open_app, sign_in, navigate, open_rota,
                            open_scheduling, add_filter, close_popover,
                            toolbar, view_settings, save_dialog)
 from .test_browser_cp_sat import cp_server, _check_after_apply, _joins, _review
@@ -205,6 +205,20 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         page.reload()
         expect(panel).to_contain_text('Cedar clinical rota')
         assert h.get('staff', '/api/branding')['short_name'] == 'Cedar'
+        for device, name in [('iPhone', 'Cedar'), ('Android', 'Cedar'), ('Computer', 'Cedar clinical rota')]:
+            tile = panel.locator('.icon-previews figure').filter(has=page.get_by_text(device, exact=True))
+            expect(tile.locator('b')).to_have_text(name)
+        expect(panel.locator('.splash-mini')).to_have_text(['Cedar clinical rota'] * 2)
+        page.get_by_role('button', name=re.compile(r'^Account menu, ')).click()
+        expect(page.get_by_role('dialog', name='Account').get_by_role('menuitem', name='About Cedar', exact=True)).to_be_visible()
+        close_popover(page)
+        guest = new_context(browser, {'width': width, 'height': 900}, color_scheme=scheme)
+        try:
+            login = open_app(guest, live_server)
+            expect(login.locator('.login-brand [data-brand-name]')).to_have_text('Cedar clinical rota')
+            expect(login).to_have_title('Sign in · Cedar clinical rota')
+        finally:
+            guest.close()
         panel.get_by_role('button', name='History', exact=True).click()
         history = page.get_by_role('dialog', name='Name and logo history', exact=True)
         expect(history).to_contain_text('Fictional acceptance branding')
