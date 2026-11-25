@@ -2455,11 +2455,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
   const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
-  const layer=sourceWindow||win;
+  const layer=sourceWindow||win,team=may('schedule.read_team');
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
   const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  if(!draftData&&!(source?may('publications.read_team'):team))shown.participantsFiltered=true;
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
   if(!draftData&&(permits(CAPABILITY.PUBLICATIONS_READ_TEAM)||permits(CAPABILITY.STAFF))&&layer&&!source)void loadLiveCoverage(layer);
@@ -2821,7 +2822,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const showAllSessions=()=>{schedFilters={};schedConditions=null;searchText='';schedSearch=undefined;weekView.onlyOpen=false;weekView.onlyIssues=false;void redraw();};
   // Only your own duties in view: My duties on, or a reader the server gives only their own (maintenance); Show everyone where
   // the reader may see the team's.
-  const team=may('schedule.read_team'),mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
+  const mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
     nextDuty:team?undefined:async()=>{const next=(await upcoming(ctx())).duties[0];if(!next)return null;const on=toLocal(next.start,zone()).slice(0,10);
       return {label:`Next duty: ${formatDay(on,'UTC')}`,go:()=>navigate(`schedule/week/${on}`)};}};
   const editing=draft&&!reading;

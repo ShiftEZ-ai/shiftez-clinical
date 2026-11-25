@@ -41,6 +41,8 @@ export interface WorkspaceData {/** Only the days in view (app.ts readWindow): n
   /** Schedule: a draft drawn inside the published layer. Days outside the draft are read-only context; sessions with
    *  `context: true` are published ones (grey, read-only). `published`: the days [from, until) a publication is in force. */
   context?: boolean; published?: [string,string][];
+  /** The server filtered the published participants for this viewer, so the list cannot be used to count staffing. */
+  participantsFiltered?: boolean;
   /** The server's contributor test for the viewer (any edit, swap party or alias): approving is self-approval. */
   reviewer_involved?: boolean;
   /** The swap this amendment carries out; its check's scope is `published_changes`. */
