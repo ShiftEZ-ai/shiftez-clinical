@@ -38,11 +38,17 @@ def filter_withdrawn_relationships(state):
     """Live reads exclude withdrawals, including joins/counts; history and Undo opt in explicitly."""
     # shortcut: can_take_duty/takes_duties is absent here; maintenance must test withdrawn-row exclusion when it lands.
     if state.is_select and not state.execution_options.get('include_withdrawn'):
-        from . import models as m
-        state.statement = state.statement.options(with_loader_criteria(
-            m.Withdrawable, lambda cls: cls.withdrawn.is_(False), include_aliases=True))
-        state.statement = state.statement.options(with_loader_criteria(
-            m.Mentorship, live_mentorship_clause(), include_aliases=True))
+        state.statement = state.statement.options(*_live_relationship_options(live_mentorship_clause()))
+
+
+@cache
+def _live_relationship_options(mentorship_clause):
+    # Share the option definitions while evaluating their predicates on every read.
+    from . import models as m
+    return (
+        with_loader_criteria(m.Withdrawable, lambda cls: cls.withdrawn.is_(False), include_aliases=True),
+        with_loader_criteria(m.Mentorship, mentorship_clause, include_aliases=True),
+    )
 
 
 # Reuse the SQL predicate and evaluate current rows on every read.

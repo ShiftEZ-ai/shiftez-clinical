@@ -70,11 +70,37 @@ def test_first_rule_proposal_errors_keep_the_handlers_message_on_the_row(h, inva
     assert row["result"] == "problem"
     assert row["issues"][0]["code"] == single["code"]
     message = single["message"] if invalid == "duplicate" else "; ".join(
-        detail["message"].removeprefix("Value error, ") for detail in single["details"])
+        f'{detail["field"]}: {detail["message"].removeprefix("Value error, ")}' for detail in single["details"])
     assert row["issues"][0]["message"] == message
     refused = h.command("coordinator", "bulk.apply", body, status=422)["error"]
     assert refused["code"] == single["code"] and refused["message"] == message
     assert refused["details"]["failed_index"] == 0 and refused["details"]["completed"] == 0
+    assert _pending(h) == []
+
+
+def test_bulk_schema_messages_name_the_field_without_echoing_values(h):
+    submitted = "synthetic_invalid_date"
+    ready = {"catalogue_id": "workload_limit", "catalogue_version": 2,
+             "lines": [line(numbers={"max": {"value": 3}})]}
+    invalid = {**ready, "lines": [line(numbers={"max": {"value": 3}}, who={
+        "conditions": [{"field": "first_day", "op": "is", "value": submitted}]})]}
+    body = {"item_kind": "rule.propose", "reason": REASON,
+            "items": [{"payload": ready}, {"payload": invalid}]}
+
+    checked = preview(h, "coordinator", body)
+    assert checked["items"][0]["result"] == "waiting"
+    row = checked["items"][1]
+    assert row["result"] == "problem"
+    issue = row["issues"][0]
+    assert issue["code"] == "SCHEMA_INVALID"
+    assert issue["message"].startswith("lines.0.who.conditions.0.")
+    assert "A value is not valid for this request" in issue["message"]
+    assert submitted not in str(checked)
+
+    refused = h.command("coordinator", "bulk.apply", body, status=422)["error"]
+    assert (refused["code"], refused["message"]) == (issue["code"], issue["message"])
+    assert refused["details"]["failed_index"] == 1 and refused["details"]["completed"] == 0
+    assert submitted not in str(refused)
     assert _pending(h) == []
 
 
