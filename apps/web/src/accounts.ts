@@ -165,8 +165,8 @@ export function onboardingPanel(people:Row[],linked:Set<string>,refresh:(quiet?:
         if(done.invitations.length)save(new Blob([invitationsCsv(done.invitations)],{type:'text/csv'}),'staff-invitations.csv');
         const doneButton=button('Done',async()=>{
           changed=false;
-          // Keep the result open until Access can offer actions for the new accounts.
-          await refresh();
+          // Wait for Access, but leave a menu alone if the panel closes while the read is in flight.
+          await refresh(true);
           if(body.isConnected)close();},'secondary');
         body.replaceChildren(el('div',{class:'import-head'},summary(done.counts),doneButton),
           done.invitations.length?note(`Links downloaded for ${plural(done.invitations.length,'person','people')}.`,'success'):'',

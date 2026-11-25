@@ -3,6 +3,7 @@ same-button confirm and gets the one-time links once, as a file only; the per-pe
 import csv
 import io
 import re
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.schemas import ACCOUNT_ONBOARDING_LIMITS
-from .test_browser import browser, holding, live_server, navigate, sign_in, wait_held  # noqa: F401
+from .test_browser import browser, expect_loaded, holding, live_server, navigate, reconnect, sign_in, wait_held  # noqa: F401
 from .test_browser_accounts import users_file  # noqa: F401
 from .test_browser_remaining_controls import _account_action
 from .governance_support import developer
@@ -48,11 +49,22 @@ def open_panel(page):
     return panel
 
 
-@pytest.mark.parametrize("viewport,scheme", [(None, "light"), ({"width": 390, "height": 844}, "dark")])
-def test_preview_create_download_once_then_resend(users_file, browser, live_server, h, viewport, scheme):  # noqa: F811
+@pytest.mark.parametrize("viewport,scheme,dismiss", [
+    pytest.param(None, "light", False, id="None-light"),
+    pytest.param({"width": 390, "height": 844}, "dark", False, id="viewport1-dark"),
+    pytest.param(None, "light", True, id="escape-during-refresh"),
+])
+def test_preview_create_download_once_then_resend(users_file, browser, live_server, h, viewport, scheme, dismiss):  # noqa: F811
     staff(h, 3)
     context, page = sign_in(browser, live_server, developer(h), viewport=viewport)
-    try:
+    with closing(context), holding(page) as held:
+        pulse = "**/api/pulse"
+        if dismiss:
+            # Isolate Done's refresh from the live update triggered by onboarding.
+            page.route("**/api/events*", lambda route: route.abort())
+            page.reload()
+            expect_loaded(page, "home")
+            held.hold(pulse)
         page.emulate_media(color_scheme=scheme)
         panel = open_panel(page)
         for n in (1, 2):
@@ -88,13 +100,26 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
             assert link not in page.evaluate("JSON.stringify({...localStorage})+JSON.stringify({...sessionStorage})")
         expect(panel.get_by_role("button", name=re.compile("^(Create|Confirm|Download)"))).to_have_count(0)
         access = "**/api/access"
-        with holding(page) as held:
-            held.hold(access)
-            done = panel.get_by_role("button", name="Done", exact=True)
-            done.click()
-            wait_held(page, held[access])
-            expect(done).to_be_disabled()
-            held.release(access)
+        held.hold(access)
+        done = panel.get_by_role("button", name="Done", exact=True)
+        done.click()
+        wait_held(page, held[access])
+        expect(done).to_be_disabled()
+        if dismiss:
+            page.keyboard.press("Escape")
+            expect(panel).to_be_hidden()
+            more = page.get_by_role("button", name=re.compile(r"^More actions for ")).first
+            more.click()
+            menu = page.get_by_role("menu", name="Row actions", exact=True)
+            expect(menu).to_be_visible()
+        held.release(access)
+        if dismiss:
+            expect_loaded(page, "access/people")
+            expect(menu).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(menu).to_be_hidden()
+            held.release(pulse)
+            reconnect(page)
         expect(panel).to_be_hidden()
 
         # The existing per-person Resend gives that one person a new link and retires the downloaded one.
@@ -105,8 +130,6 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         token = resent.input_value().rsplit("/", 1)[1]
         assert token not in tokens.values()
         assert [live(token), live(tokens["Onboard Staff 1"]), live(tokens["Onboard Staff 2"])] == [200, 404, 200]
-    finally:
-        context.close()
 
 
 def test_selection_over_the_batch_cap_says_why(users_file, browser, live_server, h):  # noqa: F811
