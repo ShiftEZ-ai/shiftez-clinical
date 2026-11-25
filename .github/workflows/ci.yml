@@ -150,7 +150,9 @@ jobs:
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
     - name: Resolve the protected affected unit scope
       id: affected-scope
-      if: github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'
+      if: >-
+        github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'
+        && steps.select.outputs.trusted_sha == github.event.pull_request.base.sha
       run: |
         if test -f "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py"; then
           python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py" scope
@@ -435,6 +437,7 @@ jobs:
       shell: python
       env:
         NEEDS_JSON: ${{ toJSON(needs) }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
       run: |
         import json
         import os
@@ -463,11 +466,13 @@ jobs:
         elif budget["result"] != "success":
             raise SystemExit("Nightly capacity check failed or was cancelled")
 
-        scope = needs["checks"].get("outputs", {}).get("quota_scope", "")
+        checks = needs["checks"].get("outputs", {})
+        scope = checks.get("quota_scope", "")
         if scope:
             expected = {"checks": "success", "static": "skipped", "unit": "skipped", "browser": "skipped"}
             if (os.environ["GITHUB_EVENT_NAME"] != "pull_request" or scope != "quota-unit-expectation"
-                    or budget["result"] != "skipped" or results != expected):
+                    or budget["result"] != "skipped" or results != expected
+                    or not os.environ["PR_BASE"] or checks.get("trusted_sha") != os.environ["PR_BASE"]):
                 raise SystemExit(f"Unexpected affected unit producer results: {results}")
             with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
                 print("run_affected_unit=true", file=output)
@@ -491,8 +496,8 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
       with:
-        ref: ${{ needs.checks.outputs.trusted_sha }}
-        path: .trusted-verdict
+        ref: ${{ github.event.pull_request.base.sha }}
+        path: .trusted-unit
         fetch-depth: 0
         persist-credentials: false
         submodules: false
@@ -508,11 +513,11 @@ jobs:
         lfs: false
     - name: Install the trusted pinned Python for the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
-      working-directory: .trusted-verdict
+      working-directory: .trusted-unit
       run: python3 .github/scripts/hosted_ci.py runtime --tool python
     - name: Install hash-locked dependencies for the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
-      working-directory: .trusted-verdict
+      working-directory: .trusted-unit
       run: |
         python3 -m venv "$RUNNER_TEMP/affected-unit-venv"
         export PATH="$RUNNER_TEMP/affected-unit-venv/bin:$PATH"
@@ -522,7 +527,7 @@ jobs:
     - name: Verify the protected scope and run the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
       working-directory: candidate
-      run: python -I "$GITHUB_WORKSPACE/.trusted-verdict/.github/scripts/affected_unit_pilot.py" test
+      run: python -I "$GITHUB_WORKSPACE/.trusted-unit/.github/scripts/affected_unit_pilot.py" test
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: always() && steps.producers.outputs.run_affected_unit == 'true'
       with:

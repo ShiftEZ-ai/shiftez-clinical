@@ -1321,7 +1321,9 @@ class BootstrapControlTests(unittest.TestCase):
                 plan_index = next(i for i, step in enumerate(checks) if step.get('id') == 'plan')
                 scope = checks[context_index + 1]
                 self.assertEqual(scope['id'], 'affected-scope')
-                self.assertEqual(scope['if'], "github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'")
+                self.assertEqual(scope['if'].strip(),
+                                 "github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'"
+                                 " && steps.select.outputs.trusted_sha == github.event.pull_request.base.sha")
                 self.assertLess(context_index + 1, plan_index)
                 plan, upload = checks[plan_index:plan_index + 2]
                 self.assertEqual(plan['id'], 'plan')

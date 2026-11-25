@@ -237,6 +237,7 @@ class ImporterV34Tests(unittest.TestCase):
         self.assertNotIn('if', step)
         self.assertEqual(step['shell'], 'python')
         self.assertEqual(step['env']['NEEDS_JSON'], '${{ toJSON(needs) }}')
+        self.assertEqual(step['env']['PR_BASE'], '${{ github.event.pull_request.base.sha }}')
         fallback = "steps.producers.outputs.run_verdict == 'true'"
         affected = "steps.producers.outputs.run_affected_unit == 'true'"
         after_check = gate['steps'][gate['steps'].index(step) + 1:]
@@ -246,8 +247,8 @@ class ImporterV34Tests(unittest.TestCase):
         controls, candidate = affected_steps[:2]
         for checkout in (controls, candidate):
             self.assertEqual(checkout['if'], f"github.event_name == 'pull_request' && {affected}")
-        self.assertEqual(controls['with']['path'], '.trusted-verdict')
-        self.assertEqual(controls['with']['ref'], '${{ needs.checks.outputs.trusted_sha }}')
+        self.assertEqual(controls['with']['path'], '.trusted-unit')
+        self.assertEqual(controls['with']['ref'], '${{ github.event.pull_request.base.sha }}')
         self.assertEqual(candidate['with']['path'], 'candidate')
         self.assertEqual(candidate['with']['ref'], '${{ github.sha }}')
         self.assertIn('affected_unit_pilot.py\" test', affected_steps[4]['run'])
@@ -258,6 +259,7 @@ class ImporterV34Tests(unittest.TestCase):
         skipped = dict.fromkeys(producers, 'skipped')
         affected_results = dict(skipped, checks='success')
         scope = 'quota-unit-expectation'
+        pr_base = 'a' * 40
         cases = (
             ('pull_request', 'skipped', None, success, True, False),
             ('merge_group', 'skipped', None, success, True, False),
@@ -278,6 +280,7 @@ class ImporterV34Tests(unittest.TestCase):
             ('push', 'skipped', None, dict(success, unit='failure'), False, False),
             ('push', 'skipped', None, {'checks': 'success'}, False, False),
             ('pull_request', 'skipped', None, affected_results, False, False, scope, True),
+            ('pull_request', 'skipped', None, affected_results, False, False, scope, False, 'b' * 40),
             ('pull_request', 'skipped', None, affected_results, False, False, '', False),
             ('pull_request', 'skipped', None, affected_results, False, False, 'unknown', False),
             ('merge_group', 'skipped', None, affected_results, False, False, scope, False),
@@ -285,18 +288,18 @@ class ImporterV34Tests(unittest.TestCase):
             ('pull_request', 'skipped', None, dict(affected_results, unit='cancelled'), False, False, scope, False),
         )
         for event, budget, admitted, results, verdict, deferred, *pilot in cases:
-            declared_scope, pilot_runs = pilot or ('', False)
+            declared_scope, pilot_runs, *trusted = pilot or ('', False)
             with self.subTest(event=event, budget=budget, admitted=admitted, results=results), \
                  tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as directory:
                 needs = {job: {'result': result} for job, result in results.items()}
                 if declared_scope:
-                    needs['checks']['outputs'] = {'quota_scope': declared_scope}
+                    needs['checks']['outputs'] = {'quota_scope': declared_scope, 'trusted_sha': trusted[0] if trusted else pr_base}
                 budget_outputs = {} if admitted is None else {'admitted': admitted}
                 all_needs = dict(needs, **{'nightly-budget': {'result': budget, 'outputs': budget_outputs}})
                 env, output, summary = (Path(directory) / name for name in ('env', 'output', 'summary'))
                 result = subprocess.run(
                     [sys.executable, '-I', '-c', step['run']],
-                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'NEEDS_JSON': json.dumps(all_needs),
+                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'NEEDS_JSON': json.dumps(all_needs), 'PR_BASE': pr_base,
                          'GITHUB_ENV': str(env), 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)},
                     capture_output=True, text=True, timeout=10,
                 )
