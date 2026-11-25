@@ -86,6 +86,7 @@ class ImporterV34Tests(unittest.TestCase):
         jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
         full = {'checks', 'static', 'unit', 'browser', 'ci-gate'}
         cases = (
+            ('queue landing', 'push', 'refs/heads/dev', True, {}, full - {'unit', 'browser'}),
             ('pull request', 'pull_request', 'refs/pull/1/merge', True, {}, full),
             ('merge group', 'merge_group', 'refs/heads/queue', True, {}, full),
             ('preview push', 'push', 'refs/heads/preview', True, {}, full),
@@ -102,6 +103,9 @@ class ImporterV34Tests(unittest.TestCase):
         for default, (label, event, ref, admitted, overrides, expected) in (
                 (default, case) for default in ('dev', 'main') for case in cases):
             ref = ref.replace('refs/heads/dev', 'refs/heads/' + default)
+            queue_run = label == 'queue landing' and default == 'main'
+            if label == 'queue landing' and not queue_run:
+                expected = full
             with self.subTest(case=label, default=default):
                 results, ancestors = {}, {}
 
@@ -131,6 +135,7 @@ class ImporterV34Tests(unittest.TestCase):
                         "needs['nightly-budget'].result == 'success'": results.get('nightly-budget') == 'success',
                         "needs['nightly-budget'].outputs.admitted == 'true'": admitted,
                         "needs.checks.result == 'success'": results.get('checks') == 'success',
+                        "needs.checks.outputs.queue_run == ''": not queue_run,
                     }
                     for expression, value in values.items():
                         condition = condition.replace(expression, str(value))
@@ -185,8 +190,15 @@ class ImporterV34Tests(unittest.TestCase):
         self.assertEqual(step['env']['NEEDS_JSON'], '${{ toJSON(needs) }}')
         for following in gate['steps'][gate['steps'].index(step) + 1:]:
             self.assertIn("steps.producers.outputs.run_verdict == 'true'", following['if'])
+        by_name = {following.get('name'): following for following in gate['steps']}
+        reuse = by_name['Verify reused merge-group reports']
+        self.assertIn("needs.checks.outputs.queue_run != ''", reuse['if'])
+        self.assertIn('queue_reuse.py .candidate-evidence/plan/shard-plan.json --require-run', reuse['run'])
+        self.assertEqual(reuse['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertIn("needs.checks.outputs.queue_run == ''", by_name['Trusted source/node/canary/allowance verdict']['if'])
         success = dict.fromkeys(producers, 'success')
         skipped = dict.fromkeys(producers, 'skipped')
+        reuse_results = dict(success, unit='skipped', browser='skipped')
         cases = (
             ('pull_request', 'skipped', None, success, True, False),
             ('merge_group', 'skipped', None, success, True, False),
@@ -207,16 +219,28 @@ class ImporterV34Tests(unittest.TestCase):
             ('push', 'skipped', None, dict(success, unit='failure'), False, False),
             ('push', 'skipped', None, {'checks': 'success'}, False, False),
         )
-        for event, budget, admitted, results, verdict, deferred in cases:
-            with self.subTest(event=event, budget=budget, admitted=admitted, results=results), \
+        reuse_cases = (
+            ('push', 'skipped', None, reuse_results, True, False, '12:1', 'refs/heads/main'),
+            ('push', 'skipped', None, reuse_results, False, False, '12:1', 'refs/heads/release/v1.2.3'),
+            ('push', 'skipped', None, dict(reuse_results, static='skipped'), False, False, '12:1', 'refs/heads/main'),
+            ('push', 'skipped', None, dict(reuse_results, browser='cancelled'), False, False, '12:1', 'refs/heads/main'),
+            ('push', 'skipped', None, reuse_results, False, False, '', 'refs/heads/main'),
+            ('pull_request', 'skipped', None, reuse_results, False, False, '12:1', 'refs/heads/main'),
+            ('merge_group', 'skipped', None, reuse_results, False, False, '12:1', 'refs/heads/main'),
+        )
+        all_cases = [(*case, '', 'refs/heads/main') for case in cases] + list(reuse_cases)
+        for event, budget, admitted, results, verdict, deferred, queue_run, ref in all_cases:
+            with self.subTest(event=event, budget=budget, admitted=admitted, results=results, queue_run=queue_run, ref=ref), \
                  tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as directory:
                 needs = {job: {'result': result} for job, result in results.items()}
+                if queue_run:
+                    needs['checks']['outputs'] = {'queue_run': queue_run}
                 budget_outputs = {} if admitted is None else {'admitted': admitted}
                 all_needs = dict(needs, **{'nightly-budget': {'result': budget, 'outputs': budget_outputs}})
                 env, output, summary = (Path(directory) / name for name in ('env', 'output', 'summary'))
                 result = subprocess.run(
                     [sys.executable, '-I', '-c', step['run']],
-                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'NEEDS_JSON': json.dumps(all_needs),
+                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref, 'NEEDS_JSON': json.dumps(all_needs),
                          'GITHUB_ENV': str(env), 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)},
                     capture_output=True, text=True, timeout=10,
                 )
