@@ -71,6 +71,45 @@ def test_incremental_validation_keeps_full_findings_coverage_goals_and_score(cha
     assert '_session_parts' not in normalized_check(result)
 
 
+@pytest.mark.parametrize('change', ['create', 'delete', 'move'])
+def test_capacity_membership_edits_keep_the_scoped_check(change):
+    data = department()
+    data['shifts'] = data['shifts'][:30]
+    room = data['shifts'][0]['location_id']
+    second_room = 'other-room'
+    data['locations'][second_room] = {**data['locations'][room], 'id': second_room}
+    data['shifts'][-1]['location_id'] = second_room
+    data['focus_ids'] = [row['id'] for row in data['shifts']]
+    data['place_capacity'] = validation.place_capacity_inputs(data, data['shifts'])
+    data['input_manifest'] = manifest(data)
+    data['fingerprint'] = data['input_manifest']['token']
+    previous = validation.evaluate(data, session_parts=True)
+    previous.update(input_manifest=planning._check_manifest(data['input_manifest']),
+                    evaluated_at='2026-10-01T00:00:00+00:00', diagnostic_version=DIAGNOSTIC_VERSION,
+                    fix_list_context=fix_list_context(data))
+    before = {'workspace': copy.deepcopy(data['workspace']), 'shifts': copy.deepcopy(data['shifts'])}
+
+    target = data['shifts'][0]
+    if change == 'create':
+        data['shifts'].append({**target, 'id': 'new-duty', 'participants': []})
+    elif change == 'delete':
+        data['shifts'].pop(0)
+    else:
+        target['location_id'] = second_room
+    data['focus_ids'] = [row['id'] for row in data['shifts']]
+    data['place_capacity'] = validation.place_capacity_inputs(data, data['shifts'])
+    data['workspace']['content_revision'] += 1
+    data['input_manifest'] = manifest(data)
+    data['fingerprint'] = data['input_manifest']['token']
+    assert data['input_manifest']['own_place_capacity'] != previous['input_manifest']['own_place_capacity']
+    assert (data['input_manifest']['components']['mandatory_inputs']
+            == previous['input_manifest']['components']['mandatory_inputs'])
+
+    scope = validation.incremental_edit_scope(data, before, previous, fix_list_context(data)['sources'])
+    assert scope is not None and 0 < len(scope['shifts']) < len(data['shifts'])
+    assert canonical(validation.evaluate({**data, '_partial': scope})) == canonical(validation.evaluate(data))
+
+
 def test_assignment_scope_falls_back_for_session_setup_change():
     data = department()
     before = {'shifts': copy.deepcopy(data['shifts'])}

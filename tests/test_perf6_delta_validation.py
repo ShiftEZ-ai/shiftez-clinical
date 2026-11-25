@@ -62,6 +62,9 @@ def test_untouched_scope_reuse_requires_identical_input_components(monkeypatch):
     assert planning.assignment_validation_scope(data, before, previous)['previous'] is previous
     data['input_manifest']['components']['mandatory_inputs'] = 'drift'
     assert planning.assignment_validation_scope(data, before, previous) is None
+    data['input_manifest']['components']['mandatory_inputs'] = 'm'
+    data['input_manifest']['own_place_capacity'] = 'changed'
+    assert planning.assignment_validation_scope(data, before, previous) is None
 
 
 def test_edit_delta_keeps_revision_and_source_currency_and_falls_back_without_scope():

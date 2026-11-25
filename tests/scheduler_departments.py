@@ -81,8 +81,9 @@ def department(h, seed, people=20, days=7, rules='full', leave_rate=0.05, clinic
             continue  # Published neighbour duties are context, not this department's templates.
         key = next(k for k, t in types.items() if t == shift['assignment_type_id'])
         templates[key] = shift
-    for location in data['locations'].values():
+    for ident, location in data['locations'].items():
         location['capacity'] = 1000
+        data['place_capacity']['limits'][ident] = 1000
     source = s['people'][0]
     base = {k: [r for r in data[k] if r['person_id'] == source] for k in ('memberships', 'eligibilities', 'grants')}
     trainees = set()

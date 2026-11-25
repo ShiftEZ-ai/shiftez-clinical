@@ -9,6 +9,7 @@ from packages.contracts.schemas import GenerationOptions
 from packages.domain import cp_sat, generation, solver_resume, validation, validation_scope
 from packages.domain.solver_control import SolverControl
 from tests.test_generation_apply_scale import completed_proposal
+from tests.test_planning_groups_drafts import settings
 
 
 @pytest.fixture(params=['h', pytest.param('pg', marks=pytest.mark.postgres)], ids=['sqlite', 'postgresql'])
@@ -182,6 +183,7 @@ def capacity_parent(h):
 
 
 def issue_overlapping_duty(h, location_id):
+    settings(h, coordinator_identity_ids=[h.seed['identities']['coordinator']])
     workspace = h.command('coordinator', 'workspace.create', {
         'name': 'Issued rota fixture', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
         'purpose': 'integrated',

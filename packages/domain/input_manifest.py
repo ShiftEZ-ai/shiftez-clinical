@@ -162,8 +162,13 @@ def manifest(data, *, content_revision=None, include_sources=True):
     # An effective parent capacity can bind outside the ordinary catalogue date window.
     from .validation import place_capacity_inputs
     capacity = place_capacity_inputs(data, data['shifts'])
-    if capacity['duties']:
-        add('mandatory_inputs', 'place_capacity', 'place_capacity', capacity)
+    own_capacity = {ident: row for ident, row in capacity['duties'].items() if ident in focus}
+    if own_capacity:
+        add('content', 'place_capacity', 'own_duties', own_capacity)
+    if capacity['limits']:
+        external_capacity = {ident: row for ident, row in capacity['duties'].items() if ident not in focus}
+        add('mandatory_inputs', 'place_capacity', 'place_capacity',
+            {'duties': external_capacity, 'limits': capacity['limits']})
     # The resolver owns catalogue lines, precedence and safety; do not hash retired parent blobs.
     registries = set()
     bound_exceptions = {e['policy_id'] for e in data.get('exceptions', []) if e.get('status') == 'approved'}
@@ -219,6 +224,8 @@ def manifest(data, *, content_revision=None, include_sources=True):
             'dirty_hint': dirty_hint,
             'sources': sources, 'selection': {'workspace_id': period['id'], 'start': lo.isoformat(), 'end': hi.isoformat(),
                                             'department_ids': sorted(departments), 'person_ids': sorted(people)}}
+    if own_capacity:
+        base['own_place_capacity'] = components['content']['place_capacity:own_duties']
     return bind_generation_admission(base, data)
 
 

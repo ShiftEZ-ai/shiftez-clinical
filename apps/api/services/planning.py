@@ -243,7 +243,10 @@ def archive(db, actor, command):
 
 
 def _check_manifest(manifest):
-    return {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
+    value = {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
+    if 'own_place_capacity' in manifest:
+        value['own_place_capacity'] = manifest['own_place_capacity']
+    return value
 
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
@@ -594,9 +597,12 @@ def assignment_validation_scope(data, before, previous):
     for key in ('starts_on', 'ends_on', 'rule_adjustments', 'target_overrides'):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
-    old_components = (previous.get('input_manifest') or {}).get('components') or {}
-    if not all(old_components.get(k) == data['input_manifest']['components'][k]
-               for k in ('mandatory_inputs', 'objective_inputs', 'toolchain')):
+    prior_manifest = previous.get('input_manifest') or {}
+    current_manifest = data['input_manifest']
+    old_components = prior_manifest.get('components') or {}
+    if (prior_manifest.get('own_place_capacity') != current_manifest.get('own_place_capacity')
+            or any(old_components.get(key) != current_manifest['components'][key]
+                   for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
     if assignment_check_scope(data, before) is None:
         return None
