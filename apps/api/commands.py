@@ -729,6 +729,7 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
     if kind in {"request.edit", "request.undo_edit"}:
         row = scoped(db, m.RequestRecord, result['record']['id'], actor)
         person_access(db, actor, row.person_id)
+        availability.require_request_person(actor, row.person_id)
         require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can read this change', 403)
     if kind.startswith("trainee_note."):
         from .services.training import note_access

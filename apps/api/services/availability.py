@@ -391,14 +391,22 @@ def require_request_person(actor, person_id):
             "FORBIDDEN", "Staff may submit only their own requests", 403)
 
 
-def _ordinary_request_values(db, actor, value, original=None):
+def _ordinary_request_values(db, actor, value, original=None, *, undo_snapshot=None):
     person_access(db, actor, value.person_id)
     require_request_person(actor, value.person_id)
     require((value.end - value.start).days <= 366, "INTERVAL_TOO_LONG", "Requests are bounded to one year")
     require(value.kind == 'leave' or value.leave_type_id is None, 'LEAVE_TYPE_NOT_APPLICABLE', 'Only leave requests use a leave type')
     same_type = original is not None and value.kind == original.kind and value.leave_type_id == original.leave_type_id
-    typ = None if same_type else leave_types.resolve(db, actor, value.leave_type_id, required=value.kind == 'leave')
-    type_id = original.leave_type_id if same_type else typ.id if typ else None
+    if undo_snapshot is not None:
+        type_id = value.leave_type_id
+        if type_id is not None:
+            scoped(db, m.LeaveType, type_id, actor)
+        counts_as_unavailable = undo_snapshot['counts_as_unavailable']
+    elif same_type:
+        type_id, counts_as_unavailable = original.leave_type_id, original.counts_as_unavailable
+    else:
+        typ = leave_types.resolve(db, actor, value.leave_type_id, required=value.kind == 'leave')
+        type_id, counts_as_unavailable = (typ.id, typ.counts_as_unavailable) if typ else (None, True)
     competing = select(m.RequestRecord.id).where(
         m.RequestRecord.department_id == actor.department_id, m.RequestRecord.person_id == value.person_id,
         m.RequestRecord.status.in_(("submitted", "approved")))
@@ -422,8 +430,7 @@ def _ordinary_request_values(db, actor, value, original=None):
             m.Availability.start < value.end, m.Availability.end > value.start)
         if db.scalar(requests.limit(1)) or db.scalar(absences.limit(1)):
             warnings.append('This overlaps existing waiting or approved leave, or a recorded absence.')
-    values = {**value.model_dump(), 'leave_type_id': type_id,
-              'counts_as_unavailable': original.counts_as_unavailable if same_type else typ.counts_as_unavailable if typ else True}
+    values = {**value.model_dump(), 'leave_type_id': type_id, 'counts_as_unavailable': counts_as_unavailable}
     return values, findings, warnings
 
 
@@ -476,9 +483,7 @@ def edit_request(db, actor, command):
         payload = command.payload
     value = s.LeaveInput.model_validate(payload)
     require(value.person_id == row.person_id, 'REQUEST_PERSON_CHANGED', 'Keep the same person on this request', 422)
-    values, findings, warnings = _ordinary_request_values(db, actor, value, original=row)
-    if undo_snapshot is not None:
-        values['counts_as_unavailable'] = undo_snapshot['counts_as_unavailable']
+    values, findings, warnings = _ordinary_request_values(db, actor, value, original=row, undo_snapshot=undo_snapshot)
     previous = {name: old for name, old in before.items() if values[name] != old}
     require(bool(previous), 'NOTHING_TO_CHANGE', 'Change the dates, type or reason before saving')
     row.private_undo_note = None

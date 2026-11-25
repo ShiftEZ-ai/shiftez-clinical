@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
+from tests.governance_support import identity
 from tests.outbox_support import process_one_after_undo as process_one
 
 
@@ -64,6 +65,58 @@ def test_author_changes_waiting_request_and_undo_restores_it(h):
                          row['id'], restored['revision'])['record']
     assert h.command('staff', 'request.edit', edited, row['id'], decision['revision'],
                      status=409)['error']['code'] == 'WORKFLOW_STATE'
+
+
+def test_request_edit_receipts_require_current_subject_access(h):
+    role = 'request_editor'
+    author = identity(h, role, ['staff', 'coordinator'], h.seed['people'][0])
+    payload = {'person_id': h.seed['people'][1], 'kind': 'meeting', 'start': '2026-10-04T09:00:00+03:00',
+               'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic original request note'}
+    row = h.command(role, 'request.create', payload)['record']
+    edited = {**payload, 'end': '2026-10-04T11:00:00+03:00'}
+    edit_key, undo_key = m.uid(), m.uid()
+    result = h.command(role, 'request.edit', edited, row['id'], row['revision'], key=edit_key)
+    undo = result['undo']
+    h.command(role, undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'], key=undo_key)
+    assert h.committed(role, edit_key)['record']['id'] == row['id']
+    assert h.committed(role, undo_key)['record']['id'] == row['id']
+
+    with transaction(h.app.state.engine, write=True) as db:
+        db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == author,
+                                             m.RoleBinding.role == 'coordinator')).revoked = True
+
+    for key in (edit_key, undo_key):
+        reply = h.get(role, '/api/commands/' + key, status=403)
+        assert reply['error']['code'] == 'FORBIDDEN' and 'result' not in reply
+    assert h.command(role, 'request.edit', edited, row['id'], row['revision'], status=403,
+                     key=edit_key)['error']['code'] == 'FORBIDDEN'
+    assert h.command(role, undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'], status=403,
+                     key=undo_key)['error']['code'] == 'FORBIDDEN'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_undo_waiting_leave_restores_previous_type_and_availability(h, legacy):
+    original_type = {'name': 'Synthetic leave type', 'short_code': 'TSTA', 'counts_as_unavailable': False}
+    original = h.configure('leave_types', original_type)['record']
+    active = h.configure('leave_types', {'name': 'Synthetic other type', 'short_code': 'TSTB'})['record']
+    payload = {'person_id': h.seed['people'][0], 'kind': 'leave', 'start': '2026-10-04T09:00:00+03:00',
+               'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic leave request',
+               'leave_type_id': original['id']}
+    row = h.command('staff', 'request.create', payload)['record']
+    if legacy:
+        with transaction(h.app.state.engine, write=True) as db:
+            db.get(m.RequestRecord, row['id']).leave_type_id = None
+    h.configure('leave_types', {**original_type, 'active': False, 'counts_as_unavailable': True},
+                original['id'], original['revision'])
+    result = h.command('staff', 'request.edit', {**payload, 'leave_type_id': active['id']}, row['id'], row['revision'])
+    current = result['record']
+    assert current['leave_type_id'] == active['id'] and current['counts_as_unavailable'] is True
+    assert h.command('staff', 'request.edit', payload, row['id'], current['revision'],
+                     status=422)['error']['code'] == 'LEAVE_TYPE_ARCHIVED'
+    undo = result['undo']
+    restored = h.command('staff', undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'])['record']
+    assert restored['leave_type_id'] == (None if legacy else original['id'])
+    assert restored['counts_as_unavailable'] is False
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

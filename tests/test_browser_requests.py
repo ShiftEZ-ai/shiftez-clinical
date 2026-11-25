@@ -93,6 +93,31 @@ def test_change_a_waiting_request_and_undo(browser, live_server, h, viewport):
         context.close()
 
 
+def test_reason_edit_keeps_precise_times_in_repeated_hour(browser, live_server, h):
+    with transaction(h.app.state.engine, write=True) as db:
+        department = db.get(m.Department, h.seed['department_id'])
+        db.get(m.Organisation, department.organisation_id).timezone = 'Europe/London'
+    payload = {'person_id': h.seed['people'][0], 'kind': 'meeting', 'private_reason': 'Initial request note'}
+    h.command('staff', 'request.create', {**payload, 'start': '2026-10-25T01:15:00+00:00', 'end': '2026-10-25T01:30:00+00:00'})
+    request = h.command('staff', 'request.create', {**payload, 'start': '2026-10-25T01:15:07.123456+01:00',
+                        'end': '2026-10-25T01:30:09.654321+01:00'})['record']
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        page.evaluate("id => location.hash = 'requests?open=' + id", request['id'])
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('Request from time', exact=True)).to_have_value('01:15')
+        expect(dialog.get_by_label('Request until time', exact=True)).to_have_value('01:30')
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Request updated')
+        updated = h.get('staff', '/api/requests/all?id=' + request['id'])['item']
+        assert (updated['start'], updated['end']) == (request['start'], request['end'])
+        assert updated['private_reason'] == 'Updated request note'
+    finally:
+        context.close()
+
+
 CONTRAST = '''els => els.map(el => {
   const rgb = c => (c.match(/[\\d.]+/g) || []).map(Number);
   const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };
