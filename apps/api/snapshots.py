@@ -1062,6 +1062,19 @@ def occurrences_unchanged_since(db, workspace, since, window):
             == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
 
 
+def _complete_draft_location_ancestry(locations, captured, live, referenced):
+    # Complete newly booked places without promoting capacity-only rows to catalogue scope.
+    for ident in referenced - captured.keys():
+        parent = locations.get(ident, {}).get('parent_id')
+        while parent and parent not in locations and parent in live:
+            locations[parent] = live[parent]
+            parent = live[parent].get('parent_id')
+    for ident in referenced & captured.keys():
+        row = locations[ident]
+        if row.get('parent_id') and row['parent_id'] not in locations:
+            locations[ident] = {**row, 'parent_id': captured[ident].get('parent_id')}
+
+
 def _draft_catalogue_refs(db, workspace):
     own = select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)
     refs = db.execute(own.with_only_columns(m.Shift.assignment_type_id, m.Shift.location_id).distinct()).all()
@@ -1088,6 +1101,7 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                    if (mandatory_rules or current_mandatory) and not current_scheduling else {})
     current_mandatory = draft_rules.get('draft_policy_basis') == REVIEW_POLICY_BASIS
     baseline = None
+    captured_locations = {}
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
     live_inputs = shared_inputs
@@ -1129,10 +1143,17 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                 shared_inputs = saved_inputs
             else:
                 shared_inputs = saved_inputs
-            from .workspace_baselines import live_safety_inputs
+            from .workspace_baselines import CAPTURED_GENERATION_STATES, _current_safety_inputs, live_safety_inputs
+            draft_capacity = workspace.status in CAPTURED_GENERATION_STATES
+            if draft_capacity:
+                live_inputs = _current_safety_inputs(db, workspace, org, live_inputs)
+                captured_locations = validity_baseline.get('locations', {})
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
                                               include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,
                                               validity_baseline=validity_baseline)
+            if draft_capacity:
+                _complete_draft_location_ancestry(shared_inputs['locations'], captured_locations,
+                                                  live_inputs['locations'], location_ids)
             if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
                 from packages.domain.rule_lines import seeded_policies
 
@@ -1345,7 +1366,8 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
-    return result, department_settings, org, department_ids, own_publication, baseline, live_inputs, department
+    return (result, department_settings, org, department_ids, own_publication, baseline,
+            live_inputs, department, captured_locations)
 
 
 def _edit_snapshot_context(db, workspace, sources, options):
@@ -1442,22 +1464,51 @@ def line_trial_snapshot(before, workspace, policy, zone):
     return after
 
 
-def _external_capacity_locations(locations, missing, live_locations):
-    """Supply ancestry for external places absent from the draft catalogue."""
-    from packages.domain.validation import ancestor_ids
+def _external_place_evidence(db, publications, external):
+    owners = {shift['workspace_id'] for shift in external}
+    publication_ids = [pub.id for pub in publications if pub.workspace_id in owners]
+    P = m.Publication
+    if not publication_ids:
+        return {}
+    return {wid: {'locations': places or {}, 'place_capacity': capacity or {}}
+            for wid, places, capacity in db.execute(select(
+                P.workspace_id, P.snapshot['locations'], P.snapshot['place_capacity']
+            ).where(P.id.in_(publication_ids)))}
 
-    graph = {'locations': live_locations}
-    evidence = {}
-    for ident in sorted(missing):
-        if ident not in live_locations:
-            continue
-        chain = [parent for parent in ancestor_ids(graph, ident) if parent in live_locations]
-        for parent in chain:
-            if parent not in locations and parent not in evidence:
-                row = live_locations[parent]
-                evidence[parent] = {key: row[key] for key in ('id', 'department_id', 'capacity')}
-        evidence[ident]['capacity_ancestors'] = chain[1:]
-    return evidence
+
+def _checked_place_capacity(shifts, captured, live, issued):
+    """Resolve capacity membership per duty without changing the ordinary catalogue."""
+    from packages.domain.validation import ancestor_ids, capacity_limit
+
+    walks, duties, limits = {}, {}, {}
+
+    def resources(places, location):
+        key = (id(places), location)
+        if key not in walks:
+            walks[key] = [ident for ident in ancestor_ids({'locations': places}, location) if ident in places]
+        return walks[key]
+
+    for shift in shifts:
+        location = shift['location_id']
+        checked = issued.get(shift['workspace_id'])
+        issued_resources = ()
+        if checked:
+            membership = checked['place_capacity'].get('duties', {}).get(shift['id'])
+            if membership and membership['location_id'] == location:
+                issued_resources = membership['resources']
+            else:
+                issued_resources = resources(checked['locations'], location)
+        chain = list(dict.fromkeys([*resources(captured, location), *issued_resources, *resources(live, location)]))
+        if chain:
+            duties[shift['id']] = {'location_id': location, 'resources': chain}
+        for ident in chain:
+            known_limits = [places[ident]['capacity'] for places in (captured, live) if ident in places]
+            if not known_limits:
+                # Older issued places can survive only in the publication evidence.
+                known_limits = [capacity_limit(checked, ident)]
+            limit = min(known_limits)
+            limits[ident] = min(limits.get(ident, limit), limit)
+    return {'duties': duties, 'limits': limits}
 
 
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
@@ -1483,7 +1534,8 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
     else:
         context = _edit_snapshot_context(db, workspace, _edit_sources, options)
     # The department row stays referenced for the whole snapshot; the identity map holds it only weakly.
-    result, department_settings, org, department_ids, own_publication, baseline, live_inputs, _department = context
+    (result, department_settings, org, department_ids, own_publication, baseline,
+     live_inputs, _department, captured_locations) = context
     read_quality = result.read_quality
     lo, hi = snapshot_window(workspace, org.timezone)
     from packages.domain.quotas import applicable_policies, MAX_SHIFTS, MAX_ROWS
@@ -1569,18 +1621,15 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if own_publication is not None and not current_scheduling:
+        if issued_capacity := own_publication.snapshot.get('place_capacity'):
+            result['place_capacity'] = json_value(issued_capacity)
     if baseline is not None:
-        if workspace.status in {"draft", "submitted", "approved"}:
-            missing = {shift['location_id'] for shift in external} - result['locations'].keys()
-            if missing:
-                from .workspace_baselines import _current_safety_inputs
-
-                current = _current_safety_inputs(db, workspace, org, live_inputs)
-                capacity_places = _external_capacity_locations(result['locations'], missing, current['locations'])
-                if capacity_places:
-                    result['capacity_locations'] = capacity_places
         from .workspace_baselines import CAPTURED_GENERATION_STATES
         if workspace.status in CAPTURED_GENERATION_STATES:
+            issued = _external_place_evidence(db, publications, external)
+            result['place_capacity'] = _checked_place_capacity(result['shifts'], captured_locations,
+                                                               live_inputs['locations'], issued)
             if draft_safety := prepare_draft_type_safety(result, own):
                 result["_draft_type_safety"] = draft_safety
         # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
@@ -1787,8 +1836,9 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
     # Keep issued evidence on the checked catalogue basis and scoped to this rota.
-    from packages.domain.validation import capacity_ancestor_ids
-    location_ids = {ident for shift in result['shifts'] for ident in capacity_ancestor_ids(data, shift['location_id'])}
+    from packages.domain.validation import ancestor_ids, place_capacity_inputs
+    location_ids = {ident for shift in result['shifts'] for ident in ancestor_ids(data, shift['location_id'])}
+    result['place_capacity'] = place_capacity_inputs(data, result['shifts'])
     service_ids = {ident for shift in result['shifts'] for ident in shift['service_ids']}
     pool_ids = {demand['resource_pool_id'] for shift in result['shifts']
                 for demand in shift['type_snapshot']['definition'].get('resources', [])}

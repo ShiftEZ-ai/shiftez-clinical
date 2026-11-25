@@ -596,16 +596,39 @@ def qualified(data, person_id, shift, definition, a, b):
 
 
 def ancestor_ids(data, location_id):
-    ids, current = [], location_id
-    while current and current not in ids:
-        ids.append(current)
-        current = data["locations"].get(current, {}).get("parent_id")
+    ids, seen = [], set()
+    while location_id and location_id not in seen:
+        ids.append(location_id)
+        seen.add(location_id)
+        location_id = data["locations"].get(location_id, {}).get("parent_id")
     return ids
 
 
-def capacity_ancestor_ids(data, location_id):
-    location = data["locations"].get(location_id) or data.get("capacity_locations", {}).get(location_id, {})
-    return dict.fromkeys([*ancestor_ids(data, location_id), *location.get("capacity_ancestors", ())])
+def capacity_ancestor_ids(data, shift):
+    place = shift['location_id']
+    membership = (data.get('place_capacity') or {}).get('duties', {}).get(shift['id'])
+    if membership is not None and membership['location_id'] == place:
+        return membership['resources']
+    locations = data['locations']
+    return [ident for ident in ancestor_ids(data, place) if ident in locations]
+
+
+def capacity_limit(data, ident):
+    limits = (data.get('place_capacity') or {}).get('limits', {})
+    return limits[ident] if ident in limits else data['locations'][ident]['capacity']
+
+
+def place_capacity_inputs(data, shifts):
+    """Use the same capacity inputs for validation, receipts and issued evidence."""
+    duties, limits = {}, {}
+    for shift in shifts:
+        resources = capacity_ancestor_ids(data, shift)
+        if resources:
+            duties[shift['id']] = {'location_id': shift['location_id'], 'resources': resources}
+            for ident in resources:
+                if ident not in limits:
+                    limits[ident] = capacity_limit(data, ident)
+    return {'duties': duties, 'limits': limits}
 
 
 def named_people(scope):
@@ -1098,16 +1121,19 @@ def resource_sessions(data, shifts, resource_id, a, b):
     for every session, and scanning the whole rota each time made department-sized checks quadratic."""
     shifts = data.get('_resource_shifts', shifts)
     cached = data.get('_resource_sessions')
-    if cached is None or cached[0] is not shifts:
+    capacity = data.get('place_capacity')
+    if cached is None or cached[0] is not shifts or cached[1] is not capacity:
         index = defaultdict(list)
         for t in shifts:
-            for rid in capacity_ancestor_ids(data, t['location_id']):
-                index[rid].append((aware(t['start']), aware(t['end']), t))
+            start, end = aware(t['start']), aware(t['end'])
+            for rid in capacity_ancestor_ids(data, t):
+                index[rid].append((start, end, t))
         for rows in index.values():
             rows.sort(key=lambda row: row[0])
         longest = {rid: max(e - s for s, e, _ in rows) for rid, rows in index.items()}
-        cached = data['_resource_sessions'] = (shifts, index, {rid: [row[0] for row in rows] for rid, rows in index.items()}, longest)
-    _, index, starts, longest = cached
+        cached = data['_resource_sessions'] = (shifts, capacity, index,
+            {rid: [row[0] for row in rows] for rid, rows in index.items()}, longest)
+    _, _, index, starts, longest = cached
     if resource_id not in index:
         return []
     rows = index[resource_id]
@@ -1184,18 +1210,18 @@ def validate_session_setup(data, shift, shifts, definition, add):
             if closure["location_id"] == resource_id and overlaps(start, end, aware(closure["start"]), aware(closure["end"])):
                 add("LOCATION_CLOSED", "A location or parent resource is closed", sid,
                     a=max(start, aware(closure["start"])), b=min(end, aware(closure["end"])))
-    for resource_id in capacity_ancestor_ids(data, loc["id"]):
-        resource = data["locations"].get(resource_id) or data["capacity_locations"][resource_id]
+    for resource_id in capacity_ancestor_ids(data, shift):
+        limit = capacity_limit(data, resource_id)
         consuming = resource_sessions(data, shifts, resource_id, start, end)
-        if len(consuming) <= resource["capacity"]:
+        if len(consuming) <= limit:
             continue
         resource_bounds = sorted({start, end} | {max(start, aware(t["start"])) for t in consuming}
                                  | {min(end, aware(t["end"])) for t in consuming})
         for a, b in zip(resource_bounds, resource_bounds[1:]):
             count = sum(overlaps(a, b, aware(t["start"]), aware(t["end"])) for t in consuming)
-            if count > resource["capacity"]:
+            if count > limit:
                 add("RESOURCE_CAPACITY", "Concurrent sessions exceed the location or shared parent capacity", sid,
-                    a=a, b=b, extra={"scheduled_sessions": count, "capacity": resource["capacity"],
+                    a=a, b=b, extra={"scheduled_sessions": count, "capacity": limit,
                                      "resource_id": resource_id,
                                      "published_sessions": sum(t["id"] not in focus and overlaps(a, b, aware(t["start"]), aware(t["end"])) for t in consuming)})
 

@@ -794,22 +794,6 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                     validity_changes.append({"catalogue": key, "record_id": ident, "name": before.get("name", ident),
                         "before": {field: before.get(field) for field in LIVE_VALIDITY_FIELDS},
                         "after": {field: after.get(field) for field in LIVE_VALIDITY_FIELDS}})
-            if key == "locations":
-                from packages.domain.validation import ancestor_ids
-
-                # Both captured and current parent capacities bind. The extra
-                # links are derived afresh and never written to the baseline.
-                captured_graph, live_graph = {"locations": captured}, {"locations": live}
-                for ident, row in tuple(overlaid.items()):
-                    ancestors = dict.fromkeys([*ancestor_ids(captured_graph, ident)[1:],
-                                               *ancestor_ids(live_graph, ident)[1:]])
-                    for parent in ancestors:
-                        if parent in live:
-                            overlaid.setdefault(parent, live[parent])
-                    projected = set(ancestor_ids(result, ident))
-                    extra = [parent for parent in ancestors if parent in overlaid and parent not in projected]
-                    if extra:
-                        row["capacity_ancestors"] = extra
             result[key] = overlaid
     result["_live_validity_changes"] = validity_changes
     # Leadership qualification is a live fact. If a replacement is active, it

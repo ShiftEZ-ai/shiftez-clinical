@@ -32,8 +32,7 @@ FIELDS = {
     'availability': ('id', 'person_id', 'kind', 'start', 'end', 'counts_as_unavailable', 'retracted'),
     'rotation_leave_availability': ('id', 'person_id', 'kind', 'start', 'end', 'counts_as_unavailable', 'leave_type_id', 'retracted'),
     'closures': ('id', 'location_id', 'start', 'end'),
-    'locations': ('id', 'department_id', 'location_type_id', 'parent_id', 'calendar_id', 'capacity', 'capacity_ancestors', 'tags', 'active', 'starts_on', 'ends_on'),
-    'capacity_locations': ('id', 'department_id', 'capacity', 'capacity_ancestors'),
+    'locations': ('id', 'department_id', 'location_type_id', 'parent_id', 'calendar_id', 'capacity', 'tags', 'active', 'starts_on', 'ends_on'),
     'services': ('id', 'department_id', 'mode', 'calendar_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'categories': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
     'capabilities': ('id', 'department_id', 'tags', 'active', 'starts_on', 'ends_on'),
@@ -160,6 +159,11 @@ def manifest(data, *, content_revision=None, include_sources=True):
             if kind == 'exceptions' and row.get('status') != 'approved':
                 continue
             add('objective_inputs' if kind == 'wishes' else 'mandatory_inputs', kind, row['id'], project(row, fields), row)
+    # An effective parent capacity can bind outside the ordinary catalogue date window.
+    from .validation import place_capacity_inputs
+    capacity = place_capacity_inputs(data, data['shifts'])
+    if capacity['duties']:
+        add('mandatory_inputs', 'place_capacity', 'place_capacity', capacity)
     # The resolver owns catalogue lines, precedence and safety; do not hash retired parent blobs.
     registries = set()
     bound_exceptions = {e['policy_id'] for e in data.get('exceptions', []) if e.get('status') == 'approved'}
