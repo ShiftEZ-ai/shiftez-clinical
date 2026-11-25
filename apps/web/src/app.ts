@@ -8114,7 +8114,8 @@ function noteRead(n:Row){return !!(n.read_at||n.acknowledged_at);}
  *  card and offered by the Kind filter. Weekly availability is a request (kind request). */
 const NOTE_KIND:Record<string,[IconName,string,string]>={feedback:['message','teal','Feedback'],publication:['check','violet','Rota published'],review:['shield','indigo','Review'],
   bulk_review:['shield','indigo','Review'],returned:['shield','amber','Returned'],request:['leave','sky','Request'],availability:['leave','amber','Leave or absence'],swap:['swap','pink','Swap'],
-  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule']};
+  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule'],
+  generation_finished:['sparkle','teal',TERMS.autoSchedule]};
 const noteKindOf=(n:Row)=>NOTE_KIND[n.kind]||['bell','slate','Other'] as [IconName,string,string];
 const ackNote=(n:Row)=>command('notification.ack',{reason:'Explicit acknowledgement by recipient'},n.id,n.revision);
 const ackAll=()=>command('notification.ack_all',{reason:'Read'});  // one request for the whole inbox
@@ -8133,7 +8134,8 @@ async function openNote(n:Row){
 function openNoteTarget(n:Row){
   const l=n.link||{};
   if(l.staged_id){void openStaged(String(l.staged_id)).catch(e=>{if(!sessionChanged(e))notify((e as Error).message,'error',undefined,e);});void loadNavBadges(true);return;}  // a change sent for independent review
-  if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
+  if(n.kind==='generation_finished'&&l.workspace_id)void rotaMeta(l.workspace_id).then(d=>openPaletteRota(d.workspace,true)).catch(reportError);
+  else if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
   else if(l.publication_id){publicationId=l.publication_id;navigate('published');}else if(l.workspace_id){ctx().setWorkspace(l.workspace_id);navigate('schedule');}
   else if(l.swap_id||l.request_id)navigate('requests?open='+encodeURIComponent(l.swap_id||l.request_id));else if(n.kind==='availability')navigate('requests');
   else if(n.kind==='rule'&&permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))navigate(ruleNoticeOf(n).hash);else navigate('inbox');
