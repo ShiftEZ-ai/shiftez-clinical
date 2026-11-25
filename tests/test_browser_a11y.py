@@ -409,14 +409,14 @@ PHONE = {'width': 390, 'height': 844}
 TARGET_CORNERS = [(-21, -21), (21, -21), (21, 21), (-21, 21)]
 
 
-def tap_corner(page, target, painted, offset):
-    target.evaluate("node => node.scrollIntoView({block: 'center', inline: 'nearest'})")
+def tap_corner(target, painted, offset):
+    target.scroll_into_view_if_needed()
     hit, ink = target.bounding_box(), painted.bounding_box()
     assert hit and ink
-    x = hit['x'] + hit['width'] / 2 + offset[0]
-    y = hit['y'] + hit['height'] / 2 + offset[1]
+    point = {'x': hit['width'] / 2 + offset[0], 'y': hit['height'] / 2 + offset[1]}
+    x, y = hit['x'] + point['x'], hit['y'] + point['y']
     assert not (ink['x'] <= x < ink['x'] + ink['width'] and ink['y'] <= y < ink['y'] + ink['height'])
-    page.touchscreen.tap(x, y)
+    target.tap(position=point)
 
 
 def test_phone_labelled_checkbox_is_a_native_44px_target(browser, live_server):
@@ -439,7 +439,7 @@ def test_phone_labelled_checkbox_is_a_native_44px_target(browser, live_server):
         bounds = label.bounding_box()
         assert bounds and min(bounds['width'], bounds['height']) >= 44, bounds
         for index, corner in enumerate(TARGET_CORNERS):
-            tap_corner(page, label, checkbox, corner)
+            tap_corner(label, checkbox, corner)
             expect(checkbox).to_be_checked(checked=bool(index % 2))
             expect(form.get_by_role('button', name='Sign in', exact=True)).to_be_visible()
             expect(password).to_have_value('')
@@ -468,7 +468,7 @@ def test_phone_collection_row_target_and_separate_select_all_menu(browser, live_
         assert hit and min(hit['width'], hit['height']) >= 44, hit
         assert ink and max(ink['width'], ink['height']) <= 24, ink
         for index, corner in enumerate(TARGET_CORNERS):
-            tap_corner(page, target, row, corner)
+            tap_corner(target, row, corner)
             expect(row).to_be_checked(checked=not bool(index % 2))
             expect(neighbour).not_to_be_checked()
             expect(page.locator('.dock-panel:visible')).to_have_count(0)
@@ -530,7 +530,7 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
         }""")
         panel = page.get_by_role('dialog', name=f"All {legend.get_attribute('aria-label')}", exact=True)
         for corner in TARGET_CORNERS:
-            tap_corner(page, more, mark, corner)
+            tap_corner(more, mark, corner)
             expect(panel).to_be_visible()
             page.keyboard.press('Escape')
             expect(panel).not_to_be_visible()
