@@ -470,7 +470,14 @@ def _index(tokens, schema=None):
             query = (f'SELECT 1 FROM {table_sql} WHERE {" AND ".join(predicates)} '
                      f'GROUP BY {", ".join(key_sql)} HAVING count(*) > 1')
             new_table = table in schema.get('new_sql_tables', ()) or bool(_guard_table(table, schema))
-            record_precheck((query, new_table))
+            inputs = {_identifier(token) for expression in [*keys, suffix[1:]]
+                      for i, token in enumerate(expression) if _IDENT.fullmatch(token) and not _literal(token)
+                      and expression[i + 1:i + 2] not in (['.'], ['('])}
+            # A whole-row predicate can depend on every column.
+            if table.rsplit('.', 1)[-1] in inputs or any(
+                    left == '.' and right == '*' for left, right in zip(suffix, suffix[1:])):
+                inputs = None
+            record_precheck(query, new_table, table, inputs)
     return True
 
 
@@ -535,17 +542,17 @@ def _fill_update(tokens, schema):
     info = schema.get('tables', {}).get(table, {})
     where_index = _top_level_index(tail, 'WHERE')
     if not info or tail[:1] != ['SET'] or where_index < 0 or 'OR' in tail:
-        return False
+        return None
     assigned = _parts(tail[1:where_index], ',')
     targets = set()
     for assignment in assigned:
         if len(assignment) < 3 or assignment[1] != '=' or _identifier(assignment[0]) not in info['columns']:
-            return False
+            return None
         targets.add(_identifier(assignment[0]))
     predicates = _conjuncts(tail[where_index + 1:])
     guarded = {_identifier(p[0]) for p in predicates if len(p) == 3 and p[1:] == ['IS', 'NULL']}
     if not targets <= guarded or not _read_expression(tail[1:where_index] + tail[where_index + 1:]):
-        return False
+        return None
     keys = info.get('primary_key', [])
     # A legacy table's original schema may be intentionally unavailable after
     # an unproved ancestor.  A current migration can still prove a bounded
@@ -554,20 +561,20 @@ def _fill_update(tokens, schema):
     # writes continue to require the recorded primary key proof.
     inferred_added_key = not keys and targets <= set(info.get('added_columns', []))
     if len(keys) != 1 and not inferred_added_key:
-        return False
+        return None
     if inferred_added_key:
         keys = ['id']
     for p in predicates:
         if len(p) == 3 and _identifier(p[0]) == keys[0] and p[1] == '=' and (_literal(p[2]) or p[2].startswith(':')):
-            return True
+            return table, targets
         if p[:2] == [keys[0].upper(), 'IN'] and p[2:4] == ['(', 'SELECT'] and p[-1:] == [')']:
             sub = p[4:-1]
             if sub[:3] != [keys[0].upper(), 'FROM', table.upper()] or 'LIMIT' not in sub or 'OFFSET' in sub:
                 continue
             limit = sub[sub.index('LIMIT') + 1:]
             if len(limit) == 1 and limit[0].isdigit() and 1 <= int(limit[0]) <= MAX_BATCH:
-                return True
-    return False
+                return table, targets
+    return None
 
 
 def _fill_insert(tokens, schema):
@@ -881,8 +888,14 @@ def analyze_sql(sql, *, schema=None):
             if (_guard_routine(tokens, proof) or _new_table_guard(tokens, proof)
                     or _append_routine(tokens, proof) or _additive_trigger(tokens, schema)):
                 continue
-            if ((tokens[:1] == ['UPDATE'] and _fill_update(tokens, schema or {}))
-                    or _fill_insert(tokens, schema or {}) or _new_table_insert(tokens, schema or {})):
+            if tokens[:1] == ['UPDATE'] and (fill := _fill_update(tokens, proof)):
+                if record_fill := proof.get('record_fill'):
+                    record_fill(*fill)
+                result = 'fill_only'
+                continue
+            if _fill_insert(tokens, proof) or _new_table_insert(tokens, proof):
+                if record_fill := proof.get('record_fill'):
+                    record_fill(_name(tokens[2:])[0], None)
                 result = 'fill_only'
                 continue
             clear_execution_proofs(proof)

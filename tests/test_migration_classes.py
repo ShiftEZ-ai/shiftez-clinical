@@ -11,13 +11,13 @@ from migrations import safety
 from scripts import manage
 
 
-def migration(tmp_path, body, declared='additive', *, reviewed=True, prefix=''):
-    path = tmp_path / '9999_classes.py'
+def migration(tmp_path, body, declared='additive', *, reviewed=True, prefix='', revision='9999_classes', down_revision=None):
+    path = tmp_path / f'{revision}.py'
     declaration = f'SAFETY_CLASS = {declared!r}\n' if declared is not None else ''
     review = ('DESTRUCTIVE_REVIEWED = "Synthetic reviewed operation; restore the verified pre-deploy backup if needed."\n'
               if reviewed else '')
-    path.write_text('from alembic import op\nimport sqlalchemy as sa\nrevision = "9999_classes"\n'
-                    'down_revision = None\n' + declaration + review + prefix + '\ndef upgrade():\n' +
+    path.write_text(f'from alembic import op\nimport sqlalchemy as sa\nrevision = "{revision}"\n'
+                    f'down_revision = {down_revision!r}\n' + declaration + review + prefix + '\ndef upgrade():\n' +
                     indent(dedent(body).strip(), '    ') + '\n', encoding='utf-8')
     return path
 
@@ -411,12 +411,12 @@ def test_manage_checks_migration_duplicates_read_only(tmp_path, monkeypatch, mod
             assert not db.execute('SELECT name FROM sqlite_master WHERE type = \'index\'').fetchall()
 
 
-def pending_for_preflight(monkeypatch, path):
-    pending = SimpleNamespace(revision=safety.revision(path), path=path)
-    script = SimpleNamespace(iterate_revisions=lambda *args: [pending],
-                             get_current_head=lambda: pending.revision)
+def pending_for_preflight(monkeypatch, *paths):
+    pending = [SimpleNamespace(revision=safety.revision(path), path=path) for path in reversed(paths)]
+    script = SimpleNamespace(iterate_revisions=lambda *args: pending,
+                             get_current_head=lambda: pending[0].revision)
     monkeypatch.setattr(manage.ScriptDirectory, 'from_config', lambda config: script)
-    return pending.revision
+    return pending[0].revision
 
 
 def test_manage_requires_duplicate_precheck_after_ancestor_dependent_fill(tmp_path, monkeypatch):
@@ -443,6 +443,64 @@ def test_manage_requires_duplicate_precheck_after_ancestor_dependent_fill(tmp_pa
         manage.check_migrations('sqlite:///' + str(db_path))
     with closing(sqlite3.connect(db_path)) as db:
         assert db.execute('SELECT marker FROM items ORDER BY id').fetchall() == [(None,), (None,)]
+
+
+@pytest.mark.parametrize(('mode', 'split'), [
+    ('key', False), ('key', True), ('predicate', True), ('sqlalchemy', True),
+    ('marker', False), ('marker', True), ('unproved', True),
+])
+def test_manage_refuses_prechecks_that_pending_fills_can_invalidate(tmp_path, monkeypatch, mode, split):
+    migration(tmp_path, 'op.create_table("items", sa.Column("id", sa.Integer(), primary_key=True), '
+              'sa.Column("label", sa.Text()), sa.Column("active", sa.Boolean()), sa.Column("marker", sa.Text()))',
+              revision='earlier')
+    column, value = {'predicate': ('active', 'TRUE'), 'marker': ('marker', "'filled'")}.get(mode, ('label', "'A'"))
+    fill = f'UPDATE items SET {column} = {value} WHERE id = 1'
+    if mode != 'unproved':
+        fill += f' AND {column} IS NULL'
+    write = f'op.execute({fill!r})'
+    if mode == 'sqlalchemy':
+        write = ("items = sa.table('items', sa.column('id'), sa.column('label'))\n"
+                 "op.get_bind().execute(items.update().where(items.c.id == 1, items.c.label.is_(None)).values(label='A'))")
+    predicate = ' WHERE "active" IS TRUE' if mode == 'predicate' else ''
+    index = f'CREATE UNIQUE INDEX uq_label ON items (lower(label)){predicate}'
+    inputs = '("active" IS TRUE) AND ' if predicate else ''
+    check = f'SELECT 1 FROM items WHERE {inputs}(lower(label)) IS NOT NULL GROUP BY lower(label) HAVING count(*) > 1'
+    prefix = f'DUPLICATE_PRECHECKS = {(check,)!r}\n'
+
+    if split:
+        kind = 'destructive' if mode == 'unproved' else 'fill_only'
+        fill_path = migration(tmp_path, write, kind, revision='fill', down_revision='earlier')
+        assert safety.classification(fill_path) == kind
+        index_path = migration(tmp_path, f'op.execute({index!r})', prefix=prefix, down_revision='fill')
+        pending_for_preflight(monkeypatch, fill_path, index_path)
+    else:
+        sql = f'{fill}; {index}'
+        path = migration(tmp_path, f'op.execute({sql!r})', 'fill_only',
+                         prefix=prefix, down_revision='earlier')
+        assert safety.classification(path) == 'fill_only'
+        pending_for_preflight(monkeypatch, path)
+
+    db_path = tmp_path / 'precheck.db'
+    rows = [(1, 'A' if predicate else None, None, None), (2, 'a', True, None)]
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executescript("CREATE TABLE alembic_version (version_num TEXT); INSERT INTO alembic_version VALUES ('earlier'); "
+                         'CREATE TABLE items (id INT PRIMARY KEY, label TEXT, active BOOLEAN, marker TEXT)')
+        db.executemany('INSERT INTO items VALUES (?, ?, ?, ?)', rows)
+        assert db.execute(check).fetchone() is None
+
+    url = 'sqlite:///' + str(db_path)
+    if mode == 'marker':
+        assert manage.check_migrations(url) == (['fill'] if split else []) + ['9999_classes']
+    else:
+        source = 'unproved pending migration' if mode == 'unproved' else 'pending fill'
+        with pytest.raises(SystemExit, match=source + ' may change unique expression index inputs before creation'):
+            manage.check_migrations(url, confirmed=('fill',))
+    with closing(sqlite3.connect(db_path)) as db:
+        assert db.execute('SELECT * FROM items ORDER BY id').fetchall() == rows
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'uq_label'").fetchall()
+        db.execute(fill)
+        assert (db.execute(check).fetchone() is None) == (mode == 'marker')
+        db.rollback()
 
 
 @pytest.mark.parametrize('mode', ['sql', 'alembic', 'declared', 'conditional', 'populated'])

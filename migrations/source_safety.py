@@ -295,6 +295,8 @@ class Analyzer(ast.NodeVisitor):
         before, previous, schema = self.env, self.function, deepcopy(self.schema)
         clear_execution_proofs(self.schema)
         if node.name != 'upgrade':
+            self.schema.pop('record_fill', None)
+            self.schema.pop('record_duplicate_precheck', None)
             for table in self.schema['tables'].values():
                 table['new'] = False
         self.env, self.function = self.globals.copy(), node.name
@@ -546,6 +548,8 @@ class Analyzer(ast.NodeVisitor):
             guarded = set().union(*(self.guards(predicate, table) for predicate in predicates))
             if setters and not any(call.args for call in setters) and targets \
                     and targets <= set(known.get('columns', [])) and targets <= guarded and self.bounded(predicates, table):
+                if record_fill := self.schema.get('record_fill'):
+                    record_fill(table, targets)
                 return 'fill_only', ''
         if kind == 'insert':
             values = {key.arg: self.value(key.value) for call in setters for key in call.keywords}
@@ -553,6 +557,8 @@ class Analyzer(ast.NodeVisitor):
             if known.get('new') and keys and len(setters) == 1 and not setters[0].args \
                     and any(getattr(call.func, 'attr', '') == 'on_conflict_do_nothing' for call in calls) \
                     and all(isinstance(values.get(key), (str, int)) for key in keys):
+                if record_fill := self.schema.get('record_fill'):
+                    record_fill(table, None)
                 return 'fill_only', ''
         return 'destructive', 'write is not proven bounded, NULL-guarded or idempotent'
 
@@ -618,21 +624,24 @@ def schema_at(ancestors):
     return schema
 
 
-@lru_cache(maxsize=512)
-def analyze_sources(source, ancestors):
-    # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
+def _revision_schema(ancestors):
     schema = deepcopy(schema_at(ancestors))
     for table in schema['tables'].values():
         table['new'] = False
-    return Analyzer(source, schema).run()
+    return schema
 
 
-def analyze(path):
+@lru_cache(maxsize=512)
+def analyze_sources(source, ancestors):
+    # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
+    return Analyzer(source, _revision_schema(ancestors)).run()
+
+
+def _revision_sources(path):
     path = Path(path)
     source = path.read_text(encoding='utf-8')
-    direct = analyze_sources(source, ())
-    if not direct['needs_schema']:
-        return direct
+    if not analyze_sources(source, ())['needs_schema']:
+        return source, ()
     previous = assigned(parse(source), 'down_revision')
     ancestors, seen = [], set()
     if previous:
@@ -643,4 +652,15 @@ def analyze(path):
             text = files[previous].read_text(encoding='utf-8')
             ancestors.append(text)
             previous = assigned(parse(text), 'down_revision')
-    return analyze_sources(source, tuple(reversed(ancestors)))
+    return source, tuple(reversed(ancestors))
+
+
+def analyze(path):
+    return analyze_sources(*_revision_sources(path))
+
+
+def preflight_analyzer(path, *, record_fill, record_duplicate_precheck):
+    source, ancestors = _revision_sources(path)
+    schema = _revision_schema(ancestors)
+    schema.update(record_fill=record_fill, record_duplicate_precheck=record_duplicate_precheck)
+    return Analyzer(source, schema)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit operator entry points. No migrations or demo seeding on normal reads."""
 import argparse
+from collections import defaultdict
 from dataclasses import replace
 from datetime import date
 import json
@@ -25,8 +26,8 @@ from apps.api import models as m
 from apps.api.serialization import record
 from packages.contracts.schemas import AccountInvite, TypeDefinition
 from migrations import safety
-from migrations.source_safety import Analyzer, assigned
-from migrations.sql_safety import duplicate_precheck_tokens
+from migrations.source_safety import assigned, preflight_analyzer
+from migrations.sql_safety import CURRENT_SCHEMA, duplicate_precheck_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,11 +45,35 @@ def migrate(url):
 
 def check_duplicate_prechecks(db, pending, fresh):
     """DUPLICATE_PRECHECKS contains literal SELECTs that return a row on conflict."""
+    fills = defaultdict(lambda: defaultdict(set))
+
+    def name_key(name):
+        return name.lower() if db.dialect.name == 'sqlite' else name
+
+    def relation_key(table):
+        schema, _, name = name_key(table).rpartition('.')
+        return name, '' if schema == CURRENT_SCHEMA else schema
+
+    def record_fill(table, columns):
+        name, schema = relation_key(table)
+        fills[name][schema].update({None} if columns is None else map(name_key, columns))
+
+    unproved = False
     for step in pending:
         indexes = []
-        source = Path(step.path).read_text(encoding='utf-8')
-        analyzer = Analyzer(source, {'tables': {}, 'record_duplicate_precheck': indexes.append})
-        analyzer.run()
+
+        def record_precheck(query, new_table, table, columns):
+            name, schema = relation_key(table)
+            inputs = None if columns is None else set(map(name_key, columns))
+            # Unqualified relations can resolve to an explicitly named schema.
+            affected = any((not schema or not scope or schema == scope)
+                           and (inputs is None or None in writes or not inputs.isdisjoint(writes))
+                           for scope, writes in fills.get(name, {}).items())
+            indexes.append((query, new_table, affected))
+
+        analyzer = preflight_analyzer(step.path, record_fill=record_fill, record_duplicate_precheck=record_precheck)
+        kind = analyzer.run()['class']
+        unproved |= kind == 'destructive'
         declared = assigned(analyzer.tree, 'DUPLICATE_PRECHECKS')
         if 'DUPLICATE_PRECHECKS' not in analyzer.globals:
             declared = ()
@@ -56,13 +81,22 @@ def check_duplicate_prechecks(db, pending, fresh):
             if not isinstance(declared, (list, tuple)) or not all(isinstance(query, str) for query in declared):
                 raise ValueError('DUPLICATE_PRECHECKS must be a literal sequence of queries')
             # A newly created table is empty only when the revision is proven additive.
-            allow_empty = any(new for _, new in indexes) and safety.analyze(step.path)['class'] == 'additive'
             required, empty = set(), set()
-            for query, new_table in indexes:
-                (empty if new_table and allow_empty else required).add(duplicate_precheck_tokens(query))
+            affected = False
+            for query, new_table, inputs_changed in indexes:
+                tokens = duplicate_precheck_tokens(query)
+                if new_table and kind == 'additive':
+                    empty.add(tokens)
+                else:
+                    required.add(tokens)
+                    affected |= inputs_changed
             queries = [(duplicate_precheck_tokens(query), query) for query in declared]
             if required - {tokens for tokens, _ in queries}:
                 raise ValueError('missing duplicate pre-check matching the unique expression index')
+            if affected:
+                raise ValueError('pending fill may change unique expression index inputs before creation')
+            if required and unproved and not fresh:
+                raise ValueError('unproved pending migration may change unique expression index inputs before creation')
         except ValueError as exc:
             raise SystemExit(f'Refusing migration {step.revision}: {exc}') from None
         if fresh:
