@@ -935,8 +935,9 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
+        # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
+                               include_objectives=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1882,9 +1883,13 @@ def save_shift(db, actor, command, update=False):
     if update:
         require(existing is not None and existing.workspace_id == workspace.id, "NOT_FOUND", "Session not found", 404)
     prior = next((row for row in before['shifts'] if existing and row['id'] == existing.id), {})
+    previous = {p['person_id']: p for p in prior.get('participants', [])}
+    for participant in value.participants:
+        supervisor_id = previous.get(participant.person_id, {}).get('supervisor_person_id')
+        if supervisor_id is not None and 'supervisor_person_id' not in participant.model_fields_set:
+            participant.supervisor_person_id = supervisor_id
     proposed = {**prior, 'id': existing.id if existing else None,
                 **value.model_dump(mode='json', include=set(s.ShiftInput.model_fields))}
-    previous = {p['person_id']: p for p in prior.get('participants', [])}
     for participant, parsed in zip(proposed['participants'], value.participants):
         if 'fixed' not in parsed.model_fields_set:
             participant['fixed'] = previous.get(parsed.person_id, {}).get('fixed', False)
@@ -2799,7 +2804,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
-                                    effective_until=effective_until,
+                                    effective_until=effective_until, calendar_lineage=True,
                                     snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)

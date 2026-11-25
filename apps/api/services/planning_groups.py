@@ -492,8 +492,8 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, req
         selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
         if versions is not None:
             candidates = population_candidates(requested, selected) if enqueue and selected_group else None
-            population = _generation_population(requested, selected, versions, actor, selected_group, default_scope,
-                                                candidates=candidates)
+            population, outside_group_count = _generation_population(
+                requested, selected, versions, actor, selected_group, default_scope, candidates=candidates)
             if retained_population is not None:
                 require({shift_id: sorted(people) for shift_id, people in population.items()} == retained_population,
                         'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
@@ -507,7 +507,10 @@ def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, req
         raise
 
     if selected_group:
-        metadata = {**metadata, 'planning_context': {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}}
+        context = {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}
+        if outside_group_count:
+            context['outside_group_count'] = outside_group_count
+        metadata = {**metadata, 'planning_context': context}
         if not enqueue and not frozen:
             snapshot.update({**metadata,
                 'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
@@ -525,6 +528,8 @@ def _generation_population(snapshot, selected, versions, actor, selected_group, 
     resolver = GroupResolver(snapshot, versions)
     admin = actor.permits('admin')
     population = {}
+    outside_group = set()
+    admitted = set()
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
             continue
@@ -535,12 +540,15 @@ def _generation_population(snapshot, selected, versions, actor, selected_group, 
             primary = resolver.primary(pid, shift)
             if selected_group is not None and (default_scope or admin) and (
                     primary is None or primary['group_id'] != selected_group['group_id']):
+                if admin:
+                    outside_group.add(pid)
                 continue
             require(primary is not None and (admin or actor.identity_id in primary['editor_identity_ids'])
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
-    return population
+            admitted.add(pid)
+    return population, len(outside_group - admitted)
 
 
 def guard_frozen_generation(db, actor, workspace, snapshot):

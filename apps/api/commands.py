@@ -1061,6 +1061,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
+        if assignment_reply and command.kind == 'shift.update':
+            # The edit writes draft assignments, leaving the shared catalogue inputs intact.
+            db.info['_assignment_reply_inputs'] = {}
         if planning_plan is not None:
             planning_preparation.bind(db, planning_plan, replay=True)
         if generation_queue:

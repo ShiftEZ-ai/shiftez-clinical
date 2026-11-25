@@ -6,20 +6,17 @@ import os
 import subprocess
 import sys
 import time
-from contextlib import closing
 from dataclasses import replace
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pytest
 
 from apps.api import main as api, models as m
 from apps.api.db import make_engine, transaction
 from apps.api.settings import Settings
 from apps.worker import main as worker
 from packages.domain import cp_sat
-from tests.conftest import disposable_postgres_url, postgres_harness, postgres_template
 from tests.test_planning_groups_drafts import group
-from tests.test_scheduler_performance import department_preparation_163_people
+from tests.test_scheduler_performance import seed_department_preparation
 
 
 def queue(harness, workspace, role='coordinator', **options):
@@ -87,8 +84,10 @@ def profile_worker(job_id):
         engine.dispose()
 
 
-def measure(harness):
-    data = department_preparation_163_people.__wrapped__(lambda _: harness)
+@pytest.mark.postgres
+def test_generation_profile_at_department_scale(pg, request):
+    harness = pg
+    data = seed_department_preparation(harness)
     for client in harness.clients.values():
         client.close()
     harness.clients.clear()
@@ -113,21 +112,12 @@ def measure(harness):
     job, timings['worker_request'] = queue(harness, workspace, role='admin', generation_options={'search_minutes': 1})
 
     env = {**os.environ, 'TEST_POSTGRES_URL': harness.settings.database_url}
-    child = subprocess.run([sys.executable, str(Path(__file__).resolve()), 'worker', job['id']],
-                           check=True, env=env, capture_output=True, text=True)
-    return {'people': len(data['people']), 'sessions': len(data['shifts']), 'rule_versions': len(data['policies']),
-            'queue': timings, 'worker': json.loads(child.stdout)}
-
-
-def main():
-    if sys.argv[1] == 'worker':
-        print(json.dumps(profile_worker(sys.argv[2])))
-        return
-    url = disposable_postgres_url()
-    with postgres_template(url) as template, closing(postgres_harness(url, template)) as fixture:
-        report = measure(next(fixture))
-    Path(sys.argv[1]).write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    child = subprocess.run([sys.executable, '-m', 'tests.test_generation_profile', job['id']],
+                           check=True, env=env, stdout=subprocess.PIPE, text=True)
+    measurement = {'people': len(data['people']), 'sessions': len(data['shifts']),
+                   'rule_versions': len(data['policies']), 'queue': timings, 'worker': json.loads(child.stdout)}
+    request.node.user_properties.append(('generation_profile', json.dumps(measurement)))
 
 
 if __name__ == '__main__':
-    main()
+    print(json.dumps(profile_worker(sys.argv[1])))

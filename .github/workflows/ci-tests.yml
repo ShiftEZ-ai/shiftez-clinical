@@ -191,15 +191,6 @@ jobs:
         python scripts/compiled_client.py
     - name: Run the exact planned shard once
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
-    - name: Profile generation on the department fixture
-      if: github.event_name == 'pull_request' && inputs.suite == 'unit' && inputs.shard == 1 && inputs.replica == 1
-      env:
-        ROTA_ENV: test
-      run: |
-        changed=$(git diff --name-only "$BASE_SHA" HEAD -- apps/api/commands.py apps/api/services/jobs.py apps/api/services/planning_groups.py apps/api/snapshots.py apps/worker/main.py packages/domain/cp_sat.py packages/domain/conditions.py tests/generation_profile.py .github/workflows/ci-tests.yml)
-        if [ -n "$changed" ]; then
-          python tests/generation_profile.py .run/reports/generation-profile.json
-        fi
     - name: Retain first-attempt reports and failure evidence
       id: evidence
       if: always()
