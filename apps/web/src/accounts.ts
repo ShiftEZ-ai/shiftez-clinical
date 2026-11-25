@@ -130,11 +130,11 @@ const post=<T>(path:string,body:AccountOnboarding|AccountOnboardingApply)=>reque
 
 /** Onboard staff (Access & roles): pick people without a sign-in, preview who gets an account, create them with a
  *  same-button confirm, and save their one-time links once as a file. The links are never drawn, stored or logged. */
-export function onboardingPanel(people:Row[],linked:Set<string>,refresh:()=>Promise<void>){
+export function onboardingPanel(people:Row[],linked:Set<string>,refresh:(quiet?:boolean)=>Promise<void>){
   const open=people.filter(p=>p.active!==false&&!linked.has(p.id));
   const email=(p:Row)=>String(p.work_email||'');
   let changed=false;
-  dockPanel({key:'staff-onboarding',title:'Onboard staff',width:720,onClose:()=>{if(changed)void refresh();},build:({body,close})=>{
+  dockPanel({key:'staff-onboarding',title:'Onboard staff',width:720,onClose:()=>{if(changed)void refresh(true);},build:({body,close})=>{
     const pick=()=>{const msg=el('div',{'aria-live':'polite'});
       body.replaceChildren(msg,dataTable<Row>({id:'staff-onboarding',noun:['person','people'],rows:open,rowId:p=>p.id,
         searchLabel:'Search people',searchPlaceholder:'Name or email',empty:['Everyone has an account',''],
@@ -163,7 +163,12 @@ export function onboardingPanel(people:Row[],linked:Set<string>,refresh:()=>Prom
         changed=true;
         // The links leave only as this file, once; nothing here keeps them.
         if(done.invitations.length)save(new Blob([invitationsCsv(done.invitations)],{type:'text/csv'}),'staff-invitations.csv');
-        body.replaceChildren(el('div',{class:'import-head'},summary(done.counts),button('Done',close,'secondary')),
+        const doneButton=button('Done',async()=>{
+          changed=false;
+          // Keep the result open until Access can offer actions for the new accounts.
+          await refresh();
+          if(body.isConnected)close();},'secondary');
+        body.replaceChildren(el('div',{class:'import-head'},summary(done.counts),doneButton),
           done.invitations.length?note(`Links downloaded for ${plural(done.invitations.length,'person','people')}.`,'success'):'',
           outcome(view.people,done.ledger));},'primary')):null;
       body.replaceChildren(el('div',{class:'import-head'},summary(c),el('div',{class:'actions'},button('Back',pick,'secondary'),...(create?[create]:[]))),said,

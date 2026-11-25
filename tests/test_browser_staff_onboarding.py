@@ -13,7 +13,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.schemas import ACCOUNT_ONBOARDING_LIMITS
-from .test_browser import browser, live_server, sign_in, navigate  # noqa: F401
+from .test_browser import browser, holding, live_server, navigate, sign_in, wait_held  # noqa: F401
 from .test_browser_accounts import users_file  # noqa: F401
 from .test_browser_remaining_controls import _account_action
 from .governance_support import developer
@@ -87,7 +87,14 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
             assert link not in page.content()
             assert link not in page.evaluate("JSON.stringify({...localStorage})+JSON.stringify({...sessionStorage})")
         expect(panel.get_by_role("button", name=re.compile("^(Create|Confirm|Download)"))).to_have_count(0)
-        panel.get_by_role("button", name="Done", exact=True).click()
+        access = "**/api/access"
+        with holding(page) as held:
+            held.hold(access)
+            done = panel.get_by_role("button", name="Done", exact=True)
+            done.click()
+            wait_held(page, held[access])
+            expect(done).to_be_disabled()
+            held.release(access)
         expect(panel).to_be_hidden()
 
         # The existing per-person Resend gives that one person a new link and retires the downloaded one.
