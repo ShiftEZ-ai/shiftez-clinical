@@ -79,10 +79,13 @@ def test_completed_check_keeps_its_revision_after_a_newer_edit(h, queued_check):
     assert delta['kind'] == 'complete_check' and delta['revision'] == workspace['revision']
     assert delta['stale'] is False and not delta['partial']
     assert delta['current_fingerprint'] == delta['validation']['fingerprint']
+    summary_path = f"/api/workspaces/{workspace['id']}/fix-list"
+    assert delta['fix_summary']['must'] == h.get('coordinator', summary_path)['summary']['must']
+    assert datetime.fromisoformat(delta['fix_summary']['checked_at']) == datetime.fromisoformat(delta['validation']['evaluated_at'])
 
     newer = h.shift(workspace, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00')['workspace']
     late = h.get('coordinator', path)['job']['delta']
-    assert late == {**delta, 'stale': True}
+    assert late == {**delta, 'stale': True, 'fix_summary': None}
     detail = h.detail(newer)['workspace']
     assert detail['revision'] == newer['revision'] > delta['revision']
     assert detail['validation']['fingerprint'] != delta['current_fingerprint']

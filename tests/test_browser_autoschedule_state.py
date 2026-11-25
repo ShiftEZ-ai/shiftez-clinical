@@ -352,6 +352,47 @@ def test_apply_updates_the_run_and_grid_before_follow_up_reads(browser, cp_serve
         context.close()
 
 
+def test_redo_of_an_applied_proposal_refreshes_the_footer(browser, cp_server, h):
+    w = h.shift(h.workspace('Check after redo'), people=[])['workspace']
+    context, page = sign_in(browser, cp_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        open_rota(page, w['id'])
+        open_scheduling(page)
+        panel = page.locator('#auto-panel')
+        footer = page.get_by_role('contentinfo', name='Status')
+        must_fix = footer.get_by_role('button', name=re.compile(r'^1 must fix'))
+        ready = footer.get_by_role('button', name=re.compile(r'^Ready to submit.*score'))
+        expect(must_fix).to_be_visible()
+        _proposal(page, h, panel)
+
+        # Let each check settle through its status response before a live update can refresh the rota separately.
+        with holding(page) as held:
+            held.hold(re.compile(r'/api/events(?:\?|$)'))
+            joined = _joins(page)
+            panel.get_by_role('button', name='Apply 1 change', exact=True).click()
+            expect(page.locator('.toast').filter(has_text='Suggestions applied')).to_be_visible()
+            _finish_rota_check(page, h, w['id'], joined)
+            expect(ready).to_be_visible()
+
+            joined = _joins(page)
+            panel.locator('.run-list').get_by_role('button', name=re.compile('^Undo Auto-schedule ')).click()
+            expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+            _finish_rota_check(page, h, w['id'], joined)
+            expect(must_fix).to_be_visible()
+            expect(footer.locator('[data-check-line]')).to_have_count(0)
+
+            joined = _joins(page)
+            page.locator('.planner-bar').get_by_role('button', name='Redo', exact=True).click()
+            expect(page.locator('.toast').filter(has_text='Redone')).to_be_visible()
+            _finish_rota_check(page, h, w['id'], joined)
+            expect(ready).to_be_visible()
+            expect(must_fix).to_have_count(0)
+            expect(footer.locator('[data-check-line]')).to_have_count(0)
+            expect(footer).not_to_contain_text('Needs a check')
+    finally:
+        context.close()
+
+
 def test_an_unrelated_message_during_a_slow_refresh_cannot_take_a_draft_edits_undo(browser, cp_server, h):
     """Review #586: Apply suggestions, the refresh after it is held, then Account › Notifications › Turn off (tab alerts). The applied
     suggestions keep their own Undo; "Desktop alerts are off." offers none (its Undo would have removed the rota edit)."""

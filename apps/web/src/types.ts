@@ -1,5 +1,5 @@
 import type {QuotaReport} from './quotas.js';
-import type { TypeDefinition, SeriesDefinition, DateSetMarker, PublishedScheduleSummary, ScheduleSession } from './generated.js';
+import type { TypeDefinition, SeriesDefinition, DateSetMarker, FixListSummary, PublishedScheduleSummary, ScheduleSession } from './generated.js';
 /** A named date on a day (date_set_markers of the schedule and calendar reads). */
 export type {DateSetMarker};
 
@@ -38,6 +38,8 @@ export interface Finding {code: string; message: string; severity: string; shift
 export interface Evaluation {valid: boolean; error_count: number; warning_count: number; findings: Finding[]; coverage: Row[]; fingerprint?: string; quota_report?: QuotaReport}
 export type PlannerSession = ScheduleSession & {context?: boolean; leave_pending?: boolean};
 export interface WorkspaceData {/** Only the days in view (app.ts readWindow): never used for whole-rota work. */ partial?: boolean; workspace: Row; shifts: PlannerSession[]; current_fingerprint: string; current_input_revision: number; current_availability_revision: number; approvals: Row[]; wishes?: Row[]; review_progress: {route: {name:string;mode:string;route_id:string|null}|null;steps:Row[];pending_step:Row|null;complete:boolean;stale_inputs?:boolean};
+  /** The Fix list counts from the same complete-check delta as the held validation. */
+  check_summary?: FixListSummary;
   /** Schedule: a draft drawn inside the published layer. Days outside the draft are read-only context; sessions with
    *  `context: true` are published ones (grey, read-only). `published`: the days [from, until) a publication is in force. */
   context?: boolean; published?: [string,string][];

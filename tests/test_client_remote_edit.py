@@ -72,9 +72,12 @@ assert.equal(shift.series_snapshot.retained,'server evidence');
 const {shifts,...delta}=reply.delta;
 assert.deepEqual(JSON.parse(JSON.stringify(applyEditDelta(held,{...reply,delta:{...delta,assignments:[assignment]}}))),
     {...fresh,shifts:[prior]});
-const check={delta:{kind:'complete_check',workspace_id:'w',revision:5,current_fingerprint:'new',
+const check={delta:{kind:'complete_check',workspace_id:'w',revision:5,current_fingerprint:'new',stale:false,
+    fix_summary:{must:0,could:0},
     validation:{...validation,...detail(fields.check),coverage:reply.delta.coverage.items}}};
-assert.deepEqual(applyCheckDelta(fresh,check),fresh);
+assert.deepEqual(applyCheckDelta(fresh,check),{...fresh,workspace:{...fresh.workspace,validation_current:true},
+    check_summary:check.delta.fix_summary});
+assert.equal(applyEditDelta({...held,check_summary:{must:1,could:0}},reply).check_summary,undefined);
 '''
     subprocess.run(['node', '--input-type=module', '-e', script.replace('EDIT_MODULE', edit)
                     .replace('CONTRACTS_MODULE', contracts)], capture_output=True, text=True, check=True, timeout=15)

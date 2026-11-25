@@ -1,5 +1,5 @@
 import type {Row,WorkspaceData} from './types.js';
-import {SCHEDULE_DETAIL_FIELDS,type LiveChange,type ScheduleParticipant,type ScheduleSession} from './generated.js';
+import {SCHEDULE_DETAIL_FIELDS,type FixListSummary,type LiveChange,type ScheduleParticipant,type ScheduleSession} from './generated.js';
 
 function withoutDetail(row:Row,fields:readonly string[]):Row{
   const kept={...row};
@@ -44,18 +44,18 @@ export interface EditDelta {
 
 export interface CompleteCheckDelta {
   kind:'complete_check';workspace_id:string;revision:number;stale?:boolean;partial?:boolean;
-  current_fingerprint?:string;validation:Row;
+  current_fingerprint?:string;fix_summary?:FixListSummary|null;validation:Row;
 }
 
 /** Applies a terminal complete-check envelope to the held full rota. A partial,
  * stale or missing envelope must use the authoritative workspace read. */
 export function applyCheckDelta(held:WorkspaceData|undefined,reply:Row|null|undefined):WorkspaceData|null{
   const d=reply?.delta as CompleteCheckDelta|undefined;
-  if(!held||held.partial||!d||d.kind!=='complete_check'||d.stale||d.partial||!d.validation
+  if(!held||held.partial||!d||d.kind!=='complete_check'||d.stale!==false||d.partial||!d.validation||!d.fix_summary
     ||String(d.workspace_id)!==String(held.workspace.id)||Number(d.revision)!==Number(held.workspace.revision)
     ||!Array.isArray(d.validation.findings)||!Array.isArray(d.validation.coverage))return null;
   const validation={...withoutDetail(d.validation,SCHEDULE_DETAIL_FIELDS.check),coverage:scheduleCoverage(d.validation.coverage)};
-  return {...held,workspace:{...held.workspace,validation},
+  return {...held,workspace:{...held.workspace,validation,validation_current:true},check_summary:d.fix_summary,
     current_fingerprint:d.current_fingerprint||d.validation.fingerprint||held.current_fingerprint};
 }
 
@@ -92,6 +92,6 @@ export function applyEditDelta(held:WorkspaceData|undefined,reply:Row|null|undef
   // (serialization.compact_reply puts it on the workspace, or beside it as `validation`).
   const summary=(w.validation||reply!.validation||{}) as Row;
   const validation={...old,...withoutDetail(summary,SCHEDULE_DETAIL_FIELDS.check),findings,coverage};
-  return {...held,workspace:{...held.workspace,...w,validation},shifts,current_fingerprint:d.current_fingerprint,
+  return {...held,workspace:{...held.workspace,...w,validation},shifts,check_summary:undefined,current_fingerprint:d.current_fingerprint,
     current_input_revision:d.current_input_revision??held.current_input_revision,current_availability_revision:d.current_availability_revision??held.current_availability_revision};
 }

@@ -95,8 +95,16 @@ def complete_validation_delta(db, job, workspace):
                and bool(watermark) and watermark == cheap_fingerprints(
                    db, [workspace], checks={workspace.id: projection}).get(workspace.id))
     partial = bool(validation.get('scope') or validation.get('checking'))
+    summary = None
+    if current and not partial:
+        from .rota_summary import current_check
+        saved = workspace.validation or {}
+        current = saved.get('evaluated_at') == validation.get('evaluated_at') and current_check(db, workspace, watermark)
+        if current:
+            summary = (saved.get('fix_list_delta') or {}).get('summary')
     return {'kind': 'complete_check', 'workspace_id': workspace.id, 'revision': checked_revision,
-            'current_fingerprint': watermark, 'partial': partial, 'stale': not current, 'validation': validation}
+            'current_fingerprint': watermark, 'partial': partial, 'stale': not current,
+            'fix_summary': summary, 'validation': validation}
 
 
 def result_stale(job, projection, current_fingerprint, source_digest, *, input_fingerprint=...):

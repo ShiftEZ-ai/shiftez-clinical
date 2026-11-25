@@ -36,14 +36,17 @@ def reply(**delta):
 def check_reply(*, stale=False, partial=False):
     return {'delta': {'kind': 'complete_check', 'workspace_id': 'w', 'revision': 4,
                       'current_fingerprint': 'checked', 'stale': stale, 'partial': partial,
+                      'fix_summary': {'must': 1, 'could': 0},
                       'validation': {'fingerprint': 'checked', 'findings': [{'code': 'NEW'}], 'coverage': []}}}
 
 
 def test_complete_check_delta_patches_the_held_validation_and_falls_back_on_uncertain_input(browser, live_server):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
-        checked = page.evaluate(APPLY_CHECK, [held(), check_reply()])
+        checked = page.evaluate(APPLY_CHECK, [held(validation_current=False), check_reply()])
         assert checked['workspace']['validation']['findings'] == [{'code': 'NEW'}]
+        assert checked['workspace']['validation_current'] is True
+        assert checked['check_summary'] == {'must': 1, 'could': 0}
         assert checked['current_fingerprint'] == 'checked'
         for case in ([held(), {'delta': None}], [held(), check_reply(stale=True)],
                      [held(), check_reply(partial=True)], [{**held(), 'partial': True}, check_reply()],

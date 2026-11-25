@@ -2590,7 +2590,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // The chosen rota's own row (`named` is looked up before a plain Schedule visit picks its default draft).
     // QA cycle 3 (maintenance): one source. The Fix list held for the rota as it is now (the panel's, the page's, an edit's delta)
     // is the footer's too; the rota list's summary only until one is held.
-    const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
+    const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||data?.check_summary||
+      fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=()=>{const first=resolveQueue(draftData!)[0];startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;if(first)toCalendar(first.shift);renderPage();};
     // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
     const missingBaseline=draft&&!w.baseline;
