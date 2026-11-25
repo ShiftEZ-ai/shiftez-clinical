@@ -4,7 +4,7 @@ import json
 import random
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import insert, select
@@ -157,7 +157,8 @@ def test_default_fairness_goals_use_the_current_rota_and_name_the_audience(h):
     assert result['goals'] and all(goal['audience_label'] for goal in result['goals'])
 
 
-def test_score_card_uses_latest_publication_inside_requested_period(h):
+def test_score_card_uses_latest_publication_inside_requested_period(h, monkeypatch):
+    monkeypatch.setattr(fairness_service, 'clock_now', lambda: datetime(2026, 10, 5, tzinfo=timezone.utc))
     person = h.seed['people'][0]
     h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share'}, {}, severity='advisory')
     current = h.shift(h.workspace('Current fairness rota', '2026-10-01', '2026-10-11'),
@@ -167,11 +168,28 @@ def test_score_card_uses_latest_publication_inside_requested_period(h):
                         start='2027-05-02T08:00:00+03:00', end='2027-05-02T12:00:00+03:00', people=[person])['workspace']
     h.publish(requested)
 
-    result = h.get('coordinator', '/api/fairness/goals?starts_on=2027-05-01&ends_on=2027-06-01')
+    route = '/api/fairness/goals'
+    may = route + '?starts_on=2027-05-01&ends_on=2027-06-01'
+    unfiltered = h.get('coordinator', route)
+    result = h.get('coordinator', may)
 
+    assert unfiltered['workspace']['id'] == current['id']
     assert result['workspace']['id'] == requested['id']
     assert result['workspace']['name'] == requested['name']
     assert result['schedule'] is not None
+    assert h.get('coordinator', route) == unfiltered
+    assert h.get('coordinator', may) == result
+    assert h.get('coordinator', route + '?starts_on=2026-11-01&ends_on=2027-01-01') == {
+        'workspace': None, 'goals': [], 'schedule': None, 'score_trend': [],
+    }
+    with transaction(h.app.state.engine) as db:
+        projection = m.WorkspaceReadProjection
+        rows = db.execute(select(projection.workspace_id, projection.value)
+                          .where(projection.kind == 'fairness_goals')).all()
+    assert {wid: value['workspace']['id'] for wid, value in rows if value['workspace']} == {
+        current['id']: current['id'], requested['id']: requested['id'],
+    }
+    assert len(rows) == 2
 
 
 @pytest.mark.parametrize('cancelled', [False, True])

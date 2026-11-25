@@ -114,8 +114,8 @@ def test_theme_failure_keeps_system_styling_and_keyboard_recovery(browser, live_
 def test_running_bundle_owns_branding_and_unversioned_assets_fail_loudly(browser, live_server):
     context = browser.new_context()
     page = context.new_page()
-    paths = []
-    page.on('request', lambda r: paths.append(r.url.removeprefix(live_server)))
+    requests = []
+    page.on('request', lambda r: requests.append((r.url.removeprefix(live_server), r.resource_type)))
     try:
         page.goto(live_server)
         expect(page.get_by_role('heading', name='Sign in', exact=True)).to_be_visible()
@@ -125,12 +125,16 @@ def test_running_bundle_owns_branding_and_unversioned_assets_fail_loudly(browser
             const base=new URL('.',document.querySelector('script[type="module"]').src);
             return {same:(await window.importBundle('api.js'))===(await import(new URL('api.js',base).href)),
                 emblem:brand().emblem_url,expected:BRANDING_DEFAULTS.emblem_url,publicEmblem:publicBrand.emblem_url,
-                wordmark:BRANDING_DEFAULTS.wordmark_url,
+                wordmark:BRANDING_DEFAULTS.wordmark_url,publicWordmark:publicBrand.wordmark_url,bundle:base.pathname,
                 icons:await (async()=>{const link=document.querySelector('link[rel=manifest]').href;
                   return (await (await fetch(link)).json()).icons.map(i=>new URL(i.src,link).pathname);})()};
         }''')
         assert result['same'] and result['emblem'] == result['expected'] == result['publicEmblem']
-        expect(page.locator('img.brand-wordmark').first).to_have_attribute('src', result['wordmark'])
+        assert result['wordmark'] == result['publicWordmark'] == ''
+        expect(page.locator('img.brand-wordmark')).to_have_count(0)
+        paths = [path for path, _ in requests]
+        assert result['bundle'] not in paths and result['bundle'].rstrip('/') not in paths
+        assert (result['bundle'] + 'brand.js', 'image') not in requests
         assert not [p for p in paths if p.startswith('/assets/') and not re.match(r'/assets/[0-9a-f]{64}/', p)]
         assert {p for p in paths if p.endswith('/brand/emblem.png')} == {result['emblem']}
         for name in ('app.js', 'api.js', 'brand/emblem.png', 'print.css', 'sw.js'):

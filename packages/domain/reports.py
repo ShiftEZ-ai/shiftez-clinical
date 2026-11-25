@@ -3,7 +3,7 @@
 from .recurrence import inactive
 from .supervision_teams import team_order
 from .time import now as clock_now
-from collections import defaultdict
+from collections import Counter, defaultdict
 import csv
 import io
 from uuid import NAMESPACE_URL, uuid5
@@ -418,6 +418,79 @@ def date_set_events(snapshot, sequence, publication_stamp):
     return result
 
 
+def _reservation_times(participant):
+    return aware(participant['start']), aware(participant['end'])
+
+
+def _calendar_duties(shifts, person_id):
+    duties = defaultdict(list)
+    for shift in shifts:
+        if inactive(shift):
+            continue
+        key = f"{shift['assignment_type_id']}/{shift['location_id']}/{aware(shift['start']).isoformat()}"
+        for participant in shift["participants"]:
+            if participant["person_id"] == person_id:
+                duties[key].append((shift, participant))
+    for key, matches in duties.items():
+        # Without lineage, personal reservation times distinguish copies that share a session key.
+        matches.sort(key=lambda duty: _reservation_times(duty[1]))
+        for occurrence, (shift, participant) in enumerate(matches, 1):
+            yield key, uuid5(NAMESPACE_URL, f"rota.invalid/{key}/{occurrence}"), shift, participant
+
+
+def _replacement_duty_ids(previous_slots, duties, replace_from):
+    current_slots = defaultdict(list)
+    for slot, _, shift, participant in duties:
+        if slot in previous_slots and aware(shift['start']) >= replace_from:
+            current_slots[slot].append((shift['id'], _reservation_times(participant)))
+
+    inherited = {}
+    for slot, current in current_slots.items():
+        prior = previous_slots[slot]
+        if len(prior) == len(current) == 1:
+            inherited[current[0][0]] = prior[0][1]
+            continue
+        # Ordinals can change when a replacement removes one of several reservations in a slot.
+        prior_counts = Counter(reservation for reservation, _ in prior)
+        current_counts = Counter(reservation for _, reservation in current)
+        by_reservation = {reservation: uid for reservation, uid in prior if prior_counts[reservation] == 1}
+        inherited.update({
+            ident: by_reservation[reservation] for ident, reservation in current
+            if current_counts[reservation] == 1 and reservation in by_reservation
+        })
+    return inherited
+
+
+def publication_duty_ids(history, person_id):
+    """Carry the first issued identifier for an unambiguously inherited duty."""
+    previous, previous_slots = {}, {}
+    ids = {}
+    for shifts, use_lineage, replace_from in history:
+        duties = list(_calendar_duties(shifts, person_id))
+        lineages = {shift['id']: shift.get('lineage_id') or shift['id'] for _, _, shift, _ in duties}
+        counts = Counter(lineages.values())
+        replacement_ids = {}
+        if replace_from is not None:
+            # Only a duty actually removed by the replacement can lend its identifier.
+            replacement_ids = _replacement_duty_ids(previous_slots, duties, replace_from)
+            previous = {}
+
+        if use_lineage:
+            ids = {ident: previous[lineage] for ident, lineage in lineages.items()
+                   if counts[lineage] == 1 and lineage in previous}
+            for ident in lineages:
+                if ident not in ids:
+                    ids[ident] = replacement_ids.get(ident) or uuid5(NAMESPACE_URL, f"rota.invalid/duty/{ident}")
+        else:
+            # Anchor to what a legacy publication already emitted at rollout.
+            ids = {shift['id']: legacy_uid for _, legacy_uid, shift, _ in duties}
+        previous = {lineage: ids[ident] for ident, lineage in lineages.items() if counts[lineage] == 1}
+        previous_slots = defaultdict(list)
+        for slot, _, shift, participant in duties:
+            previous_slots[slot].append((_reservation_times(participant), ids[shift['id']]))
+    return ids
+
+
 def calendar_feed(snapshots: list, person_id: str, name: str, *, events=()) -> str:
     """A subscribed calendar: one person's duties across the current published rotas and audience-visible department events."""
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Rota//Scheduled Rota v1//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
@@ -429,38 +502,27 @@ def calendar_feed(snapshots: list, person_id: str, name: str, *, events=()) -> s
         publication_stamp = stamp(issued_at)
         markers.update(date_set_events(snapshot, sequence, publication_stamp))
         segmented = metric_version(snapshot) != "scheduled-v1"
-        duties = defaultdict(list)
-        for shift in snapshot["shifts"]:
-            if inactive(shift):
-                continue
-            # Amendment copies get new row IDs; this session key survives unchanged copies.
-            key = f"{shift['assignment_type_id']}/{shift['location_id']}/{aware(shift['start']).isoformat()}"
-            for p in shift["participants"]:
-                if p["person_id"] == person_id:
-                    duties[key].append((shift, p))
-        for key, matches in duties.items():
-            # Copies reorder random row IDs; personal reservation times distinguish same-session duties.
-            matches.sort(key=lambda duty: (aware(duty[1]["start"]), aware(duty[1]["end"])))
-            for occurrence, (shift, p) in enumerate(matches, 1):
-                duty_id = uuid5(NAMESPACE_URL, f"rota.invalid/{key}/{occurrence}")
-                intervals = presence_intervals(p) if segmented else [(aware(p["start"]), aware(p["end"]))]
-                for index, (start, end) in enumerate(intervals, 1):
-                    # Legacy duties keep the same ordinal when amended into the current snapshot format.
-                    suffix = f"-presence-{index}"
-                    label = date_set_label(snapshot, start)
-                    description = personal_calendar_description(
-                        snapshot, p, "Planned duty · role: ",
-                        note="Your calendar app updates this on its own schedule; it may take up to a day.",
-                        date_label=label)
-                    lines += ["BEGIN:VEVENT", f"UID:{duty_id}-{person_id}{suffix}@rota.invalid", f"SEQUENCE:{sequence}",
-                              "DTSTAMP:" + publication_stamp, "LAST-MODIFIED:" + publication_stamp,
-                              "DTSTART:" + stamp(start), "DTEND:" + stamp(end),
-                              "SUMMARY:" + ics_escape(shift["type_snapshot"]["name"]),
-                              "LOCATION:" + ics_escape(snapshot["locations"][shift["location_id"]]["name"]),
-                              "DESCRIPTION:" + ics_escape(description)]
-                    if label:
-                        lines.append('X-FMUC-DATE-SETS:' + ics_escape(label))
-                    lines.append('END:VEVENT')
+        inherited = snapshot.get('_calendar_duty_ids', {})
+        for _, default_id, shift, p in _calendar_duties(snapshot["shifts"], person_id):
+            duty_id = inherited.get(shift.get('id'), default_id)
+            intervals = presence_intervals(p) if segmented else [(aware(p["start"]), aware(p["end"]))]
+            for index, (start, end) in enumerate(intervals, 1):
+                # Legacy duties keep the same ordinal when amended into the current snapshot format.
+                suffix = f"-presence-{index}"
+                label = date_set_label(snapshot, start)
+                description = personal_calendar_description(
+                    snapshot, p, "Planned duty · role: ",
+                    note="Your calendar app updates this on its own schedule; it may take up to a day.",
+                    date_label=label)
+                lines += ["BEGIN:VEVENT", f"UID:{duty_id}-{person_id}{suffix}@rota.invalid", f"SEQUENCE:{sequence}",
+                          "DTSTAMP:" + publication_stamp, "LAST-MODIFIED:" + publication_stamp,
+                          "DTSTART:" + stamp(start), "DTEND:" + stamp(end),
+                          "SUMMARY:" + ics_escape(shift["type_snapshot"]["name"]),
+                          "LOCATION:" + ics_escape(snapshot["locations"][shift["location_id"]]["name"]),
+                          "DESCRIPTION:" + ics_escape(description)]
+                if label:
+                    lines.append('X-FMUC-DATE-SETS:' + ics_escape(label))
+                lines.append('END:VEVENT')
     for _, event in sorted(markers.items()):
         lines += event
     for event in events:

@@ -287,10 +287,40 @@ def test_ending_an_upcoming_rank_starts_from_its_first_day(browser, live_server,
         form = page.get_by_role('dialog', name=f"End {rank['name']}")
         expect(form.get_by_label('Last day')).to_have_value('Mon 1 Jul 2030')
         form.get_by_label('Reason').fill('Added by mistake')
+        expect(form).to_contain_text('No duties need cover.')
         form.get_by_role('button', name='End', exact=True).click()
         expect(form).to_have_count(0)
         ended = [r for r in h.get('coordinator', '/api/catalogues')['memberships'] if r['person_id'] == p['id'] and r['starts_on'] == '2030-07-01']
         assert any(r['ends_on'] == '2030-07-02' for r in ended), ended
+    finally:
+        context.close()
+
+
+def test_withdrawing_an_upcoming_rank_previews_published_and_draft_duties(browser, live_server, h):
+    from .test_browser_person_profile import person, open_person, section
+    from .test_catalogue_preview import rank_cover_fixture
+
+    ident, _, _ = rank_cover_fixture(h)
+    p = person(h)
+    cat = h.get('coordinator', '/api/catalogues')
+    rank = next(r for r in cat['memberships'] if r['id'] == ident)
+    name = next(r['name'] for r in cat['categories'] if r['id'] == rank['category_id'])
+    context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
+    try:
+        panel = open_person(page, p)
+        section(panel, 'Rank').get_by_role('button', name=f'More for {name}').click()
+        page.get_by_role('menuitem', name='Withdraw', exact=True).click()
+        dialog = page.get_by_role('dialog', name=f'Withdraw {name}?')
+        dialog.get_by_label('Reason').fill('Review the rank change')
+        expect(dialog).to_contain_text('1 published duty would need cover')
+        expect(dialog).to_contain_text('1 duty in a draft would need cover')
+        expect(dialog.locator('.impact-list li')).to_have_count(2)
+        before = h.get('coordinator', '/api/catalogues')['memberships']
+        assert any(r['id'] == ident for r in before)
+        dialog.get_by_role('button', name='Withdraw', exact=True).click()
+        expect(dialog).to_have_count(0)
+        after = h.get('coordinator', '/api/catalogues')['memberships']
+        assert all(r['id'] != ident for r in after)
     finally:
         context.close()
 

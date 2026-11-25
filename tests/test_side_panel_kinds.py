@@ -12,7 +12,7 @@ NOT_PANELS = {'sidebar', 'setup-aside', 'rb-palette'}
 KINDS = {
     # docked item and task panels (dockPanel)
     'person', 'request', 'tag', 'rule', 'rule-line', 'session-details', 'session-edit', 'rota-targets', 'fairness-drill',
-    'staffing', 'staff-import', 'other-department-rules', 'pending-rules', 'rule-exceptions',
+    'staffing', 'staff-import', 'staff-onboarding', 'other-department-rules', 'pending-rules', 'rule-exceptions',
     'calendar-protection', 'simplify-rules', 'feedback', 'rotation', 'trainee', 'date-set-dates', 'bulk-change',
     'timeline-item', 'report-duties', 'fix-list',
     # lists and drill-downs moved out of modal dialogs (C26)

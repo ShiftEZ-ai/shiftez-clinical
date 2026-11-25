@@ -441,6 +441,45 @@ def test_staff_see_their_published_duties_only_on_the_same_page(browser, live_se
         context.close()
 
 
+@pytest.mark.parametrize('phone', [False, True], ids=['desktop', 'phone'])
+def test_staff_schedule_distinguishes_a_real_vacancy_from_a_hidden_colleague(browser, live_server, h, phone):
+    staff, colleague, _ = h.seed['people']
+    identity(h, 'staff_two', ['staff'], colleague)
+    h.policy({'kind': 'minimum_cover', 'minimum': 2})
+    rota = h.workspace('Staff rota', '2026-10-04', '2026-10-11')
+    for day in (4, 5):
+        rota = h.shift(rota, *at(day), people=[staff, colleague])['workspace']
+    pub = h.publish(rota)['publication_id']
+    full, gap = sorted(h.get('coordinator', f'/api/publications/{pub}')['snapshot']['shifts'], key=lambda s: s['start'])
+    away = next(p for p in gap['participants'] if p['person_id'] == colleague)
+    report = h.command('staff_two', 'request.create', {'kind': 'absence_report', 'publication_id': pub,
+                       'assignment_id': away['id'], 'reason': 'Synthetic absence'})['record']
+    h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Independent absence decision'},
+              target=report['id'], revision=report['revision'])
+
+    window = h.get('staff', '/api/schedule/sessions?start=2026-10-04&end=2026-10-11')
+    assert {s['id']: [p['person_id'] for p in s['participants']] for s in window['shifts']} == {
+        full['id']: [staff], gap['id']: [staff]}
+    assert not window['coverage'] and not window['findings'] and set(window['people']) == {staff}
+
+    context, page = sign_in(browser, live_server, 'staff', {'width': 390, 'height': 844} if phone else None)
+    try:
+        for view in ('week', 'month'):
+            show(page, f'schedule/{view}/2026-10-04')
+            if phone:
+                full_row = page.locator(f'.ag-item[data-session="{full["id"]}"]')
+                gap_row = page.locator(f'.ag-item[data-session="{gap["id"]}"]')
+                expect(gap_row.locator('.ag-open')).to_have_text('1 open')
+                expect(full_row).to_be_visible()
+                expect(full_row.locator('.ag-open')).to_have_count(0)
+            else:
+                expect(page.locator(f'.pchip.gap[data-shift="{gap["id"]}"]')).to_have_count(1)
+                expect(page.locator(f'.pchip:not(.gap)[data-shift="{full["id"]}"]').first).to_be_visible()
+                expect(page.locator(f'.pchip.gap[data-shift="{full["id"]}"]')).to_have_count(0)
+    finally:
+        context.close()
+
+
 # ---- 6. Old routes ----
 def test_old_routes_land_on_the_schedule_with_the_right_view(browser, live_server, h):
     _, d = october(h)

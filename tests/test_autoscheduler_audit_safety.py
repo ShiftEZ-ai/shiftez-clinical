@@ -133,6 +133,42 @@ def test_nested_external_work_allows_exact_minimum_rest(h, engine):
     assert evaluate(_apply(data, result))['valid']
 
 
+@pytest.mark.parametrize('engine', ENGINES)
+@pytest.mark.parametrize('minutes', [-1, 0, 1])
+@pytest.mark.parametrize('previous_start,previous_end,exact_start', [
+    ('2027-03-27T20:00:00+01:00', '2027-03-28T00:00:00+01:00', '2027-03-28T09:00:00+02:00'),
+    ('2026-10-24T20:00:00+02:00', '2026-10-25T00:00:00+02:00', '2026-10-25T07:00:00+01:00'),
+], ids=['spring', 'autumn'])
+def test_minimum_rest_uses_elapsed_time_across_clock_change(h, engine, minutes, previous_start, previous_end, exact_start):
+    person = h.seed['people'][0]
+    h.policy({'kind': 'min_rest', 'hours': 8})
+    h.command('coordinator', 'availability.record', {
+        'person_id': person, 'kind': 'external_commitment', 'start': previous_start, 'end': previous_end,
+        'private_reason': 'Synthetic previous work',
+    })
+    start = _stamp(exact_start) + timedelta(minutes=minutes)
+    end = start + timedelta(hours=4)
+    workspace = h.workspace(start=previous_start[:10], end=(end.date() + timedelta(days=1)).isoformat())
+    workspace = h.shift(workspace, start.isoformat(), end.isoformat(), people=[])['workspace']
+    data = h.snapshot(workspace)
+    data['organisation']['timezone'] = 'Europe/Berlin'
+    data['people'] = {person: data['people'][person]}
+
+    result = ENGINES[engine](data, time_budget_seconds=3)
+    expected = 'candidate_feasible'
+    if minutes < 0:
+        expected = 'requirements_conflict' if engine == 'cp_sat' else 'candidate_with_gaps'
+    assert result['status'] == expected, result
+    assert [a['participant']['person_id'] for a in result['additions']] == ([person] if minutes >= 0 else [])
+
+    shift = data['shifts'][0]
+    shift['participants'] = [_assignment(shift, person)]
+    findings = [f for f in finding_observations(evaluate(data)) if f['code'] == 'MIN_REST']
+    assert len(findings) == int(minutes < 0)
+    if findings:
+        assert findings[0]['detail']['actual_hours'] == pytest.approx(8 - 1 / 60, abs=0.001)
+
+
 def test_nested_rest_finding_and_rule_reach_keep_the_long_work_source(h):
     data, person = _nested_external_work(h)
     shift = data['shifts'][0]

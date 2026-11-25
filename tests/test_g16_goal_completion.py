@@ -272,18 +272,17 @@ def test_complete_published_fairness_read_is_identical_without_completion_and_ke
     goal, publication_id = _published_complete_goal(h)
     with transaction(h.app.state.engine) as db:
         actor = _coordinator(h, db)
+        workspace = db.get(m.Workspace, db.get(m.Publication, publication_id).workspace_id)
+        first, last = date(2026, 10, 1), date(2026, 11, 1)
         with monkeypatch.context() as patches:
-            with_completion = fairness_service._goals_uncached(
-                db, actor, starts_on=date(2026, 10, 1), ends_on=date(2026, 11, 1))
+            with_completion = fairness_service._goals_uncached(db, actor, workspace, None, first, last)
             patches.setattr(
                 'packages.domain.rule_lines._complete_fair_share_goals',
                 lambda policies, read_quality, context=None: list(policies))
-            without_completion = fairness_service._goals_uncached(
-                db, actor, starts_on=date(2026, 10, 1), ends_on=date(2026, 11, 1))
+            without_completion = fairness_service._goals_uncached(db, actor, workspace, None, first, last)
         policy = next(row for row in with_completion['goals'] if row['policy_id'] == goal['id'])
         assert policy['score'] is not None and policy['trend']
-        snapshot = domain_snapshot(db, db.get(m.Workspace, db.get(m.Publication, publication_id).workspace_id),
-                                   current_scheduling=True)
+        snapshot = domain_snapshot(db, workspace, current_scheduling=True)
         complete = next(row for row in snapshot['policies'] if row['id'] == goal['id'])
         assert bound_policies([complete], snapshot)[0] is complete
     assert _bytes(with_completion) == _bytes(without_completion)
