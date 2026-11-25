@@ -24,14 +24,13 @@ def test_department_fix_list_evidence_is_lazy_and_version_bound(pg, record_prope
         cause['evidence'] = []
     assert slim.status_code == 200 and slim.json() == expected
     lean, timing = measure(pg, 'fix-list-lazy', lambda: client.get(path+'?view=lean'))
-    selects = timing['sql'].get('SELECT', 0)
     record_property('full_fix_list_bytes', len(full.content))
     record_property('lean_fix_list_bytes', len(lean.content))
-    record_property('lean_fix_list_selects', selects)
+    record_property('lean_fix_list_selects', timing['sql'].get('SELECT', 0))
     assert lean.status_code == 200 and not any('evidence' in cause for cause in lean.json()['causes'])
     assert len(lean.content) < len(full.content) * .2
     assert len(lean.content) < 200_000
-    assert selects <= 30
+    assert timing['sql'].get('SELECT', 0) <= 30
     original = full.json()['causes'][0]
     url = path+'?cause_id='+original['id']+'&evidence_hash='+original['evidence_hash']
     detail = pg.get('coordinator', url)
