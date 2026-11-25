@@ -6244,7 +6244,7 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   :root .dt-table .dt-check:has(.dt-check-hit){padding:0!important;text-align:center}
   /* The one-line legend reserves the whole overflow target while retaining the painted pill. */
   :root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}
-  :root .view-legend .lg-more>.pill-more{min-width:var(--target);height:var(--target)}
+  :root .view-legend .lg-more>.pill-more{min-width:var(--target);height:var(--target);border-radius:0}
   :root .view-legend li:first-child{max-width:calc(100% - var(--target) - 14px)}
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark:not(.cov-cell>*),.app-footer :is(button,a[href])){position:relative}  /* an absolute mark already holds its ::after */
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark,.app-footer :is(button,a[href]))::after{content:'';position:absolute;inset:min(0px,calc(50% - var(--target)/2))}
