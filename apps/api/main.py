@@ -1945,7 +1945,13 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post("/api/planner/why", response_model=s.WhyResult, response_model_exclude_unset=True)
     def planner_why(value: s.WhyInput, request: Request):
         from .services.staffing import prepare_why, why
-        with transaction(engine) as db:
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+        with transaction(reader) as db:
+            if not postgres:
+                db.execute(text('BEGIN'))
+            # Authentication and input capture can share the department row from this read view.
+            db.info['_request_parents'] = {}
             actor = actor_for(request, db)
             source, options = prepare_why(db, actor, value)
         result = why(source, options, value)
