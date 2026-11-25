@@ -1,9 +1,11 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
+import pytest
 from sqlalchemy import event
 
-from apps.api import models as m
+from apps.api import models as m, workspace_baselines
 from apps.api.services import rule_catalogue
 from apps.api.snapshots import snapshot_hash
 from tests.test_rule_catalogue_api import line
@@ -31,6 +33,7 @@ def _add_fixture(h, count):
             db.flush()
             policies = [{
                 'id': f'active-{index}', 'status': 'active',
+                'department_id': workspace.department_id,
                 'definition': {'rule': {'kind': 'catalogue', 'id': 'duties_per_week',
                                         'lines': [line(numbers={'max': {'value': index + 1}})]}},
             }]
@@ -106,3 +109,64 @@ def test_source_options_changed_matches_previous_comparison_after_memo_fill(h):
             key not in live for key in snapshot)
     options = {option['workspace_id']: option for option in _source_options(h)[1:]}
     assert {workspace_id: options[workspace_id]['changed'] for workspace_id in expected} == expected
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
+    legacy = h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
+    draft = h.workspace('Captured rules')
+    later = h.policy({'kind': 'max_hours', 'hours': 6, 'window': 'day'})
+    catalogue = '/api/rules/catalogue?version=2&include_hidden=true'
+    live = h.get('coordinator', catalogue)
+    captured = h.get('coordinator', f'{catalogue}&workspace_id={draft["id"]}')
+    assert captured['source'] == {'kind': 'snapshot', 'workspace_id': draft['id']}
+    assert 'source' not in live
+    for body in (live, captured):
+        fair_share = next(entry['rule'] for entry in body['entries'] if entry['id'] == 'fair_share')
+        assert fair_share['definition']['rule']['catalogue_version'] == 2
+        assert fair_share['definition']['rule']['lines']
+
+    api = '/api/rules-explained'
+    live_ids = {row['rule_id'] for row in h.get('coordinator', api)['rules']}
+    captured_ids = {row['rule_id'] for row in h.get('coordinator', f'{api}?workspace_id={draft["id"]}')['rules']}
+    assert {legacy['id'], later['id']} <= live_ids
+    assert legacy['id'] in captured_ids
+    assert later['id'] not in captured_ids
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch):
+    draft = h.workspace('Unusable capture')
+    verify = workspace_baselines.verify
+
+    def corrupt(row):
+        payload = verify(row)
+        if row.workspace_id == draft['id']:
+            policy = next(policy for policy in payload['policies'] if policy['status'] == 'active')
+            payload = {**payload, 'policies': [{**policy, 'definition': None}]}
+        return payload
+
+    monkeypatch.setattr(workspace_baselines, 'verify', corrupt)
+    for path in ('/api/rules/catalogue', '/api/rules-explained'):
+        h.get('coordinator', path)
+        refused = h.get('coordinator', f'{path}?workspace_id={draft["id"]}', status=409)
+        assert refused['error']['code'] == 'RULES_SNAPSHOT_UNAVAILABLE'
+
+
+def test_captured_catalogue_ignores_other_department_and_rota_rules(h, monkeypatch):
+    draft = h.workspace('Department capture')
+    verify = workspace_baselines.verify
+    other_id, private_id = str(uuid4()), str(uuid4())
+
+    def with_unrelated_policies(row):
+        payload = verify(row)
+        policy = next(policy for policy in payload['policies'] if policy['status'] == 'active')
+        other = {**policy, 'id': other_id, 'department_id': str(uuid4())}
+        private = {**policy, 'id': private_id, 'definition': {**policy['definition'], 'workspace_id': str(uuid4())}}
+        return {**payload, 'policies': [other, private, *payload['policies']]}
+
+    monkeypatch.setattr(workspace_baselines, 'verify', with_unrelated_policies)
+    for path in ('/api/rules/catalogue', '/api/rules-explained'):
+        result = repr(h.get('coordinator', f'{path}?workspace_id={draft["id"]}'))
+        assert other_id not in result
+        assert private_id not in result

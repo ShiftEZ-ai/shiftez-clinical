@@ -611,6 +611,47 @@ def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_serv
         context.close()
 
 
+def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser, live_server, h):
+    flag(h, legacy=False)
+    draft = h.workspace('Saved rules source')
+    context, page = sign_in(browser, live_server, 'coordinator')
+    captured = re.compile('^Saved rules source, as captured')
+    requests = []
+
+    def captured_catalogue(route):
+        requests.append(route.request.url)
+        if len(requests) == 1:
+            route.fulfill(status=409, json={'error': {'code': 'RULES_SNAPSHOT_UNAVAILABLE',
+                                                     'message': 'This draft baseline does not contain readable rules'}})
+        else:
+            route.continue_()
+
+    def view_settings():
+        page.get_by_role('button', name='View settings', exact=True).click()
+
+    try:
+        page.route(re.compile(rf'/api/rules/catalogue\?.*workspace_id={draft["id"]}'), captured_catalogue)
+        navigate(page, 'rules')
+        expect(page.get_by_role('button', name='Add rule', exact=True)).to_be_visible()
+        view_settings()
+        page.get_by_role('button', name='Live rules', exact=True).click()
+        page.get_by_role('option', name=captured).click()
+        expect(page.locator('#main .read-failed')).to_contain_text('This draft baseline does not contain readable rules')
+        expect(page.get_by_role('button', name='Add rule', exact=True)).to_have_count(0)
+        page.get_by_role('button', name='Retry', exact=True).click()
+        expect(page.locator('.app-footer .dt-count')).to_contain_text('Saved rules source, as captured')
+        expect(page.locator('#main .rt-item').first).to_be_visible()
+        expect(page.get_by_role('button', name='Add rule', exact=True)).to_have_count(0)
+        assert len(requests) == 2
+        assert requests[0] == requests[1]
+        view_settings()
+        page.get_by_role('button', name=captured).click()
+        page.get_by_role('option', name='Live rules', exact=True).click()
+        expect(page.get_by_role('button', name='Add rule', exact=True)).to_be_visible()
+    finally:
+        context.close()
+
+
 def test_lines_that_overlap_are_marked_and_the_rules_filtered(browser, live_server, h):
     flag(h)
     equal_tier = weekly_group_conflict(h)

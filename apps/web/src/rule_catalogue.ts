@@ -48,7 +48,9 @@ export type Fix={kind:string;recommended:boolean;numbers?:string[];ops:{line_id:
 export type Issue={id:string;kind:string;rule_id:string;catalogue_id:string;lines:number[];line_ids:string[];people:number|null;facts:Row;fixes:Fix[];
   /** Who acknowledged it for everyone, while its lines stay as they are (rule.acknowledge). */
   fingerprint:string;acknowledged:{by:string;by_id:string;at:string;note:string}|null};
+type RulesSourceOption={workspace_id:string|null;label:string;captured_at:string|null;changed:number|null};
 export type Catalogue={families:{id:string;name:string}[];entries:Entry[];day:string;attention:Issue[];catalogue_version?:number;
+  source_options?:RulesSourceOption[];source?:{kind:'snapshot';workspace_id:string};
   /** Unique rules and lines with an unacknowledged issue (rule_catalogue.attention_counts), hidden lines included. */attention_counts?:RuleAttentionCounts};
 /** A line with the rule it belongs to (the rule page). */
 export type LineRow={entry:Entry;line:RuleLine;n:number};
@@ -59,6 +61,8 @@ export type Options={parts:string[];openTag:(tag:Row)=>void;navigate:(view:strin
   /** Shared full rule detail, including source and history. */openRule?:(rule:Row)=>void;
   /** One row of a rule: a catalogue rule's line, or an older rule's person row. */openLine?:(ruleId:string,at:{lineId?:string;personId?:string})=>void;
   /** "In <draft>": how the rule in force fares in a draft being planned (app.ts draftHealth). */inDraft?:(rule:Row)=>HTMLElement;
+  source?:{workspace:string};
+  frame?:()=>void;
   /** The Rules list's catalogue read, started at boot (readRulesAhead): taken by the first draw instead of asking again. */ahead?:Promise<Catalogue>|null};
 
 export const WAITING='Waiting for approval',ENDS_SOON=`Ends within ${LINE_ENDING_DAYS} days`,CURRENT='Current or later';
@@ -295,9 +299,9 @@ function sideCounts(lines:readonly RuleLine[],side:'who'|'where',names:Namer,non
 }
 /** A rule row's one count line: "41 lines · 40 in force · who: everyone, 4 ranks, 30 people · where: all clinics,
  *  3 clinics"; "in force" only when it differs (the rule on). Counts the lines the list shows. */
-export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:boolean):string{
+export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:boolean,at=(line:RuleLine)=>effectiveOf(line,day)):string{
   if(!lines.length)return 'no lines';
-  const inForce=lines.filter(l=>effectiveOf(l,day)==='active').length;
+  const inForce=lines.filter(l=>at(l)==='active').length;
   return [plural(lines.length,'line'),...(on&&inForce!==lines.length?[`${inForce} in force`]:[]),`who: ${sideCounts(lines,'who',names,'everyone')}`,`where: ${sideCounts(lines,'where',names,'all clinics')}`].join(' · ');
 }
 /** A rule's strength, said once on its row: its one level when every number shares it, else Mandatory and Advisory. */
@@ -357,8 +361,8 @@ export function effectiveOf(l:RuleLine,day:string):RuleLineValidity['effective']
   return l.ends_on&&l.ends_on<=day?'ended':l.starts_on&&l.starts_on>day?'future':'active';
 }
 /** The Valid filter's values a line has today. */
-export function validFacets(l:RuleLine,today:string):string[]{
-  const out=[l.ends_on?'Has an end date':'No end date'],at=effectiveOf(l,today);
+export function validFacets(l:RuleLine,today:string,at=effectiveOf(l,today)):string[]{
+  const out=[l.ends_on?'Has an end date':'No end date'];
   if(at==='ended')out.push('Ended');
   else{out.push(CURRENT);if(l.ends_on&&l.ends_on<=addDays(today,LINE_ENDING_DAYS+1))out.push(ENDS_SOON);}
   if(at==='future')out.push('Starts later');
@@ -455,8 +459,9 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
     if(d){settle(d.entry);learn(linesOf(d.entry),d.entry.line_specificity);learnValidity(d.entry,d.day);if(d.entry.proposed)learn(d.entry.proposed.definition.rule.lines||[],d.entry.proposed.line_specificity);
       rulePage(ctx,target,{families:RULE_FAMILIES.map(([id,name])=>({id,name})),entries:[d.entry],day:d.day,attention:[],catalogue_version:2},d.entry,o,canEdit,redraw,{check:d.check,reach:d.reach,period:forWeek&&week?week.name:'today'});return;}
   }
-  const data=await (o.ahead||ask<Catalogue>(catalogueUrl(version)));
-  for(const e of data.entries){settle(e);learn(linesOf(e),e.line_specificity);learnValidity(e,data.day);if(e.proposed)learn(e.proposed.definition.rule.lines||[],e.proposed.line_specificity);}
+  const learnLive=(data:Catalogue)=>{for(const e of data.entries){settle(e);learn(linesOf(e),e.line_specificity);learnValidity(e,data.day);if(e.proposed)learn(e.proposed.definition.rule.lines||[],e.proposed.line_specificity);}};
+  let data=await (o.ahead||ask<Catalogue>(catalogueUrl(version)));
+  learnLive(data);
   const entry=o.parts[0]&&data.entries.find(e=>e.id===o.parts[0]);
   if(entry){rulePage(ctx,target,data,entry,o,canEdit,redraw);return;}
   if(o.parts[0]){target.append(note('This rule is not available. Choose one from Rules.','warning'));return;}
@@ -465,17 +470,61 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
   // maintenance: Retry asks the server again itself, once (readAfresh: never a held read), and redraws the list in place. It
   // never goes through the app's refresh, which joins a refresh already on its way and so could send nothing at all.
   let drawSerial=0;
-  const draw=async()=>{
+  const source=o.source||{workspace:''};
+  const sourceLabel=(option:RulesSourceOption)=>option.workspace_id
+    ? `${option.label}, as captured${option.captured_at?' '+formatDate(option.captured_at.slice(0,10)):''}` : 'Live rules';
+  const chooseSource=(id:string)=>{if(id!==source.workspace){source.workspace=id;retry(!id);}};
+  const sourceControl=()=>{
+    const sources=data.source_options||[];
+    if(sources.length<2)return source.workspace?button('Live rules',()=>chooseSource(''),'secondary'):'';
+    const selected=sources.find(option=>(option.workspace_id||'')===source.workspace)||sources[0];
+    const pick:HTMLButtonElement=opens(button(sourceLabel(selected),()=>openPicker(pick,pick.parentElement!,{
+      label:'Rules',multiple:false,selected:new Set([source.workspace]),
+      choices:sources.map(option=>({value:option.workspace_id||'',label:sourceLabel(option),
+        hint:option.changed?`${option.changed} changed since`:''})),
+      onPick:chooseSource,
+    }),'secondary'),'dialog');
+    pick.append(icon('chevronDown'));
+    return pick;
+  };
+  const retry=(reloadLive=false)=>{
+    readAfresh();
+    void draw(reloadLive).catch(err=>{if(!sessionChanged(err))reportError(err);});
+  };
+  const draw=async(reloadLive=false)=>{
     const serial=++drawSerial;
+    const workspace=source.workspace;
+    let current=data;
+    if(workspace||reloadLive){
+      target.replaceChildren(sectionHead('Rules',''),skeleton('lines','Loading rules…'));
+      o.frame?.();
+      const path=catalogueUrl(version);
+      try{
+        current=await (workspace?get<Catalogue>(`${path}${path.includes('?')?'&':'?'}workspace_id=${encodeURIComponent(workspace)}`):ask<Catalogue>(path));
+      }catch(err){
+        if(sessionChanged(err))throw err;
+        if(serial===drawSerial){
+          target.replaceChildren(sectionHead('Rules',''),sourceControl(),
+            readFailed(workspace?'captured rules':'live rules',err,()=>retry(reloadLive)));
+          o.frame?.();
+        }
+        return;
+      }
+      if(serial!==drawSerial)return;
+      if(!workspace){data=current;learnLive(data);}
+    }
     let failed:unknown=null;
-    const byQuestion=await departmentRules(data.day).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
+    const byQuestion=await departmentRules(current.day,get,workspace).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
     if(serial!==drawSerial)return;
-    target.replaceChildren();rulesDatabase(ctx,target,data,o,canEdit,redraw,byQuestion);
+    const selected=data.source_options?.find(option=>option.workspace_id===workspace);
+    target.replaceChildren();
+    rulesDatabase(ctx,target,current,o,canEdit&&!workspace,redraw,byQuestion,sourceControl,selected&&sourceLabel(selected));
+    o.frame?.();
     // A refusal (403) is the role's, not a fault: the list by family is the whole answer, with nothing to retry (B128).
     if(!failed||refused(failed))return;
     // The shared failure note: the error's own words and reference, Retry, and Report this problem remain visible.
     const n=readFailed('the rules’ questions',failed,
-      ()=>{forgetDepartmentRules(data.day);readAfresh();void draw().catch(err=>{if(!sessionChanged(err))reportError(err);});},undefined,'The list is grouped by family.');
+      ()=>{if(!workspace)forgetDepartmentRules(current.day);retry();},undefined,'The list is grouped by family.');
     target.querySelector(':scope>.rt')?.before(n);
   };
   await draw();
