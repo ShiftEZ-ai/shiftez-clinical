@@ -16,7 +16,7 @@ from packages.contracts import schemas as s
 from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
 from apps.api import models as m
 from apps.api.auth import require_role
-from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, VALUE_INVALID_MESSAGE, Problem, require, safe_message
+from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, VALUE_INVALID_MESSAGE, Problem, require, safe_message, validation_issues
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import snapshot_hash
 from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped
@@ -1426,7 +1426,11 @@ def _problem(error):
     if isinstance(error, IntegrityError):
         return Problem(409, "INTEGRITY_CONFLICT", INTEGRITY_CONFLICT_MESSAGE)
     if isinstance(error, ValidationError):
-        return Problem(422, "SCHEMA_INVALID", "; ".join(e["msg"].removeprefix("Value error, ") for e in error.errors()))
+        messages = []
+        for issue in validation_issues(error.errors()):
+            message = issue['message'].removeprefix('Value error, ')
+            messages.append(f"{issue['field']}: {message}" if issue['field'] else message)
+        return Problem(422, "SCHEMA_INVALID", "; ".join(messages))
     if isinstance(error, ValueError):
         return Problem(422, "VALIDATION_ERROR", safe_message(str(error)))
     # Any other exception text can carry internal or submitted values; keep it out of row issues.
