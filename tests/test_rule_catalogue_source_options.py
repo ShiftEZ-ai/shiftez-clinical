@@ -119,7 +119,9 @@ def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
     catalogue = '/api/rules/catalogue?version=2&include_hidden=true'
     live = h.get('coordinator', catalogue)
     captured = h.get('coordinator', f'{catalogue}&workspace_id={draft["id"]}')
-    assert captured['source'] == {'kind': 'snapshot', 'workspace_id': draft['id']}
+    assert captured['source']['kind'] == 'snapshot'
+    assert captured['source']['workspace_id'] == draft['id']
+    assert captured['source']['captured_at']
     assert 'source' not in live
     for body in (live, captured):
         fair_share = next(entry['rule'] for entry in body['entries'] if entry['id'] == 'fair_share')
@@ -128,14 +130,19 @@ def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
 
     api = '/api/rules-explained'
     live_ids = {row['rule_id'] for row in h.get('coordinator', api)['rules']}
-    captured_ids = {row['rule_id'] for row in h.get('coordinator', f'{api}?workspace_id={draft["id"]}')['rules']}
+    selected = f'{api}?workspace_id={draft["id"]}'
+    explained = h.get('coordinator', f'{selected}&baseline_id={captured["source"]["baseline_id"]}')
+    captured_ids = {row['rule_id'] for row in explained['rules']}
     assert {legacy['id'], later['id']} <= live_ids
     assert legacy['id'] in captured_ids
     assert later['id'] not in captured_ids
+    stale = h.get('coordinator', f'{selected}&baseline_id={uuid4()}', status=409)
+    assert stale['error']['code'] == 'RULES_SNAPSHOT_UNAVAILABLE'
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
-def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch):
+@pytest.mark.parametrize('corruption', ['missing-definition', 'scalar-number'])
+def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch, corruption):
     draft = h.workspace('Unusable capture')
     verify = workspace_baselines.verify
 
@@ -143,7 +150,12 @@ def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch
         payload = verify(row)
         if row.workspace_id == draft['id']:
             policy = next(policy for policy in payload['policies'] if policy['status'] == 'active')
-            payload = {**payload, 'policies': [{**policy, 'definition': None}]}
+            definition = policy['definition']
+            if corruption == 'missing-definition':
+                definition = None
+            else:
+                definition = {**definition, 'rule': {**definition['rule'], 'lines': [line(numbers={'target': 3})]}}
+            payload = {**payload, 'policies': [{**policy, 'definition': definition}]}
         return payload
 
     monkeypatch.setattr(workspace_baselines, 'verify', corrupt)
@@ -156,17 +168,23 @@ def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch
 def test_captured_catalogue_ignores_other_department_and_rota_rules(h, monkeypatch):
     draft = h.workspace('Department capture')
     verify = workspace_baselines.verify
-    other_id, private_id = str(uuid4()), str(uuid4())
+    other_id, private_id, foreign_seed = (str(uuid4()) for _ in range(3))
 
     def with_unrelated_policies(row):
         payload = verify(row)
         policy = next(policy for policy in payload['policies'] if policy['status'] == 'active')
         other = {**policy, 'id': other_id, 'department_id': str(uuid4())}
         private = {**policy, 'id': private_id, 'definition': {**policy['definition'], 'workspace_id': str(uuid4())}}
-        return {**payload, 'policies': [other, private, *payload['policies']]}
+        seed = {'department_id': other['department_id'], 'policy_id': policy['id'],
+                'policy_revision': policy['revision'], 'line': {'id': foreign_seed, 'numbers': {'target': 3}}}
+        binding = {'source': other, 'destinations': [{'id': policy['id'], 'kind': 'policy'}]}
+        return {**payload, 'policies': [other, private, *payload['policies']],
+                'policy_seed_lines': [*payload['policy_seed_lines'], seed],
+                'source_bindings': [*payload['source_bindings'], binding]}
 
     monkeypatch.setattr(workspace_baselines, 'verify', with_unrelated_policies)
     for path in ('/api/rules/catalogue', '/api/rules-explained'):
         result = repr(h.get('coordinator', f'{path}?workspace_id={draft["id"]}'))
         assert other_id not in result
         assert private_id not in result
+        assert foreign_seed not in result

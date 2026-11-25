@@ -25,7 +25,7 @@ import type {Context} from './forms.js';
 import type {RuleLine,RulesViewSettings} from './generated.js';
 import type {Row} from './types.js';
 import {WAITING,linesOf,isOn,numberText,draftOf,draftView,keepDraft,discardDraft,rememberProposed,restoreProposedDrafts,changesOf,changesIn,changedRules,namer,treeText,pills,numbersText,numbersNode,sourceWords,daysText,validText,lineWords,
-  newLine,newLinePicker,propose,moreActions,checkBeforeProposing,checkWords,changeList,missingNeeds,settingsOf,numbersPopover,datesDialog,barButton,keptRules,otherRulesContext,ruleViewKey,validNode,olderPending,olderEffect,mayReviewOlder,reviewOlder,
+  newLine,newLinePicker,propose,moreActions,checkBeforeProposing,checkWords,changeList,missingNeeds,settingsOf,numbersPopover,datesDialog,barButton,keptRules,otherRulesContext,capturedRulesContext,ruleViewKey,validNode,olderPending,olderEffect,mayReviewOlder,reviewOlder,
   type Catalogue,type Entry,type Issue,type Fix,type Options,type Chosen,type Namer,type Draft} from './rule_catalogue.js';
 
 type Mode=NonNullable<RulesViewSettings['mode']>;
@@ -106,6 +106,7 @@ export const ruleTreeViews=()=>fetchViews<Saved>('rule-tree');
 export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Options,canEdit:boolean,refresh:()=>Promise<void>,byQuestion:DepartmentRules|null=null,
     sourceControl?:()=>HTMLElement|'',sourceLabel?:string){
   const captured=data.source?.kind==='snapshot';
+  const openTag=captured?undefined:o.openTag;
   const ruleView=(e:Entry)=>captured?{on:isOn(e),lines:linesOf(e)}:draftView(e);
   const ruleChanges=(e:Entry)=>captured?0:changesOf(e);
   const store=`${STORE}.${ctx.me.identity_id}.${ctx.me.department.id}`;
@@ -197,7 +198,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   // The button waits for the work (busy while the check runs) and reports what stops it: never a silent press.
   const proposeBtn=proposeButton(()=>proposeAll());
   const discardBtn=armed(button('Discard changes',()=>{for(const e of changedRules(all))discardDraft(e.id);applied.clear();redraw();},'secondary'),'Discard all?');
-  const context=captured?'':otherRulesContext(ctx,keptRules(ctx),o,refresh);
+  const context=captured?capturedRulesContext(data,byQuestion):otherRulesContext(ctx,keptRules(ctx),o,refresh);
   const pendingExceptions=(ctx.catalogues.exceptions||[]).filter(r=>r.status==='proposed').length;
   // How many are shown (E13: one place, the footer, as on every list); the totals follow it.
   const status=el('span',{class:'footer-total'}),count=el('span',{class:'dt-count muted',role:'status'});
@@ -443,7 +444,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     for(const it of x.lines){const k=set(it.line)?JSON.stringify(it.line.where):'';groups.set(k,[...(groups.get(k)||[]),it]);}
     [...groups.values()].sort((a,b)=>Number(set(a[0].line))-Number(set(b[0].line))).forEach((g,i)=>{
       const where=g[0].line.where;
-      region.append(el('div',{class:'rt-wh'},el('span',{class:'rt-wh-label'},'Where'),pills(ctx,where,names,'All clinics',o.openTag,'Where',3,marks),el('span',{class:'dt-group-count'},String(g.length)),
+      region.append(el('div',{class:'rt-wh'},el('span',{class:'rt-wh-label'},'Where'),pills(ctx,where,names,'All clinics',openTag,'Where',3,marks),el('span',{class:'dt-group-count'},String(g.length)),
         // How lines combine is a rule of reading: contextual help on the first where, never a line of text.
         i===0?helpButton(`How ${e.name}'s lines combine`,whoWins(e),'rt-help'):''),
         el('ol',{class:'rt-lns','aria-label':`${plural(g.length,'line')} at ${treeText(where,names,'all clinics')}`},...shaped(g)));
@@ -492,11 +493,11 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     return el('li',{class:'rt-ln'+(state?' rc-changed':''),'data-line':l.id},
       canEdit?box(`Select line ${n+1} of ${e.name}`,['l:'+l.id],!editable(e)):el('span',{}),
       el('span',{class:'rt-n','aria-label':`Line ${n+1}`},String(n+1)),
-      el('span',{class:'rt-ln-who'},pills(ctx,l.who,names,'Everyone',o.openTag,'Who',2,marks)),
+      el('span',{class:'rt-ln-who'},pills(ctx,l.who,names,'Everyone',openTag,'Who',2,marks)),
       el('span',{class:'rt-ln-what'},el('span',{class:'rt-ln-when'},...when.flatMap((w,i)=>i?[' · ',w]:[w])),el('span',{class:'rt-ln-num'},...lock,num,tail),
         el('span',{class:'rt-ln-flags'},state?badge(state,'info'):'',ov.some(o=>o.winner==null)?badge('⚠ Overlaps','warn'):'',days!==null&&days>=0&&days<=RULE_ENDING_DAYS?badge(`⚠ Ends in ${plural(days,'day')}`,'warn'):'',
           reached===0?reachNode(reached,l,data.day):'')),
-      el('span',{class:'rt-ln-open'},button('↗',()=>go(`rules/${e.id}/${l.id}`),'',{class:'icon-button bare','aria-label':`Open line ${n+1} of ${e.name}`,'data-tip':'Open in the rule'})));
+      el('span',{class:'rt-ln-open'},captured?'':button('↗',()=>go(`rules/${e.id}/${l.id}`),'',{class:'icon-button bare','aria-label':`Open line ${n+1} of ${e.name}`,'data-tip':'Open in the rule'})));
   }
   /** On or off from the switch or the selection bar: a draft change, proposed with the rest. A rule not in force gets
    *  its first line; one whose settings only the department can choose opens its page. */
@@ -667,7 +668,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   }
   function issueRow(x:Issue,pick:(label:string,ids:string[])=>HTMLInputElement){
     const e=byId.get(x.catalogue_id),live=e?linesOf(e):[],[best,...rest]=x.fixes;
-    const lineCell=el('div',{class:'rt-ilines'},...x.lines.map(n=>live[n]?el('div',{class:'rt-iline'},el('span',{class:'rt-n'},String(n+1)),pills(ctx,live[n].who,names,'Everyone',o.openTag,'Who',1,marks),pills(ctx,live[n].where,names,'All clinics',o.openTag,'Where',1,marks),
+    const lineCell=el('div',{class:'rt-ilines'},...x.lines.map(n=>live[n]?el('div',{class:'rt-iline'},el('span',{class:'rt-n'},String(n+1)),pills(ctx,live[n].who,names,'Everyone',openTag,'Who',1,marks),pills(ctx,live[n].where,names,'All clinics',openTag,'Where',1,marks),
       numbersNode(live[n],e?.inherited?.[live[n].id],sourceWords(()=>live,names),undefined,marks)):''));
     const can=canEdit&&!!e&&(best.kind==='resolve'||editable(e)),a=x.acknowledged,description=what(x);
     return el('tr',{class:'rt-issue','data-issue':x.id},el('td',{class:'dt-check'},canEdit?pick(`Select ${KINDS[x.kind]?.label} in ${e?.name}`,[x.id]):''),

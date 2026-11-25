@@ -12,6 +12,7 @@ export type {ExplainedRule,ExplainedPeopleTable};
 export type Conflict=ExplainedConflict;
 export type DepartmentRules=DepartmentRulesExplainedResponse;
 export type RuleSummary=DepartmentExplainedRule;
+export type CapturedRulesSource={kind:'snapshot';workspace_id:string;baseline_id:string;captured_at:string|null};
 
 // Kept across rebuilds of the page (api.ts keptRead; maintenance). The department's explainer reads the rules, the lists they
 // name and who may read them: only those live scopes drop its answers. A rota's also says whether each rule holds in it
@@ -27,9 +28,9 @@ export function rotaSentences(workspace:string,key:string):Promise<RulesExplaine
   return keptRead(`${workspace}|${key}`,()=>get<RulesExplainedResponse>(url),ROTA_EXPLAINED).p;
 }
 /** The department's rules by question for a day (no rota, so no statuses), with its conflicts and people table. */
-export function departmentRules(at:string,read:typeof get=get,workspace?:string):Promise<DepartmentRules>{
+export function departmentRules(at:string,read:typeof get=get,source?:CapturedRulesSource):Promise<DepartmentRules>{
   const url=`/api/rules-explained?group_by=question&at=${encodeURIComponent(at)}`;
-  if(workspace)return read<DepartmentRules>(`${url}&workspace_id=${encodeURIComponent(workspace)}`);
+  if(source)return read<DepartmentRules>(`${url}&workspace_id=${encodeURIComponent(source.workspace_id)}&baseline_id=${encodeURIComponent(source.baseline_id)}`);
   return keptRead(url,()=>read<DepartmentRules>(url),EXPLAINED).p;
 }
 /** Rules page Retry drops only this day's held question read; unrelated kept answers continue to share their requests. */

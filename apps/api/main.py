@@ -2510,14 +2510,17 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules-explained", response_model=s.DepartmentRulesExplainedResponse)
     def department_rules_explained(request: Request, group_by: Literal['question'] = 'question',
-                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None)):
+                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None),
+                                   baseline_id: s.ID | None = Query(None)):
         """Explain department rules for a date without inventing a rota status."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_permission(actor, 'rules.read')
+            require(baseline_id is None or workspace_id is not None, 'TARGET_REQUIRED', 'Choose a draft', 422)
             from .services import rule_catalogue
             day = at or rule_catalogue.independence.today(db, actor.department_id)
-            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id)
+            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id,
+                                                           baseline_id=baseline_id)
 
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,

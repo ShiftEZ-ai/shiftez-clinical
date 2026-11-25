@@ -38,6 +38,8 @@ MIGRATED = "Rule catalogue: rules as lines"
 
 class RulesCapture(NamedTuple):
     workspace_id: str
+    baseline_id: str
+    captured_at: str | None
     policies: list[dict]
     inputs: dict
 
@@ -590,7 +592,7 @@ def _people_table(data, explained, actor=None):
     return {'columns': columns_out, 'rows': rows}
 
 
-def department_rules_explained(db, actor, day, *, workspace_id=None):
+def department_rules_explained(db, actor, day, *, workspace_id=None, baseline_id=None):
     """Common department-wide Why projection; no rota status is fabricated."""
     from datetime import timedelta
     from packages.domain.rule_explainer import explain_rules
@@ -601,7 +603,7 @@ def department_rules_explained(db, actor, day, *, workspace_id=None):
     from .scoring_defaults import seeded_rows
     from apps.api.serialization import record
 
-    capture = rules_source(db, actor, workspace_id) if workspace_id is not None else None
+    capture = rules_source(db, actor, workspace_id, baseline_id=baseline_id) if workspace_id is not None else None
     data, _, _ = people_period(db, actor, day, day + timedelta(days=1))
     if capture is None:
         policies = seeded_rows(db, [record(row) for row in db.scalars(select(m.Policy).where(
@@ -783,7 +785,7 @@ def _captured_payload(baseline):
         raise _captured_rules_problem() from error
 
 
-def rules_source(db, actor, workspace_id) -> RulesCapture:
+def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
     """Read only the department rules and their retained dependencies from a visible draft."""
     from apps.api.workspace_baselines import latest
     from packages.domain.rule_lines import seeded_policies
@@ -795,6 +797,8 @@ def rules_source(db, actor, workspace_id) -> RulesCapture:
     baseline = latest(db, workspace.id)
     if baseline is None or 'rules' not in (baseline.included_sources or ()):
         raise _captured_rules_problem()
+    if baseline_id is not None and baseline.id != baseline_id:
+        raise Problem(409, 'RULES_SNAPSHOT_UNAVAILABLE', 'The draft rules capture changed. Retry to read the current capture')
     payload = _captured_payload(baseline)
 
     def records(key, default=None):
@@ -816,28 +820,36 @@ def rules_source(db, actor, workspace_id) -> RulesCapture:
         if not (all(isinstance(row.get(key), str) for key in ('id', 'status', 'name', 'kind'))
                 and isinstance(rule, dict) and isinstance(rule.get('kind'), str)):
             raise _captured_rules_problem()
-        if row['status'] != 'proposed' and not definition.get('workspace_id'):
-            if rule['kind'] == 'catalogue' and not (
-                    isinstance(rule.get('id'), str) and isinstance(rule.get('lines'), list)
-                    and all(isinstance(line, dict) and isinstance(line.get('id'), str)
-                            and isinstance(line.get('numbers'), dict) for line in rule['lines'])):
-                raise _captured_rules_problem()
+        if row['status'] in ('active', 'retired') and not definition.get('workspace_id'):
             policies.append(row)
 
     inputs = {key: [row for row in records(key, []) if row.get('department_id') == actor.department_id]
               for key in ('exceptions', 'scheduling_facts', 'type_lead_ownership')}
-    inputs['exceptions'] = [row for row in inputs['exceptions'] if row.get('status') == 'approved']
     policy_ids = {policy['id'] for policy in policies}
-    seeds = [row for row in records('policy_seed_lines', []) if row.get('policy_id') in policy_ids]
+    inputs['exceptions'] = [row for row in inputs['exceptions']
+                            if row.get('status') == 'approved' and row.get('policy_id') in policy_ids]
+    seeds = [row for row in records('policy_seed_lines', [])
+             if row.get('department_id') == actor.department_id and row.get('policy_id') in policy_ids]
     try:
         destination_ids = policy_ids | {row['id'] for row in inputs['scheduling_facts']}
-        inputs['source_bindings'] = [binding for binding in records('source_bindings', [])
-                                     if any(destination['id'] in destination_ids for destination in binding['destinations'])]
+        bindings = []
+        for binding in records('source_bindings', []):
+            source = binding['source']
+            if (source['department_id'] == actor.department_id and not source['definition'].get('workspace_id')
+                    and binding['destinations'] and all(row['id'] in destination_ids for row in binding['destinations'])):
+                bindings.append(binding)
+        inputs['source_bindings'] = bindings
         policies = seeded_policies(policies, seeds)
-    except (KeyError, TypeError, ValueError) as error:
+        for policy in policies:
+            definition = stored_definition(policy['definition'])
+            s.PolicyDefinition.model_validate_json(json.dumps(definition), strict=True, context={'historical': True})
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise _captured_rules_problem() from error
     inputs['policy_seed_lines'] = []
-    return RulesCapture(workspace.id, policies, inputs)
+    captured_at = (baseline.provenance or {}).get('captured_at')
+    if captured_at is None and baseline.created_at is not None:
+        captured_at = baseline.created_at.isoformat()
+    return RulesCapture(workspace.id, baseline.id, captured_at, policies, inputs)
 
 
 def _source_options(db, actor, live):
@@ -1065,7 +1077,8 @@ def _catalogue_uncached(db, actor, version=1, include_hidden=False, day=None, *,
             "families": [{"id": f, "name": n} for f, n in FAMILIES], "entries": entries,
             'not_on_catalogue': not_on_catalogue if catalogue_id is None else [], "day": str(day),
             "attention": issues, "attention_counts": attention_counts(pending),
-            **({'source': {'kind': 'snapshot', 'workspace_id': capture.workspace_id}} if capture is not None else
+            **({'source': {'kind': 'snapshot', 'workspace_id': capture.workspace_id, 'baseline_id': capture.baseline_id,
+                           'captured_at': capture.captured_at}} if capture is not None else
                {'_live_definitions': live_definitions} if shared_body else {'source_options': source_options})}
 
 

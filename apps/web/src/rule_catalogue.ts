@@ -22,7 +22,7 @@ import {highlightRule} from './planner_rules.js';
 import {tagRef,membersOf} from './tags.js';
 import {ruleConditionFields,safetyRule,catalogueEntryOf,type Context} from './forms.js';
 import {rulesDatabase,ruleTreeViews} from './rules_tree.js';
-import {departmentRules,forgetDepartmentRules} from './rules_explained.js';
+import {departmentRules,forgetDepartmentRules,type CapturedRulesSource,type DepartmentRules} from './rules_explained.js';
 import {conversions,readsSimplify} from './rule_simplify.js';
 import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,ruleSentence,type NumberPart} from './rule_view.js';
 import {ruleReview} from './rule_review.js';
@@ -37,6 +37,7 @@ import {moreWords} from './dom.js';  // the one "+N" and its words (UX › contr
 import {routeHash} from './routes.js';
 
 export type Entry=RuleCatalogueEntry&{rule:Row|null;proposed:(Row&{diff:Row})|null;reach:Record<string,number>;people:number;overlaps:number;
+  also_in_force?:Row[];
   /** Line id → the lines it overlaps: who both hold today and which line applies. */line_overlaps?:Record<string,{line_id:string;people:number;winner:string|null}[]>;
   /** Line id → the numbers it leaves blank and takes from a broader line. */inherited?:Record<string,Inherited>;
   /** Line id → how specific its who is (the server's rule_lines.tier). */line_specificity?:Record<string,number>;
@@ -50,7 +51,7 @@ export type Issue={id:string;kind:string;rule_id:string;catalogue_id:string;line
   fingerprint:string;acknowledged:{by:string;by_id:string;at:string;note:string}|null};
 type RulesSourceOption={workspace_id:string|null;label:string;captured_at:string|null;changed:number|null};
 export type Catalogue={families:{id:string;name:string}[];entries:Entry[];day:string;attention:Issue[];catalogue_version?:number;
-  source_options?:RulesSourceOption[];source?:{kind:'snapshot';workspace_id:string};
+  source_options?:RulesSourceOption[];source?:CapturedRulesSource;not_on_catalogue?:Row[];
   /** Unique rules and lines with an unacknowledged issue (rule_catalogue.attention_counts), hidden lines included. */attention_counts?:RuleAttentionCounts};
 /** A line with the rule it belongs to (the rule page). */
 export type LineRow={entry:Entry;line:RuleLine;n:number};
@@ -246,7 +247,7 @@ export function treeText(tree:Conditions|null|undefined,names:Namer,none:string,
     :(c.op==='none'?'except ':i&&isDateCondition(c)?'on ':'')+c.values.slice(0,max).map(v=>valueText(names,c.field,v)).join(c.op==='all'?' + ':', ')+(c.values.length>max?' '+moreWords(c.values.length-max):'')+entriesWords(c)).join(tree.match==='any'?' or ':' · ');
 }
 /** A who or where as pills, one per value, on one line: the first `shown` and "+N" opening the numbered list. */
-export function pills(ctx:Context,tree:Conditions|null|undefined,names:Namer,none:string,openTag:(tag:Row)=>void,label:string,shown=2,key?:RuleViewKey):HTMLElement{
+export function pills(ctx:Context,tree:Conditions|null|undefined,names:Namer,none:string,openTag:((tag:Row)=>void)|undefined,label:string,shown=2,key?:RuleViewKey):HTMLElement{
   // A rank pill names itself; a person, group or clinic pill's hue is in the view's key.
   const plain=(text:string,kind:string,dot='')=>{const p=el('span',{class:`rp ${kind}`,title:text,...(kind.startsWith('duty-')?{'data-lg-self':''}:{})},dot?el('span',{class:'lg-swatch '+dot,'aria-hidden':'true'}):'',bidi(text));if(/\bexcept\b/.test(kind))ruleMark(p,'not');return key&&(HUED.has(kind)||kind.startsWith('duty-'))?key.mark(p,HUED.has(kind)?kind:'rank'):p;};
   if(!tree?.conditions?.length)return plain(none,'all');
@@ -514,11 +515,12 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
       if(!workspace){data=current;learnLive(data);}
     }
     let failed:unknown=null;
-    const byQuestion=await departmentRules(current.day,get,workspace).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
+    const byQuestion=await departmentRules(current.day,get,current.source).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
     if(serial!==drawSerial)return;
     const selected=data.source_options?.find(option=>option.workspace_id===workspace);
     target.replaceChildren();
-    rulesDatabase(ctx,target,current,o,canEdit&&!workspace,redraw,byQuestion,sourceControl,selected&&sourceLabel(selected));
+    rulesDatabase(ctx,target,current,o,canEdit&&!workspace,redraw,byQuestion,sourceControl,
+      selected&&sourceLabel({...selected,captured_at:current.source?.captured_at??selected.captured_at}));
     o.frame?.();
     // A refusal (403) is the role's, not a fault: the list by family is the whole answer, with nothing to retry (B128).
     if(!failed||refused(failed))return;
@@ -2307,23 +2309,33 @@ export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CA
  *  under a self-approval permission (mayDecide). */
 export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
   refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
+function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,level:(rule:Row)=>string,open?:(rule:Row)=>void){
+  if(!rows.length)return null;
+  return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
+    build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
+      dataTable<Row>({id:'other-department-rules',noun:['rule','rules'],rows,rowId:p=>p.id,pageSize:25,
+        searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:open,
+        defaults:{wrap:['name','effect']},
+        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):labelOf(p)},
+          {key:'effect',label:'Effect',text:effect,cell:effect},
+          {key:'level',label:'Level',text:level,cell:p=>level(p)?levelBadge(level(p),p.severity_reason):''},
+          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
+    'secondary'),'layers');
+}
+export function capturedRulesContext(data:Catalogue,explained:DepartmentRules|null){
+  const entries=data.entries.flatMap(e=>e.also_in_force||[]);
+  const rows=[...new Map([...entries,...(data.not_on_catalogue||[])].map(row=>[row.id,row])).values()];
+  const summaries=new Map(explained?.rules.map(rule=>[rule.rule_id,rule]));
+  return otherDepartmentRules(rows,p=>summaries.get(p.id)?.summary_sentence||'',p=>summaries.get(p.id)?.level||'');
+}
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{
   const pending=olderPending(ctx);
   if(!kept.length&&!pending.length)return null;
   const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
-  const context=kept.length?compact(button(`Other department rules (${kept.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
-    build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
-      dataTable<Row>({id:'other-department-rules',noun:['rule','rules'],rows:kept,rowId:p=>p.id,pageSize:25,
-        searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:p=>o.openRule?.(p),
-        // A 640 px panel: long names and effects wrap rather than clip.
-        defaults:{wrap:['name','effect']},
-        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
-          {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)},
-          {key:'level',label:'Level',text:p=>p.effective_severity??p.definition.severity,cell:p=>levelBadge(p.effective_severity??p.definition.severity,p.severity_reason)},
-          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
-    'secondary'),'layers'):null;
+  const context=otherDepartmentRules(kept,p=>ruleSentence(p.definition.rule,p.definition,name),
+    p=>p.effective_severity??p.definition.severity,o.openRule);
   if(!pending.length)return context;
   const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};

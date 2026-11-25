@@ -613,6 +613,7 @@ def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_serv
 
 def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser, live_server, h):
     flag(h, legacy=False)
+    legacy = h.policy({'kind': 'max_duties', 'maximum': 5, 'window': 'week'})
     draft = h.workspace('Saved rules source')
     context, page = sign_in(browser, live_server, 'coordinator')
     captured = re.compile('^Saved rules source, as captured')
@@ -642,6 +643,14 @@ def test_captured_rules_retry_the_selected_source_and_keep_it_read_only(browser,
         expect(page.locator('.app-footer .dt-count')).to_contain_text('Saved rules source, as captured')
         expect(page.locator('#main .rt-item').first).to_be_visible()
         expect(page.get_by_role('button', name='Add rule', exact=True)).to_have_count(0)
+        first = page.locator('#main .rt-item').first
+        first.locator('.rt-toggle').click()
+        expect(first.locator('.rt-ln').first).to_be_visible()
+        expect(first.get_by_role('button', name=re.compile('^Open line'))).to_have_count(0)
+        rules_action(page, re.compile('^Other department rules'))
+        expect(page.get_by_text(legacy['name'], exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name=legacy['name'], exact=True)).to_have_count(0)
+        page.keyboard.press('Escape')
         assert len(requests) == 2
         assert requests[0] == requests[1]
         view_settings()
