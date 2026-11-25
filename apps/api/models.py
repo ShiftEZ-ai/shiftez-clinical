@@ -1288,6 +1288,7 @@ class Publication(Record, DepartmentRecord, Base):
     ends_on: Mapped[date] = mapped_column(Date)
     current: Mapped[bool] = mapped_column(Boolean, default=True)
     supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("publications.id"))
+    calendar_lineage: Mapped[bool | None] = mapped_column(Boolean)
     published_by: Mapped[str] = mapped_column(ForeignKey("identities.id"))
     snapshot: Mapped[dict] = mapped_column(JSON)
     validation: Mapped[dict] = mapped_column(JSON)

@@ -685,9 +685,14 @@
     "sha256": "5fb845220111eee7d31d8f261c5d9f661284731ebb023ed18b70bd9e25b6a591",
     "review": "Adds a per-attempt feasibility result table keyed to jobs and preserves all existing rows."
   },
-  "0153_request_undo_note": {
+  "0153_calendar_lineage": {
     "class": "additive",
-    "sha256": "98db45f0a037e6c0de15496014efb2eb84a1b9d3484b6e698fc2a80b2e211116",
+    "sha256": "d285cbfda762b6ab54d37adaf47bee3462ac632c73ddc50dd131d956bffe6cd2",
+    "review": "Adds a nullable calendar lineage marker to publications without rewriting existing rows. The SQLite trigger and existing PostgreSQL row guard keep the marker immutable."
+  },
+  "0154_request_undo_note": {
+    "class": "additive",
+    "sha256": "f36f96e0d6fb9960113470a338877afd9317f62428acaf0613aa52865876ff98",
     "review": "Adds a nullable request Undo note without changing existing records. The note can be erased with the request's private details."
   }
 }

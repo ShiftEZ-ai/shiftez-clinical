@@ -455,6 +455,22 @@ def test_generation_continuation_rechecks_group_authority(h):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('future_group', [False, True])
+def test_unlinked_admin_reads_ungrouped_draft_summary_and_fix_list(h, future_group):
+    identity(h, 'summary-admin', ['admin'])
+    workspace = h.shift(h.workspace(), people=[])['workspace']
+    if future_group:
+        group(h, starts_on='2026-11-01')
+
+    path = f'/api/workspaces/{workspace["id"]}'
+    summary = h.get('summary-admin', path + '/summary')
+    fixes = h.get('summary-admin', path + '/fix-list?view=lean')
+    assert summary['workspace_id'] == fixes['workspace_id'] == workspace['id']
+    assert summary['fix_list']['planning_context']['groups'] == fixes['planning_context']['groups'] == []
+    assert [cause['id'] for cause in fixes['causes']] == [cause['id'] for cause in summary['fix_list']['causes']]
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 @pytest.mark.parametrize('with_groups', [False, True], ids=['without-groups', 'with-groups'])
 def test_sole_admin_queues_and_applies_whole_department_generation(h, with_groups):
     admin = h.seed['identities']['admin']

@@ -29,18 +29,20 @@ def migration_url(request, tmp_path):
 
 
 def test_candidate_evidence_migration_is_additive(migration_url):
-    path = safety.VERSIONS / '0151_job_candidate_evidence.py'
-    assert safety.classification(path) == 'additive'
-    new = safety.VERSIONS / '0152_feasibility_results.py'
-    assert safety.classification(new) == 'additive'
-    evidence, feasibility = safety.revision(path), safety.revision(new)
-    previous = '0148_bulk_analyze'
-    pending = manage.check_migrations(migration_url)
-    following = pending[pending.index(previous) + 1:]
-    assert following[:3] == ['0150_person_inactive_from', evidence, feasibility]
+    evidence_migration = safety.VERSIONS / '0151_job_candidate_evidence.py'
+    feasibility_migration = safety.VERSIONS / '0152_feasibility_results.py'
+    assert safety.classification(evidence_migration) == 'additive'
+    assert safety.classification(feasibility_migration) == 'additive'
+    evidence, feasibility = safety.revision(evidence_migration), safety.revision(feasibility_migration)
+
+    def pending_through_feasibility():
+        pending = manage.check_migrations(migration_url)
+        return pending[:pending.index(feasibility) + 1]
+
+    assert pending_through_feasibility()[-2:] == [evidence, feasibility]
     config = manage.alembic_config(migration_url)
-    command.upgrade(config, previous)
-    assert manage.check_migrations(migration_url) == following
+    command.upgrade(config, '0148_bulk_analyze')
+    assert pending_through_feasibility() == ['0150_person_inactive_from', evidence, feasibility]
     command.upgrade(config, '0150_person_inactive_from')
     engine = make_engine(migration_url)
     try:
