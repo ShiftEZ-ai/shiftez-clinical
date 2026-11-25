@@ -56,7 +56,7 @@ def test_new_rota_creates_a_draft_without_starting_auto_schedule(browser, live_s
         h.shift(h.workspace('Copy source'), people=[])
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
-        navigate(page, 'planner')
+        navigate(page, 'schedule/week/2026-10-04' if start_from == 'patterns' else 'planner')
         new_draft(page)
         dialog = page.get_by_role('dialog', name='New rota', exact=True)
         dialog.get_by_label('Start from', exact=True).select_option(start_from)
