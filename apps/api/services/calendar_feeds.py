@@ -92,7 +92,7 @@ def publication_calendars(db, pubs, person_id, zone):
     subject = people.c.value['person_id'].as_string() if postgres else func.json_extract(people.c.value, '$.person_id')
     mine = select(1).select_from(people).where(subject == person_id).correlate(shifts).exists()
     source_ids = ids
-    replacement = P.snapshot['workspace']['replaces_publication_id'].as_string()
+    replacement = P.snapshot[('workspace', 'replaces_publication_id')].as_string()
     predecessor = func.coalesce(P.supersedes_id, replacement).label('predecessor')
     if any(pub.calendar_lineage for pub in pubs):
         # Read same-department lineage only as far back as the first already-issued legacy version.

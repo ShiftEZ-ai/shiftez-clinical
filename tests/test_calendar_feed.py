@@ -381,6 +381,7 @@ def test_replace_from_date_preserves_earlier_duty_uid_and_invalidates_etag(h, su
 def test_replacement_reusing_a_moved_dutys_slot_keeps_both_identities(h):
     person = h.get('staff', '/api/me')['person_id']
     path = h.command('staff', 'calendar_feed.create', {})['path']
+    replacement_start, replacement_end = '2026-10-06', '2026-10-11'
     slot = {'start': '2026-10-06T08:00:00+03:00', 'end': '2026-10-06T12:00:00+03:00'}
     original = h.publish(h.shift(h.workspace(), people=[person], **slot)['workspace'])
     with TestClient(h.app, base_url=h.settings.public_origin) as client:
@@ -391,7 +392,7 @@ def test_replacement_reusing_a_moved_dutys_slot_keeps_both_identities(h):
         assert moved['UID'] == first['UID'] and moved['DTSTART'] < first['DTSTART']
 
         replacement = h.command('coordinator', 'workspace.create', {
-            'name': 'Reuse the old slot', 'starts_on': '2026-10-06', 'ends_on': '2026-10-11',
+            'name': 'Reuse the old slot', 'starts_on': replacement_start, 'ends_on': replacement_end,
             'replaces_publication_id': amended['publication_id'],
         })['workspace']
         replacement = h.publish(h.shift(replacement, people=[person], **slot)['workspace'])
@@ -401,7 +402,8 @@ def test_replacement_reusing_a_moved_dutys_slot_keeps_both_identities(h):
 
         retained = h.workspace('Amend the retained duty', base=amended['publication_id'])
         retained = h.publish(move_duty(h, retained, offset=timedelta(hours=1)))
-        new = h.workspace('Amend the replacement duty', base=replacement['publication_id'])
+        new = h.workspace('Amend the replacement duty', start=replacement_start, end=replacement_end,
+                          base=replacement['publication_id'])
         h.publish(move_duty(h, new, offset=timedelta(hours=1)))
         after = events(client.get(path))
         assert [duty['UID'] for duty in after] == [earlier['UID'], later['UID']]
