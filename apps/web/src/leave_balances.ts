@@ -1,5 +1,5 @@
 import {ApiError,background,command,get,sessionChanged} from './api.js';
-import {area,button,el,field,formatDate,formDialog,labelOf,plural,readFailed,select} from './dom.js';
+import {alive,area,button,el,field,formatDate,formDialog,labelOf,plural,readFailed,select} from './dom.js';
 import {peopleChoices,type Context} from './forms.js';
 import type {LeaveAllowanceLine,LeaveBalance,LeaveBalanceSettings} from './generated.js';
 
@@ -18,9 +18,9 @@ export function loadLeaveBalances(path:string,projected=false){
   const load=async()=>{
     try{
       const rows=await background<LeaveBalance[]>(path);
-      if(region.isConnected){region.replaceChildren(...(rows.length?[leaveBalanceSection(rows,projected)]:[]));region.hidden=!rows.length;}
+      if(alive(region)){region.replaceChildren(...(rows.length?[leaveBalanceSection(rows,projected)]:[]));region.hidden=!rows.length;}
     }catch(error){
-      if(region.isConnected&&!sessionChanged(error)){region.replaceChildren(readFailed('leave balances',error,load));region.hidden=false;}
+      if(alive(region)&&!sessionChanged(error)){region.replaceChildren(readFailed('leave balances',error,load));region.hidden=false;}
     }
   };
   void load();
