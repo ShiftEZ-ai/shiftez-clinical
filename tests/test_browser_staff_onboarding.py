@@ -72,7 +72,12 @@ def test_preview_create_download_once_then_resend(users_file, browser, live_serv
         rows = list(csv.reader(io.StringIO(Path(saved.path()).read_text(encoding="utf-8-sig"))))
         assert rows[0] == ["Person", "One-time link"]
         assert sorted(r[0] for r in rows[1:]) == ["Onboard Staff 1", "Onboard Staff 2"]
-        tokens = {r[0]: re.fullmatch(r"\S+/invite/([A-Za-z0-9_-]{43})", r[1]).group(1) for r in rows[1:]}
+        invitation_url = re.compile(re.escape(live_server) + r"/invite/([A-Za-z0-9_-]{43})")
+        tokens = {}
+        for person, link in rows[1:]:
+            match = invitation_url.fullmatch(link)
+            assert match is not None, "The downloaded invitation must use the configured public origin"
+            tokens[person] = match.group(1)
         live = lambda token: context.request.get(live_server + "/api/account-links/" + token).status  # noqa: E731
         assert [live(t) for t in tokens.values()] == [200, 200]
         expect(panel.get_by_text("Links downloaded for 2 people.", exact=True)).to_be_visible()
