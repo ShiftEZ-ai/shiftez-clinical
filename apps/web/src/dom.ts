@@ -409,7 +409,9 @@ export function legend(label='Legend'){
     const lis=[...root.querySelectorAll<HTMLElement>(':scope>li[data-lg-entry]')];for(const l of lis)l.hidden=false;
     const list=()=>lis.map(l=>{const i=items.get(l.dataset.lgK||'');return i?el('span',{class:'lg-pop'},...entry({...i,mark:i.mark.cloneNode(true) as HTMLElement})):'';});
     for(let i=lis.length-1,n=1;i>0&&root.scrollWidth>root.clientWidth+1;i--,n++){lis[i].hidden=true;root.querySelector(':scope>.lg-more')?.remove();
-      root.append(el('li',{class:'lg-more'},overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list})));}};
+      const more=overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list});
+      more.replaceChildren(el('span',{class:'lg-more-mark','aria-hidden':'true'},more.textContent));
+      root.append(el('li',{class:'lg-more'},more));}};
   legendFits.set(root,fit);
   observeSize(root,()=>{if(root.clientWidth!==width)fit();});
   const add=(key:string,mark:string|HTMLElement,text:string,order=1,use?:LegendUse)=>{
