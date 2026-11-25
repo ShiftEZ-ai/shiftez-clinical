@@ -11,7 +11,7 @@ import {collectionToolbar,conditionFilter,holds,joinFilter,mentions,savedViewIte
 import {selectionBar,type SelectionAction} from './selection_bar.js';
 import {setTriState,triStateOf} from './check_tree.js';
 import {columnHeader,wrapAllColumns,columnGrip,sized,sizeColumn} from './table_menu.js';
-import {ruleMark,proposalPanel,movedNotes,groupings,specificFirst,exceptionTree,ruleCounts,ruleLevels,whoWins,reachNode,levelOf,validFacets,effectiveOf,proposeTip,proposeButton,replacedWords,whenWords,unitWords,setsSafety,safetyLock,tickGates,unitText,appliesWord,measureText,periodText,countingEndText} from './rule_catalogue.js';
+import {ruleMark,proposalPanel,movedNotes,groupings,specificFirst,exceptionTree,ruleCounts,ruleLevels,capturedRuleLevels,whoWins,reachNode,levelOf,validFacets,effectiveOf,proposeTip,proposeButton,replacedWords,whenWords,unitWords,setsSafety,safetyLock,tickGates,unitText,appliesWord,measureText,periodText,countingEndText} from './rule_catalogue.js';
 import {openPicker} from './picker.js';
 import {unexplainedLine,type DepartmentRules,type RuleSummary} from './rules_explained.js';
 import {levelBadge} from './rule_view.js';
@@ -397,6 +397,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       el('span',{class:'rt-conflict-in'},issueGlyph('error'),el('span',{},c.sentence,refs.length===2?` Lines #${refs[0]} and #${refs[1]}.`:''),
         ids.length?button('Open both',()=>setOpen(ids,true),'secondary small'):''));
   }
+  const levels=(e:Entry,lines:RuleLine[])=>captured?capturedRuleLevels(lines):ruleLevels(e,lines);
   /** One rule: its catalogue name with what changes what happens (safety, strength, Off, waiting, changes,
    *  attention), over one count line; its lines only when it is opened. Never a sentence about one of its lines. */
   function ruleItem(x:Shown,rows:Shown[]):HTMLElement{
@@ -418,7 +419,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       safe(e)?ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter','data-tip':'Safety rule: can only be made stricter'},icon('lock')),'safety'):'',
       captured?el('strong',{},e.name):button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'}),
       // Its strength once (one badge when every number agrees, else Mandatory and Advisory): the shared level badges.
-      marks.numbers(el('span',{class:'rt-levels'},...ruleLevels(e,shownLines).map(v=>levelBadge(v))),false),
+      marks.numbers(el('span',{class:'rt-levels'},...levels(e,shownLines).map(v=>levelBadge(v))),false),
       // a rule the explainer can't word says so beside its name, in every grouping; by question in full (its check still applies).
       summaries.get(e.id)?.unexplained?unexplainedLine(questionOf(e)?TERMS.ruleUnexplained:TERMS.ruleUnexplainedShort):'',
       // Off in words too (the switch's colour is never the only signal); a reader's On / Off badge already says it.
@@ -438,7 +439,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const e=x.e,ls=ruleView(e).lines,live=new Map(linesOf(e).map(l=>[l.id,JSON.stringify(l)]));
     // Inherited labels read this render's snapshot, not a fresh clone of the whole rule for every number.
     const from=sourceWords(()=>ls as RuleLine[],names);  // read only: the label reader never edits
-    const one=ruleLevels(e,x.lines.map(i=>i.line)).length<=1,sorted=[s.sort,...s.then_sort].some(k=>!!k&&k[0] in LINE_SORT);
+    const one=levels(e,x.lines.map(i=>i.line)).length<=1,sorted=[s.sort,...s.then_sort].some(k=>!!k&&k[0] in LINE_SORT);
     const region=el('div',{class:'rt-lines',id,role:'region','aria-label':`${e.name} lines`});
     const set=(l:RuleLine)=>!!l.where?.conditions?.length,groups=new Map<string,Shown['lines']>();
     for(const it of x.lines){const k=set(it.line)?JSON.stringify(it.line.where):'';groups.set(k,[...(groups.get(k)||[]),it]);}
@@ -483,7 +484,8 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     // 12 + C1: a safety line (no duties, …) carries its lock.
     const lock=noDuties||e.mixed_safety&&setsSafety(e,l)?[safetyLock(),' ']:[];
     marks.numbers(num);
-    const after=[...(one?[]:levels.filter(b=>b.dataset.level!=='inherit')),...(instead?[el('small',{class:'muted rt-instead'},`(instead of ${instead})`)]:[])];
+    const lineLevels=captured?capturedRuleLevels([l]).map(level=>levelBadge(level)):levels.filter(b=>b.dataset.level!=='inherit');
+    const after=[...(one?[]:lineLevels),...(instead?[el('small',{class:'muted rt-instead'},`(instead of ${instead})`)]:[])];
     const tail=after.length?marks.numbers(el('span',{class:'rt-ln-after'},...after.flatMap(x=>[' ',x])),false):'';
     // When: its days (only when not every day) and valid dates (only when set); blank otherwise.
     // every condition the resolver applies (a restriction's days, hours, window around leave) reads here.

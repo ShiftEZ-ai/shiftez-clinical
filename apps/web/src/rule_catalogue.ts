@@ -311,6 +311,12 @@ export function ruleLevels(e:RuleCatalogueEntry,lines:readonly RuleLine[]):strin
   const all=[...new Set(lines.flatMap((l:LineNumbers)=>Object.entries(l.numbers||{}).map(([k,n])=>l.mandatory_reasons?.[k]?'mandatory':n?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
   return all.length<=1?all:[...new Set(all.map(v=>v==='mandatory'?'mandatory':'advisory'))];
 }
+/** Captures show the stored strength, including blank values that inherit from broader lines. */
+export function capturedRuleLevels(lines:readonly RuleLine[]):(string|null)[]{
+  return [...new Set(lines.flatMap(line=>Object.entries(line.numbers)
+    .filter(([key,number])=>key==='apply'||number?.value!=null)
+    .map(([key,number])=>line.mandatory_reasons?.[key]?'mandatory':number?.level??null)))];
+}
 /** The days a line holds on: none set (or an empty list) is every day, as the server reads it. */
 const daysOf=(l:Pick<RuleLine,'weekdays'>)=>l.weekdays?.length?l.weekdays:[0,1,2,3,4,5,6];
 export function daysText(l:Pick<RuleLine,'weekdays'|'start_time'|'end_time'>):string{
@@ -2312,11 +2318,12 @@ function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,levels:(rule:
     effectCell:(rule:Row)=>Child=effect){
   if(!rows.length)return null;
   return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
-    build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
+    build:({body})=>body.append(...(open?[el('p',{class:'muted'},'These approved department rules also apply during their valid dates.')]:[]),
       dataTable<Row>({id:'other-department-rules',noun:['rule','rules'],rows,rowId:p=>p.id,pageSize:25,
         searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:open,
         defaults:{wrap:['name','effect']},
-        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):labelOf(p)},
+        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):
+          p.definition.rule.on===false?el('span',{},labelOf(p),' ',badge('Off','neutral')):labelOf(p)},
           {key:'effect',label:'Effect',text:effect,cell:effectCell},
           {key:'level',label:'Level',text:p=>levels(p).map(levelWords).join(', '),
             cell:p=>el('span',{},...levels(p).map(level=>levelBadge(level,p.severity_reason)))},
@@ -2332,9 +2339,7 @@ export function capturedRulesContext(ctx:Context,data:Catalogue){
   const levels=(p:Row):(string|null)[]=>{
     const rule=p.definition.rule;
     if(rule.kind!=='catalogue')return [p.effective_severity??p.definition.severity];
-    // A stored blank inherits its strength; the captured panel cannot read that as an explicit Mandatory bound.
-    return [...new Set((rule.lines as RuleLine[]).flatMap(line=>Object.entries(line.numbers)
-      .map(([key,number])=>line.mandatory_reasons?.[key]?'mandatory':number?.level??null)))];
+    return capturedRuleLevels(rule.lines);
   };
   const lines=(p:Row):string[]=>{
     const definition=p.definition,rule=definition.rule;

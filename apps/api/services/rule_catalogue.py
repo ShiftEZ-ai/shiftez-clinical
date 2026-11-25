@@ -532,7 +532,7 @@ def _people_table(data, explained, actor, lo, hi, *, captured=False):
 
     def cell_for(key, person_id=None, rank_id=None):
         column = column_values[key]
-        if person_id and data['exceptions']:
+        if not captured and person_id and data['exceptions']:
             exception = next((matched for rule_id in column['rule_ids'] if rule_id in originals
                               and (matched := exception_for(data, originals[rule_id], person_id, lo, hi))), None)
             if exception:
@@ -555,9 +555,19 @@ def _people_table(data, explained, actor, lo, hi, *, captured=False):
             return None
         _, sentence, line, rule_id = max(candidates, key=lambda item: (item[0], item[2].get('id', '')))
         cell = sentence.get('cell') or sentence.get('number') or sentence.get('text')
-        return {'display': cell, 'cell': cell, 'short': sentence.get('short'),
+        short = sentence.get('short')
+        exception = None
+        if captured and person_id and data['exceptions']:
+            exception = exception_for(data, originals[rule_id], person_id, lo, hi)
+        if exception:
+            # Approval on the selected day does not establish coverage of a workload counting window.
+            last_day = date.fromisoformat(exception['ends_on']) - timedelta(days=1)
+            approval = f"Approved exception {exception['starts_on']} through {last_day}"
+            cell = f'{cell} · {approval}'
+            short = f'{short} · {approval}' if short else None
+        return {'display': cell, 'cell': cell, 'short': short,
                 'qualified': bool(sentence.get('qualified')), 'rule_id': rule_id, 'line_id': line['id'],
-                'exception_id': None, 'kind': 'line',
+                'exception_id': exception['id'] if exception else None, 'kind': 'line',
                 'actions': actions(rule_id, line['id'], safety_by_rule.get(rule_id, False))}
 
     everyone_id = 'everyone'

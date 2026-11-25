@@ -225,6 +225,9 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
         line(numbers={'max': {'value': 3, 'level': 'critical'}}),
         line(who=person(people[1]), numbers={'max': {'value': 5, 'level': None}}),
     ])['record'])
+    switched_off = approve(h, propose(h, 'duties_per_month', [
+        line(numbers={'max': {'value': 2}}),
+    ], on=False)['record'])
     draft = h.workspace('Historical rules source')
     verify_date = '2030-01-01'
     url = f'/api/rules/catalogue?version=2&day={verify_date}&workspace_id={draft["id"]}'
@@ -233,6 +236,9 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
     assert [(number['value'], number['level']) for number in numbers] == [(3, 'critical'), (5, None)]
     assert records[legacy['id']]['definition']['rule']['hours'] == 7
     assert records[safety['id']]['effective_severity'] == 'mandatory'
+    off_rule = records[switched_off['id']]['definition']['rule']
+    assert off_rule['on'] is False
+    assert off_rule['lines'][0]['numbers']['max']['value'] == 2
 
 
 def test_captured_catalogue_retains_independently_approved_workload_fact(h):
@@ -254,7 +260,8 @@ def test_captured_catalogue_retains_independently_approved_workload_fact(h):
     assert saved_line['period']['kind'] == 'calendar_week'
 
 
-def test_captured_people_table_only_shows_current_exception_revision(h, monkeypatch):
+@pytest.mark.parametrize('approval', ['current-week', 'current-day', 'stale-week'])
+def test_captured_people_table_keeps_limit_with_dated_approval(h, monkeypatch, approval):
     from .test_rule_catalogue_api import approve, person, propose
 
     who = h.seed['people'][0]
@@ -263,24 +270,33 @@ def test_captured_people_table_only_shows_current_exception_revision(h, monkeypa
     ])['record'])
     draft = h.workspace('Captured exception rules')
     day = h.get('coordinator', '/api/rules/catalogue')['day']
-    next_day = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
-    exact, stale = str(uuid4()), str(uuid4())
+    week_start = h.get('coordinator', '/api/me')['organisation']['week_start']
+    selected = date.fromisoformat(day)
+    first = selected if approval == 'current-day' else selected - timedelta(days=(selected.weekday() - week_start) % 7)
+    last = selected if approval == 'current-day' else first + timedelta(days=6)
+    exception_id = str(uuid4())
     verify = workspace_baselines.verify
 
     def with_exceptions(row):
         payload = verify(row)
         policies = [{**p, 'definition': {**p['definition'], 'exception_allowed': True}}
                     if p['id'] == policy['id'] else p for p in payload['policies']]
-        original = {'department_id': policy['department_id'], 'policy_id': policy['id'], 'person_id': who,
-                    'status': 'approved', 'starts_on': day, 'ends_on': next_day}
-        return {**payload, 'policies': policies, 'exceptions': [
-            {**original, 'id': stale, 'policy_revision': policy['revision'] - 1},
-            {**original, 'id': exact, 'policy_revision': policy['revision']},
-        ]}
+        exception = {'id': exception_id, 'department_id': policy['department_id'], 'policy_id': policy['id'],
+                     'policy_revision': policy['revision'] - int(approval == 'stale-week'), 'person_id': who,
+                     'status': 'approved', 'starts_on': first.isoformat(),
+                     'ends_on': (last + timedelta(days=1)).isoformat()}
+        return {**payload, 'policies': policies, 'exceptions': [exception]}
 
     monkeypatch.setattr(workspace_baselines, 'verify', with_exceptions)
     body = h.get('coordinator', f'/api/rules-explained?at={day}&workspace_id={draft["id"]}')
     person_row = next(row for row in body['people_table']['rows'] if row['kind'] == 'person' and row['id'] == who)
-    approved = [cell for cell in person_row['cells'].values() if cell['kind'] == 'exception']
-    assert [cell['exception_id'] for cell in approved] == [exact]
-    assert approved[0]['actions'] == []
+    cell = next(cell for cell in person_row['cells'].values() if cell['rule_id'] == policy['id'])
+    assert cell['kind'] == 'line'
+    assert '5' in cell['cell'].partition(' · Approved exception ')[0]
+    assert cell['actions'] == []
+    if approval == 'stale-week':
+        assert cell['exception_id'] is None
+        assert 'Approved exception' not in cell['display']
+    else:
+        assert cell['exception_id'] == exception_id
+        assert f'Approved exception {first} through {last}' in cell['display']
