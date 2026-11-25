@@ -198,8 +198,9 @@ def test_staff_find_configured_contact_by_number_and_open_the_card(browser, live
         found.locator('strong').first.click()
         panel = page.get_by_role('region', name=person['display_name'])
         open_contact_details(panel)
-        expect(panel.get_by_text('Mobile', exact=True)).to_be_visible()
-        expect(panel.get_by_role('link', name=re.compile(r'^Call .*Mobile'))).to_have_attribute('href', 'tel:+12025550144')
+        expect(panel.get_by_role('button', name='Copy Mobile +1 202 555 0144', exact=True)).to_be_visible()
+        call = panel.get_by_role('link', name=f"Call {person['display_name']}, Mobile +1 202 555 0144", exact=True)
+        expect(call).to_have_attribute('href', 'tel:+12025550144')
         expect(panel).not_to_contain_text('+1 202 555 0188')
         no_page_overflow(page)
     finally:
