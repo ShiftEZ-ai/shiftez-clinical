@@ -935,8 +935,9 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
+        # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
+                               include_objectives=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
