@@ -231,8 +231,8 @@ def test_pg_guard_body_is_independently_proved_and_cannot_smuggle_calls_or_dml()
 PUBLICATION_HEAD = '0152_feasibility_results'
 ADD_NULLABLE = "op.add_column('publications', sa.Column('marker', sa.Boolean(), nullable=True))\n"
 UPDATE_REFUSAL = (
-    "CREATE TRIGGER publications_calendar_lineage_guard BEFORE UPDATE OF marker ON publications "
-    "WHEN NEW.marker IS NOT OLD.marker BEGIN SELECT RAISE(ABORT, 'immutable marker'); END"
+    "CREATE TRIGGER publications_calendar_lineage_guard BEFORE UPDATE OF \"marker\" ON publications "
+    "WHEN NEW.\"marker\" IS NOT OLD.\"marker\" BEGIN SELECT RAISE(ABORT, 'immutable marker'); END"
 )
 
 
@@ -257,20 +257,26 @@ def publication_history(tmp_path_factory):
     return directory
 
 
-def test_retained_publication_guard_protects_new_nullable_column(publication_history):
+@pytest.mark.parametrize('column, sql', [
+    ('marker', UPDATE_REFUSAL),
+    ('select', UPDATE_REFUSAL.replace('"marker"', '"select"')),
+    ('calendar_lineage', UPDATE_REFUSAL.replace('"marker"', 'calendar_lineage') + ';'),
+])
+def test_retained_publication_guard_protects_new_nullable_column(publication_history, column, sql):
     parent = nullable_guard_revision(publication_history, 'additive_parent', PUBLICATION_HEAD,
                                      "op.add_column('other', sa.Column('label', sa.Text(), nullable=True))\n")
-    path = retained_guard_revision(publication_history, parent=safety.revision(parent))
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent), sql=sql,
+                                   add=ADD_NULLABLE.replace("'marker'", repr(column)))
     assert safety.analyze(path)['class'] == 'additive'
     assert safety.declaration_errors(path) == []
     assert not safety.needs_confirmation(path)
 
 
 @pytest.mark.parametrize(('old', 'new'), [
-    ('NEW.marker', 'NEW.label'),
-    ('OLD.marker', 'NEW.marker'),
+    ('NEW."marker"', 'NEW."label"'),
+    ('OLD."marker"', 'NEW."marker"'),
     ('IS NOT', '<>'),
-    ('OF marker', 'OF label'),
+    ('OF "marker"', 'OF "label"'),
     ('ON publications', 'ON other.publications'),
     ('ON publications', 'ON other'),
     ('BEFORE UPDATE', 'AFTER UPDATE'),
@@ -279,12 +285,20 @@ def test_retained_publication_guard_protects_new_nullable_column(publication_his
     ('publications_calendar_lineage_guard', 'publications_update_guard'),
     ("BEGIN SELECT", "BEGIN UPDATE publications SET marker = NULL; SELECT"),
     ("END", "END; DELETE FROM publications"),
+    ("END", "END;;"),
     ('WHEN', '/* outer /* nested */ marker */ WHEN'),
     ('WHEN', '-- dialect-dependent comment\nWHEN'),
     ('WHEN', '\u00a0WHEN'),
 ])
 def test_retained_nullable_guard_requires_exact_target_comparison_and_abort(publication_history, old, new):
     path = retained_guard_revision(publication_history, sql=UPDATE_REFUSAL.replace(old, new))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_retained_nullable_guard_requires_quoted_arbitrary_column(publication_history):
+    add = ADD_NULLABLE.replace("'marker'", "'select'")
+    sql = UPDATE_REFUSAL.replace('"marker"', 'select')
+    path = retained_guard_revision(publication_history, add=add, sql=sql)
     assert safety.analyze(path)['class'] == 'destructive'
 
 

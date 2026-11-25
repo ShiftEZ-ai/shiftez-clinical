@@ -659,41 +659,27 @@ def _abort_body(body):
 
 
 def sqlite_nullable_update_guard(sql):
-    """Return the table and column of an exact, null-safe SQLite refusal."""
+    """Return the table and column for the SQLite publication refusal shape."""
     # SQLite and Alembic must see the same SQL the shared lexer proves.
     if '/*' in sql or '--' in sql or ':' in sql or re.search(r'[^\t\n\r -~]', sql):
         return None
     try:
-        statements = _statements(_tokens(sql))
+        tokens = _tokens(sql)
     except ValueError:
         return None
-    trigger = _before_trigger(statements[0]) if len(statements) == 1 else None
-    if not trigger:
+    if tokens[-1:] == [';']:
+        tokens.pop()
+    prefix = ['CREATE', 'TRIGGER', SQLITE_PUBLICATION_GUARD.upper(), 'BEFORE', 'UPDATE', 'OF']
+    if tokens[:len(prefix)] != prefix or len(tokens) <= len(prefix):
         return None
-    name, table, events, tail = trigger
-    if (name != SQLITE_PUBLICATION_GUARD or '.' in table
-            or events[:1] != ['UPDATE'] or 'BEGIN' not in tail):
+    column, *tail = tokens[len(prefix):]
+    if column != 'CALENDAR_LINEAGE' and not (column.startswith('"') and _IDENT.fullmatch(column)):
         return None
-    if tail[:3] == ['FOR', 'EACH', 'ROW']:
-        tail = tail[3:]
-    begin = tail.index('BEGIN')
-    if tail[:1] != ['WHEN'] or not _abort_body(tail[begin + 1:]):
-        return None
-    condition = tail[1:begin]
-    if condition[:1] == ['('] and condition[-1:] == [')']:
-        condition = condition[1:-1]
-    if condition[3:-3] not in (['IS', 'NOT'], ['IS', 'DISTINCT', 'FROM']):
-        return None
-    left, dot, column = condition[:3]
-    right, other_dot, other = condition[-3:]
-    if ({left, right} != {'OLD', 'NEW'} or dot != '.' or other_dot != '.'
-            or not _IDENT.fullmatch(column) or not _IDENT.fullmatch(other)
-            or _identifier(column) != _identifier(other)):
-        return None
-    if events[1:] and (events[1:2] != ['OF'] or len(events) != 3
-                       or not _IDENT.fullmatch(events[2]) or _identifier(events[2]) != _identifier(column)):
-        return None
-    return table, _identifier(column)
+    when = ['ON', 'PUBLICATIONS', 'WHEN', 'NEW', '.', column, 'IS', 'NOT',
+            'OLD', '.', column, 'BEGIN']
+    if tail[:len(when)] == when and _abort_body(tail[len(when):]):
+        return 'publications', _identifier(column)
+    return None
 
 
 def _new_table_guard(tokens, schema):
