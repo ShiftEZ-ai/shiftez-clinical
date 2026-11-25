@@ -17,7 +17,8 @@ def test_each_step_is_a_native_form():
     source = sign_in_source()
     assert "submit=el('button',{type:'submit',class:'button primary'},'Continue')" in source
     assert "form.addEventListener('submit',async e=>{e.preventDefault();" in source
-    assert "form.append(whoRow,username.wrap,password.wrap,remember.wrap,error,submit)" in source
+    # The refusal sits directly under the password, like other field errors (design verdict A-1).
+    assert "form.append(whoRow,username.wrap,password.wrap,error,remember.wrap,submit)" in source
     # The hidden username for password managers stays in the form during the password step.
     assert "autocomplete:'username'" in source
 

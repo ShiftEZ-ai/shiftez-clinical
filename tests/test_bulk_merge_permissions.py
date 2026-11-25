@@ -1,11 +1,12 @@
 """Bulk reverses preserve the shared Developer permission and credential-recovery boundary."""
 import pytest
+from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts import schemas as s
 from .governance_support import identity
-from .test_accounts import PASSWORD, accepted, anonymous, invite, token_of, with_users_file
+from .test_accounts import PASSWORD, accepted, anonymous, invite, race_link_acceptance, token_of, with_users_file
 
 
 REASON = {"reason": "Synthetic explicit-role restore after the dev merge"}
@@ -69,3 +70,43 @@ def test_explicit_role_restore_invalidates_open_recovery_links(h, tmp_path, role
     with transaction(h.app.state.engine) as db:
         stored = db.get(m.AccountLink, link["link"]["id"])
         assert stored.revoked_at is not None and stored.used_at is None and stored.revision == 2
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("change,purpose", [("grant", "invite"), ("bulk restore", "reset"), ("disable", "invite")])
+@pytest.mark.parametrize("acceptance_first", [False, True])
+def test_link_acceptance_serializes_with_privileged_access_changes(pg, tmp_path, monkeypatch, change, purpose, acceptance_first):
+    from apps.api.identity_store import store_for
+
+    h = with_users_file(pg, tmp_path)
+    if purpose == "reset":
+        target = accepted(h)
+    else:
+        target = invite(h)["record"]["id"]
+    binding = revoked_binding(h, "operator", target) if change == "bulk restore" else None
+    link = h.command("admin", "account.reset_link" if purpose == "reset" else "account.resend", REASON, target)
+    h.client("operator")
+    path = f"/api/account-links/{token_of(link)}"
+
+    def mutate():
+        if change == "grant":
+            return h.command("operator", "role.grant",
+                {"identity_id": target, "role": "operator", "starts_on": "2020-01-01", **REASON})
+        if change == "bulk restore":
+            return restore(h, "operator", binding, True)
+        return h.command("admin", "identity.disable", REASON, target, 1)
+
+    with anonymous(h) as client:
+        accepted_link, changed = race_link_acceptance(monkeypatch, acceptance_first=acceptance_first,
+            accept=lambda: client.post(path, json={"password": PASSWORD + " replacement"}), write=mutate)
+        changed.result()
+        assert accepted_link.result().status_code == (200 if acceptance_first else 404)
+    with transaction(h.app.state.engine) as db:
+        stored = db.get(m.AccountLink, link["link"]["id"])
+        assert (stored.used_at is not None) == acceptance_first
+        if change != "disable":
+            assert (stored.revoked_at is not None) != acceptance_first
+        else:
+            assert db.get(m.Identity, target).disabled
+            account = db.scalar(select(m.Account).where(m.Account.identity_id == target))
+            assert store_for(h.settings).get(account.username)["disabled"]
