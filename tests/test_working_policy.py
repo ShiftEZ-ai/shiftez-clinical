@@ -1318,15 +1318,20 @@ class BootstrapControlTests(unittest.TestCase):
                     self.assertEqual(checkout['with']['ref'], merge_ref)
                 self.assertEqual(doc['jobs']['checks']['outputs']['candidate_sha'], '${{ steps.candidate.outputs.commit }}')
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
-                plan, upload = checks[context_index + 1:context_index + 3]
+                plan_index = next(i for i, step in enumerate(checks) if step.get('id') == 'plan')
+                scope = checks[context_index + 1]
+                self.assertEqual(scope['id'], 'affected-scope')
+                self.assertEqual(scope['if'], "github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'")
+                self.assertLess(context_index + 1, plan_index)
+                plan, upload = checks[plan_index:plan_index + 2]
                 self.assertEqual(plan['id'], 'plan')
-                self.assertNotIn('if', plan)
-                self.assertNotIn('if', upload)
+                self.assertEqual(plan['if'], "steps.affected-scope.outputs.scope == ''")
+                self.assertEqual(upload['if'], plan['if'])
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
                 self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
                 for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
                                         'Build web assets and compiled client modules'):
-                    self.assertIn(name_after_plan, [step.get('name') for step in checks[context_index + 3:]])
+                    self.assertIn(name_after_plan, [step.get('name') for step in checks[plan_index + 2:]])
             for job in doc['jobs'].values():
                 steps = job.get('steps', [])
                 for index, step in enumerate(steps):

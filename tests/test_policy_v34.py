@@ -242,9 +242,15 @@ class ImporterV34Tests(unittest.TestCase):
         after_check = gate['steps'][gate['steps'].index(step) + 1:]
         affected_steps = [following for following in after_check
                           if affected in following['if'] and fallback not in following['if']]
-        self.assertEqual(len(affected_steps), 5)
-        self.assertEqual(affected_steps[0]['with']['path'], 'candidate')
-        self.assertIn('affected_unit_pilot.py\" test', affected_steps[3]['run'])
+        self.assertEqual(len(affected_steps), 6)
+        controls, candidate = affected_steps[:2]
+        for checkout in (controls, candidate):
+            self.assertEqual(checkout['if'], f"github.event_name == 'pull_request' && {affected}")
+        self.assertEqual(controls['with']['path'], '.trusted-verdict')
+        self.assertEqual(controls['with']['ref'], '${{ needs.checks.outputs.trusted_sha }}')
+        self.assertEqual(candidate['with']['path'], 'candidate')
+        self.assertEqual(candidate['with']['ref'], '${{ github.sha }}')
+        self.assertIn('affected_unit_pilot.py\" test', affected_steps[4]['run'])
         for following in after_check:
             if following not in affected_steps:
                 self.assertIn(fallback, following['if'])

@@ -480,7 +480,7 @@ jobs:
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             print("run_verdict=true", file=output)
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      if: steps.producers.outputs.run_verdict == 'true' || steps.producers.outputs.run_affected_unit == 'true'
+      if: steps.producers.outputs.run_verdict == 'true'
       with:
         ref: ${{ needs.checks.outputs.trusted_sha }}
         path: .trusted-verdict
@@ -489,9 +489,18 @@ jobs:
         submodules: false
         lfs: false
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      if: steps.producers.outputs.run_affected_unit == 'true'
+      if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
       with:
-        ref: ${{ needs.checks.outputs.candidate_sha }}
+        ref: ${{ needs.checks.outputs.trusted_sha }}
+        path: .trusted-verdict
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
+      with:
+        ref: ${{ github.sha }}
         path: candidate
         fetch-depth: 0
         persist-credentials: false

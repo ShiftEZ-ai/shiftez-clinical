@@ -119,7 +119,7 @@ class V33Tests(unittest.TestCase):
                     job_id = (name, job_name)
                     if action == 'actions/cache/restore':
                         self.assertNotIn(job_id, restores)
-                        self.assertNotIn('if', step)
+                        self.assertEqual(step['if'], "steps.affected-scope.outputs.scope == ''")
                         restores.add(job_id)
                     else:
                         self.assertEqual(action, 'actions/cache/save')
