@@ -118,7 +118,7 @@ def test_multi_person_and_finding_name_matching_uses_the_projected_people(h, col
         filters = {"policy_id": [policy["id"]], "id": [record_id]}
     selection = {"collection": collection, "where": {"filters": filters}}
     if mode == "search":
-        selection["where"]["q"] = "Alex"
+        selection["where"]["q"] = "Staff 01"
     else:
         selection["names"] = ["STAFF 01(test)"]
     resolved = post(h, "resolve", selection)

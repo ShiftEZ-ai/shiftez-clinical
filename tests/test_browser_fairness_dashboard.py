@@ -77,7 +77,7 @@ def test_dashboard_draws_every_section_and_drills_down(browser, live_server, h):
         names = dist.locator('.fx-drow .fx-name').all_text_contents()
         assert names == sorted(names), names
         # The toolbar's people search narrows the list at once.
-        page.get_by_label('Find a person', exact=True).fill('alex')
+        page.get_by_label('Find a person', exact=True).fill('staff 01')
         expect(dist.locator('.fx-drow')).to_have_count(1)
         page.get_by_label('Find a person', exact=True).fill('')
         expect(dist.locator('.fx-drow')).to_have_count(len(names))
@@ -692,7 +692,7 @@ def test_find_reuses_the_drawn_rows(browser, live_server, h):
         dist = section(page, 'distribution')
         expect(dist.locator('.fx-drow')).to_have_count(3)
         dist.locator('.fx-drow').evaluate_all('rows => rows.forEach(r => { r.__kept = true; })')
-        page.get_by_label('Find a person', exact=True).fill('alex')
+        page.get_by_label('Find a person', exact=True).fill('staff 01')
         expect(dist.locator('.fx-drow')).to_have_count(1)
         page.get_by_label('Find a person', exact=True).fill('')
         expect(dist.locator('.fx-drow')).to_have_count(3)

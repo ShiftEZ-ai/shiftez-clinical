@@ -234,7 +234,7 @@ def test_search_pagination_and_empty_result_are_explicit(h):
     one=ask(h,w,sh,limit=1);two=ask(h,w,sh,limit=1,offset=1)
     assert one['has_more'] and two['has_more'] and one['candidates'][0]['person_id']!=two['candidates'][0]['person_id']
     last=ask(h,w,sh,limit=1,offset=2);assert not last['has_more']
-    found=ask(h,w,sh,search='MORGAN');assert found['total']==1
+    found=ask(h,w,sh,search='STAFF 01');assert found['total']==1
     missing=ask(h,w,sh,search="'; DROP TABLE people; --")
     assert missing['total']==0 and missing['candidates']==[] and not missing['has_more']
     assert one['request_fingerprint']!=two['request_fingerprint']

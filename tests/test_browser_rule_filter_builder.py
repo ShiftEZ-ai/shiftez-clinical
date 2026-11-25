@@ -327,7 +327,7 @@ def test_reach_lists_group_people_by_their_filter_with_load_and_links(browser, l
         expect(alex.locator('.picker-meta .rc-load.at .rc-load-bar')).to_have_count(1)  # the bar beside the words
         expect(pop.locator('.picker-group', has_text='Recent')).to_have_count(0)  # fullest load first, never reordered
         expect(pop.locator('.picker-foot')).to_contain_text('2 at the limit')
-        pop.get_by_role('combobox').fill('jordan')
+        pop.get_by_role('combobox').fill('staff 02')
         expect(pop.get_by_role('option')).to_have_count(1)
         pop.get_by_role('combobox').fill('')
         shot(page, f'reach-people-{width}-{scheme}', full_page=False)
