@@ -7,6 +7,7 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
+import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
 import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
@@ -5358,8 +5359,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const entries=(source[kind]||[]).filter(r=>r.person_id===p.id).sort((a,b)=>order.indexOf(stateOf(a))-order.indexOf(stateOf(b))||String(b.starts_on).localeCompare(String(a.starts_on)));
     if(!entries.length&&optional&&!add)return null;
     // F14 (maintenance): which published duties a shorter clinic eligibility leaves without cover (read only, nothing saved);
-    // shared by End and Change dates. Only eligibilities have the server's preview (memberships and grants have none).
-    type Impact={count?:number;sessions?:Row[]};type Impacts={published_impact?:Impact;draft_impact?:Impact};
+    // Shared by End and Change dates. Rank end and withdrawal use the catalogue evaluator.
     // The server lists every duty left uncovered after the new dates, also ones this record never covered (after its old
     // end): only duties overlapping the days removed from THIS record count. null: unknown (no preview, or a cut list).
     const coverPreview=async(r:Row,dates:{starts_on?:string;ends_on?:string|null},why:string):Promise<Impacts|null>=>{
@@ -5379,18 +5379,6 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(Number(g?.count||0)>list.length)return undefined;const kept=list.filter(hit);return {count:kept.length,sessions:kept};};
       const published=only(res.published_impact),draft=only(res.draft_impact);
       return published&&draft?{published_impact:published,draft_impact:draft}:null;};
-    const coverLines=(r:Impacts)=>{
-      // SW-24: the person is named once (it is their eligibility), each line says the duty and when; the rest open in place.
-      // Published duties lose cover; duties in shared drafts and rotas in review are listed too (maintenance draft_impact).
-      const part=(g:Impact|undefined,one:string,many:string,draft=false)=>{const list=g?.sessions||[],n=Number(g?.count||list.length);if(!n)return [];
-        const who=new Set(list.map(x=>x.person).filter(Boolean)),only=who.size===1?[...who][0]:'';
-        const items=list.map((x,i)=>el('li',{hidden:i>=10},[draft?x.rota_name:'',only?'':x.person,x.type,x.start?`${formatDate(String(x.start),zone())} ${formatTime(String(x.start),zone())}`:''].filter(Boolean).join(' · ')));
-        const rest=el('li',{class:'muted'}),more=list.length>10?button(`Show ${list.length-10} more`,()=>{items.forEach(x=>{x.hidden=false;});more!.parentElement!.remove();},'link-button'):null;
-        if(more)rest.append(more);else if(n>list.length)rest.textContent=`${n-list.length} more`;
-        return [note(`${only?only+'’s ':''}${plural(n,one,many)} would need cover:`,'warning'),el('ul',{class:'impact-list'},...items,...(rest.childNodes.length?[rest]:[]))];};
-      const lines=[...part(r.published_impact,'published duty','published duties'),...part(r.draft_impact,'duty in a draft','duties in drafts',true)];
-      // SW3-D-27: nothing affected is said too (an empty preview read as not worked out).
-      return lines.length?lines:[note('No duties need cover.','info')];};
     const lostCover=(hit:number)=>hit?` ${plural(hit,'published duty','published duties')} now need${hit===1?'s':''} cover; the coordinators are told.`:'';
     const verb=kind==='grants'?'Revoke':'End',live=(r:Row)=>['Current','Upcoming'].includes(stateOf(r));
     const end=(r:Row)=>can&&kind!=='programme_memberships'&&live(r)?button(verb,()=>formDialog(`${verb} ${named(r[key])}`,'The earlier record stays in the history.',form=>{
@@ -5401,12 +5389,17 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         const preview=async()=>{const on=day.input.value;if(!on||on===asked)return;asked=on;
           const r=await coverPreview(r0,{ends_on:addDays(on,1)},reason.input.value);
           if(asked!==on||!r)return;
-          impact.replaceChildren(...coverLines(r));};
+          impact.replaceChildren(...coverLines(r,zone()));};
         const r0=r;day.input.addEventListener('change',()=>void preview());queueMicrotask(()=>void preview());}
-      return async()=>{const done=await command<{published_impact?:{count?:number}}>(kind==='memberships'?'membership.end':kind==='eligibilities'?'eligibility.end':'grant.revoke',{ends_on:addDays(day.input.value,1),reason:reason.input.value},r.id,r.revision);await refresh();
+      const payload=()=>({ends_on:day.input.value?addDays(day.input.value,1):null,reason:reason.input.value});
+      const saveRank=kind==='memberships'?configurationImpact(form,()=>({kind:'membership.end',payload:payload(),target_id:r.id,expected_revision:r.revision})):null;
+      return async()=>{let hit=0;
+        if(saveRank)await saveRank();
+        else{const done=await command<{published_impact?:{count?:number}}>(kind==='eligibilities'?'eligibility.end':'grant.revoke',payload(),r.id,r.revision);
+          hit=Number(done?.published_impact?.count||0);}
+        await refresh();
         // Said, with Undo (P-10): the server's own reverse, through the one Undo registry (api.ts). F14: the published
         // duties it leaves without cover are said too (the coordinators are told separately).
-        const hit=Number(done?.published_impact?.count||0);
         notify(`${named(r[key])} ${kind==='grants'?'revoked':'ends'} ${formatDate(day.input.value)}.${lostCover(hit)}`,hit?'warning':'success');};},verb),
       'ghost small',{'aria-label':`${verb} ${named(r[key])}`}):'';
     // DL-071: Extend is folded into Change dates (a later or empty last day), one path for a clinic's dates.
@@ -5414,8 +5407,16 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const withdrawn:Record<string,string>={memberships:'membership.withdraw',eligibilities:'eligibility.withdraw',programme_memberships:'programme_membership.withdraw'};
     const withdrawable=(r:Row)=>can&&kind in withdrawn&&stateOf(r)==='Upcoming'&&(kind!=='programme_memberships'||programmeMembershipWritable(r));
     // A required reason and the armed press, then Undo (the server's restore of the same record), as Archive does.
-    const withdraw=(r:Row)=>confirmAction(`Withdraw ${named(r[key])}?`,"It won't apply. Published rotas keep it.",async reason=>{
-      await command(withdrawn[kind],{reason},r.id,r.revision);await refresh();notify(`${named(r[key])} withdrawn.`,'success');},'Withdraw',undefined,false,false);  // D1: one press + Undo (no published rota changes)
+    const withdraw=(r:Row)=>{
+      const title=`Withdraw ${named(r[key])}?`,done=async()=>{await refresh();notify(`${named(r[key])} withdrawn.`,'success');};
+      if(kind==='memberships'){
+        formDialog(title,'The rank will no longer apply. Published duties stay in place.',form=>{
+          const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=500;form.append(reason.wrap);
+          const save=configurationImpact(form,()=>({kind:'membership.withdraw',payload:{reason:reason.input.value},target_id:r.id,expected_revision:r.revision}));
+          return async()=>{await save();await done();};},'Withdraw');
+        return;}
+      confirmAction(title,"It won't apply. Published rotas keep it.",async reason=>{
+        await command(withdrawn[kind],{reason},r.id,r.revision);await done();},'Withdraw',undefined,false,false);};
     // A skill can be limited to one clinic; the clinic is part of what it says.
     const scope=(r:Row)=>kind==='grants'?(r.service_id?labelOf(source.services?.find(s=>s.id===r.service_id)):'All clinics'):'';
     // Change dates (M1): the start and last day, by the same command and roles the Bulk editor uses (its update_dates).
@@ -5440,7 +5441,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(kind!=='eligibilities'||!(removesStart()||removesEnd()))return;
         const res=await coverPreview(r,{...(first.input.value!==r.starts_on?{starts_on:first.input.value}:{}),...(e!==(r.ends_on||null)?{ends_on:e}:{})},reason.input.value);
         if(asked!==key||!res)return;
-        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res));sync();};
+        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res,zone()));sync();};
       for(const f of [first,last])f.input.addEventListener('change',()=>void preview());
       queueMicrotask(()=>{const s=submit();if(s)armed(s,'Confirm?',()=>(removesEnd()||removesStart())&&lost!==0);void preview();});
       return async()=>{const e=ends();
