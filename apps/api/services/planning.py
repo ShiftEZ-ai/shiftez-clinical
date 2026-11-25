@@ -2800,7 +2800,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
-                                    effective_until=effective_until,
+                                    effective_until=effective_until, calendar_lineage=True,
                                     snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)
