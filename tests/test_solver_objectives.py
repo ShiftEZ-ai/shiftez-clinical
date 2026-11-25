@@ -50,8 +50,9 @@ def test_reserved_hours_balance_and_configurable_stability_weight(h):
 
 def test_fairness_weight_only_balances_duties_with_a_goal(h):
     first, second = h.seed['people'][:2]
-    goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share', 'period': 'rota'},
-                    severity='advisory')
+    # The default one-duty tolerance would accept the initial two-to-zero split.
+    goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share', 'period': 'rota',
+                     'tolerance_units': 0, 'tolerance_percent': 0}, severity='advisory')
     duty_type = h.configure('assignment_types', {'name': 'Single place duty', 'starts_on': '2020-01-01',
                             'definition': {'requirements': [{'minimum': 1, 'target': 1, 'maximum': 1}]}})['record']
     w = h.workspace()

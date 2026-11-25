@@ -14,6 +14,7 @@ from .test_browser_cp_sat import cp_server, _review, _finish, _job, _still, _app
 from .browser_acceptance_support import shot
 from .test_browser_disclosure import no_disclosure_markers
 from .test_browser_person_card import shoot
+from .test_browser_rule_catalogue import flag
 
 pytestmark = pytest.mark.browser
 DESKTOP, PHONE = {'width': 1440, 'height': 1000}, {'width': 390, 'height': 844}
@@ -335,6 +336,7 @@ def test_review_counts_places_numbers_and_week_ranges(browser, cp_server, h, vie
 
 @pytest.mark.parametrize('view,scheme', TWO)
 def test_run_priorities_link_to_the_fair_share_rule(browser, cp_server, h, view, scheme):
+    flag(h, legacy=False)
     w = h.shift(h.workspace(), people=[])['workspace']
     context, page, panel = _open(browser, cp_server, h, w, view, scheme)
     try:
