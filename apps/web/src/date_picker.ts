@@ -127,26 +127,39 @@ export function timeInput(time:HTMLInputElement):HTMLInputElement{
  *  "<label> time". The labelled date input's .value reads and writes local ISO "yyyy-mm-ddTHH:MM" as datetime-local
  *  did, so callers and the API are unchanged; a whole "2026-10-05T09:00" typed or pasted into the date splits into
  *  both parts. disabled/readonly/required follow the date input; a time change fires input and change on it. */
-export function dateTimeInput(input:HTMLInputElement,label:string,options:DateOptions={}):HTMLElement{
+export function dateTimeInput(input:HTMLInputElement,label:string,options:DateOptions&{allDay?:'start'|'end'}={}):HTMLElement{
   const start=String(input.value||'');input.value=start.slice(0,10);
   const box=dateInput(input,options),date=shown.get(input)!;
-  const time=timeInput(el('input',{'aria-label':label+' time'}) as HTMLInputElement);
+  const time=timeInput(el('input',{'aria-label':label+' time',...(options.allDay?{placeholder:'All day','aria-description':'Leave the time blank for all day'}:{})}) as HTMLInputElement);
+  const sync=()=>{
+    const hasDate=!!date.get(),typedTime=time.value.trim();
+    time.disabled=input.disabled;time.readOnly=input.readOnly;
+    time.required=!options.allDay&&(input.required||hasDate);
+    if(!typedTime||parseTime(typedTime))time.setCustomValidity(typedTime&&!hasDate?'Enter a date for this time.':
+      hasDate&&!typedTime&&!options.allDay?'Enter a time such as 08:00 (24-hour).':'');
+  };
   const changed=()=>{input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));};
   // Setting the value updates the time's own state (aria, validity) with a non-bubbling input, not the field's listeners.
   const set=(v:unknown)=>{const text=String(v??''),m=/^(.+?)[T ](\d{1,2}:\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(text.trim());
     if(m&&parseDay(m[1])){date.set(m[1]);time.value=parseTime(m[2])!;}else{date.set(text);if(!text)time.value='';}
     time.dispatchEvent(new Event('input'));date.check();};
-  const get=()=>{const d=date.get(),t=parseTime(time.value);return d&&t?`${d}T${t}`:'';};
+  const get=()=>{const d=date.get(),t=parseTime(time.value);
+    if(!d)return '';
+    if(t)return `${d}T${t}`;
+    if(!options.allDay||time.value.trim())return '';
+    return `${options.allDay==='end'?shiftDay(d,1):d}T00:00`;
+  };
   Object.defineProperty(input,'value',{configurable:true,get,set});
+  time.addEventListener('input',sync);
   set(start);
   // A whole date and time typed or pasted into the date part (or a test's fill) lands in both parts.
   input.addEventListener('input',()=>{const raw=String(Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.get!.call(input));
     const m=/^(.+?)[T ](\d{1,2}:\d{2})(?::\d{2})?$/.exec(raw.trim());if(m&&parseDay(m[1])){const before=get();set(raw);if(get()!==before)changed();}},true);
+  input.addEventListener('input',sync);
   // The time's own events stop here; the field reports its change on the labelled input.
   time.addEventListener('input',e=>{if(!e.bubbles)return;e.stopPropagation();if(parseTime(time.value)||!time.value.trim())changed();});
-  time.addEventListener('change',e=>e.stopPropagation());
-  const mirror=()=>{time.disabled=input.disabled;time.readOnly=input.readOnly;time.required=input.required;};
-  new MutationObserver(mirror).observe(input,{attributes:true,attributeFilter:['disabled','readonly','required']});mirror();
+  time.addEventListener('change',e=>{sync();e.stopPropagation();});
+  new MutationObserver(sync).observe(input,{attributes:true,attributeFilter:['disabled','readonly','required']});
   return el('div',{class:'datetime-box'},box,time);
 }
 
