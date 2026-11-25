@@ -64,5 +64,6 @@
   "tests/test_shared_search.py::test_selected_reference_is_scoped_and_does_not_depend_on_query_label",
   "tests/test_bulk_reverse_transitions.py::test_mandatory_or_unknown_findings_never_offer_apply_anyway[case-bgcfgagnblebfafbkjkpkonieikmgikgbbcepfcocfmgcemogaochlppdjcifmpb]",
   "tests/test_browser_terms.py::test_coordinator_follows_the_setup_guide_without_admin_actions",
-  "tests/test_why_trial_reuse.py::test_department_why_reuses_exact_trials"
+  "tests/test_why_trial_reuse.py::test_department_why_reuses_exact_trials",
+  "tests/test_perf_sweep_payloads.py::test_department_fix_list_evidence_is_lazy_and_version_bound"
 ]

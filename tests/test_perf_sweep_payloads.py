@@ -12,19 +12,26 @@ from tests.test_performance_budget import python_budget
 
 
 @pytest.mark.postgres
-def test_department_fix_list_evidence_is_lazy_and_version_bound(pg):
+def test_department_fix_list_evidence_is_lazy_and_version_bound(pg, record_property):
     workspace, _, _, _ = scale_department(pg, assigned=False)
     pg.command('coordinator', 'workspace.validate', {'reason': 'Synthetic scale check'}, workspace['id'], workspace['revision'])
     path = f'/api/workspaces/{workspace["id"]}/fix-list'
-    full = pg.client('coordinator').get(path)
-    slim, timing = measure(pg, 'fix-list-lazy', lambda: pg.client('coordinator').get(path+'?include_evidence=false'))
+    client = pg.client('coordinator')
+    full = client.get(path)
+    slim = client.get(path+'?include_evidence=false')
     expected = full.json()
     for cause in expected['causes']:
         cause['evidence'] = []
     assert slim.status_code == 200 and slim.json() == expected
-    assert len(slim.content) < len(full.content) * .2
-    assert len(slim.content) < 200_000
-    assert timing['sql'].get('SELECT', 0) <= 30
+    lean, timing = measure(pg, 'fix-list-lazy', lambda: client.get(path+'?view=lean'))
+    selects = timing['sql'].get('SELECT', 0)
+    record_property('full_fix_list_bytes', len(full.content))
+    record_property('lean_fix_list_bytes', len(lean.content))
+    record_property('lean_fix_list_selects', selects)
+    assert lean.status_code == 200 and not any('evidence' in cause for cause in lean.json()['causes'])
+    assert len(lean.content) < len(full.content) * .2
+    assert len(lean.content) < 200_000
+    assert selects <= 30
     original = full.json()['causes'][0]
     url = path+'?cause_id='+original['id']+'&evidence_hash='+original['evidence_hash']
     detail = pg.get('coordinator', url)
@@ -33,21 +40,21 @@ def test_department_fix_list_evidence_is_lazy_and_version_bound(pg):
     assert pg.client('coordinator').get(path+'?cause_id=missing').status_code == 409
     assert pg.client('staff').get(url).status_code == 403
     assert pg.client('coordinator').get(path).json() == full.json()
-    print('fix-list bytes', {'before': len(full.content), 'after': len(slim.content)})
+    print('fix-list bytes', {'before': len(full.content), 'after': len(lean.content)})
     return locals()
 
 
 @pytest.mark.postgres
 @pytest.mark.cpu_budget
-def test_department_fix_list_evidence_cpu_budget(pg):
-    state = test_department_fix_list_evidence_is_lazy_and_version_bound(pg)
+def test_department_fix_list_evidence_cpu_budget(pg, record_property):
+    state = test_department_fix_list_evidence_is_lazy_and_version_bound(pg, record_property)
     assert state['timing']['cpu_seconds'] < python_budget(1), state['timing']
 
 
 @pytest.mark.postgres
 @pytest.mark.wall_benchmark
-def test_department_fix_list_evidence_wall_budget(pg):
-    state = test_department_fix_list_evidence_is_lazy_and_version_bound(pg)
+def test_department_fix_list_evidence_wall_budget(pg, record_property):
+    state = test_department_fix_list_evidence_is_lazy_and_version_bound(pg, record_property)
     assert state['timing']['wall_seconds'] < python_budget(3), state['timing']
 
 
