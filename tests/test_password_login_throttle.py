@@ -14,6 +14,7 @@ from apps.api.errors import Problem
 from apps.api.rate_limit import counter_key
 from packages.contracts.schemas import LoginInput
 from packages.domain.time import aware
+from .clock_support import freeze_clock
 from .conftest import TEST_PASSWORD
 
 
@@ -177,8 +178,7 @@ def test_refused_rotating_inputs_leave_no_new_delay_rows(throttle_store, monkeyp
 @pytest.mark.parametrize("account_active", [False, True])
 def test_postgres_expired_delay_prune_between_upsert_and_lock(pg, monkeypatch, account_active):
     from apps.api.rate_limit import enforce
-    moment = m.now()
-    monkeypatch.setattr(auth, "now", lambda: moment)
+    moment = freeze_clock(monkeypatch)
     engine = pg.app.state.engine
     keys = auth.login_keys("staff", "pruned-peer", pg.settings)
     pair_key = auth.digest("login-delay:" + keys[2])

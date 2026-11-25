@@ -1,6 +1,11 @@
 """Whole duty booking is enforced at both command and publication boundaries."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
 from packages.domain.validation import evaluate
-from packages.domain.time import configured_duration_matches
+from packages.domain.time import configured_duration_matches, duration_hours
 from .test_participation_segments import at
 
 
@@ -26,4 +31,16 @@ def test_configured_duration_handles_overnight_and_dst():
     definition = {'default_timing': {'start_time': '20:00', 'end_time': '04:00'}}
     assert configured_duration_matches(definition, '2026-10-04T20:00:00+03:00', '2026-10-05T04:00:00+03:00', 'Asia/Riyadh')
     assert not configured_duration_matches(definition, '2026-10-04T20:00:00+03:00', '2026-10-05T00:00:00+03:00', 'Asia/Riyadh')
-    assert configured_duration_matches(definition, '2026-03-28T20:00:00+01:00', '2026-03-29T04:00:00+02:00', 'Europe/Berlin')
+
+
+@pytest.mark.parametrize('start,end,elapsed', [
+    ('2026-03-28T20:00:00+01:00', '2026-03-29T04:00:00+02:00', 7),
+    ('2026-10-24T20:00:00+02:00', '2026-10-25T04:00:00+01:00', 9),
+], ids=['spring', 'autumn'])
+def test_configured_overnight_duty_uses_elapsed_hours_across_clock_change(start, end, elapsed):
+    zone = ZoneInfo('Europe/Berlin')
+    definition = {'default_timing': {'start_time': '20:00', 'end_time': '04:00'}}
+    assert configured_duration_matches(definition, start, end, zone.key)
+    local_start = datetime.fromisoformat(start).astimezone(zone)
+    local_end = datetime.fromisoformat(end).astimezone(zone)
+    assert duration_hours(local_start, local_end) == elapsed

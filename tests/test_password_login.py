@@ -395,15 +395,20 @@ def test_failure_audit_includes_rate_limit_csrf_schema_and_session_issuance(h, m
         for binding in db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == identity_id)):
             binding.revoked = True
     response = post_login(client)
-    assert response.status_code == 401 and response.json()["error"] == INVALID
+    assert response.status_code == 403 and response.json()["error"]["code"] == "UNPROVISIONED_IDENTITY"
+    assert failure_counts(h, settings) == [0, 0]
+    wrong = post_login(client, password=PASSWORD + " wrong")
+    assert wrong.status_code == 401 and wrong.json()["error"] == INVALID
     assert failure_counts(h, settings) == [1, 1]
-    fill_failure_budget(h, settings, "login-account", 7)
+    fill_failure_budget(h, settings, "login-account", settings.password_login_account_limit - 1)
     blocked = post_login(client)
     assert blocked.status_code == 429 and 1 <= int(blocked.headers["retry-after"]) <= 900
     with transaction(h.app.state.engine) as db:
         events = list(db.scalars(select(m.AuthLoginEvent)))
-        assert len(events) == 4  # The two malformed bodies share one immutable first-rejection event.
-        assert {event.outcome for event in events} == {"ORIGIN_REJECTED", "SCHEMA_INVALID", "INVALID_LOGIN", "LOGIN_RATE_LIMIT"}
+        assert len(events) == 5  # The two malformed bodies share one immutable first-rejection event.
+        assert {event.outcome for event in events} == {
+            "ORIGIN_REJECTED", "SCHEMA_INVALID", "UNPROVISIONED_IDENTITY", "INVALID_LOGIN", "LOGIN_RATE_LIMIT",
+        }
         assert all(len(event.account_hash) == len(event.peer_hash) == 64 and event.correlation_id for event in events)
         assert all(event.session_id is None for event in events)
         assert PASSWORD not in repr([vars(event) for event in events]) and USERNAME not in repr([vars(event) for event in events])
@@ -575,6 +580,37 @@ def test_correct_password_department_selection_does_not_consume_failure_budget(h
     assert failure_counts(h, settings) == [0, 0]
     assert client.post("/auth/login", json={"username": USERNAME, "password": PASSWORD,
                                            "department_id": h.seed["department_id"]}).status_code == 200
+
+
+@pytest.mark.parametrize("progressive", [False, True], ids=["fixed", "progressive"])
+@pytest.mark.parametrize("department_id, code, message", [
+    (None, "UNPROVISIONED_IDENTITY", "Your identity needs an active departmental role binding"),
+    (str(uuid.UUID(int=0)), "FORBIDDEN", "No access to this department"),
+])
+def test_verified_password_access_refusal_does_not_consume_failure_budget(
+    h, managed, monkeypatch, progressive, department_id, code, message,
+):
+    pin_login_clock(monkeypatch)
+    _, settings, _, identity_id = managed
+    settings = replace(settings, password_login_progressive_delay=progressive,
+                       password_login_account_limit=1, password_login_pair_limit=1, password_login_address_limit=1)
+    if department_id is None:
+        with transaction(h.app.state.engine, write=True) as db:
+            for binding in db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == identity_id)):
+                binding.revoked = True
+
+    payload = {"username": USERNAME, "password": PASSWORD, "department_id": department_id}
+    with client_for(h, settings) as client:
+        for _ in range(2):
+            response = client.post("/auth/login", json=payload)
+            assert response.status_code == 403
+            assert response.json()["error"] == {"code": code, "message": message, "details": None}
+            assert "set-cookie" not in response.headers
+        assert failure_counts(h, settings) == [0, 0]
+        wrong = client.post("/auth/login", json={**payload, "password": PASSWORD + " wrong"})
+        assert wrong.status_code == 401 and wrong.json()["error"] == INVALID
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(func.count()).select_from(m.Session)) == 0
 
 
 @pytest.mark.parametrize("window", [60, 900, 3600])
