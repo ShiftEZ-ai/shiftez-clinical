@@ -2,12 +2,24 @@
 import ast
 from copy import deepcopy
 from functools import lru_cache
+from hashlib import sha256
 from pathlib import Path
 
-from migrations.sql_safety import CURRENT_SCHEMA, analyze_sql, clear_execution_proofs, schema_template
+from migrations.sql_safety import (CURRENT_SCHEMA, analyze_sql, clear_execution_proofs, schema_template,
+                                   sqlite_nullable_update_guard)
 
 
 CLASSES = ('additive', 'fill_only', 'destructive')
+# Source-bound proof of the published closure, including both merge revisions. The trigger installed
+# in 0002 calls the function replaced in 0050, which compares the whole row except current and effective_until.
+# ponytail: only this audited historical guard is seeded. New guard shapes need their own source proof.
+PUBLICATION_GUARD_CHECKPOINT = '0152_feasibility_results'
+PUBLICATION_GUARD_HISTORY = 'ad3ec2b570a972a0193024b5d89eef7506619353d039e03f9f89cae2ca494e2b'
+PUBLICATION_COLUMNS = frozenset({
+    'workspace_id', 'sequence', 'starts_on', 'ends_on', 'current', 'supersedes_id', 'published_by',
+    'snapshot', 'validation', 'fingerprint', 'id', 'revision', 'created_at', 'department_id', 'effective_until',
+})
+MISSING_RETAINED_GUARD = 'dialect-only update guard lacks a proved retained PostgreSQL guard'
 TYPES = {'String', 'Text', 'Integer', 'BigInteger', 'SmallInteger', 'Boolean', 'Float', 'Numeric',
          'JSON', 'Date', 'DateTime', 'Time', 'LargeBinary', 'Enum'}
 CONSTRUCTORS = TYPES | {'table', 'Table', 'column', 'Column', 'MetaData', 'ForeignKey',
@@ -57,6 +69,8 @@ class Analyzer(ast.NodeVisitor):
         self.dialect, self.dollar_free = None, set()
         self.rank, self.findings, self.needs_schema = 0, [], False
         self.unproved = False
+        self.retained_guard_use = None
+        self.other_upgrade_branch = False
         self.globals = {}
         definitions = [node.name for node in self.tree.body if isinstance(node, ast.FunctionDef)]
         for node in self.tree.body:
@@ -88,6 +102,7 @@ class Analyzer(ast.NodeVisitor):
         for fact in self.schema['tables'].values():
             fact.update(columns=[], primary_key=[], added_columns=[], new=False)
         clear_execution_proofs(self.schema)
+        self.schema.pop('retained_publication_guard', None)
 
     def issue(self, node, reason):
         self.rank, self.unproved = 2, True
@@ -318,6 +333,22 @@ class Analyzer(ast.NodeVisitor):
     def visit_Return(self, node):
         self.issue(node, 'unproved control flow')
 
+    def nullable_update_guard(self, node, dialect):
+        if self.function != 'upgrade' or self.dialect is not None or not isinstance(self.parents.get(node), ast.FunctionDef):
+            return None
+        sqlite, postgres = (node.body, node.orelse) if dialect == 'sqlite' else (node.orelse, node.body)
+        if len(sqlite) != 1 or not isinstance(sqlite[0], ast.Expr) or any(not isinstance(s, ast.Pass) for s in postgres):
+            return None
+        call = sqlite[0].value
+        if not isinstance(call, ast.Call) or self.name(call.func) != 'alembic.op.execute' or len(call.args) != 1 or call.keywords:
+            return None
+        sql = self.value(call.args[0])
+        if isinstance(sql, str):
+            guard = sqlite_nullable_update_guard(sql)
+            if guard in self.schema.get('nullable_added_columns', ()):
+                return guard
+        return None
+
     def visit_If(self, node):
         test = node.test
         if (self.dialect == 'postgresql' and isinstance(test, ast.Compare) and len(test.ops) == 1
@@ -333,11 +364,21 @@ class Analyzer(ast.NodeVisitor):
                 and self.value(test.comparators[0]) in {'sqlite', 'postgresql'}):
             self.issue(node, 'unproved conditional execution')
             return
+        dialect_name = self.value(test.comparators[0])
+        if guard := self.nullable_update_guard(node, dialect_name):
+            self.needs_schema = True
+            if guard[0] != 'publications' or 'retained_publication_guard' not in self.schema:
+                self.issue(node, MISSING_RETAINED_GUARD)
+            else:
+                self.retained_guard_use = node
+            return
+        if self.function == 'upgrade':
+            self.other_upgrade_branch = True
         self.schema['append_targets'], self.schema['guard_targets'] = set(), set()
         environment, dialect, dollar_free = self.env.copy(), self.dialect, self.dollar_free.copy()
         before = deepcopy(self.schema)
         baseline_rank, baseline_unproved = self.rank, self.unproved
-        self.dialect = self.value(test.comparators[0])
+        self.dialect = dialect_name
         self.rank, self.unproved = 0, False
         for statement in node.body:
             self.visit(statement)
@@ -356,6 +397,8 @@ class Analyzer(ast.NodeVisitor):
         self.env, self.dialect, self.dollar_free = environment, dialect, dollar_free
         if self.schema['tables'] != first['tables']:
             self.issue(node, 'dialect branches have different schema proofs')
+        if self.schema.get('retained_publication_guard') != first.get('retained_publication_guard'):
+            self.schema.pop('retained_publication_guard', None)
         appends = self.schema.get('append_targets', set())
         guards, first_guards = self.schema.get('guard_targets', set()), first.get('guard_targets', set())
         if appends and appends == first.get('append_targets'):
@@ -460,6 +503,8 @@ class Analyzer(ast.NodeVisitor):
             return
         if self.function != 'upgrade':
             return
+        if method == 'create_table' and table.rsplit('.', 1)[-1] == 'publications':
+            self.schema.pop('retained_publication_guard', None)
         parent = self.parents.get(node)
         direct = isinstance(parent, (ast.Expr, ast.Assign, ast.AnnAssign)) and parent.value is node
         if not direct:
@@ -486,6 +531,24 @@ class Analyzer(ast.NodeVisitor):
             kind = self.name(column.func).split('.')[-1]
             name = self.value(column.args[0])
             if kind == 'Column' and isinstance(name, str):
+                if method == 'add_column':
+                    known = self.schema.get('retained_publication_guard') if table == 'publications' else None
+                    # Boolean and text preserve NULL and value differences in the PostgreSQL row comparison.
+                    if (self.dialect is None and isinstance(self.parents.get(parent), ast.FunctionDef)
+                            and not node.keywords and len(column.args) == 2
+                            and name.isascii() and name.isidentifier() and name.islower() and len(name) <= 63
+                            and self.constructor(self.resolve(column.args[1])) in {'Boolean', 'String', 'Text'}
+                            and all(key.arg == 'nullable' and self.value(key.value) is True for key in column.keywords)
+                            and name not in fact['columns'] and (known is None or name not in known)):
+                        self.schema.setdefault('nullable_added_columns', set()).add((table, name))
+                    if known is not None:
+                        if name in known and not any(key.arg == 'if_not_exists' and self.value(key.value) is True
+                                                     for key in node.keywords):
+                            self.schema.pop('retained_publication_guard')
+                        else:
+                            known.add(name)
+                    elif table.rsplit('.', 1)[-1] == 'publications':
+                        self.schema.pop('retained_publication_guard', None)
                 if name not in fact['columns']:
                     fact['columns'].append(name)
                 if method == 'add_column' and name not in fact['added_columns']:
@@ -600,31 +663,66 @@ class Analyzer(ast.NodeVisitor):
     def run(self):
         for node in self.tree.body:
             self.visit(node)
+        if self.retained_guard_use is not None and not self.unproved:
+            if 'retained_publication_guard' not in self.schema:
+                self.issue(self.retained_guard_use, MISSING_RETAINED_GUARD)
+            elif self.rank or self.other_upgrade_branch:
+                self.issue(self.retained_guard_use, 'dialect-only update guard requires a shared additive schema')
         if self.unproved:
             self.invalidate()
         return {'class': CLASSES[self.rank], 'findings': self.findings, 'needs_schema': self.needs_schema}
 
 
 @lru_cache(maxsize=256)
-def schema_at(ancestors):
+def schema_at(ancestors, retained_at=0):
     if not ancestors:
         return {'tables': {}}
-    schema = deepcopy(schema_at(ancestors[:-1]))
+    schema = deepcopy(schema_at(ancestors[:-1], retained_at))
     clear_execution_proofs(schema)
     for table in schema['tables'].values():
         table['new'] = False
     Analyzer(ancestors[-1], schema).run()
     clear_execution_proofs(schema)
+    if len(ancestors) == retained_at:
+        schema['retained_publication_guard'] = set(PUBLICATION_COLUMNS)
     return schema
 
 
 @lru_cache(maxsize=512)
-def analyze_sources(source, ancestors):
+def analyze_sources(source, ancestors, retained_at=0):
     # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
-    schema = deepcopy(schema_at(ancestors))
+    schema = deepcopy(schema_at(ancestors, retained_at))
     for table in schema['tables'].values():
         table['new'] = False
     return Analyzer(source, schema).run()
+
+
+def _published_guard_history(sources):
+    pending, reachable = [PUBLICATION_GUARD_CHECKPOINT], set()
+    while pending:
+        rev = pending.pop()
+        if rev in reachable:
+            continue
+        if rev not in sources:
+            return False
+        reachable.add(rev)
+        parents = assigned(parse(sources[rev]), 'down_revision')
+        if isinstance(parents, str):
+            pending.append(parents)
+        elif isinstance(parents, tuple) and all(isinstance(parent, str) for parent in parents):
+            pending.extend(parents)
+        elif parents is not None:
+            return False
+    digest = sha256()
+    for rev in sorted(reachable):
+        digest.update(sha256(sources[rev].encode('utf-8')).digest())
+    return digest.hexdigest() == PUBLICATION_GUARD_HISTORY
+
+
+def _linear_guard_descendant(source):
+    return all(isinstance(node.value, ast.Constant) and node.value.value is None
+               for node in parse(source).body if isinstance(node, ast.Assign)
+               and any(isinstance(target, ast.Name) and target.id == 'depends_on' for target in node.targets))
 
 
 def analyze(path):
@@ -635,12 +733,27 @@ def analyze(path):
         return direct
     previous = assigned(parse(source), 'down_revision')
     ancestors, seen = [], set()
+    sources, ambiguous = {}, False
     if previous:
-        files = {assigned(parse(item.read_text(encoding='utf-8')), 'revision'): item
-                 for item in path.parent.glob('*.py') if item.name != '__init__.py'}
-        while isinstance(previous, str) and previous not in seen and previous in files:
+        for item in path.parent.glob('*.py'):
+            if item.name == '__init__.py':
+                continue
+            text = item.read_text(encoding='utf-8')
+            rev = assigned(parse(text), 'revision')
+            ambiguous |= isinstance(rev, str) and rev in sources
+            sources[rev] = text
+        while isinstance(previous, str) and previous not in seen and previous in sources:
             seen.add(previous)
-            text = files[previous].read_text(encoding='utf-8')
-            ancestors.append(text)
-            previous = assigned(parse(text), 'down_revision')
-    return analyze_sources(source, tuple(reversed(ancestors)))
+            ancestors.append(previous)
+            previous = assigned(parse(sources[previous]), 'down_revision')
+    ancestors.reverse()
+    history = tuple(sources[rev] for rev in ancestors)
+    result = analyze_sources(source, history)
+    if (ambiguous or PUBLICATION_GUARD_CHECKPOINT not in seen
+            or not any(finding.endswith(MISSING_RETAINED_GUARD) for finding in result['findings'])):
+        return result
+    retained_at = ancestors.index(PUBLICATION_GUARD_CHECKPOINT) + 1
+    if (not _linear_guard_descendant(source) or not all(map(_linear_guard_descendant, history[retained_at:]))
+            or not _published_guard_history(sources)):
+        return result
+    return analyze_sources(source, history, retained_at)
