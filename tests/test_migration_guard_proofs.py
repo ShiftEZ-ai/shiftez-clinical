@@ -257,12 +257,10 @@ def publication_history(tmp_path_factory):
     return directory
 
 
-@pytest.mark.parametrize('column_type', ['Boolean()', 'String(36)', 'Text()'])
-def test_retained_publication_guard_protects_new_nullable_column(publication_history, column_type):
+def test_retained_publication_guard_protects_new_nullable_column(publication_history):
     parent = nullable_guard_revision(publication_history, 'additive_parent', PUBLICATION_HEAD,
                                      "op.add_column('other', sa.Column('label', sa.Text(), nullable=True))\n")
-    path = retained_guard_revision(publication_history, parent=safety.revision(parent),
-                                   add=ADD_NULLABLE.replace('Boolean()', column_type))
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent))
     assert safety.analyze(path)['class'] == 'additive'
     assert safety.declaration_errors(path) == []
     assert not safety.needs_confirmation(path)
@@ -279,6 +277,9 @@ def test_retained_publication_guard_protects_new_nullable_column(publication_his
     ('RAISE(ABORT', 'RAISE(FAIL'),
     ("BEGIN SELECT", "BEGIN UPDATE publications SET marker = NULL; SELECT"),
     ("END", "END; DELETE FROM publications"),
+    ('WHEN', '/* outer /* nested */ marker */ WHEN'),
+    ('WHEN', '-- dialect-dependent comment\nWHEN'),
+    ('WHEN', '\u00a0WHEN'),
 ])
 def test_retained_nullable_guard_requires_exact_target_comparison_and_abort(publication_history, old, new):
     path = retained_guard_revision(publication_history, sql=UPDATE_REFUSAL.replace(old, new))
@@ -292,6 +293,9 @@ def test_retained_nullable_guard_requires_exact_target_comparison_and_abort(publ
     ADD_NULLABLE.replace("nullable=True", "nullable=False, server_default='false'"),
     ADD_NULLABLE.replace("nullable=True))", "nullable=True), if_not_exists=True)"),
     ADD_NULLABLE.replace("sa.Boolean()", "sa.JSON()"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.String(36)"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.Text()"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.Boolean(create_constraint=True)"),
 ])
 def test_retained_nullable_guard_requires_a_nullable_column_added_by_this_revision(publication_history, add):
     assert safety.analyze(retained_guard_revision(publication_history, add=add))['class'] == 'destructive'
@@ -307,8 +311,26 @@ def test_retained_nullable_guard_cannot_claim_an_existing_column_as_new(publicat
     assert safety.analyze(path)['class'] == 'destructive'
 
 
-def test_retained_nullable_guard_requires_equal_schema(publication_history):
-    path = retained_guard_revision(publication_history, after="else:\n    " + ADD_NULLABLE.replace("'marker'", "'other'"))
+@pytest.mark.parametrize('extra', [
+    "else:\n    " + ADD_NULLABLE.replace("'marker'", "'other'"),
+    ADD_NULLABLE.replace("'marker'", "'other'"),
+    "op.create_index('ix_marker', 'publications', ['marker'], unique=True, "
+    "sqlite_where=sa.table('publications', sa.column('marker')).c.marker == True)\n",
+    "op.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+])
+def test_retained_nullable_guard_requires_equal_schema(publication_history, extra):
+    path = retained_guard_revision(publication_history, after=extra)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('extra', [
+    "\nop.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+    "\ndef downgrade():\n    op.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+])
+def test_retained_nullable_guard_refuses_ddl_outside_upgrade(publication_history, extra):
+    path = retained_guard_revision(publication_history)
+    with path.open('a', encoding='utf-8') as source:
+        source.write(extra)
     assert safety.analyze(path)['class'] == 'destructive'
 
 

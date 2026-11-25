@@ -659,6 +659,9 @@ def _abort_body(body):
 
 def sqlite_nullable_update_guard(sql):
     """Return the table and column of an exact, null-safe SQLite refusal."""
+    # SQLite does not nest block comments. Require SQL the shared lexer cannot reinterpret.
+    if '/*' in sql or '--' in sql or re.search(r'[^\t\n\r -~]', sql):
+        return None
     try:
         statements = _statements(_tokens(sql))
     except ValueError:

@@ -70,7 +70,6 @@ class Analyzer(ast.NodeVisitor):
         self.rank, self.findings, self.needs_schema = 0, [], False
         self.unproved = False
         self.retained_guard_use = None
-        self.other_upgrade_branch = False
         self.globals = {}
         definitions = [node.name for node in self.tree.body if isinstance(node, ast.FunctionDef)]
         for node in self.tree.body:
@@ -334,7 +333,17 @@ class Analyzer(ast.NodeVisitor):
         self.issue(node, 'unproved control flow')
 
     def nullable_update_guard(self, node, dialect):
-        if self.function != 'upgrade' or self.dialect is not None or not isinstance(self.parents.get(node), ast.FunctionDef):
+        upgrade = self.parents.get(node)
+        # Both dialects execute the same column addition. Only SQLite executes the refusal.
+        if (self.function != 'upgrade' or self.dialect is not None or not isinstance(upgrade, ast.FunctionDef)
+                or len(upgrade.body) != 2 or upgrade.body[1] is not node or not isinstance(upgrade.body[0], ast.Expr)):
+            return None
+        if not all(statement is upgrade or isinstance(statement, (ast.Import, ast.ImportFrom))
+                   or isinstance(statement, ast.Assign) and self.literal(statement.value)
+                   or isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+                   or (isinstance(statement, ast.FunctionDef) and statement.name == 'downgrade'
+                       and len(statement.body) == 1 and isinstance(statement.body[0], ast.Raise))
+                   for statement in self.tree.body):
             return None
         sqlite, postgres = (node.body, node.orelse) if dialect == 'sqlite' else (node.orelse, node.body)
         if len(sqlite) != 1 or not isinstance(sqlite[0], ast.Expr) or any(not isinstance(s, ast.Pass) for s in postgres):
@@ -372,8 +381,6 @@ class Analyzer(ast.NodeVisitor):
             else:
                 self.retained_guard_use = node
             return
-        if self.function == 'upgrade':
-            self.other_upgrade_branch = True
         self.schema['append_targets'], self.schema['guard_targets'] = set(), set()
         environment, dialect, dollar_free = self.env.copy(), self.dialect, self.dollar_free.copy()
         before = deepcopy(self.schema)
@@ -533,12 +540,14 @@ class Analyzer(ast.NodeVisitor):
             if kind == 'Column' and isinstance(name, str):
                 if method == 'add_column':
                     known = self.schema.get('retained_publication_guard') if table == 'publications' else None
-                    # Boolean and text preserve NULL and value differences in the PostgreSQL row comparison.
+                    column_type = self.resolve(column.args[1]) if len(column.args) == 2 else None
                     if (self.dialect is None and isinstance(self.parents.get(parent), ast.FunctionDef)
-                            and not node.keywords and len(column.args) == 2
+                            and not node.keywords
                             and name.isascii() and name.isidentifier() and name.islower() and len(name) <= 63
-                            and self.constructor(self.resolve(column.args[1])) in {'Boolean', 'String', 'Text'}
-                            and all(key.arg == 'nullable' and self.value(key.value) is True for key in column.keywords)
+                            and isinstance(column_type, ast.Call) and self.constructor(column_type) == 'Boolean'
+                            and not column_type.args and not column_type.keywords
+                            and len(column.keywords) == 1 and column.keywords[0].arg == 'nullable'
+                            and self.value(column.keywords[0].value) is True
                             and name not in fact['columns'] and (known is None or name not in known)):
                         self.schema.setdefault('nullable_added_columns', set()).add((table, name))
                     if known is not None:
@@ -666,7 +675,7 @@ class Analyzer(ast.NodeVisitor):
         if self.retained_guard_use is not None and not self.unproved:
             if 'retained_publication_guard' not in self.schema:
                 self.issue(self.retained_guard_use, MISSING_RETAINED_GUARD)
-            elif self.rank or self.other_upgrade_branch:
+            elif self.rank:
                 self.issue(self.retained_guard_use, 'dialect-only update guard requires a shared additive schema')
         if self.unproved:
             self.invalidate()
