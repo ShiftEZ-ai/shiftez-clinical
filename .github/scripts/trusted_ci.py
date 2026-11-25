@@ -151,6 +151,14 @@ def affected_files(changed, files):
     return required | owners if isinstance(owners, set) and owners <= files else None
 
 
+def test_inventory():
+    files = sorted(p for p in hosted.git("ls-files", "tests").splitlines()
+                   if policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", p))
+    if not files or any(Path(p).is_symlink() or not Path(p).is_file() for p in files):
+        raise ValueError("Invalid candidate file inventory")
+    return files
+
+
 def plan(base, measurement):
     candidate = hosted.git("rev-parse", "HEAD")
     candidate_tree = hosted.git("rev-parse", "HEAD^{tree}")
@@ -165,10 +173,7 @@ def plan(base, measurement):
         replicas = context["replicas"]
     durations = TRUSTED / "ci/hosted-durations.json"
     data = hosted.load_durations(durations)
-    files = sorted(p for p in hosted.git("ls-files", "tests").splitlines()
-                   if policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", p))
-    if not files or any(Path(p).is_symlink() or not Path(p).is_file() for p in files):
-        raise ValueError("Invalid candidate file inventory")
+    files = test_inventory()
     result = {"schema": 1, "sha": candidate, "tree": candidate_tree, "base_sha": base,
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
@@ -197,6 +202,25 @@ def plan(base, measurement):
         result["suites"][suite] = {"shards": hosted.balance(selected, seconds, count),
                                   "median_files": sorted(set(selected) - seconds.keys())}
     return result
+
+
+def runner_plan(base, measurement, suite, shard, seal):
+    path = os.getenv("CI_CHECKS_PLAN")
+    # The first unit shard independently checks the entire plan on every PR.
+    if (not path or measurement or os.getenv("GITHUB_EVENT_NAME") != "pull_request"
+            or os.getenv("TRUSTED_BOOTSTRAP") == "true" or (suite == "unit" and shard == 1)):
+        return plan(base, measurement)
+    candidate = policy.decode(Path(path).read_bytes())
+    if hosted.digest(candidate) != seal:
+        raise ValueError("Runner plan identity differs from the trusted plan")
+    sha, tree = hosted.git("rev-parse", "HEAD", "HEAD^{tree}").splitlines()
+    if (candidate["sha"], candidate["tree"], candidate["base_sha"]) != (sha, tree, base):
+        raise ValueError("Checks plan differs from the shard candidate or base")
+    require_pr_merge(policy.event(), policy.git, sha)
+    if candidate["inventory_sha256"] != hosted.digest(test_inventory()):
+        raise ValueError("Checks plan differs from the shard test inventory")
+    print("Using the sealed Checks plan")
+    return candidate
 
 
 def census_files(plan, files):
@@ -386,7 +410,12 @@ def main():
         else:
             policy.ci_context()
         return
-    candidate = plan(policy.commit(args.base_sha), args.measurement == "true")
+    base = policy.commit(args.base_sha)
+    measurement = args.measurement == "true"
+    if args.mode == "plan":
+        candidate = plan(base, measurement)
+    else:
+        candidate = runner_plan(base, measurement, args.suite, args.shard, args.plan_sha256)
     reports = Path(".run/reports")
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "shard-plan.json").write_text(json.dumps(candidate, indent=2) + "\n", encoding="utf-8")
