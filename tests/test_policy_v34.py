@@ -16,6 +16,7 @@ if not HELPERS.is_dir():HELPERS=Path(__file__).resolve().parent
 sys.path.insert(0,str(HELPERS))
 if not (HELPERS/'hosted_ci.py').is_file():sys.path.insert(0,str(HELPERS.parents[1]/'workflows-next/.github/scripts'))
 import cut_root_measurements as importer
+import affected_unit_pilot as pilot
 import working_policy as policy
 import nightly_budget
 
@@ -81,6 +82,41 @@ class ImporterV34Tests(unittest.TestCase):
             with self.subTest(running=running):
                 self.assertEqual(nightly_budget.can_start(running), admitted)
 
+    def test_affected_unit_pilot_accepts_only_the_pinned_fixture_expression(self):
+        source = (HELPERS.parents[1] / pilot.TEST).read_bytes()
+        positive = source.replace(b"'2026-10-11', '2026-10-12')) == 7", b"'2026-10-12', '2026-10-13')) == 7")
+        negative = positive.replace(b"')) == 7", b"')) == 8")
+        self.assertTrue(pilot.quota_expectation_change(source, positive))
+        self.assertTrue(pilot.quota_expectation_change(source, negative))
+        for changed in (source, source + b"\n# comment\n", positive.replace(b"== 7", b"== 0 or True"),
+                        positive.replace(b"== 7", b"== 07"), positive.replace(b"2026-10-13", b"2027-10-13")):
+            self.assertFalse(pilot.quota_expectation_change(source, changed))
+
+    def test_affected_unit_scope_requires_the_bound_path_and_rechecked_owners(self):
+        event = {'repository': {'default_branch': 'main', 'id': 1},
+                 'pull_request': {'base': {'ref': 'main'}, 'head': {'repo': {'id': 1}}, 'labels': []}}
+        refs = b"\0".join(f"base:{name}".encode() for name in sorted(pilot.OWNERS)) + b"\0"
+
+        def read_git(command, *args):
+            return {'rev-parse': b'candidate', 'ls-tree': b'100644 blob ', 'grep': refs}[command]
+
+        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'pull_request', 'TRUSTED_BOOTSTRAP': 'false'}), \
+             patch.object(pilot.policy, 'event', return_value=event), \
+             patch.object(pilot.policy, 'pr_test_base', return_value='base') as exact_base, \
+             patch.object(pilot.trusted_ci, 'pr_changed_files', return_value={pilot.TEST}) as changed, \
+             patch.object(pilot.policy, 'git', side_effect=read_git), \
+             patch.object(pilot.policy, 'read_file'), \
+             patch.object(pilot, 'quota_expectation_change', return_value=True):
+            self.assertEqual(pilot.qualified_base(), 'base')
+            exact_base.assert_called_once_with(event, 'candidate')
+            refs += b"base:tests/another_consumer.py\0"
+            self.assertIsNone(pilot.qualified_base())
+            changed.return_value.add('tests/conftest.py')
+            self.assertIsNone(pilot.qualified_base())
+        for kind in ('merge_group', 'push', 'schedule', 'workflow_dispatch'):
+            with patch.dict(os.environ, {'GITHUB_EVENT_NAME': kind}):
+                self.assertIsNone(pilot.qualified_base())
+
     def test_ci_jobs_run_by_event_with_skipped_budget(self):
         workflows = HELPERS if (HELPERS / 'ci.yml').is_file() else HELPERS.parent / 'workflows'
         jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
@@ -98,6 +134,7 @@ class ImporterV34Tests(unittest.TestCase):
              {'nightly-budget': 'failure'}, {'nightly-budget', 'ci-gate'}),
             ('failed checks', 'pull_request', 'refs/pull/1/merge', True,
              {'checks': 'failure'}, {'checks', 'ci-gate'}),
+            ('qualified affected unit', 'pull_request', 'refs/pull/1/merge', True, {}, {'checks', 'ci-gate'}),
         )
         for default, (label, event, ref, admitted, overrides, expected) in (
                 (default, case) for default in ('dev', 'main') for case in cases):
@@ -131,6 +168,7 @@ class ImporterV34Tests(unittest.TestCase):
                         "needs['nightly-budget'].result == 'success'": results.get('nightly-budget') == 'success',
                         "needs['nightly-budget'].outputs.admitted == 'true'": admitted,
                         "needs.checks.result == 'success'": results.get('checks') == 'success',
+                        "needs.checks.outputs.quota_scope == ''": label != 'qualified affected unit',
                     }
                     for expression, value in values.items():
                         condition = condition.replace(expression, str(value))
@@ -183,10 +221,21 @@ class ImporterV34Tests(unittest.TestCase):
         self.assertNotIn('if', step)
         self.assertEqual(step['shell'], 'python')
         self.assertEqual(step['env']['NEEDS_JSON'], '${{ toJSON(needs) }}')
-        for following in gate['steps'][gate['steps'].index(step) + 1:]:
-            self.assertIn("steps.producers.outputs.run_verdict == 'true'", following['if'])
+        fallback = "steps.producers.outputs.run_verdict == 'true'"
+        affected = "steps.producers.outputs.run_affected_unit == 'true'"
+        after_check = gate['steps'][gate['steps'].index(step) + 1:]
+        affected_steps = [following for following in after_check
+                          if affected in following['if'] and fallback not in following['if']]
+        self.assertEqual(len(affected_steps), 5)
+        self.assertEqual(affected_steps[0]['with']['path'], 'candidate')
+        self.assertIn('affected_unit_pilot.py\" test', affected_steps[3]['run'])
+        for following in after_check:
+            if following not in affected_steps:
+                self.assertIn(fallback, following['if'])
         success = dict.fromkeys(producers, 'success')
         skipped = dict.fromkeys(producers, 'skipped')
+        affected_results = dict(skipped, checks='success')
+        scope = 'quota-unit-expectation'
         cases = (
             ('pull_request', 'skipped', None, success, True, False),
             ('merge_group', 'skipped', None, success, True, False),
@@ -206,11 +255,20 @@ class ImporterV34Tests(unittest.TestCase):
             ('push', 'skipped', None, dict(success, static='skipped'), False, False),
             ('push', 'skipped', None, dict(success, unit='failure'), False, False),
             ('push', 'skipped', None, {'checks': 'success'}, False, False),
+            ('pull_request', 'skipped', None, affected_results, False, False, scope, True),
+            ('pull_request', 'skipped', None, affected_results, False, False, '', False),
+            ('pull_request', 'skipped', None, affected_results, False, False, 'unknown', False),
+            ('merge_group', 'skipped', None, affected_results, False, False, scope, False),
+            ('pull_request', 'skipped', None, dict(affected_results, checks='failure'), False, False, scope, False),
+            ('pull_request', 'skipped', None, dict(affected_results, unit='cancelled'), False, False, scope, False),
         )
-        for event, budget, admitted, results, verdict, deferred in cases:
+        for event, budget, admitted, results, verdict, deferred, *pilot in cases:
+            declared_scope, pilot_runs = pilot or ('', False)
             with self.subTest(event=event, budget=budget, admitted=admitted, results=results), \
                  tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as directory:
                 needs = {job: {'result': result} for job, result in results.items()}
+                if declared_scope:
+                    needs['checks']['outputs'] = {'quota_scope': declared_scope}
                 budget_outputs = {} if admitted is None else {'admitted': admitted}
                 all_needs = dict(needs, **{'nightly-budget': {'result': budget, 'outputs': budget_outputs}})
                 env, output, summary = (Path(directory) / name for name in ('env', 'output', 'summary'))
@@ -220,13 +278,15 @@ class ImporterV34Tests(unittest.TestCase):
                          'GITHUB_ENV': str(env), 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)},
                     capture_output=True, text=True, timeout=10,
                 )
-                self.assertEqual(result.returncode == 0, verdict or deferred, result.stderr)
+                self.assertEqual(result.returncode == 0, verdict or deferred or pilot_runs, result.stderr)
                 self.assertEqual(env.exists(), verdict)
-                self.assertEqual(output.exists(), verdict)
+                self.assertEqual(output.exists(), verdict or pilot_runs)
                 self.assertEqual(summary.exists(), deferred)
                 if verdict:
                     self.assertEqual(output.read_text().splitlines(), ['run_verdict=true'])
                     self.assertEqual(json.loads(env.read_text().removeprefix('NEEDS_JSON=')), needs)
+                if pilot_runs:
+                    self.assertEqual(output.read_text().splitlines(), ['run_affected_unit=true'])
                 if deferred:
                     self.assertIn('Nightly suites deferred', summary.read_text())
 
