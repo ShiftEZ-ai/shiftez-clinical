@@ -348,6 +348,8 @@ export function coverOf(data:WorkspaceData){
     out.set(r.shift_id,c);
   }
   for(const c of out.values()){if(c.scheduled===Infinity)c.scheduled=0;if(c.available===Infinity)c.available=0;}
+  // A staff view has the real checked coverage but only the viewer's own and paired participants.
+  if(data.participantsFiltered)return out;
   // Someone absent now (leave or a rotation found after the check, a reported Can't make it) is struck through on the
   // grid, so they fill no place either: never more places filled than the people on the session who are not absent.
   // A check that already knew of the absence counted it, and the smaller of the two counts it once.

@@ -35,6 +35,7 @@ def test_month_is_the_week_grid_in_bands_with_more(browser, live_server, h):
         expect(grid).to_be_visible()
         assert grid.locator(".mo-wk").count() >= 5  # one band per week of October
         expect(grid.locator(".wk-day.mo-out").first).to_be_visible()  # September or November fills the first or last band
+        assert grid.locator(".wk-day.mo-out").first.evaluate("n=>getComputedStyle(n).opacity") == "1"  # a muted token, never a fade (WCAG 2.2 SC 1.4.3)
         cell = grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · "))
         # Comfortable shows two people, then "+3", which lists the whole lane for that day.
         expect(cell.locator(".pchip:not(.more)")).to_have_count(2)

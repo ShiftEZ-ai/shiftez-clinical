@@ -101,6 +101,53 @@ def test_unknown_name_behaves_like_a_password_account(browser, live_server, view
         context.close()
 
 
+@pytest.mark.parametrize("code,message", [
+    ("UNPROVISIONED_IDENTITY", "Your identity needs an active departmental role binding"),
+    ("FORBIDDEN", "No access to this department"),
+])
+def test_password_access_refusal_leaves_the_password_field_valid(browser, live_server, code, message):
+    context = new_context(browser)
+
+    def login_response(route):
+        attempt = route.request.post_data_json
+        if attempt["password"] != TEST_PASSWORD:
+            route.fulfill(status=401, json={"error": {"code": "INVALID_LOGIN", "message": "Unable to sign in"}})
+        elif code == "FORBIDDEN" and not attempt.get("department_id"):
+            route.fulfill(status=409, json={"error": {
+                "code": "DEPARTMENT_REQUIRED", "message": "Select a department for this session",
+                "details": {"departments": [{"id": "first", "name": "First"}, {"id": "second", "name": "Second"}]},
+            }})
+        else:
+            route.fulfill(status=403, json={"error": {"code": code, "message": message}})
+
+    context.route("**/auth/login", login_response)
+    try:
+        page = open_app(context, live_server)
+        form = page.locator(".login-form")
+        form.get_by_label("Username or email", exact=True).fill("staff")
+        form.get_by_role("button", name="Continue", exact=True).click()
+        password = form.get_by_label("Password", exact=True)
+        submit = form.get_by_role("button", name="Sign in", exact=True)
+        password.fill("not-the-password")
+        submit.click()
+        expect(password).to_have_attribute("aria-invalid", "true")
+
+        password.fill(TEST_PASSWORD)
+        submit.click()
+        if code == "FORBIDDEN":
+            department = form.get_by_label("Department", exact=True)
+            expect(department).to_be_focused()
+            department.select_option("first")
+            submit.click()
+        expect(form.locator("#login-error .notice.error")).to_have_text(message)
+        expect(password).not_to_have_attribute("aria-invalid", "true")
+        expect(password).not_to_have_attribute("aria-describedby", "login-error")
+        if code == "FORBIDDEN":
+            expect(department).to_be_focused()
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize("remember", [False, True], ids=["session", "remembered"])
 def test_institutional_account_goes_to_auth_start_with_remember_me_and_the_page(browser, live_server, remember):
     context = new_context(browser)
@@ -258,6 +305,7 @@ def test_a_refused_password_for_the_remembered_account_names_it(browser, live_se
         error = form.locator("#login-error .notice")
         expect(error).to_contain_text("Unable to sign in as Quartz Example with this password.")
         expect(password).to_be_focused()
+        expect(password).to_have_attribute("aria-describedby", "login-account-who login-error")
         # Directly under the Password field, like other field errors.
         assert page.evaluate("document.querySelector('#login-error').previousElementSibling.contains(document.querySelector('#current-password'))")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")

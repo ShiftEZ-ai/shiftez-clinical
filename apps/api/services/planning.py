@@ -935,8 +935,9 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
+        # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
+                               include_objectives=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -2566,14 +2567,29 @@ def validation_stamp(db, workspace):
     """Bind this request's repeatable read to its short writer, never to a cached check.
 
     Scheduling/configuration and published-context writers bump the organisation's input
-    revisions; local edits bump the workspace revision. A changed stamp is resolved from
+    revisions; local edits bump the workspace revision. A first baseline capture moves no
+    counter, so the baseline hint is part of the stamp. A changed stamp is resolved from
     canonical inputs outside the lock before any result can be stored.
     """
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    return (organisation.revision, organisation.input_revision, organisation.availability_revision,
-            department.revision, department.catalogue_revision, workspace.revision,
-            workspace.content_revision, workspace.status, workspace.archived_at)
+    # Callers drop the last four (workspace) fields to share sources across a draft's own edits.
+    return (snapshots._baseline_hint(db, workspace), organisation.revision, organisation.input_revision,
+            organisation.availability_revision, department.revision, department.catalogue_revision,
+            workspace.revision, workspace.content_revision, workspace.status, workspace.archived_at)
+
+
+def read_stamp(db, workspace, data, since):
+    """The validation stamp of a read, with the instant before it started and the window it projected events over."""
+    selection = data['input_manifest']['selection']
+    return since, validation_stamp(db, workspace), (selection['start'], selection['end'])
+
+
+def read_stamp_holds(db, workspace, stamp):
+    """True under the writer when nothing a read stamped has moved, the clock-dependent occurrences included."""
+    since, recorded, window = stamp
+    return (validation_stamp(db, workspace) == recorded
+            and snapshots.occurrences_unchanged_since(db, workspace, since, window))
 
 
 def _publication_approval(db, workspace, fp):

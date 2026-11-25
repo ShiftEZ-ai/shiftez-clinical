@@ -592,6 +592,10 @@ LIVE_DRIFT_KEYS = frozenset({*LIVE_OVERLAY_KEYS, "people", "exceptions", "schedu
 
 def _drift_group_hash(payload, source):
     """Hash only refreshable baseline inputs; live person data is never a refresh conflict."""
+    return snapshot_hash(_drift_group(payload, source))
+
+
+def _drift_group(payload, source):
     value = {key: item for key, item in group_payload(payload, source).items() if key not in LIVE_DRIFT_KEYS}
     for key in LIVE_VALIDITY_SOURCES:
         if key in value:
@@ -601,7 +605,7 @@ def _drift_group_hash(payload, source):
     if source in DEPARTMENT_SETTING_FIELDS:
         value["departments"] = {ident: frozen_department_settings(payload, ident, [source])
                                 for ident in payload.get("departments", {})}
-    return snapshot_hash(value)
+    return value
 
 
 def _source_revisions(payload, included):
@@ -1203,8 +1207,31 @@ def _diff(row, workspace, current):
         if status != "unchanged":
             changes.append({"source": source, "status": status, "snapshot_hash": before,
                             "department_hash": department, "draft_hash": local,
-                            "safety": source == "rules" and bool(base.get("policies") or current.get("policies"))})
+                            "safety": source == "rules" and bool(base.get("policies") or current.get("policies")),
+                            "mandatory": source == "rules" and _changes_mandatory_rule(base, current, draft)})
     return base, draft, changes
+
+
+def _changes_mandatory_rule(*payloads):
+    """Whether the rules group's change touches a mandatory or safety rule, or anything but rules; it labels the
+    conflict only (the refresh decision is unchanged). Unsure counts as mandatory, so it is never understated."""
+    groups = [_drift_group(payload, "rules") for payload in payloads]
+    if any({k: v for k, v in group.items() if k != "policies"} != {k: v for k, v in groups[0].items() if k != "policies"}
+           for group in groups):
+        return True
+    rows = [{policy.get("id"): policy for policy in group.get("policies") or []} for group in groups]
+    changed = {ident for by_id in rows for ident in by_id if any(other.get(ident) != by_id[ident] for other in rows)}
+
+    def binds(policy):
+        definition = policy.get("definition") or {}
+        rule = definition.get("rule") or {}
+        if s.safety_rule(definition):
+            return True
+        if rule.get("kind") == "catalogue":  # a catalogue rule's strength is per number; unset inherits, so counts
+            return any(number.get("level", "mandatory") in ("mandatory", None)
+                       for line in rule.get("lines") or [] for number in (line.get("numbers") or {}).values())
+        return definition.get("severity") != "advisory"
+    return any(binds(by_id[ident]) for ident in changed for by_id in rows if ident in by_id)
 
 
 def refresh_preview(db, actor, command):

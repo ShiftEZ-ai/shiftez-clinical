@@ -3,6 +3,7 @@ snapshot and asks the one evaluator (active_rules and the validator's scope test
 Work is shared: sessions are grouped by what a scope can see of them, and each person-side scope is read once per person."""
 
 import json
+from collections import defaultdict
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from packages.contracts.schemas import safety_rule
@@ -302,6 +303,82 @@ def _skill_context(data, scope, pool, by_clinic):
     people = frozenset().union(*(by_clinic.values() if presence else
                                  (by_clinic.get(skill, ()) for skill in skills)))
     return people, people if presence or negative else frozenset()
+
+
+def line_check_scope(before, after, previous, policy_id):
+    """Find the duties and people that need rechecking on an unchanged snapshot context."""
+    from .conditions import counting_views
+    from .validation import applicable_restriction_intervals
+
+    parts = previous.get('_person_parts')
+    if not isinstance(parts, dict) or not isinstance(previous.get('_session_parts'), list):
+        return None
+    personal = {'min_rest', 'forbidden_transition', 'travel_buffer', 'max_hours',
+                'max_duties', 'max_consecutive_days', 'max_consecutive_weekends'}
+    metadata = {'_catalogue_sources', 'seq', 'created_at', 'created_by', 'approved_by', 'owner', 'source'}
+    focus = set(before['focus_ids'])
+    duties = [s for s in before['shifts'] if s['id'] in focus and not inactive(s)]
+    compiled = []
+    for data in (before, after):
+        active = active_rules(data['policies'], context=data)
+        context = {**data, 'policies': active, '_line_index_cache': {}}
+        groups = defaultdict(list)
+        for i, policy in enumerate(counting_views(data, active)):
+            line = policy.get('template_line') or {}
+            key = policy['id'], line.get('line'), line.get('slot')
+            scope = policy['definition']['scope']
+            sources = selector_sources(active, scope.get('conditions'), context['_line_index_cache'])
+            # The trial has no audit metadata, and every copy carries the whole source directory.
+            # Only sources read by this copy's predicates affect its stored checks.
+            signature = {k: v for k, v in policy.items() if k not in metadata}, sources
+            groups[key].append((str(i), policy, signature))
+        compiled.append((context, groups))
+
+    (old_context, old), (new_context, new) = compiled
+    retained, people, shifts = {}, set(), set()
+    for key in old.keys() | new.keys():
+        was, now = old.get(key, ()), new.get(key, ())
+        if [signature for _, _, signature in was] == [signature for _, _, signature in now]:
+            retained.update({target: parts[source] for (source, _, _), (target, _, _) in zip(was, now, strict=True)
+                             if source in parts})
+            continue
+        if key[0] != policy_id:
+            return None  # Another policy reads changed inputs.
+        for context, (_, policy, _) in [(old_context, row) for row in was] + [(new_context, row) for row in now]:
+            if policy.get('_live_zero') or policy.get('_live_mandatory_recheck'):
+                return None  # Recheck aliases share the stored finding identity of another policy.
+            rule = policy['definition']['rule']
+            if rule['kind'] == 'block_quota':
+                continue  # The quota evaluator keeps its complete windows and zero-count subjects.
+            if rule['kind'] in personal:
+                named = named_people(policy['definition']['scope'])
+                # Planner reach omits former members. Use the actual assignment intervals and leave
+                # each reached person's complete duty horizon available for rest and count windows.
+                people.update(row['person_id'] for shift in duties for row in shift['participants']
+                              if row['person_id'] not in people and (named is None or row['person_id'] in named)
+                              and policy_applies(context, policy, row['person_id'], shift,
+                                                 aware(row['start']), aware(row['end'])))
+            elif rule['kind'] == 'restriction':
+                for s in duties:
+                    if s['id'] in shifts:
+                        continue
+                    start, end = aware(s['start']), aware(s['end'])
+                    if any(any(applicable_restriction_intervals(context, policy, row['person_id'], s, a, b))
+                           for row in s['participants'] for a, b in
+                           ((start, end), (aware(row['start']), aware(row['end'])))):
+                        shifts.add(s['id'])
+            elif rule['kind'] in COVERAGE and rule.get('aggregation', 'assignment') == 'assignment':
+                scope = session_scope(policy['definition']['scope'])
+                local = {**policy, 'definition': {**policy['definition'], 'scope': scope}}
+                shifts.update(s['id'] for s in duties if s['id'] not in shifts
+                              and policy_applies(context, local, None, s, aware(s['start']), aware(s['end'])))
+            else:
+                return None  # Cross-session and cross-person rules need the full check.
+    if shifts and any(p['definition']['rule'].get('aggregation') == 'service_group'
+                      for p in new_context['policies']):
+        return None  # Reusing session coverage requires an unchanged pooled anchor.
+    return {'complete': True, 'shifts': shifts, 'people': people,
+            'previous': {**previous, '_person_parts': retained}}
 
 
 def rule_map(data, originals=None, *, reach_only=False):

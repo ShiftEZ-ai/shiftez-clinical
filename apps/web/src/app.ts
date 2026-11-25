@@ -83,7 +83,7 @@ import {issuesPage,issueKey,type IssuesHooks} from './issues.js';
 import {setIssueNav,issueList,sessionChips,dayLabels,findingIssue as findingItem,type Issue,type SessionChip} from './issue_marker.js';
 import {ASSIGN_KINDS,actionLabel,deltaWords,fixListPage,fixPanelNodes,lastFixList,applyFixDelta,fixDeltaOf,fixPills,fixGate,fixRow,fixLevel,mustWords,couldWords,reviewItemsOf,reviewedWithRota,fixSummaryOf,readFixList,heldFixList,type FixCause,type FixHooks,type FixList,type FixSummary,type FixStep} from './fix_list.js';
 import {scoreReview} from './score_review.js';
-import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt} from './autoschedule_result.js';
+import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
 import {scoreCheckPage,scoreCheckTitle,type Step as ScoreStep} from './score_check.js';
 import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
@@ -96,7 +96,7 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList} from './generated.js';
+import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
@@ -673,14 +673,16 @@ async function showLogin(reason='',resume=''){
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
     // A wrong password for the remembered account names that account, with the way to another one beside it.
     const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s){wait(s);return;}
-      const named=onChip&&continuing&&err instanceof ApiError&&err.code==='INVALID_LOGIN'?continuing:null;
+      const named=identified&&onChip&&continuing&&err instanceof ApiError&&err.code==='INVALID_LOGIN'?continuing:null;
       const message=note(named?`Unable to sign in as ${named.name} with this password.`:(err as Error).message,'error',err);
       if(named)message.append(' ',el('button',{type:'button',class:'link-button',onclick:useAnother},'Use another account'));
       error.replaceChildren(message);};
-    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal says why under the
-    // password, keeps what was typed and puts focus back there; success opens the app frame at once (boot).
+    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal keeps what was
+    // typed and shows its reason; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
-      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();pw.input.removeAttribute('aria-invalid');
+      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();
+      pw.input.removeAttribute('aria-invalid');
+      if(onChip)pw.input.setAttribute('aria-describedby','login-account-who');else pw.input.removeAttribute('aria-describedby');
       const accountActions=[...formWrap.querySelectorAll<HTMLButtonElement>('.login-account button,.login-switch')];accountActions.forEach(b=>{b.disabled=true;});
       if(department)department.input.disabled=true;
       const done=busy(submit,identified?'Signing in…':'Continuing…');
@@ -699,7 +701,9 @@ async function showLogin(reason='',resume=''){
           form.insertBefore(department.wrap,remember.wrap);announce('Choose a department to continue.');department.input.focus();return;
         }
         refused(err);
-        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby','login-error');pw.input.focus();pw.input.select();return;}
+        if(err instanceof ApiError&&err.code==='FORBIDDEN'){department?.input.focus();return;}
+        if(err instanceof ApiError&&err.code==='UNPROVISIONED_IDENTITY')return;
+        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby',onChip?'login-account-who login-error':'login-error');pw.input.focus();pw.input.select();return;}
       rotatedNow();
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);
     // A local countdown belongs to the name it was for: another account starts with Continue available (the server still decides).
@@ -1502,7 +1506,7 @@ async function loadLists(full=false){
     // Unread contacts fail the whole reply (never an empty directory): its versions are not kept, so the next refresh
     // reads the people and their contacts again.
     const contacts=new Map((await background<{people:Row[]}>('/api/directory')).people.map(d=>[d.id,d]));
-    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section}:p;});
+    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section,contacts:d.contacts}:p;});
   }
   // Replies apply in the order the reads started: one that started earlier and lands later (a refresh overtaken by a
   // sign-in or role change) is dropped, never merged over fresher lists.
@@ -2206,7 +2210,7 @@ function openRotaPanel(rotaId:string,ruleId=''){
   if(openRotaRulesFor(rotaId,ruleId))return;
   workspaceId=rotaId;draftNone=false;void navigate(routeHash('schedule',[schedView,planDay],{edit:rotaId}).slice(1));
 }
-type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
+type BaselineRefreshPreview={workspace_id:string;revision:number;baseline:{snapshot_hash:string;included_sources?:string[];omitted_sources?:string[]};current_hash:string;changes:{source:string;status:string;snapshot_hash:string;department_hash:string;draft_hash:string;safety?:boolean;mandatory?:boolean}[];conflicts:string[];ready:boolean;captured_initial?:boolean;local_adjustments?:Row[];target_overrides?:Row[]};
 const baselineDriftCache=new Map<string,Pick<BaselineRefreshPreview,'changes'>>();
 /** A draft's baseline against current department changes: the one call for the bar's count and the review dialog. */
 // A read (maintenance's GET, 93bd145ed): it never takes the write path.
@@ -2456,11 +2460,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
   const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
-  const layer=sourceWindow||win;
+  const layer=sourceWindow||win,team=may('schedule.read_team');
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
   const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  if(!draftData&&!(source?may('publications.read_team'):team))shown.participantsFiltered=true;
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
   if(!draftData&&(permits(CAPABILITY.PUBLICATIONS_READ_TEAM)||permits(CAPABILITY.STAFF))&&layer&&!source)void loadLiveCoverage(layer);
@@ -2822,7 +2827,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const showAllSessions=()=>{schedFilters={};schedConditions=null;searchText='';schedSearch=undefined;weekView.onlyOpen=false;weekView.onlyIssues=false;void redraw();};
   // Only your own duties in view: My duties on, or a reader the server gives only their own (maintenance); Show everyone where
   // the reader may see the team's.
-  const team=may('schedule.read_team'),mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
+  const mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
     nextDuty:team?undefined:async()=>{const next=(await upcoming(ctx())).duties[0];if(!next)return null;const on=toLocal(next.start,zone()).slice(0,10);
       return {label:`Next duty: ${formatDay(on,'UTC')}`,go:()=>navigate(`schedule/week/${on}`)};}};
   const editing=draft&&!reading;
@@ -4981,7 +4986,12 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
   const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
-  if(items.length&&aboutOf(catalogueKind))head.querySelector('h2')!.append(' ',helpButton('About '+kindLabel(catalogueKind),aboutOf(catalogueKind),'field-help'));
+  const about=aboutOf(catalogueKind);
+  if(items.length&&about){
+    const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
+    heading.replaceWith(title);
+    title.append(heading,helpButton('About '+kindLabel(catalogueKind),about,'field-help'));
+  }
   target.append(head);
   // One empty state everywhere (C-03): what is missing, why it matters, and the one action that adds it.
   // A kind that needs another first (a recurring session needs a duty type) offers that step instead of a Create that
@@ -5214,6 +5224,23 @@ async function peoplePage(target:HTMLElement){
     {key:'code',label:'Short code',field:'short_code',text:p=>shortCode(p),cell:p=>el('span',{class:'mono'},p.short_code||el('span',{class:'muted'},'Automatic')),
       edit:inlineField('people','short_code',{kind:'text',maxLength:6})},
   ];
+  // Build optional columns and search terms only from contacts already disclosed to this reader.
+  const contactTypes=new Map<string,VisibleContact>();
+  const contactValues=new Map(people.map(p=>{
+    const values=new Map<string,string>();
+    for(const c of (p.contacts||[]) as VisibleContact[]){
+      if(c.legacy_field==='work_phone'||c.legacy_field==='work_extension')continue;
+      contactTypes.set(c.contact_type_id,c);
+      values.set(c.contact_type_id,c.value);
+    }
+    return [p.id,values] as const;
+  }));
+  const extraContacts:Column<Row>[]=[...contactTypes.values()]
+    .sort((a,b)=>a.sort_order-b.sort_order||a.name.localeCompare(b.name)||a.contact_type_id.localeCompare(b.contact_type_id))
+    .map(c=>{
+      const text=(p:Row)=>contactValues.get(p.id)?.get(c.contact_type_id)||'';
+      return {key:'contact_'+c.contact_type_id,label:c.name,text,cell:p=>text(p)||none()};
+    });
   const contact:Column<Row>[]=[
     // The title shown: the recorded one, else the current rank (display_title; the directory sends it as title).
     // The recorded title only: the rank is its own column (P-02).
@@ -5221,6 +5248,7 @@ async function peoplePage(target:HTMLElement){
     {key:'section',label:'Section',field:'directory_section',text:sectionLabel,facet:sectionLabel,cell:p=>sectionLabel(p)||none()},
     {key:'phone',label:'Hospital phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
     {key:'ext',label:'Extension',field:'work_extension',text:p=>String(p.work_extension||''),cell:p=>extensions(p.work_extension)},
+    ...extraContacts,
   ];
   // Columns follow the role: contacts for everyone; ranks, eligibility and skills for planners; what a credentialer authorises.
   const hidden=!full?[]:manager?['title','section','programme','code','status','review']:cred?['title','section','rank','programme','tags','code','status','review']:['title','section','skills','programme','code','status'];  // tags show: their chips open the tag read-only
@@ -5252,7 +5280,7 @@ async function peoplePage(target:HTMLElement){
       {key:'order',label:'Directory order',hidden:true,cell:()=>null,sort:p=>Number(p.directory_order??1000)},
     ],
     // Active people by default (leavers stay one filter away); the directory keeps its own order.
-    defaults:{hidden:timeline?[...hidden,'works_in_area']:hidden,...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
+    defaults:{hidden:[...hidden,...extraContacts.map(c=>c.key),...(timeline?['works_in_area']:[])],...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
     bulk:permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.CREDENTIALER)?ids=>peopleBulkActions(ids):undefined,
     // The row opens the person's side panel; one visible button per row.
     onOpen:(p,position)=>personDetails(p,position),
@@ -6843,10 +6871,12 @@ const STALE_WORDS:Record<Currency,string>={'':'',rota:'The rota changed since th
   unknown:'This older run cannot be confirmed as current, so it cannot be applied. Run auto-schedule again to get a result you can apply.',
   superseded:'A newer run replaced this one. Review the latest run.'};
 /** Apply refused because a newer run replaced this one (RUN_SUPERSEDED): said once, with the way to the latest run; the
- *  refusal itself has nothing more to report. Any other error goes on as it was. */
-function supersededRun(e:unknown,workspace:string):never{
+ *  refusal itself has nothing more to report. Any other error goes on as it was. `here` says it in the open results
+ *  dialog instead, so the press that was refused never just closes it. */
+function supersededRun(e:unknown,workspace:string,here?:()=>void):never{
   if(!(e instanceof ApiError&&e.code===RUN_SUPERSEDED))throw e;
-  closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});void refresh();
+  if(here)here();else{closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});}
+  void refresh();
   throw new ApiError('PAGE_LEFT','',0);
 }
 /** A stored proposal can be reviewed at any time; only a current candidate can change a draft. */
@@ -7116,9 +7146,11 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
-  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
+  const reviewStatus=facts.fixListMissing
+    ?outcome('warn',facts.fixListMissing,'Run auto-schedule again to get the detailed Fix list.')
+    :status;
+  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[reviewStatus]),breaks,clash,
     basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
-    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7173,6 +7205,8 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
   // Support detail (timing, evidence, the whole rota check) is one disclosure at the end: the result comes first.
   const details=el('details',{class:'auto-run-details'},el('summary',{},'Run details'),el('p',{class:'run-metrics'},jobTiming(result)));
   const r:Row|null=result.result;
+  const outsideGroup=outsideGroupLine(result);
+  if(outsideGroup)body.append(outsideGroup);
   if(r?.phase_timings){
     const stages=generationPhaseTimings(r.phase_timings,runSeconds);
     if(r.first_solution_seconds!=null)stages.push(`first candidate after ${runSeconds(Number(r.first_solution_seconds))}`);
@@ -7241,7 +7275,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
     const pickAdd=new Set<string>(additions.map((_:Row,i:number)=>String(i))),pickRemove=new Set<string>(removals.map((_:Row,i:number)=>'r'+i));
     const actions=el('div',{class:'actions'});
     const applyJob=async(additionIndexes?:number[],removalIndexes?:number[])=>{
-      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined);
+      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined,()=>{
+        selectionHint.hidden=true;proposal=null;
+        actions.replaceWith(outcome('warn',SUPERSEDED.state,STALE_WORDS.superseded,button(SUPERSEDED.next,()=>{close();reviewLatestRun(result.workspace_id);},'secondary small')));});
       // Nothing written: the dialog stays, saying so where Apply was (nothing is left to apply).
       if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...NOTHING_APPLIED));proposal=null;await refresh();return;}
       if(applyNeedsReview(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('warn',...APPLY_NOT_CONFIRMED));proposal=null;await refresh();return;}
@@ -7290,9 +7326,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
 // Proposals the coordinator discarded in this browser session (the job itself stays in history).
 const dismissedJobs=new Set<string>();
 // The rota's revision is the one this page last read or changed (a reply carries it); it reads it only when it holds none.
-async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]}){
+async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]},here?:()=>void){
   const revision=knownRevision(job.workspace_id)??(await rotaMeta(job.workspace_id)).workspace.revision;
-  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id));
+  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id,here));
 }
 const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{
   const reply=await sendGenerationApply(job,pick);proposal=null;
@@ -7935,6 +7971,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       sub.textContent=w.name||'';
       const receipt=latest.kind==='generation'&&result?solverReceipt(latest):null;
       if(receipt)feedback.append(receipt);
+      const outsideGroup=outsideGroupLine(latest);
+      if(outsideGroup)feedback.append(outsideGroup);
       // A result that still applies (not stale, discarded or applied) opens on Review; otherwise What to fill.
       if(!st().step)st().step=reviewable||(latest.status==='succeeded'&&!stale&&!discarded)?3:1;
       staleNote=stale?text:'';

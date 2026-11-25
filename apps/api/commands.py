@@ -846,6 +846,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
                 if command.kind != 'workspace.publish':
+                    since = m.now()
                     if command.kind == 'workspace.submit':
                         checked, data = planning.review_gate_check(db, workspace, reuse=True)
                     else:
@@ -857,7 +858,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     context = (actor.identity_id, actor.department_id, workspace.content_revision,
                                workspace.status, workspace.archived_at, data['fingerprint'])
                     workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
-                                       planning.validation_stamp(db, workspace))
+                                       planning.read_stamp(db, workspace, data, since))
                     checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
@@ -1046,6 +1047,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
+        if assignment_reply and command.kind == 'shift.update':
+            # The edit writes draft assignments, leaving the shared catalogue inputs intact.
+            db.info['_assignment_reply_inputs'] = {}
         if planning_plan is not None:
             planning_preparation.bind(db, planning_plan, replay=True)
         db.info['_track_input_changes'] = True
@@ -1082,7 +1086,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if workspace_check is not None:
             require_workspace_command(db, actor, command)
             workspace = scoped(db, m.Workspace, command.target_id, actor)
-            if planning.validation_stamp(db, workspace) != workspace_check[4]:
+            if not planning.read_stamp_holds(db, workspace, workspace_check[4]):
                 raise CheckInputsChanged()
             # This request acquired canonical inputs under REPEATABLE READ. Every input
             # revision is still identical under the writer; never rebuild history here.
@@ -1267,6 +1271,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
+                    since = m.now()
                     current_data = planning.domain_snapshot(db, workspace,
                                                             current_mandatory=command.kind == 'workspace.submit')
                     check_context(db, actor, workspace, current_data, revisions_changed=True)
@@ -1275,7 +1280,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     if command.kind == 'workspace.validate':
                         command = command.model_copy(update={'expected_revision': workspace.revision})
                     workspace_check = (*workspace_check[:2], current_data, workspace_check[3],
-                                       planning.validation_stamp(db, workspace))
+                                       planning.read_stamp(db, workspace, current_data, since))
     except IntegrityError:
         # Two identical requests can both pass the pre-write receipt read.  The
         # unique (actor, key) constraint makes the loser roll back; recover the

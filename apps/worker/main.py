@@ -725,21 +725,13 @@ def check_inputs_unchanged(db, workspace, stamp):
     """
     if stamp is None or stamp[2] is None:
         return False
-    from datetime import datetime
-    from apps.api.services import events
-    from apps.api.snapshots import currency_match, preparation_stamp, snapshot_department_ids
+    from apps.api.snapshots import currency_match, occurrences_unchanged_since, preparation_stamp
     since, recorded, window = stamp
-    current = preparation_stamp(db, workspace)
-    if not currency_match(current, recorded):
+    if not currency_match(preparation_stamp(db, workspace), recorded):
         return False
-    organisation_id = db.get(m.Department, workspace.department_id).organisation_id
     # The snapshot widens its window to block-quota periods; its manifest recorded the window it read.
     # Always compare: the hint drops the local date after the window ends, yet an overnight occurrence still counts.
-    lo, hi = (datetime.fromisoformat(value) for value in window)
-    # Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
-    department_ids = snapshot_department_ids(db, organisation_id)
-    return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
-            == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
+    return occurrences_unchanged_since(db, workspace, since, window)
 
 
 def stage_feasibility_result(db, claim, result):
