@@ -15,7 +15,7 @@ from apps.api import models as m
 from apps.api.db import transaction
 from .governance_support import identity
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, expect_loaded  # noqa: F401
-from .test_home import big_department
+from .test_home import agreed_home_swap, big_department
 
 pytestmark = pytest.mark.browser
 SHOTS = os.getenv('HOME_SCREENSHOTS')  # a folder: save one screenshot per role, size and theme for review
@@ -833,7 +833,7 @@ def test_needs_you_rule_change_deep_links(browser, live_server, h, key, target):
     try:
         page.route(re.compile(r'/api/home$'), with_item)
         page.evaluate("location.hash = 'home'; location.reload()")
-        page.locator(f'#main [data-need="{key}"]').get_by_role('button', name='Review', exact=True).click()
+        page.locator(f'#main [data-need="{key}"]').get_by_role('button', name=re.compile('^Review, ')).click()
         page.wait_for_function('t => location.hash.startsWith("#" + t.split("?")[0])', arg=target)
         assert page.evaluate('location.hash').startswith('#rules')
     finally:
@@ -917,6 +917,37 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
         expect(row).to_contain_text(name)
         expect(row.locator('.audit-self')).to_contain_text('Self-approved')
         assert refused == []
+    finally:
+        context.close()
+
+
+def test_home_swap_has_one_action_and_each_review_button_names_its_item(browser, live_server, h):
+    h.command('staff', 'request.create', {
+        'person_id': h.seed['people'][0], 'start': '2026-10-07T09:00:00+03:00', 'end': '2026-10-07T12:00:00+03:00',
+        'private_reason': 'Synthetic leave request',
+    })
+    h.command('coordinator', 'policy.create', {
+        'name': 'Weekly staffing limit', 'owner': 'Test policy owner', 'source': 'Constructed fixture',
+        'starts_on': '2026-01-01', 'definition': {'rule': {'kind': 'maximum_participants', 'maximum': 3}},
+    })
+    swap = agreed_home_swap(h)
+    assert swap['status'] == 'reviewing'
+    detail = h.get('admin', '/api/workspaces/' + swap['workspace_id'])
+    assert detail['review_progress']['can_decide']
+
+    context, page = sign_in(browser, live_server, 'admin', DESKTOP)
+    try:
+        navigate(page, 'home')
+        card = page.get_by_role('region', name='Needs you', exact=True)
+        swap_review = card.get_by_role('button', name=re.compile('^Review, Amendment to review, .+'))
+        expect(swap_review).to_have_count(1)
+        expect(swap_review).to_have_text('Review')
+        expect(needs(page, 'Swap to apply')).to_have_count(0)
+        expect(card.get_by_role('button', name=re.compile('^Review, Leave request, .+'))).to_have_count(1)
+        expect(card.get_by_role('button', name=re.compile('^Review, Rule change, Weekly staffing limit'))).to_have_count(1)
+        expect(card.get_by_role('button', name='Review', exact=True)).to_have_count(0)
+        swap_review.click()
+        expect(page.get_by_role('dialog', name='Approve changes', exact=True)).to_be_visible()
     finally:
         context.close()
 
