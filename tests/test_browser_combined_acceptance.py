@@ -214,7 +214,13 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         close_popover(page)
         guest = new_context(browser, {'width': width, 'height': 900}, color_scheme=scheme)
         try:
+            # Finish the anonymous branding read only after the sign-in form has cleared session state.
+            pending = []
+            guest.route('**/api/branding', lambda route: pending.append(route))
             login = open_app(guest, live_server)
+            expect(login.get_by_role('heading', name='Sign in', exact=True)).to_be_visible()
+            assert len(pending) == 1
+            pending[0].continue_()
             expect(login.locator('.login-brand [data-brand-name]')).to_have_text('Cedar clinical rota')
             expect(login).to_have_title('Sign in · Cedar clinical rota')
         finally:

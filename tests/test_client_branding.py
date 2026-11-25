@@ -98,5 +98,5 @@ def test_start_up_and_sign_in_never_wait_for_the_branding_read():
     # The boot-ready boundary (account read, sign-in config) awaits no branding read or logo: it is started once, unawaited.
     app = (ROOT / 'apps/web/src/app.ts').read_text(encoding='utf-8')
     assert app.count("'/api/branding'") == 1 and app.count('readBranding()') == 1
-    assert 'const readBranding=()=>void ' in app and '\nreadBranding();' in app
+    assert "void fetch('/api/branding'" in app and '\nreadBranding();' in app
     assert not re.search(r'await[^;]*(readBranding|applyBranding|/api/branding)', app)
