@@ -131,7 +131,7 @@ def test_single_named_plan_assign_preview_save_reload_preserves_every_other_reco
         assert command['payload']['shift_id'] == shift['id']
         assert command['payload']['workspace_id'] == w['id']
         assert command['expected_revision'] == w['revision']
-        assert command['expected_fingerprint'] == result['source_fingerprint']
+        assert command['expected_fingerprint'] == result['assignment_stamp']
         inputs = command['payload']['participants']
         assert {p['person_id'] for p in inputs} == {case['trainee'], case['supervisor'], case['other']}
         assert participant_input(next(p for p in inputs if p['person_id'] == case['trainee'])) == proposal
@@ -183,7 +183,7 @@ def test_named_plan_ordinary_save_rejects_real_input_or_revision_race(
         with page.expect_response(lambda r: r.url.endswith('/api/commands')
                 and r.request.post_data_json.get('kind') == 'shift.update') as refused:
             card.get_by_role('button', name=re.compile(r'^Assign (?!.* with a warning$)')).click()
-        assert intercepted and intercepted[0]['expected_fingerprint'] == result['source_fingerprint']
+        assert intercepted and intercepted[0]['expected_fingerprint'] == result['assignment_stamp']
         assert refused.value.status == 409, refused.value.text()
         # The fingerprint guard runs before the revision guard for a fingerprint-bound write.
         assert refused.value.json()['error']['code'] == 'STALE_PREVIEW'
@@ -213,7 +213,7 @@ def save_checked(page, h, case, card, result, before_reload=None):
     assert saved.value.ok, saved.value.text()
     cmd = saved.value.request.post_data_json
     assert cmd['expected_revision'] == case['workspace']['revision']
-    assert cmd['expected_fingerprint'] == result['source_fingerprint']
+    assert cmd['expected_fingerprint'] == result['assignment_stamp']
     assert participant_input(next(p for p in cmd['payload']['participants'] if p['person_id'] == case['trainee'])) == participant_input(row['supervision']['proposal'])
     for original in case['shift']['participants']:
         assert participant_input(next(p for p in cmd['payload']['participants'] if p['person_id'] == original['person_id'])) == participant_input(original)

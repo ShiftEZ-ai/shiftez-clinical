@@ -529,6 +529,7 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   // is linked to the request) and records the undo; a bulk decision is undone as one batch. A swap step is undone
   // forward: the swap closes and reopens as a new one at the earlier stage (the database keeps consent forward-only).
   'request.decide':(_,x)=>({said:'Decision saved',undo:back('request.undo',{reason:'Undo'},x?.record)}),
+  'request.edit':(_,x)=>({said:'Request updated',undo:served(x)}),
   'request.decide_many':(_,x)=>({said:'Decisions saved',undo:x?.batch_id?[{kind:'request.undo',payload:{batch_id:x.batch_id,reason:'Undo'}}]:[]}),
   'availability_pattern.decide':(_,x)=>({said:'Decision saved',undo:back('availability_pattern.undo',{reason:'Undo'},x?.pattern)}),
   // Once a confirmed swap is prepared into a rota change (automatically), it is withdrawn or declined instead.

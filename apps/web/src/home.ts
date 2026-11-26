@@ -371,7 +371,8 @@ function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<Hom
       return needRow((b=>{b.dataset.lgSelf='';return b;})(needCount(n.count,n.tone)),
         needText(n.title,n.context,{id,cls:'truncate',tip:n.context}),
         n.items?el('ul',{class:'home-need-items'},...n.items.map((x,j)=>el('li',{},el('small',{class:'truncate',id:`${id}-${j}`,title:x.context},x.context),
-          button(x.action,x.go,'secondary small',{'aria-describedby':`${id} ${id}-${j}`})))):button(n.action,n.go,'secondary small',{'aria-describedby':id}),
+          button(x.action,x.go,'secondary small',{'aria-describedby':`${id} ${id}-${j}`})))):button(n.action,n.go,'secondary small',n.action==='Review'
+          ? {'aria-label':[n.action,n.title,n.context].filter(Boolean).join(', ')} : {'aria-describedby':id}),
         {tag:'li',cls:'',attrs:{'data-need':n.key||''}});})):elsewhere?'':el('p',{class:'home-clear'},'All clear ',el('span',{'aria-hidden':'true'},'✓')),elsewhere||'']);};
   // A delegation boundary can change Needs you without a write or a live notification.
   const lifetime=pageReadSignal();
