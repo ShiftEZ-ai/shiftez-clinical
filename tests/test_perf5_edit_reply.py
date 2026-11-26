@@ -173,7 +173,7 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
     payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
     payload.update(workspace_id=w['id'], shift_id=shift['id'], participants=[{
         'person_id': h.seed['people'][0 if add else 1], 'start': shift['start'], 'end': shift['end']}])
-    statements, acquired, scopes = [], [], []
+    statements, acquired, scopes, snapshot_shapes = [], [], [], []
     def counted(_c, _cu, statement, _p, _ctx, _many):
         statements.append(statement.split()[0])
     def forbidden(*a, **kw):
@@ -203,6 +203,7 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
                 if _name == '_domain_snapshot':
                     assert kw.get('include_fairness') is False
                     assert kw.get('include_objectives') is False
+                    snapshot_shapes.append((kw.get('own_shifts'), kw.get('include_manifest', True)))
                 acquired.append(_name)
                 return _original(*a, **kw)
             patch.setattr(snapshots, name, acquisition)
@@ -216,10 +217,16 @@ def test_reply_never_evaluates_the_rota_and_worker_stores_complete_current_evide
             event.remove(h.app.state.engine, 'before_cursor_execute', counted)
     record_property('reply_selects', statements.count('SELECT'))
     record_property('reply_statements', len(statements))
-    print({'reply_selects': statements.count('SELECT'), 'reply_statements': len(statements)})
+    acquisitions = (acquired.count('_domain_snapshot'), acquired.count('_snapshot_inputs'))
+    record_property('reply_domain_acquisitions', acquisitions[0])
+    record_property('reply_input_acquisitions', acquisitions[1])
+    print({'reply_selects': statements.count('SELECT'), 'reply_statements': len(statements),
+           'domain_acquisitions': acquisitions[0], 'input_acquisitions': acquisitions[1]})
     # Both additions and removals need D65's scoped safety check; neither needs a complete evaluation.
     assert statements.count('SELECT') <= (130 if add else 80) and len(statements) <= (160 if add else 100)
-    assert acquired.count('_domain_snapshot') == acquired.count('_snapshot_inputs') == 1
+    assert acquisitions == (2 if add else 1, 1)
+    # The placement gate checks the proposed people without own sessions. Admission checks the saved edit.
+    assert snapshot_shapes == ([([], False), (None, True)] if add else [(None, True)])
     assert len(scopes) == 2  # One before and one after, reused by the reply.
     assert result['validation']['scope'] == 'command_changes'
     assert result['health']['score'] is None and result['fix_list']['summary']['checking']
@@ -284,6 +291,11 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
     worker_up(h)
     canonical = validation.evaluate
     scopes = []
+    input_reads = []
+    read_inputs = snapshots._snapshot_inputs
+    def counted_inputs(db, org):
+        input_reads.append(org.id)
+        return read_inputs(db, org)
     def scoped(data, **kwargs):
         scope = data.get('_partial')
         assert scope and not scope.get('complete') and scope['shifts'] == {shift['id']}
@@ -295,6 +307,7 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
     monkeypatch.setattr(planning, 'revalidate', forbidden)
     monkeypatch.setattr(planning, 'evaluate', scoped)
     monkeypatch.setattr(validation, 'evaluate', scoped)
+    monkeypatch.setattr(snapshots, '_snapshot_inputs', counted_inputs)
     monkeypatch.setattr(fairness, 'prepare_history_window', forbidden)
     monkeypatch.setattr(fairness, 'history', forbidden)
     monkeypatch.setattr(wishes, 'snapshot_wishes', forbidden)
@@ -308,6 +321,7 @@ def test_supervised_edit_pairs_without_objective_inputs_or_diagnostic_explanatio
         json={'kind': 'shift.update', 'payload': payload, 'expected_revision': w['revision']})
     assert response.status_code == 200, response.text
     result = response.json()
+    assert input_reads == [h.seed['organisation_id']]
     assert len(scopes) >= 3  # Pairing trial plus the before/after admission.
     row = next(row for row in result['shifts'] if row['id'] == shift['id'])
     assert next(p for p in row['participants'] if p['person_id'] == trainee)['supervisor_person_id'] == mentor

@@ -631,10 +631,11 @@ def pytest_runtest_makereport(item, call):
             output = Path(folder) / "output"
             fetched = []
             with patch.object(policy, "event", return_value=data), patch.object(policy, "git", return_value=head.encode()), \
+                 patch.object(policy, "pr_test_base", return_value=before), \
                  patch.object(policy, "tree", return_value="c" * 40), \
                  patch.object(policy, "fetch", side_effect=lambda name: fetched.append(name) or "d" * 40), \
                  patch.object(policy, "accepted_dev_commit", return_value=accepted), \
-                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": kind, "GITHUB_REF": "refs/heads/" + ref,
+                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": kind, "GITHUB_REF": "refs/heads/" + ref, "TRUSTED_BOOTSTRAP": "false",
                                          "GITHUB_OUTPUT": str(output)}):
                 policy.ci_context()
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
@@ -1182,6 +1183,9 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             if args[0] == "show": return json.dumps(after if args[1] == candidate+":"+policy.KNOWN else before).encode()
             if args[:4] == ("rev-list", "--parents", "-n", "1"):
                 return (f"{candidate} {target} {head}" if args[4] == candidate else f"{head} {'6' * 40}").encode()
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                self.assertIn(args[2:], [(target, target), (target, "refs/remotes/origin/" + branch)])
+                return b""
             if args == ("rev-parse", "HEAD"): return trusted.encode()
             if args[0] == "rev-parse": return tree.encode()
             raise AssertionError(args)
@@ -1274,7 +1278,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                     with patch.dict(os.environ, {"CANDIDATE_SHA": selected.call_args.args[0]["candidate_sha"]}):
                         verifier.main()
                     with patch.dict(os.environ, {"CANDIDATE_SHA": head, "GITHUB_SHA": head}):
-                        with self.assertRaisesRegex(ValueError, "PR candidate must be the event merge"):
+                        with self.assertRaisesRegex(ValueError, "event head second"):
                             verifier.main()
                 else:
                     verifier.main()
@@ -1314,15 +1318,22 @@ class BootstrapControlTests(unittest.TestCase):
                     self.assertEqual(checkout['with']['ref'], merge_ref)
                 self.assertEqual(doc['jobs']['checks']['outputs']['candidate_sha'], '${{ steps.candidate.outputs.commit }}')
                 context_index = next(i for i, step in enumerate(checks) if step.get('id') == 'context')
-                plan, upload = checks[context_index + 1:context_index + 3]
+                plan_index = next(i for i, step in enumerate(checks) if step.get('id') == 'plan')
+                scope = checks[context_index + 1]
+                self.assertEqual(scope['id'], 'affected-scope')
+                self.assertEqual(scope['if'].strip(),
+                                 "github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'"
+                                 " && steps.select.outputs.trusted_sha == github.event.pull_request.base.sha")
+                self.assertLess(context_index + 1, plan_index)
+                plan, upload = checks[plan_index:plan_index + 2]
                 self.assertEqual(plan['id'], 'plan')
-                self.assertNotIn('if', plan)
-                self.assertNotIn('if', upload)
+                self.assertEqual(plan['if'], "steps.affected-scope.outputs.scope == ''")
+                self.assertEqual(upload['if'], plan['if'])
                 self.assertTrue(plan['run'].startswith('python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/'))
                 self.assertEqual(upload['with']['name'], 'ci-plan-${{ github.run_attempt }}')
                 for name_after_plan in ('Install the committed runtime pins', 'Install hash-locked dependencies',
                                         'Build web assets and compiled client modules'):
-                    self.assertIn(name_after_plan, [step.get('name') for step in checks[context_index + 3:]])
+                    self.assertIn(name_after_plan, [step.get('name') for step in checks[plan_index + 2:]])
             for job in doc['jobs'].values():
                 steps = job.get('steps', [])
                 for index, step in enumerate(steps):

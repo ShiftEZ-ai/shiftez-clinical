@@ -28,25 +28,23 @@ def test_public_branding_is_read_field_by_field_with_only_local_images(client_mo
     good = {'short_name': 'KR', 'app_name': 'Rota', 'institution_name': 'Hospital', 'emblem_url': '/api/branding/images/a',
             'wordmark_url': '/api/branding/images/b', 'emblem_alt': '', 'wordmark_alt': 'Hospital', 'revision': 3}
     assert parse(client_modules, good) == good
-    defaults = {**s.BRANDING_DEFAULTS, **{kind + '_url': asset(client_modules, s.BRANDING_DEFAULTS[kind + '_url'])
-                for kind in ('emblem', 'wordmark')}, 'revision': 0}
-    for value in (None, [], 'x', {'revision': 0}):
+    defaults = {**s.BRANDING_DEFAULTS, 'emblem_url': asset(client_modules, s.BRANDING_DEFAULTS['emblem_url']), 'revision': 0}
+    for value in (None, [], 'x', {'revision': 0, 'wordmark_url': ''}):
         assert parse(client_modules, value) == defaults
     hostile = {**good, 'short_name': 'x' * 161, 'app_name': '  ', 'emblem_url': '//evil.example/x.png', 'wordmark_url': 'javascript:alert(1)',
                'emblem_alt': 5, 'revision': 1.5}
     assert parse(client_modules, hostile) == {**good, 'short_name': s.BRANDING_DEFAULTS['short_name'],
         'app_name': s.BRANDING_DEFAULTS['app_name'],
-        'emblem_url': asset(client_modules, s.BRANDING_DEFAULTS['emblem_url']), 'wordmark_url': asset(client_modules, s.BRANDING_DEFAULTS['wordmark_url']),
+        'emblem_url': asset(client_modules, s.BRANDING_DEFAULTS['emblem_url']), 'wordmark_url': s.BRANDING_DEFAULTS['wordmark_url'],
         'emblem_alt': s.BRANDING_DEFAULTS['emblem_alt'], 'revision': 0}
     for url in ('data:image/png;base64,AA', 'https://example.org/a.png', '/a\\b', '/a b'):
         assert parse(client_modules, {**good, 'emblem_url': url})['emblem_url'] == asset(client_modules, s.BRANDING_DEFAULTS['emblem_url'])
 
 
 def test_static_startup_fallbacks_name_the_generated_default_app():
-    # index.html and the web manifest cannot run code: they keep the default name, checked against its one owner.
-    name = s.BRANDING_DEFAULTS['app_name']
+    name = s.BRANDING_DEFAULTS['short_name']
     html = (ROOT / 'apps/web/public/index.html').read_text(encoding='utf-8')
-    assert f'<title>{name} · ' in html and f'<h1 data-brand-name>{name}</h1>' in html
+    assert f' {name}</title>' in html and f'<h1 data-brand-name>{name}</h1>' in html
     # The start-up screen's emblem is the generated default (the app repaints it, like every .brand-emblem).
     assert f'<img class="boot-emblem brand-emblem" src="/assets/{s.BRANDING_DEFAULTS["emblem_url"]}"' in html
     # The web manifest is generated from the active branding by the API (one owner); the page links it there.
@@ -57,12 +55,14 @@ def test_static_startup_fallbacks_name_the_generated_default_app():
     assert f"'{s.BRANDING_DEFAULTS['short_name']} can’t be reached'" in startup
     assert "fetch('/api/branding'" in startup and '`${short} can’t be reached`' in startup
     for kind in ('emblem', 'wordmark'):
-        assert (ROOT / 'apps/web/public/assets' / s.BRANDING_DEFAULTS[kind + '_url'].lstrip('/')).is_file()
+        path = s.BRANDING_DEFAULTS[kind + '_url']
+        if path:
+            assert (ROOT / 'apps/web/public/assets' / path).is_file()
 
 
 APPLY = r"""
-const pending={};
-globalThis.Image=class{set src(u){this.u=u;}get src(){return this.u;}
+const pending={},requests=[];
+globalThis.Image=class{set src(u){this.u=u;requests.push(u);}get src(){return this.u;}
   decode(){return new Promise((ok,no)=>{pending[this.u]={ok:()=>{this.naturalWidth=1;this.naturalHeight=1;ok();},no:()=>no(new Error('x'))};});}};
 const painted={};const slot=k=>[{set textContent(v){painted[k]=v;}}];
 globalThis.document={title:'',querySelectorAll:s=>s==='[data-brand-name]'?slot('name'):s==='[data-brand-short]'?slot('short'):[]};
@@ -79,6 +79,11 @@ out.race={name:m.brand().app_name,emblem:m.brand().emblem_url,alt:m.brand().embl
 await m.applyBranding(b(1,'old'));out.older=m.brand().app_name;
 const failing=m.applyBranding(b(4,'bad'));pending['/e/bad'].no();pending['/w/bad'].no();await failing;
 out.failed={name:m.brand().app_name,emblem:m.brand().emblem_url};
+// A supplied wordmark can be removed without loading an empty URL.
+const supplied=m.applyBranding(b(5,'custom'));pending['/e/custom'].ok();pending['/w/custom'].ok();await supplied;
+const first=m.brand().wordmark_url;
+const cleared=m.applyBranding({...m.brand(),wordmark_url:'',revision:6});pending['']?.ok();await cleared;
+out.wordmark={first,after:m.brand().wordmark_url,requestedEmpty:requests.includes('')};
 console.log(JSON.stringify(out));
 """
 
@@ -92,11 +97,12 @@ def test_branding_never_waits_for_a_logo_and_a_late_answer_never_overwrites_newe
     assert out['race'] == {'name': 'App new', 'emblem': '/e/new', 'alt': 'new'}
     assert out['older'] == 'App new'
     assert out['failed'] == {'name': 'App bad', 'emblem': '/e/new'}
+    assert out['wordmark'] == {'first': '/w/custom', 'after': '', 'requestedEmpty': False}
 
 
 def test_start_up_and_sign_in_never_wait_for_the_branding_read():
     # The boot-ready boundary (account read, sign-in config) awaits no branding read or logo: it is started once, unawaited.
     app = (ROOT / 'apps/web/src/app.ts').read_text(encoding='utf-8')
     assert app.count("'/api/branding'") == 1 and app.count('readBranding()') == 1
-    assert 'const readBranding=()=>void ' in app and '\nreadBranding();' in app
+    assert "void fetch('/api/branding'" in app and '\nreadBranding();' in app
     assert not re.search(r'await[^;]*(readBranding|applyBranding|/api/branding)', app)

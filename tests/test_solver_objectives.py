@@ -48,6 +48,34 @@ def test_reserved_hours_balance_and_configurable_stability_weight(h):
     assert balanced['objective_components']['fairness']['value'] == 1
 
 
+def test_fairness_weight_only_balances_duties_with_a_goal(h):
+    first, second = h.seed['people'][:2]
+    # The default one-duty tolerance would accept the initial two-to-zero split.
+    goal = h.policy({'kind': 'balance_goal', 'metric': 'duties', 'aim': 'equal_share', 'period': 'rota',
+                     'tolerance_units': 0, 'tolerance_percent': 0}, severity='advisory')
+    duty_type = h.configure('assignment_types', {'name': 'Single place duty', 'starts_on': '2020-01-01',
+                            'definition': {'requirements': [{'minimum': 1, 'target': 1, 'maximum': 1}]}})['record']
+    w = h.workspace()
+    for day in (4, 5):
+        w = h.shift(w, typ=duty_type['id'], start=f'2026-10-0{day}T08:00:00+03:00',
+                    end=f'2026-10-0{day}T12:00:00+03:00', people=[first])['workspace']
+    data = h.snapshot(w)
+    data['people'] = {pid: data['people'][pid] for pid in (first, second)}
+    data['generation_options'] = {'mode': 'rebalance', 'scoring': {'weights': {'fairness': 20}}}
+
+    unbalanced = generate({**data, 'policies': []}, 5, deterministic=True)
+    assert unbalanced['weighted_status'] == 'OPTIMAL'
+    assert unbalanced['additions'] == unbalanced['removals'] == []
+    assert unbalanced['compiled_component_values']['fairness'] is None
+    assert unbalanced['summary']['score']['score'] == 100
+
+    balanced = generate({**data, 'policies': [goal]}, 5, deterministic=True)
+    assert balanced['weighted_status'] == 'OPTIMAL'
+    assert len(balanced['removals']) == 1
+    assert [row['participant']['person_id'] for row in balanced['additions']] == [second]
+    assert balanced['compiled_component_values']['fairness'] == 1
+
+
 def test_a_small_quota_miss_no_longer_outweighs_an_unfilled_seat(h):
     # A desired seat on a 30-minute session against an advisory 6-minute hours cap. The quota counted in tenths
     # of an hour cost 4 units against the seat's 1, so the seat stayed empty; desired cover now precedes weighted quality.
@@ -121,6 +149,52 @@ def test_filling_an_empty_rota_prefers_no_changes_without_changing_the_public_sc
     assert kept['summary']['score']['components']['stability']['value'] is None
 
 
+@pytest.mark.parametrize('mode', ['fill_gaps', 'rebalance'])
+@pytest.mark.parametrize('demand', ['minimum', 'type_target', 'scoped_cover', 'pooled_cover', 'quota'])
+def test_fair_share_does_not_add_work_beyond_requested_staffing(h, mode, demand):
+    from .scheduler_departments import apply
+
+    person, other, _ = h.seed['people']
+    requirement = {'minimum': 2}
+    if demand == 'type_target':
+        requirement = {'minimum': 1, 'target': 2}
+    elif demand == 'scoped_cover':
+        h.cover_target(2, {'person_ids': [person, other]})
+        requirement = {'minimum': 1}
+    elif demand == 'pooled_cover':
+        h.policy({'kind': 'minimum_cover', 'minimum': 2, 'aggregation': 'service_group'},
+                 {'service_ids': h.seed['services'], 'person_ids': [person, other]})
+        requirement = {'minimum': 1}
+    elif demand == 'quota':
+        h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+                  'metric': 'duties', 'comparison': 'target', 'amount': 1},
+                 {'person_id': other}, severity='advisory')
+        requirement = {'minimum': 1}
+    typ = h.configure('assignment_types', {'name': 'Requested staffing',
+        'starts_on': '2020-01-01', 'definition': {'requirements': [requirement]}})['record']['id']
+    goal = h.policy({'kind': 'balance_goal', 'metric': 'hours', 'period': 'rota', 'share_by': 'equal',
+                     'tolerance_units': 0, 'tolerance_percent': 0}, severity='advisory')
+    initial = h.shift(h.workspace(), typ=typ, people=[person])['workspace']
+    data = h.snapshot(initial)
+    data['policies'] = [p for p in data['policies']
+                        if p['id'] == goal['id'] or (p['definition']['rule']['kind'] != 'balance_goal'
+                                                       and p['definition']['rule'].get('id') != 'fair_share')]
+    data['generation_options'] = {'mode': mode, 'shortlist_width': 0,
+        'scoring': {'weights': {'coverage': 0, 'rules': 1, 'fairness': 100, 'preferences': 0, 'stability': 0}}}
+
+    result = generate(data, 5, workers=1, deterministic=True)
+    assert result['status'] == 'candidate_feasible', result
+    if demand in {'minimum', 'scoped_cover'}:
+        assert ('staffing' in [row['name'] for row in result['objectives']]) == (demand == 'scoped_cover')
+        assert 'Requested work and minimum staffing precede weighted quality.' in result['optimality_boundary']
+    assigned = {row['person_id'] for row in apply(data, result)['shifts'][0]['participants']}
+    assert len(assigned) == (1 if demand == 'quota' and mode == 'rebalance' else 2), result
+    if demand in {'scoped_cover', 'pooled_cover'}:
+        assert assigned == {person, other}
+    if demand == 'quota':
+        assert other in assigned
+
+
 @pytest.mark.parametrize('seconds, expected', [(7, 7), (0, None)])
 @pytest.mark.parametrize('fair_share', [False, True])
 def test_stop_without_improvement_option_is_honoured(h, monkeypatch, seconds, expected, fair_share):
@@ -128,7 +202,8 @@ def test_stop_without_improvement_option_is_honoured(h, monkeypatch, seconds, ex
     solve, seen = SolverControl.solve, []
     def watched(self, solver, model, tier):
         if tier is not None:
-            seen.append((tier, self.stall_seconds, self.fairness_plateau, self.fairness_stall_seconds, self.context.get('candidates')))
+            name = self.context['objective_names'][tier]
+            seen.append((name, self.stall_seconds, self.fairness_plateau, self.fairness_stall_seconds, self.context.get('candidates')))
         return solve(self, solver, model, tier)
     monkeypatch.setattr(SolverControl, 'solve', watched)
     w = h.shift(h.workspace(), people=[])['workspace']
@@ -143,9 +218,9 @@ def test_stop_without_improvement_option_is_honoured(h, monkeypatch, seconds, ex
     result = generate(data, 5)
     assert result['status'] == 'candidate_feasible', result
     assert result['effective_options']['stop_without_improvement_seconds'] == seconds
-    assert seen and all(value == (None if tier == 0 else expected)
-                        and fairness == (fair_share and tier != 0 and candidates == 'all') and window == 23
-                        for tier, value, fairness, window, candidates in seen)
+    assert seen and all(value == (None if name == 'coverage' else expected)
+                        and fairness == (fair_share and name == 'weighted' and candidates == 'all') and window == 23
+                        for name, value, fairness, window, candidates in seen)
     assert ('fair_share_search' in result) is fair_share
     assert GenerationOptions().stop_without_improvement_seconds == 10
 
