@@ -8,7 +8,7 @@ import {tableColumnMenus} from './table_menu.js';
 import {recordError,unisolated} from './feedback_context.js';
 import {BULK_COLLECTIONS,CAPABILITIES,PERMISSIONS,ROLE_NAMES,ROLE_LABELS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS} from './generated.js';
 import {staleFault} from './stale_bundle.js';
-import {brand,brandSize,suppliedLogo} from './brand.js';
+import {brand,brandImage,paintWordmark} from './brand.js';
 const iconPaths = {
   // Something deviates from the general rule here (an exception, an override, a rota-only change).
   fork:'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12-12a9 9 0 0 1-9 9',
@@ -660,8 +660,8 @@ export function fitRow(row:HTMLElement,steps=['tight','tighter'],clipped=()=>row
   // forcing a layout of the page that is still being built.
   // Relabelled or newly visible actions must refit too; ignore the fitting classes to avoid observing our own work.
   const unsize=observeSize(row.parentElement||row,()=>{row.dataset.fitted='1';if(row.isConnected)fit();});kids.observe(row,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['hidden']});
-  const entry={born:now,seen:false,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
-  setTimeout(()=>{entry.seen=row.isConnected;},0);
+  const entry={born:now,seen:row.isConnected,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
+  if(!entry.seen)setTimeout(()=>{entry.seen=row.isConnected;},0);
 }
 /** The latest reading of a typed or pasted text (Paste names, Paste from Excel): `start()` begins one and outdates
  *  every earlier one at once (call it on each input, before any debounce, and when a reading begins); `current(t)`
@@ -703,18 +703,18 @@ export function iconButton(label: string, name: IconName, action: (event: MouseE
   b.addEventListener('click',event=>{try{const r=action(event);if(r instanceof Promise)r.catch(e=>{reportError(e);});}catch(e){reportError(e);}});
   return b;
 }
-/** The app's and institution's brand as currently applied (brand.ts: the deployment's branding, else the generated
- *  defaults): the emblem (compact: the navigation) and the wordmark (sign-in). New branding repaints these in place. */
-const brandImage=(cls:string,url:string,alt:string)=>{const size=brandSize(url);
-  return el('img',{class:cls+(suppliedLogo(url)?' brand-supplied':''),src:url,alt,...(size?{width:size[0],height:size[1]}:{}),decoding:'async'});};
 /** Decorative beside the app's name (the link or heading it sits in names it). */
 export const brandEmblem=()=>brandImage('brand-mark brand-emblem',brand().emblem_url,brand().emblem_alt);
 /** The product's short name in a heading drawn before the branding may have answered: it follows the branding. */
 export const brandShort=()=>el('span',{'data-brand-short':''},brand().short_name);
 /** The start-up screen's mark (index.html draws the same before the app runs; failures keep it): the emblem, centred. */
 export const bootEmblem=()=>brandImage('boot-emblem brand-emblem',brand().emblem_url,brand().emblem_alt);
-/** The sign-in and account-link screens' brand: the institution's wordmark over the app's name. */
-export const brandRow=()=>el('div',{class:'brand login-brand'},brandImage('brand-wordmark',brand().wordmark_url,brand().wordmark_alt),el('strong',{'data-brand-name':''},brand().app_name));
+/** The app's name with an optional wordmark on sign-in, account linking and department selection. */
+export const brandRow=()=>{
+  const row=el('div',{class:'brand login-brand'},el('strong',{'data-brand-name':''},brand().app_name));
+  paintWordmark(row);
+  return row;
+};
 /** Production or test, as an icon (the footer, sign-in): keyed on the deployment, not ROTA_ENV (DEV runs ROTA_ENV=production
  *  for strict security but is a test deployment). `text` is its name and tooltip; test is gold, production plain.
  *  Not a Tab stop: it does nothing (maintenance, WCAG 2.4.3); its name is read with the footer. */
@@ -983,6 +983,8 @@ function because<T extends HTMLButtonElement>(b:T,why:string,more:Child[]=[],at?
   ensureReasonObserver();
   reasons.set(b,{why,more,at});sayReason(b);return b;
 }
+/** Each held control's reason now: a press says the words it is described with at that moment. */
+const heldWhy=new WeakMap<HTMLElement,string>();
 /** A control in place but not usable yet (DL-007; D59: the whole rota still loading): aria-disabled, so it keeps its
  *  focus and its tip, with `why` as its description; a press only says why again and never runs later. A field is
  *  read-only meanwhile. Drawn again once usable, so it is never released here. */
@@ -990,8 +992,10 @@ export function notYet<T extends HTMLElement>(n:T,why:string):T{
   n.setAttribute('aria-disabled','true');n.dataset.tip=why;if(n instanceof HTMLInputElement)n.readOnly=true;
   // A menu item's reason is its tip and its press (a menu holds only items).
   if(!n.matches('[role^=menuitem]')){sayWhy(n,why);whyOf.get(n)!.classList.add('sr-only');}
+  // Held again (its reason moved on, e.g. the check started): the words change, the one press listener stays.
+  const held=heldWhy.has(n);heldWhy.set(n,why);if(held)return n;
   // Capture, on the control itself: before its own click handler (and the footer's delegated one), which never runs.
-  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(why,'info');},true);  // visible, and said (a toast is a status)
+  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(heldWhy.get(n)!,'info');},true);  // visible, and said (a toast is a status)
   return n;
 }
 /** A disabled button's reason is visible beside it and referenced by aria-describedby. */
