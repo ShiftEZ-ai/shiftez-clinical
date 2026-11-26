@@ -4091,7 +4091,7 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .wk-grid.mo .mo-wk>*{background:var(--sub);border-top:1px solid var(--line-2)}
 .wk-grid.mo .mo-wk>.wk-corner{align-items:flex-start;font-family:var(--mono);position:sticky;left:0;z-index:2!important}  /* a row head: under the day header; SX-14: every week label starts at the same edge */
 .wk-grid.mo .wk-head>.wk-day{padding:6px 8px}
-.wk-grid.mo .wk-cell{display:flex;flex-direction:column;gap:3px;align-items:stretch}
+.wk-grid.mo .wk-cell{display:flex;flex-direction:column;align-items:stretch}  /* the cell's pill gap: 20 px pills at a 24 px pitch (WCAG 2.2 SC 2.5.8 spacing) */
 /* A lane's name gets two lines (the full name is its tooltip), so "Family Medicine Clinic" and "Family Medicine
    Virtual Clinic" stay tellable apart; the swatch sits beside it. */
 .wk-grid.mo .wk-rowhead{flex-direction:row;flex-wrap:nowrap;align-items:flex-start;gap:6px;padding:8px 8px 8px 10px}  /* SX-14: the dot stays beside a name that wraps */
@@ -4622,7 +4622,7 @@ tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
   border:1px solid var(--line-2);background:transparent;color:var(--muted)}
 .rc-strength[data-level=mandatory]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .rc-strength[data-level=inherit]{border-style:dashed;font-weight:500}
-.rc-strength:disabled{cursor:default}
+span.rc-strength{cursor:default}
 .rc-strength.is-idle{visibility:hidden}
 .rc-strength:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rc-lp-numbers .rc-none{align-self:flex-start;max-width:100%;height:auto;min-height:22px;margin-top:0}
@@ -5334,6 +5334,7 @@ button.tl-ag-item{cursor:pointer}
 .export-body .wk-cell{flex-direction:row;flex-wrap:wrap;align-items:flex-start;align-content:flex-start}
 .export-body .wk-cell>*{flex:1 1 100%}
 .export-body .wk-cell>.pchip{flex:0 1 auto;max-width:100%}
+.export-body .wk-grid.mo .wk-cell{gap:3px}  /* paper has no pointer targets: Month keeps its denser fit-page scale */
 .export-offscreen{position:fixed;left:-100000px;top:0}
 @media(max-width:720px){.export-split{flex-direction:column}.export-form{width:auto;max-height:none}.export-preview{flex:none;height:40vh}}
 @media print{
@@ -6261,8 +6262,7 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 }
 /* ---------- Disabled state (last, so a state beats every variant and hover) ----------
    Disabled is tokens, never opacity: text --muted (>= 4.5:1 on every surface, incl. its reason), bordered controls a
-   --subtle fill and --line border, cursor not-allowed. Busy buttons keep their look; a read-only strength chip is a fact.
-   shortcut: .rc-strength opts out by class; upgrade when rule_catalogue.ts renders a read-only chip as a non-button. */
-:is(button,.button,[role=menuitem],[role=option],.picker-row,.sd-option):is(:disabled,.is-disabled,.disabled,[aria-disabled=true]):not([aria-busy=true],.rc-strength){color:var(--muted)}
+   --subtle fill and --line border, cursor not-allowed. Busy buttons keep their look. */
+:is(button,.button,[role=menuitem],[role=option],.picker-row,.sd-option):is(:disabled,.is-disabled,.disabled,[aria-disabled=true]):not([aria-busy=true]){color:var(--muted)}
 :is(.button,.icon-button,.sd-option):is(:disabled,.is-disabled,.disabled,[aria-disabled=true]):not([aria-busy=true],.ghost,.bare){background:var(--subtle);border-color:var(--line)}
  .selection-bar :is(button):is(:disabled,[aria-disabled=true]):not([aria-busy=true]){background:transparent;color:var(--muted-inverse)}  /* inverse bar; a disabled primary drops its fill */

@@ -93,6 +93,7 @@ def test_fill_options_department_scale_stays_within_three_seconds(monkeypatch):
     actor = SimpleNamespace(department_id=workspace.department_id, permits=lambda *roles: True)
     monkeypatch.setattr(staffing, 'scoped', lambda *args: workspace)
     monkeypatch.setattr(staffing, 'domain_snapshot', lambda *args: data)
+    monkeypatch.setattr(staffing, 'assignment_stamp', lambda *args: s.ASSIGNMENT_STAMP_PREFIX + 'a' * 64)
     from apps.api.services import published_changes
     monkeypatch.setattr(published_changes, 'validation_scope', lambda *args, **kwargs: None)
     started = time.perf_counter()
@@ -131,6 +132,7 @@ def test_fill_options_reports_first_page_and_stops_before_remaining_candidates(m
     actor = SimpleNamespace(department_id=workspace.department_id, permits=lambda *roles: True)
     monkeypatch.setattr(staffing, 'scoped', lambda *args: workspace)
     monkeypatch.setattr(staffing, 'domain_snapshot', lambda *args: data)
+    monkeypatch.setattr(staffing, 'assignment_stamp', lambda *args: s.ASSIGNMENT_STAMP_PREFIX + 'a' * 64)
     from apps.api.services import published_changes
     monkeypatch.setattr(published_changes, 'validation_scope', lambda *args, **kwargs: None)
     participant = data['shifts'][0]['participants'][0] if replace else None

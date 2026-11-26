@@ -4,8 +4,10 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from apps.api import commands, models as m
+from apps.api import commands, models as m, snapshots
 from apps.api.db import transaction
+from apps.api.errors import Problem
+from apps.api.services import planning_groups
 from packages.domain import conditions, generation_scope
 from packages.domain.planning_groups import GroupResolver
 from tests.clock_support import freeze_clock
@@ -27,9 +29,12 @@ def test_group_queue_evaluates_population_once_per_person_outside_writer(scale_h
     version = group(h, people=people[:55])
     workspace = h.command('admin', 'workspace.designate', {'reason': REASON},
                           workspace['id'], workspace['revision'])['workspace']
-    evaluations, authority_checks = [], []
+    evaluations, resolutions, authority_checks, stamp_checks, event_checks = [], [], [], [], []
     writing = False
     retry_write, primary = commands.retry_write, GroupResolver.primary
+    authority = planning_groups._generation_group_context
+    stamp = snapshots.preparation_stamp
+    event_currency = snapshots.prepared_event_currency_matches
 
     def writer(*args, **kwargs):
         nonlocal writing
@@ -45,12 +50,27 @@ def test_group_queue_evaluates_population_once_per_person_outside_writer(scale_h
             return evaluate(*args, **kwargs)
         return counted
 
-    def check_authority(*args):
-        authority_checks.append(writing)
+    def resolve_primary(*args):
+        resolutions.append(writing)
         return primary(*args)
 
+    def check_authority(db, *args):
+        authority_checks.append(bool(db.connection().info.get('rota_write')))
+        return authority(db, *args)
+
+    def check_stamp(db, *args):
+        stamp_checks.append(bool(db.connection().info.get('rota_write')))
+        return stamp(db, *args)
+
+    def check_event_currency(db, *args, **kwargs):
+        event_checks.append(bool(db.connection().info.get('rota_write')))
+        return event_currency(db, *args, **kwargs)
+
     monkeypatch.setattr(commands, 'retry_write', writer)
-    monkeypatch.setattr(GroupResolver, 'primary', check_authority)
+    monkeypatch.setattr(GroupResolver, 'primary', resolve_primary)
+    monkeypatch.setattr(planning_groups, '_generation_group_context', check_authority)
+    monkeypatch.setattr(snapshots, 'preparation_stamp', check_stamp)
+    monkeypatch.setattr(snapshots, 'prepared_event_currency_matches', check_event_currency)
     monkeypatch.setattr(generation_scope, 'population_allows', count(generation_scope.population_allows))
     monkeypatch.setattr(generation_scope, 'scope_segments', count(conditions.scope_segments), raising=False)
     job = h.command('admin', 'job.create', {'kind': 'generation', 'workspace_id': workspace['id'],
@@ -58,7 +78,10 @@ def test_group_queue_evaluates_population_once_per_person_outside_writer(scale_h
     assert job['status'] == 'queued'
     assert 0 < len(evaluations) <= len(people)
     assert not any(evaluations)
-    assert authority_checks and all(authority_checks)
+    assert resolutions and not any(resolutions)
+    assert authority_checks == [False, True]
+    assert stamp_checks == [False, True]
+    assert event_checks == [True]
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
@@ -70,15 +93,23 @@ def test_group_queue_rechecks_population_when_membership_changes(h, monkeypatch)
         category_id = membership.category_id
         membership_id = membership.id
     retry_write = commands.retry_write
-    writer_reached = []
+    writer_outcomes = []
 
     def concurrent_edit(*args, **kwargs):
-        if kwargs['context']['command_kind'] == 'job.create':
-            writer_reached.append(True)
+        if kwargs['context']['command_kind'] != 'job.create':
+            return retry_write(*args, **kwargs)
+        if not writer_outcomes:
             with transaction(h.app.state.engine, write=True) as db:
                 db.info['_track_input_changes'] = True
                 db.get(m.Membership, membership_id).ends_on = date.fromisoformat(shift['start'][:10])
-        return retry_write(*args, **kwargs)
+        try:
+            return retry_write(*args, **kwargs)
+        except planning_groups.GenerationAdmissionChanged:
+            writer_outcomes.append('refresh')
+            raise
+        except Problem as refusal:
+            writer_outcomes.append(refusal.code)
+            raise
 
     monkeypatch.setattr(commands, 'retry_write', concurrent_edit)
     refused = h.command('admin', 'job.create', {'kind': 'generation', 'workspace_id': workspace['id'],
@@ -86,8 +117,11 @@ def test_group_queue_rechecks_population_when_membership_changes(h, monkeypatch)
         'generation_scope': {'conditions': {'match': 'all', 'conditions': [
             *tree(person)['conditions'], {'field': 'category_ids', 'values': [category_id]}]}}},
         revision=workspace['revision'], status=422)
-    assert writer_reached == [True]
+    assert writer_outcomes == ['refresh', 'INVALID_SCOPE']
     assert refused['error']['code'] == 'INVALID_SCOPE'
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Job.id).where(m.Job.workspace_id == workspace['id'],
+                                                m.Job.kind == 'generation')) is None
 
 
 def test_batched_population_matches_canonical_scope_across_change_points():

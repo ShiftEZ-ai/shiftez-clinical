@@ -62,6 +62,19 @@ def test_untouched_scope_reuse_requires_identical_input_components(monkeypatch):
     assert planning.assignment_validation_scope(data, before, previous)['previous'] is previous
     data['input_manifest']['components']['mandatory_inputs'] = 'drift'
     assert planning.assignment_validation_scope(data, before, previous) is None
+    data['input_manifest']['components']['mandatory_inputs'] = 'm'
+    capacity_source = 'place_capacity:own_duties'
+    data['input_manifest']['sources'] = {capacity_source: {'hash': 'changed'}}
+    assert planning.assignment_validation_scope(data, before, previous) is None
+    before['input_manifest'] = {'token': 'before', 'sources': {capacity_source: {'hash': 'changed'}}}
+    previous['input_manifest']['token'] = 'before'
+    data['input_manifest']['token'] = 'after'
+    assert planning.assignment_validation_scope(data, before, previous)['previous'] is previous
+    data['input_manifest']['sources'][capacity_source]['hash'] = 'unmatched'
+    assert planning.assignment_validation_scope(data, before, previous) is None
+    data['input_manifest']['sources'][capacity_source]['hash'] = 'changed'
+    before['input_manifest']['token'] = 'unbound'
+    assert planning.assignment_validation_scope(data, before, previous) is None
 
 
 def test_edit_delta_keeps_revision_and_source_currency_and_falls_back_without_scope():
