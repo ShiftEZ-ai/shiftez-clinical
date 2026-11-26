@@ -312,10 +312,10 @@ export function ruleLevels(e:RuleCatalogueEntry,lines:readonly RuleLine[]):strin
   return all.length<=1?all:[...new Set(all.map(v=>v==='mandatory'?'mandatory':'advisory'))];
 }
 /** Captures show the stored strength, including blank values that inherit from broader lines. */
-export function capturedRuleLevels(lines:readonly RuleLine[]):(string|null)[]{
+export function capturedRuleLevels(lines:readonly LineNumbers[]):(string|null)[]{
   return [...new Set(lines.flatMap(line=>Object.entries(line.numbers)
     .filter(([key,number])=>key==='apply'||number?.value!=null)
-    .map(([key,number])=>line.mandatory_reasons?.[key]?'mandatory':number?.level??null)))];
+    .map(([key,number])=>displayedStrength(line,key,number?.level).level)))];
 }
 /** The days a line holds on: none set (or an empty list) is every day, as the server reads it. */
 const daysOf=(l:Pick<RuleLine,'weekdays'>)=>l.weekdays?.length?l.weekdays:[0,1,2,3,4,5,6];
