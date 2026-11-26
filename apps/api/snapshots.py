@@ -159,7 +159,23 @@ def mapped_score_baseline(rows, published, details=None):
     return baseline if matched else None
 
 
-def publication_score_baseline(db, workspace, rows, own_publication=None):
+def generation_role_bindings(db, workspace):
+    """Freeze only the dated, linked role facts used by a scheduling population."""
+    binding, identity = m.RoleBinding, m.Identity
+    rows = db.execute(select(identity.person_id, binding.role, binding.starts_on, binding.ends_on).join(
+        identity, identity.id == binding.identity_id).where(
+        binding.department_id == workspace.department_id, binding.revoked.is_(False),
+        identity.disabled.is_(False), identity.person_id.is_not(None),
+        binding.starts_on <= workspace.ends_on,
+        or_(binding.ends_on.is_(None), binding.ends_on > workspace.starts_on),
+    ).order_by(identity.person_id, binding.role, binding.starts_on, binding.ends_on))
+    result = defaultdict(list)
+    for person, role, starts, ends in rows:
+        result[person].append({'role': role, 'starts_on': starts.isoformat(), 'ends_on': ends.isoformat() if ends else None})
+    return dict(result)
+
+
+def publication_score_baseline(db, workspace, rows=None, own_publication=None):
     """Freeze the named publication's assignments as scoring evidence, never as draft assignments."""
     if workspace.status in ('published', 'superseded'):
         publication = own_publication or db.scalar(select(m.Publication).where(m.Publication.workspace_id == workspace.id))
@@ -168,6 +184,8 @@ def publication_score_baseline(db, workspace, rows, own_publication=None):
     if workspace.origin not in ('import', 'auto') or not workspace.base_publication_id:
         return None
     publication = db.get(m.Publication, workspace.base_publication_id)
+    if rows is None:
+        rows = workspace_shifts(db, workspace.id)
     details = {}
     # The retained snapshot is immutable; later effective-range trimming cannot change this baseline.
     baseline = mapped_score_baseline(rows, publication.snapshot['shifts'], details)
