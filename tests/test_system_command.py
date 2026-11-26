@@ -30,7 +30,7 @@ def test_maintenance_does_not_add_system_role_to_other_account_commands(h, monke
         assert db.get(m.CommandReceipt, result["receipt_id"]).required_roles == ["admin"]
 
 
-@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES))
+@pytest.mark.parametrize("role", sorted(s.EXPLICIT_ROLES - {s.INSTALLATION_ADMIN_ROLE}))
 @pytest.mark.parametrize("permission_roles", [s.PERMISSIONS["access.system_roles"], ("auditor",)])
 def test_maintenance_invites_and_resets_explicit_roles_from_permission_map(h, tmp_path, monkeypatch, role, permission_roles):
     with_users_file(h, tmp_path)

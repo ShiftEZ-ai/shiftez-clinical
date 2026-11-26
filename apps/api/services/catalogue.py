@@ -407,11 +407,11 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
             require(series_context is None, 'STALE_PREVIEW', 'The pending series definitions changed; preview again', 409)
             overlap_preview = preview(db, actor, value, row.id if row else None, disclose=False)
         acknowledgement = (series_context or {}).get('acknowledgement') or payload.overlap_acknowledgement
-        require(preview_only or resolved_occurrence or (series_context or {}).get('preview_only') or not overlap_preview['conflicts']
-                or acknowledgement == overlap_preview['conflict_token'],
-                'SERIES_OVERLAP_ACKNOWLEDGEMENT',
-                'Review and acknowledge every conflicting occurrence before saving this recurrence', 409,
-                json_value(overlap_labels(db, actor, overlap_preview)))
+        if not (preview_only or resolved_occurrence or (series_context or {}).get('preview_only')
+                or not overlap_preview['conflicts'] or acknowledgement == overlap_preview['conflict_token']):
+            details = s.SeriesOverlapPreview.model_validate(overlap_labels(db, actor, overlap_preview)).model_dump(mode='json')
+            raise Problem(409, 'SERIES_OVERLAP_ACKNOWLEDGEMENT',
+                          'Review and acknowledge every conflicting occurrence before saving this recurrence', details)
     if kind == 'date_sets':
         from .date_sets import check_write
         check_write(db, actor, value, row)

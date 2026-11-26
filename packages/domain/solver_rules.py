@@ -16,7 +16,8 @@ from .rule_serialization import stored_definition
 # 36: preserve mandatory quota minima and exclude conflicted supervision from proposals.
 # 38: retain supported probing to avoid false infeasibility in weighted fairness models.
 # 41: keep relative fair share within staffing demand.
-COMPILER_VERSION = 'cp-sat-41'
+# 42: keep weighted service-mode balance within staffing demand.
+COMPILER_VERSION = 'cp-sat-42'
 PLANNING_LIMITS = {'max_sessions': 1500, 'max_people': 500, 'max_period_days': 31}
 
 

@@ -29,6 +29,8 @@ ALL_ROLES = list(s.ROLE_NAMES)
 NON_SERIALIZED_COMMANDS = frozenset({"department_content.seen"})
 COMMAND_PERMISSIONS = {
     "department.create": "department.create",
+    "branding.update": "branding.configure",
+    "branding.undo": "branding.configure",
     **{kind: kind for kind in s.BULK_ITEM_KINDS},
     **dict.fromkeys(('workspace.archive', 'workspace.restore', 'workspace.delete_draft'), 'workspace.archive'),
     **dict.fromkeys(('score.settings', 'score.settings.rollback'), 'planning.configure'),
@@ -100,7 +102,7 @@ def command_roles(command):
             permission = "request.withdraw"
         roles = list(s.PERMISSIONS[permission])
         if kind.startswith("role."):
-            roles += s.PERMISSIONS["access.system_roles"]
+            roles += (*s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
         return list(dict.fromkeys(roles))
     for prefix, canonical in (("catalogue.", "catalogue.update"), ("eligibility.", "eligibility.create"),
                               ("grant.", "grant.create"), ("role.", "role.grant")):
@@ -125,7 +127,7 @@ def command_roles(command):
         return ['approver']
     if kind == "account.end_other_sessions":
         return ALL_ROLES
-    if kind in {'branding.update', 'branding.undo', 'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
+    if kind in {'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
         return ['admin']
     if kind.startswith("planner_view."):
         return sorted(planner_tools.PLANNER_ROLES)
@@ -703,7 +705,10 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
     """Single and nested receipts keep the command's current sensitive-object authority checks."""
     if kind in {'branding.update', 'branding.undo'}:
         from .services import branding
-        branding.require_editor(db, actor)
+        branding.require_editor(actor)
+    if kind in {'role.grant', 'role.restore', 'role.revoke'}:
+        from .services.access import require_role_change
+        require_role_change(db, actor, result['record']['role'], grant=kind != 'role.revoke')
     if kind == 'timeline.rotation':
         from .services import timeline_commands
         timeline_commands.authorize_result(db, actor, result)
@@ -824,11 +829,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     class CheckInputsChanged(Exception):
         """Release the writer before resolving changed scheduling inputs."""
 
-    def check_context(db, actor, workspace, current_data, *, revisions_changed=False):
+    def check_context(db, actor, workspace, current_data):
         current = (actor.identity_id, actor.department_id, workspace.content_revision,
                    workspace.status, workspace.archived_at, current_data['fingerprint'])
-        if current != workspace_check[0] or (revisions_changed and command.kind in {
-                'workspace.submit', 'workspace.approve'}):
+        if current != workspace_check[0]:
             raise Problem(409, 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during the check; the completed check is retained here.',
                 {'current_revision': workspace.revision, 'validation': workspace_check[1],
@@ -1217,7 +1221,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
-            if (command.kind in {'account.invite', 'rule.propose'}
+            if (command.kind in {'account.invite', 'role.grant', 'rule.propose'}
                     or command.kind == 'availability.record' and result['record'].get('self_approved')):
                 target_id = result['record']['id']
             elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
@@ -1309,12 +1313,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     since = m.now()
                     current_data = planning.domain_snapshot(db, workspace,
                                                             current_mandatory=command.kind == 'workspace.submit')
-                    check_context(db, actor, workspace, current_data, revisions_changed=True)
+                    check_context(db, actor, workspace, current_data)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})
+                    checked = workspace_check[1]
                     if command.kind == 'workspace.validate':
                         command = command.model_copy(update={'expected_revision': workspace.revision})
-                    workspace_check = (*workspace_check[:2], current_data, workspace_check[3],
+                    else:
+                        checked = planning.revalidate(db, workspace, store=False, include_internal=True,
+                                                      acquired_data=current_data)
+                    workspace_check = (workspace_check[0], checked, current_data, workspace_check[3],
                                        planning.read_stamp(db, workspace, current_data, since))
     except IntegrityError:
         # Two identical requests can both pass the pre-write receipt read.  The

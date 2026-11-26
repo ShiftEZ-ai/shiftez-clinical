@@ -6,7 +6,7 @@ from apps.api import models as m
 from apps.api.auth import CATALOGUE_READ_ROLES
 from apps.api.db import transaction
 from apps.api.services import leavers
-from packages.contracts.schemas import DEFAULT_CONTACT_TYPES, PersonInput, ROLE_NAMES
+from packages.contracts.schemas import DEFAULT_CONTACT_TYPES, INSTALLATION_ADMIN_ROLE, PersonInput, ROLE_NAMES
 from tests.governance_support import identity
 from tests.test_accounts import invite, users_file, with_users_file
 
@@ -62,6 +62,19 @@ def test_anonymised_leaver_is_absent_from_other_directory_and_people_reads(reque
     admin_row = next(row for row in h.get("admin", "/api/catalogues")["people"] if row["id"] == person["id"])
     assert admin_row["display_name"] == f"Former staff member {person['id'][:8]}"
     assert all(admin_row.get(field, "") == "" for field in leavers.ANONYMISED_FIELDS)
+
+
+def test_anonymising_a_leaver_preserves_the_last_installation_admin(h):
+    person_id = h.seed["people"][0]
+    h.command("operator", "role.grant", {"identity_id": h.seed["identities"]["staff"],
+        "role": INSTALLATION_ADMIN_ROLE, "starts_on": "2020-01-01", "reason": "Synthetic installation grant"})
+    person = next(p for p in h.get("admin", "/api/catalogues")["people"] if p["id"] == person_id)
+    person = h.configure("people", {"display_name": person["display_name"], "active": False},
+                         person_id, person["revision"])["record"]
+    refused = h.command("admin", "person.anonymise", {"reason": "Remove synthetic leaver details"},
+                        person_id, person["revision"], status=409)
+    assert refused["error"]["code"] == "LAST_INSTALLATION_ADMIN"
+    assert h.get("staff", "/api/admin/branding")["can_edit"]
 
 
 def test_anonymise_a_leaver(h, tmp_path):
