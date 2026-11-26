@@ -66,9 +66,9 @@ def test_withdrawn_rows_absent_from_core_snapshots_people_reach_and_counts(h, na
             assert not scope_applies(data, scope, person_id, None, a, b)
         if name == 'memberships':
             assert row['id'] not in {r['id'] for r in department_memberships(data, person_id, actor.department_id, a, b)}
+            current = people.current_people(db, actor, day, person_ids=data['people'])
             assert people.current_people_counts(db, actor, day) == {
-                key: people.current_people(db, actor, day)[key]
-                for key in ('active_people', 'people_without_current_rank')}
+                key: current[key] for key in ('active_people', 'people_without_current_rank')}
         if name == 'eligibilities':
             missing = [f for f in qualification_failures(data, person_id, shift, {}, a, b) if f['code'] == 'ELIGIBILITY_MISSING']
             assert len(missing) == 1 and row['id'] not in missing[0]['existing_record_ids']

@@ -357,28 +357,25 @@ def people_data(db, actor, day, *, last=None):
     work at) for people in the department on `day`, its retained duty contexts, and that day's local bounds."""
     from packages.domain.time import local_midnight
     from packages.domain.validation import person_active_on
+    from .people import period_records
     last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
+    # Dated person records come period-bounded (rotations through the ORM for their mentor); catalogues in one read.
+    data = DomainSnapshot({"organisation": {"timezone": zone}, **period_records(db, department.id, day, last)})
     keyed = {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
              "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
              "services": m.Service, "locations": m.Location}
-    sources = {"memberships": m.Membership, "grants": m.CapabilityGrant,
-               "programme_memberships": m.ProgrammeMembership, "eligibilities": m.Eligibility, **keyed}
-    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in sources.items()})
-    data = DomainSnapshot({"organisation": {"timezone": zone}, **rows})
+    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in keyed.items()})
     for name in keyed:
         data[name] = {r["id"]: r for r in rows[name]}
-    # Rotation records resolve their current mentor through the ORM attachment.
-    data["rotations"] = [record(r) for r in db.scalars(select(m.Rotation).where(m.Rotation.department_id == actor.department_id))]
-    day_key, last_key = day.isoformat(), last.isoformat()
     first_membership = {}
     for row in data["memberships"]:
-        if row["starts_on"] < last_key and (not row.get("ends_on") or day_key < row["ends_on"]):
-            first = max(day, date.fromisoformat(row["starts_on"]))
-            pid = row["person_id"]
-            first_membership[pid] = min(first, first_membership.get(pid, first))
-    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(m.Person.id.in_(first_membership)))
+        first = max(day, date.fromisoformat(row["starts_on"]))
+        pid = row["person_id"]
+        first_membership[pid] = min(first, first_membership.get(pid, first))
+    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(
+                          m.Person.organisation_id == department.organisation_id, m.Person.id.in_(first_membership)))
                       if person_active_on(p.active, p.inactive_from, first_membership[p.id])}
     data["tags"] = tag_data(db, [actor.department_id])
     from apps.api.snapshots import scheduling_inputs
@@ -493,7 +490,11 @@ def policy_reach(db, actor, day, workspace_id=None, starts_on=None, ends_on=None
     else:
         data, a, b = people_period(db, actor, starts_on, ends_on) if starts_on else people or people_data(db, actor, day)
         from .scoring_defaults import seeded_rows
-        policies = seeded_rows(db, [record(p) for p in db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id))])
+        query = select(m.Policy).where(m.Policy.department_id == actor.department_id)
+        # Bound catalogue sources can follow replacement links through retired versions.
+        if not data.get('source_bindings'):
+            query = query.where(m.Policy.status.in_(('active', 'proposed')))
+        policies = seeded_rows(db, [record(p) for p in db.scalars(query)])
         data['policies'] = [p for p in policies if not p['definition'].get('workspace_id')]
         policies = [p for p in with_tags(data)['policies'] if p['status'] in ('active', 'proposed')]
     require(a < b, 'REACH_PERIOD', 'The end date must be after the start date', 422)

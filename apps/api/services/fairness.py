@@ -32,6 +32,7 @@ from packages.domain.time import aware, local_midnight
 from apps.api.snapshots import DomainSnapshot, scheduling_inputs, tag_data
 from .common import scoped
 from .date_sets import data as date_set_data
+from .people import period_records
 from apps.api.services.common import neutral_rota_name
 
 ALL_ROLES = ("coordinator", "approver", "admin")
@@ -654,14 +655,6 @@ def _legacy_history(db, data, policies):
 
 
 # ---- dashboard reads -----------------------------------------------------------------------------------------
-
-def period_records(db, department_id, first, last):
-    return {name: [record(r) for r in db.scalars(select(cls).where(cls.department_id == department_id,
-                cls.starts_on < last, cls.ends_on.is_(None) | (cls.ends_on > first)))]
-            for name, cls in {'memberships': m.Membership, 'eligibilities': m.Eligibility,
-                              'grants': m.CapabilityGrant, 'rotations': m.Rotation,
-                              'programme_memberships': m.ProgrammeMembership}.items()}
-
 
 def department_data(db, actor, first, last, *, include_offers=False, workspace_id=None, include_period_facts=True):
     """The records the condition evaluator needs, for conditions over [first, last) without a rota."""
