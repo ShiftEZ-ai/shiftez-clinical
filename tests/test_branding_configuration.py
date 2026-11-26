@@ -303,8 +303,11 @@ def test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_asse
     image = upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type)
     assert upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type) == image
     assert h.client('staff').get(image['url']).status_code == 404  # staging does not publish
-    saved = h.command('admin', 'branding.update', names(emblem_image_id=image['image_id'],
-        wordmark_image_id=image['image_id'], emblem_alt='Department emblem'), revision=1)
+    settings = names(emblem_image_id=image['image_id'], wordmark_image_id=image['image_id'],
+        emblem_alt='Department emblem')
+    saved = h.command('admin', 'branding.update', settings, revision=1)
+    stale = h.command('admin', 'branding.update', settings, revision=1, status=409)
+    assert stale['error']['code'] == 'STALE_REVISION'
     assert saved['branding']['emblem_url'] == saved['branding']['wordmark_url'] == image['url']
     response = h.client('staff').get(image['url'])
     assert response.status_code == 200 and response.headers['content-type'] == 'image/png'
