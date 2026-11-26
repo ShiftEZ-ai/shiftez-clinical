@@ -473,11 +473,6 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             data['_scope_membership_index'][field, row['person_id'], row.get(field)].append(row)
     from .conditions import resolved_rule_context
     data = resolved_rule_context(data)
-    relative_fair_share = not feasibility_only and options.scoring.weights.fairness > 0 and any(
-        p['definition']['rule']['kind'] == 'balance_goal'
-        and p['definition']['rule'].get('aim', 'equal_share') in {'equal_share', 'max_min'}
-        and p['definition'].get('strength') != 'off'
-        for p in data['policies'])
     data['_candidate_evidence_cache'] = {}
     data['_candidate_evidence_policy_source'] = data['policies']
     data['_policy_name_static'] = {}
@@ -603,13 +598,14 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     by_person, by_shift = defaultdict(list), defaultdict(list)
     # Coverage stays first; advisory instances feed the same normalized components as the score.
     coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
-    staffing_targets = [] if relative_fair_share else None
+    staffing_targets = [] if not feasibility_only else None
     staffing_choices = []
     capped = False
-    cross_duty_demand = relative_fair_share and any(
+    cross_duty_demand = not feasibility_only and any(
         rule['kind'] == 'team_lead_requirement'
         or rule['kind'] == 'block_quota' and rule['comparison'] != 'maximum'
-        or rule['kind'] == 'balance_goal' and rule.get('aim') in {'target', 'min_per_pair'}
+        or (options.scoring.weights.fairness > 0 and rule['kind'] == 'balance_goal'
+            and rule.get('aim') in {'target', 'min_per_pair'})
         for rule in (p['definition']['rule'] for p in data['policies']))
     coverage_floor_rows = []
     diagnostic_domains = {}
@@ -1206,7 +1202,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             continue
         repair_targets = {}
         supervision = definition.get('supervision')
-        mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if relative_fair_share else []
+        mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if not feasibility_only else []
         whole_duty = bool(mutable_people) and all(presence(sid, pid) == [(start, end)] for pid in mutable_people)
         can_cap = (whole_duty and not cross_duty_demand and not supervision and not definition.get('lead')
                    and not is_open_extra_cover(definition) and all(not r['capabilities'] for r in definition['requirements']))
@@ -1590,7 +1586,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         goal_presence, fixed_goals = [], []
         goals = add_score_goals(target_model, target_data, choices, participants, overtime_choices, pairings,
                                focus, levels, leads=lead_terms, presence=goal_presence,
-                               fixed_goals=fixed_goals if staffing_targets is not None else None)
+                               fixed_goals=fixed_goals if staffing_targets is not None and target_options.scoring.weights.fairness else None)
         if fixed_goals:
             staffing_targets.append(q.mean(fixed_goals))
         # Normalize exact goal weights; the complete component is inactive until focused work exists.

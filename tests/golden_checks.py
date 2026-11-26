@@ -213,6 +213,27 @@ def check_interaction(data, ids, spec):
             'bindings': {key: len(value) for key, value in bound.items()}}
 
 
+def check_allocation_cover(data, ids, spec):
+    from packages.domain.score import schedule_score
+
+    expected = spec['expect']
+    overfilled = copy.deepcopy(data)
+    for duty in expected['staffing']:
+        place(overfilled, ids[duty], [ids['p0'], ids['p1']])
+    original_score = schedule_score(data, evaluate(data))['components']['preferences']['value']
+    overfilled_score = schedule_score(overfilled, evaluate(overfilled))['components']['preferences']['value']
+    assert (overfilled_score > original_score) == expected['pressure']['overfilled_preference_score_is_higher']
+
+    seeds = expected['seed_robustness']['seeds']
+    for seed in seeds:
+        result = solve(data, seed)
+        assert result['solver_status'] == 'OPTIMAL', result
+        draft = feasible(data, result)
+        for duty, people in expected['staffing'].items():
+            assert [p['person_id'] for p in shift(draft, ids[duty])['participants']] == [ids[p] for p in people]
+    return {'assertions': {'staffing', 'pressure', 'seed_robustness'}, 'bindings': {'balance': len(expected['staffing'])}}
+
+
 def check_scenario(data, ids, spec):
     if 'safety' in spec['expect']:
         from tests.golden_safety import check_safety
@@ -223,5 +244,5 @@ def check_scenario(data, ids, spec):
     if spec['id'] == 'A-PREF-01':
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
-    return {'A-REST-01': check_rest, 'A-COVER-01': check_cover,
+    return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)
