@@ -17,7 +17,12 @@ def test_shipped_worker_caches_the_complete_bundle_and_keeps_data_on_the_network
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 const origin='https://rota.test', handlers={},stores=new Map(),network=[];
 const key=r=>new URL(typeof r==='string'?r:r.url,origin).href;
-const cache=()=>({entries:new Map(),async addAll(files){for(const f of files)this.entries.set(key(f),new Response(f));},
+const added=[],failing=new Set();
+// addAll as the spec has it (one batch: a non-ok response stores nothing), so only the files kept one by one survive.
+const cache=()=>({entries:new Map(),async addAll(files){for(const f of files){added.push(f);if(failing.has(f))throw new TypeError('not ok');}
+    for(const f of files)this.entries.set(key(f),new Response(f));},
+  async add(f){added.push(f);if(failing.has(f))throw new TypeError('not ok');await new Promise(ok=>setTimeout(ok));this.entries.set(key(f),new Response(f));},
+  async keys(){return [...this.entries.keys()].map(url=>({url}));},
   async match(r){return this.entries.get(key(r))?.clone();},async put(r,v){this.entries.set(key(r),v);}});
 stores.set('rota-shell-v1',cache());stores.set('rota-shell-old',cache());stores.set('another-app',cache());
 const caches={async open(n){if(!stores.has(n))stores.set(n,cache());return stores.get(n);},
@@ -27,7 +32,11 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{URL,Response,caches,
   self:{addEventListener:(n,f)=>handlers[n]=f,skipWaiting:async()=>{skipped=true;},clients:{claim:async()=>{claimed=true;}}},
   fetch:async r=>{network.push(key(r));if(offline)throw new Error('offline');return new Response('network');}});
 async function lifecycle(name){let done;handlers[name]({waitUntil:p=>done=p});await done;}
-await lifecycle('install');assert(skipped);
+// One file fails: the install fails but keeps the rest, so the retry (the next page load) fetches only that file.
+const all=JSON.parse(process.argv[2]);failing.add(all[5]);
+await assert.rejects(lifecycle('install'),/not ok/);assert(!skipped);assert.equal(added.length,all.length);
+added.length=0;failing.clear();
+await lifecycle('install');assert(skipped);assert.deepEqual(added,[all[5]]);
 await lifecycle('activate');assert(claimed);
 const names=await caches.keys(),shell=names.find(n=>n.startsWith('rota-shell-'));
 assert.deepEqual(names.sort(),['another-app',shell].sort());

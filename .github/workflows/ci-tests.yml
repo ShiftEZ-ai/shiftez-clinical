@@ -211,6 +211,7 @@ jobs:
           candidate/.run/reports/
           candidate/.run/traces/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
@@ -223,6 +224,7 @@ jobs:
           candidate/.run/reports/
           candidate/.run/traces/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7

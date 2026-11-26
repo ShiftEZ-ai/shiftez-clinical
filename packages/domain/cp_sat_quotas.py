@@ -13,7 +13,7 @@ from .generation_scope import selected_session_ids
 
 
 def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, leads=None, score_items=None, score_strengths=None, target_group=None,
-               strict_minima=None, diagnostic_domains=None):
+               strict_minima=None, diagnostic_domains=None, staffing_targets=None):
     # Targets, rotation proration, overrides, subjects and context checks stay in
     # the reporting evaluator, including the canonical planning-population audience.
     # Empty work reveals targets without trial schedules.
@@ -188,7 +188,10 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 model.add_max_equality(deviation, [0, difference])
             denominator //= divisor
             clipped = scoring.minimum([deviation, denominator], denominator)
-            score_items.append((score_weight, scoring.ratio(clipped, denominator), 1))
+            loss = scoring.ratio(clipped, denominator)
+            score_items.append((score_weight, loss, 1))
+            if staffing_targets is not None and row['comparison'] in {'minimum', 'target'}:
+                staffing_targets.append(score_weight * loss)
             if score_strengths is not None:
                 score_strengths.append(score_strength)
     for rows in targets.values():

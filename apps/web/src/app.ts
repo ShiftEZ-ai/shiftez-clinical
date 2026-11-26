@@ -58,7 +58,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -125,7 +125,7 @@ import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
-import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,sessionsPanel} from './accounts.js';
+import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,onboardingPanel,sessionsPanel} from './accounts.js';
 import {installFeedback,openFeedback,feedbackPage,SHORTCUT as FEEDBACK_KEY} from './feedback.js';
 import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
@@ -634,11 +634,10 @@ async function showLogin(reason='',resume=''){
   // The account last used on this device: "Continue as <name>", with its password only (or the institutional
   // sign-in), "Use another account", and a remove button for shared computers.
   const known=rememberedAccount(),continuing=known&&(passwords?!!known.username:config.institutional_login)?known:null;
-  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06).
-  const intro=el('p',{hidden:!continuing},continuing?'Continue where you left off.':'');
+  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06); the account card says who.
   // Test or production as the footer shows it: an icon in the card's corner, named in its tooltip.
   const production=config.deployment==='production';
-  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),intro,reason?el('div',{class:'notice warning',role:'status'},reason):null);
+  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),reason?el('div',{class:'notice warning',role:'status'},reason):null);
   // Institutional sign-in returns to this page, as the built-in one does; Remember me goes with it.
   const back:Record<string,string>=location.hash.length>1?{next:location.hash}:{};
   const startUrl=(remembered:boolean)=>'/auth/start?'+new URLSearchParams({...back,...(remembered?{remember_me:'true'}:{})});
@@ -650,7 +649,7 @@ async function showLogin(reason='',resume=''){
     :el('a',{class:'button primary',href:startUrl(false)},continuing?'Continue as '+continuing.name:'Continue with institutional sign-in')):null;
   institutional?.addEventListener('click',()=>{institutional.setAttribute('href',startUrl(remember.input.checked));});
   const chip=continuing?el('div',{class:'login-account'},avatar(continuing.name),
-    el('div',{class:'who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
+    el('div',{class:'who',id:'login-account-who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
     iconButton('Remove '+continuing.name+' from this device','close',()=>{forgetAccount();void showLogin(reason);})):null;
   if(chip)formWrap.append(chip);
   let password:ReturnType<typeof field>|null=null,forget:(()=>void)|null=null;
@@ -659,6 +658,7 @@ async function showLogin(reason='',resume=''){
     // provider); an unknown one behaves like any password account.
     const username=field('Username or email','text',continuing?.username||'',{required:true,autocomplete:'username',spellcheck:false,autocorrect:'off',autocapitalize:'none'});password=field('Password','password','',{id:'current-password',required:true,autocomplete:'current-password'});
     password.wrap.querySelector('label')!.htmlFor=password.input.id;
+    if(continuing)password.input.setAttribute('aria-describedby','login-account-who');  // whose password, said with the field
     // The password step keeps the username in the form, hidden (password managers read it); continuing, the account
     // chip says who, else the name typed with "Not you? Change".
     const pw=password,submit=el('button',{type:'submit',class:'button primary'},'Continue');
@@ -669,7 +669,7 @@ async function showLogin(reason='',resume=''){
     let identified=false,onChip=!!continuing;
     const showPassword=(on:boolean)=>{identified=on;pw.wrap.hidden=!on;pw.input.required=on;username.wrap.hidden=on||onChip;
       whoRow.hidden=!on||onChip;who.textContent=username.input.value.trim();submit.textContent=on?'Sign in':'Continue';};
-    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,remember.wrap,error,submit);
+    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,error,remember.wrap,submit);
     let department:Field<HTMLSelectElement>|null=null;
     const forgetDepartment=()=>{department?.wrap.remove();department=null;};
     showPassword(false);
@@ -682,12 +682,18 @@ async function showLogin(reason='',resume=''){
       submit.disabled=true;error.replaceChildren(message);
       waitTimer=window.setInterval(()=>{left--;if(!form.isConnected||left<=0){window.clearInterval(waitTimer);submit.disabled=false;error.replaceChildren();return;}count.textContent=String(left);},1000);};
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
-    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s)wait(s);else error.replaceChildren(note((err as Error).message,'error',err));};
+    // A wrong password for the remembered account names that account, with the way to another one beside it.
+    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s){wait(s);return;}
+      const named=identified&&onChip&&continuing&&err instanceof ApiError&&err.code==='INVALID_LOGIN'?continuing:null;
+      const message=note(named?`Unable to sign in as ${named.name} with this password.`:(err as Error).message,'error',err);
+      if(named)message.append(' ',el('button',{type:'button',class:'link-button',onclick:useAnother},'Use another account'));
+      error.replaceChildren(message);};
     // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal keeps what was
     // typed and shows its reason; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
       const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();
-      pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');
+      pw.input.removeAttribute('aria-invalid');
+      if(onChip)pw.input.setAttribute('aria-describedby','login-account-who');else pw.input.removeAttribute('aria-describedby');
       const accountActions=[...formWrap.querySelectorAll<HTMLButtonElement>('.login-account button,.login-switch')];accountActions.forEach(b=>{b.disabled=true;});
       if(department)department.input.disabled=true;
       const done=busy(submit,identified?'Signing in…':'Continuing…');
@@ -708,18 +714,18 @@ async function showLogin(reason='',resume=''){
         refused(err);
         if(err instanceof ApiError&&err.code==='FORBIDDEN'){department?.input.focus();return;}
         if(err instanceof ApiError&&err.code==='UNPROVISIONED_IDENTITY')return;
-        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby','login-error');pw.input.focus();pw.input.select();return;}
+        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby',onChip?'login-account-who login-error':'login-error');pw.input.focus();pw.input.select();return;}
       rotatedNow();
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);
     // A local countdown belongs to the name it was for: another account starts with Continue available (the server still decides).
     if(continuing)forget=()=>{stopWait();onChip=false;forgetDepartment();username.input.value='';pw.input.value='';remember.input.checked=false;
-      error.replaceChildren();pw.input.removeAttribute('aria-invalid');showPassword(false);username.input.focus();};
+      error.replaceChildren();pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');showPassword(false);username.input.focus();};
   }
   // "Use another account": back to the generic sign-in (the empty form, or the plain institutional button).
-  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:(e:Event)=>{
-    chip?.remove();(e.currentTarget as HTMLElement).remove();intro.hidden=true;
+  function useAnother(){chip?.remove();another?.remove();
     if(institutional&&!passwords)institutional.textContent='Continue with institutional sign-in';
-    if(forget)forget();else institutional?.focus();}},'Use another account'):null;
+    if(forget)forget();else institutional?.focus();}
+  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:useAnother},'Use another account'):null;
   if(institutional)formWrap.append(...(passwords?[institutional]:[remember.wrap,institutional]));
   if(another)formWrap.append(another);
   if(!config.institutional_login&&!passwords)formWrap.append(note('Identity integration is not configured. Contact the institutional operator.','error'));
@@ -1573,7 +1579,13 @@ async function rotateIfDue(){let last=0;try{last=Number(localStorage.getItem(ROT
 /** The deployment's branding, read once per page load and never waited for: sign-in and start-up draw at once with what
  *  is shown (the generated defaults until it answers; unread or unreadable, they stay). A saved change or its Undo
  *  applies its reply at once. */
-const readBranding=()=>void request<unknown>('/api/branding').then(v=>applyBranding(parseBranding(v)),()=>{});
+const readBranding=()=>{
+  // This public read still applies when boot clears the signed-out session.
+  const stop=new AbortController(),timer=setTimeout(()=>stop.abort(),READ_TIMEOUT);
+  void fetch('/api/branding',{credentials:'omit',cache:'no-store',signal:stop.signal})
+    .then(r=>r.ok?r.json():null).then(v=>{if(v)void applyBranding(parseBranding(v));},()=>{})
+    .finally(()=>clearTimeout(timer));
+};
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(String(d?.kind).startsWith('branding.')&&d.result?.branding)void applyBranding(parseBranding(d.result.branding));});
 async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
@@ -2060,9 +2072,14 @@ const checkSaid=()=>checkingWords(checkJob?checkJob.status:checkSync?'running':'
 /** The job's status moved (queued → running): every check line drawn says it in place, without a redraw. */
 const sayCheck=()=>{for(const line of document.querySelectorAll<HTMLElement>('[data-check-line]')){const said=checkSaid();
   if(line.dataset.checkLine!==said){line.dataset.checkLine=said;line.childNodes[1].textContent=said+' · ';line.querySelector('button')?.setAttribute('aria-label','Cancel: '+said.toLowerCase());}}
-  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();};
+  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();
+  // Submit, Approve and Publish held for this check say what its line says (schedulePage checkHold).
+  for(const b of document.querySelectorAll<HTMLElement>('[data-check-hold]'))notYet(b,checkSaid());};
 /** Someone is mid-task (a dialog, a popover, a field, a session panel): a redraw would rebuild it under them. */
-const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]'))||!!document.activeElement?.closest('.wk-panel');
+const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]')&&!document.activeElement.matches('.wk-panel input[type=search]'))
+  // A session panel is mid-task while it saves or a reason or confirm is open; idle (after its save), the check's result
+  // draws beside it at once (its redraw keeps the panel and its focus), so the next edit never waits for it.
+  ||!!document.querySelector('.wk-panel :is(.save-mark.saving,.wk-save-slot .spinner,form,.armed)');
 /** The bound passed with the job still queued (at once when no worker answers): the page takes the check over, once; a
  *  job it may not take over again stops saying it waits (drawn once nobody is mid-task). */
 const checkDue=(id:string)=>{const job=checkJob;if(job?.id!==id||!autoChecking)return;
@@ -2116,7 +2133,9 @@ const readWorkers=(id:string,w:Row,then:()=>void)=>{let read=workerReads.get(id)
     while(workerReads.size>8){const old=workerReads.keys().next().value!;workerReads.delete(old);jobWorkers.delete(old);}}
   void read.then(then,()=>{});};
 /** Each status read of the joined job: its words follow it. */
-const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;const was=checkStalled();checkJob.status=String(j.status);
+const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;
+  if(j.status==='failed'&&j.error_code==='STALE_INPUTS')return;  // maybe replaced by a newer edit's check: checkEnded says
+  const was=checkStalled();checkJob.status=String(j.status);
   if(was)void redraw();else sayCheck();};  // picked up after all: the pill gives way to the running check
 /** One rota check: a validation job (waited for, read each second) when workers serve jobs, else synchronous.
  *  shortcut: a worker lost after its probe leaves the job queued (Cancel still stops it). */
@@ -2141,8 +2160,11 @@ async function runCheck(w:Row,key:string,existing?:Row):Promise<Row|null>{
 /** The joined job ended. Set aside by someone else (their Cancel, or a take-over from another page on this rota): the
  *  rota's check is read first, and only one that is not current stopped (rule_check_api.ts checkEndedStopped, DL-024).
  *  A stale or failed job names why, as a refused synchronous check does (maintenance cause via its input changes). */
-async function checkEnded(last:Row,w:Row,key:string):Promise<Row>{
+async function checkEnded(last:Row,w:Row,key:string):Promise<Row|null>{
   if(checkCancelled===key)return last;  // this person's own Cancel: "Not checked" (autoCheck)
+  // Failed as stale because the rota was edited again (queue_validation): the newer edit's check counts, so this one is
+  // dropped like a check superseded before it started, never drawn as stopped, also before the newer check is on the page.
+  if(last.error_code==='STALE_INPUTS'&&await rotaMeta(String(w.id)).then(d=>d.workspace.revision>w.revision,()=>false))return null;
   const current=last.status==='cancelled'&&await rotaCheckCurrent(String(w.id));
   if(!checkEndedStopped(last.status,current))return last;
   const details=last.error_code==='STALE_INPUTS'?await get<Row>(`/api/jobs/${last.id}/input-changes?offset=0&limit=1`).then(r=>({changed_facts:r.changes}),()=>undefined):undefined;
@@ -2179,7 +2201,10 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
-  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key)return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key)return;autoChecking=false;
+  // Superseded by a newer edit's check on this rota (autoCheckKey moved on): this one's result is dropped, never drawn,
+  // and the checking state stays the newer check's.
+  const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
+  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
@@ -2469,7 +2494,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
-  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  const liveCheck=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive:null;
+  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,liveCheck?stagedCoverage(liveCheck.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
   if(!draftData&&!(source?may('publications.read_team'):team))shown.participantsFiltered=true;
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
@@ -2613,9 +2639,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     const stalled=unstarted||autoChecking&&draft&&checkJob?.key.startsWith(w.id+':')===true&&checkStalled();
     const unfinished=unstarted?CHECK_NOT_STARTED:stalled?checkingWords(checkJob!.status,Date.now()-checkJob!.since,jobWorkers.get(checkJob!.id)):draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id?checkingWords('failed'):'';
     const refused=!stalled&&!!unfinished&&checkStop!.refused;
+    // This person cancelled the latest revision's check: nothing is queued, so it is "Not checked", never "Waiting to check".
+    const cancelled=!unfinished&&draft&&(!fresh||serverChecking(w.validation))&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':');
     if(unfinished){validate.lastElementChild!.textContent=refused?unfinished:unfinished+' · '+CHECK_AGAIN;validate.disabled=refused;delete validate.dataset.tip;
       if(refused)validate.setAttribute('aria-describedby',CHECK_STOPPED_WHY);}  // DL-007: a disabled control says why (the line above the grid)
-    else if(draft&&!fresh&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':')){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
+    else if(cancelled){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
     // A recheck keeps the last counts with a spinner (R1: counts never blank) beside its elapsed time and Cancel (B7).
     const checking=autoChecking&&draft&&(!fresh||!!checkJob||serverChecking(w.validation))&&!stalled,longCheck=checkLine;
     // maintenance: a stored check that covers only the last edit (someone's, its complete check queued with the workers) is
@@ -2630,7 +2658,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(partialCheck&&!workersKnown())void reprobeWorkers(w.id+':'+w.revision);  // the stale "no worker" answer is asked again
     // A published rota has nothing to check in place (its changes are amendments): its footer is the published layer's.
     const kind=footerCheck({stalled,checking:!!checking,provisional:!!provisional,checked:!!w.validation,counts:!!fixSum,current:fresh,
-      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished,whole:!!data,draft});
+      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished||cancelled,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
     rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
@@ -2640,6 +2668,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
       :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
+    // Submit, Approve and Publish wait while the latest revision is not checked, whatever the check's state (running,
+    // waiting, stalled, not started, cancelled, failed): held in place (D59 notYet), saying what the footer says.
+    const checkHold=reading||!draft||fresh&&!serverChecking(w.validation)?'':kind==='checking'?checkSaid():kind==='provisional'?checkingWords(provisional!.status)
+      :kind==='waiting'?waitingWord('queued'):kind==='not-checked'?TERMS.notChecked
+      :['stalled','stale','check-now'].includes(kind)?validate.lastElementChild!.textContent!.split(' · ')[0]:TERMS.needsCheck;
+    if(checkHold)for(const b of workflow.children)if(b instanceof HTMLButtonElement){notYet(b,checkHold);if(kind==='checking')b.dataset.checkHold='';}
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
@@ -2688,11 +2722,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   }
   const planning=w?planningOf(whole):null;
   const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
-  // Phones always take the smallest step: icon + count pills and icon-only actions on one row under the title.
-  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // A load that finishes after you have moved on must not take over the new page's top bar.
   if(mySerial!==renderSerial)return;
   swapPlannerBar(bar,target);
+  // Fit after the swap so fitRow can release the outgoing toolbar's observers.
+  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // The bar now names the new rota or view. A body still on screen from another rota or view goes to its skeleton at
   // once, toolbar included, so the two states never mix while this one loads (S-27); a live redraw of the same view
   // keeps what it shows.
@@ -2858,6 +2892,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
+  viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
   // The window on screen until the whole rota lands (wholeRota): read-only, its writes held; then the page draws it whole.
   // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it is read,
@@ -2890,6 +2926,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekView.matchPeople=schedView==='people'?[]:about.length?about:byText?rows('people').filter(p=>byText(fullNameOf(p))).map(p=>String(p.id)):[];
   // An empty view tells the filters hiding everything (Show all) from a period with nothing in it (S-01).
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
+  // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
+  weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
+  // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
+  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
@@ -8114,7 +8154,8 @@ function noteRead(n:Row){return !!(n.read_at||n.acknowledged_at);}
  *  card and offered by the Kind filter. Weekly availability is a request (kind request). */
 const NOTE_KIND:Record<string,[IconName,string,string]>={feedback:['message','teal','Feedback'],publication:['check','violet','Rota published'],review:['shield','indigo','Review'],
   bulk_review:['shield','indigo','Review'],returned:['shield','amber','Returned'],request:['leave','sky','Request'],availability:['leave','amber','Leave or absence'],swap:['swap','pink','Swap'],
-  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule']};
+  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule'],
+  generation_finished:['sparkle','teal',TERMS.autoSchedule]};
 const noteKindOf=(n:Row)=>NOTE_KIND[n.kind]||['bell','slate','Other'] as [IconName,string,string];
 const ackNote=(n:Row)=>command('notification.ack',{reason:'Explicit acknowledgement by recipient'},n.id,n.revision);
 const ackAll=()=>command('notification.ack_all',{reason:'Read'});  // one request for the whole inbox
@@ -8133,7 +8174,8 @@ async function openNote(n:Row){
 function openNoteTarget(n:Row){
   const l=n.link||{};
   if(l.staged_id){void openStaged(String(l.staged_id)).catch(e=>{if(!sessionChanged(e))notify((e as Error).message,'error',undefined,e);});void loadNavBadges(true);return;}  // a change sent for independent review
-  if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
+  if(n.kind==='generation_finished'&&l.workspace_id)void rotaMeta(l.workspace_id).then(d=>openPaletteRota(d.workspace,true)).catch(reportError);
+  else if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
   else if(l.publication_id){publicationId=l.publication_id;navigate('published');}else if(l.workspace_id){ctx().setWorkspace(l.workspace_id);navigate('schedule');}
   else if(l.swap_id||l.request_id)navigate('requests?open='+encodeURIComponent(l.swap_id||l.request_id));else if(n.kind==='availability')navigate('requests');
   else if(n.kind==='rule'&&permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))navigate(ruleNoticeOf(n).hash);else navigate('inbox');
@@ -8257,7 +8299,8 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
   const accounts:Record<string,Row>=access.accounts||{};
   const admin=permits(CAPABILITY.ADMIN);
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
-  target.append(sectionHead('People who can sign in','',invite,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
+  const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
+  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
   /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
    *  identity.bind checks against): shown, not typed. Without one there is nothing to bind to: the settings say how. */
   async function hospitalSignIn(){

@@ -4,6 +4,7 @@ from threading import Event
 
 import anyio.to_thread
 import httpx
+from fastapi.testclient import TestClient
 import pytest
 from starlette.staticfiles import StaticFiles
 
@@ -167,3 +168,18 @@ def test_static_paths_cannot_escape_the_served_directory(tmp_path, path):
             response = await client.get('/assets' + path)
             assert response.status_code == 404 and 'Synthetic private data' not in response.text
     asyncio.run(scenario())
+
+
+def test_versioned_asset_directory_is_not_a_file(tmp_path):
+    version = 'a' * 64
+    bundle = tmp_path / version
+    bundle.mkdir()
+    (bundle / 'app.js').write_text('export {};', encoding='utf-8')
+    app = main.FastAPI()
+    app.mount('/assets', IndependentStaticFiles(directory=tmp_path))
+    with TestClient(app) as client:
+        assert client.get(f'/assets/{version}/app.js').status_code == 200
+        for suffix in ('', '/'):
+            path = f'/assets/{version}{suffix}'
+            assert client.get(path).status_code == 404
+            assert client.head(path).status_code == 404

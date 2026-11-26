@@ -49,10 +49,12 @@ def test_live_refreshes_after_changes_elsewhere_keep_the_heap_bounded(people_at_
     page.on("request", lambda r: asked.append(r) if COVERAGE.search(r.url) else None)
 
     def coverage_read(step):
-        """Runs `step`, then waits for the coverage read it starts to land (a published year's check takes seconds)."""
+        """Runs `step`, then waits for the coverage read it starts to land (a published year's check takes seconds) and
+        for the redraw that draws it: a measure taken while that page is still being built counts it as detached."""
         n = len(asked)
         with page.expect_request_finished(lambda r: r in asked[n:], timeout=180_000):
             step()
+        expect(page.locator("#schedule-view[data-live-checked]")).to_be_attached(timeout=120_000)
 
     def pulse_after_change(n):
         def seen():
