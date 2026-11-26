@@ -1530,8 +1530,7 @@ export async function assignCandidate(w:Row,shift:Row,candidate:Row,result:Row,o
   const leaving=shift.participants.find((p:Row)=>p.id===result.replace_assignment_id);
   const added=plan?.proposal?{...plan.proposal}:{...result.slot,person_id:candidate.person_id,fixed:false,supervisor_person_id:null,team_lead:joinsAsLead(w,shift.id,candidate)};
   const back=onGrid(shift,[...(leaving?[leaving.person_id]:[])],nameOf(candidate));
-  // Bound to the fingerprint the candidates were checked under (PERF async fill-options, contract c): a rota that moved
-  // since fails closed (STALE_PREVIEW), never saves an unchecked placement.
+  // Use the candidate check's binding token so changed scheduling inputs refuse the save.
   return saveParticipants(w,shift,result.replace_assignment_id?shift.participants.map((p:Row)=>p.id===result.replace_assignment_id?added:keep(p)):[...shift.participants.map(keep),added],overrideReason,
     fingerprint).catch(e=>{back();throw e;});
 }
@@ -1769,7 +1768,7 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
     pick.input.addEventListener('change',()=>{const chosen=pick.input.value;if(!chosen)return;pick.input.disabled=true;
       void fillOptions(askBody(result.issue_gone?'':findingKey,chosen)).then(fresh=>{if(!list.isConnected)return;const next=(fresh.candidates as Row[]).find(x=>x.person_id===c.person_id);
         if(fresh.workspace_revision!==w.revision||!next){notify('The rota changed. Open the session again to see who can work it now.','warning');return;}
-        result.candidates=(result.candidates as Row[]).map(x=>x===c?{...next,source_fingerprint:fresh.source_fingerprint}:x);render();},
+        result.candidates=(result.candidates as Row[]).map(x=>x===c?{...next,assignment_stamp:fresh.assignment_stamp,source_fingerprint:fresh.source_fingerprint}:x);render();},
         e=>{pick.input.disabled=false;notify((e as Error).message,'error',undefined,e);});});
     return pick.wrap;
   }
