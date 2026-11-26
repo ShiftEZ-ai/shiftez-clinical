@@ -39,6 +39,8 @@ def test_month_is_the_week_grid_in_bands_with_more(browser, live_server, h):
         cell = grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · "))
         # Comfortable shows two people, then "+3", which lists the whole lane for that day.
         expect(cell.locator(".pchip:not(.more)")).to_have_count(2)
+        tops = cell.evaluate("c=>[...c.children].filter(n=>n.matches('.pchip,.team-box,.wk-open-row')).map(n=>n.getBoundingClientRect().top)")
+        assert len(tops) >= 2 and all(round(b - a, 1) >= 24 for a, b in zip(tops, tops[1:])), tops  # WCAG 2.2 SC 2.5.8 spacing: 20 px pills at a 24 px pitch
         more = cell.get_by_role("button", name=re.compile(r"^3 more entries on 4 Oct 2026, .+: show all$"))
         expect(more).to_have_text("+3")  # +N everywhere, never "+N more" (DESIGN D8, 1aeb88039); its name says the rest
         more.click()
