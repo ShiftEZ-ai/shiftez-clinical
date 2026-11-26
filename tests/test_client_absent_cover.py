@@ -4,8 +4,9 @@ import json
 import subprocess
 
 
-def cover(client_modules, shift, row):
-    data = {'workspace': {'validation': {'coverage': [row]}}, 'shifts': [shift]}
+def cover(client_modules, shift, row, *, participants_filtered=False):
+    data = {'workspace': {'validation': {'coverage': [row]}}, 'shifts': [shift],
+            'participantsFiltered': participants_filtered}
     script = (f"const m=await import({json.dumps((client_modules/'planner_week.js').as_uri())});"
               "const c=m.coverOf(JSON.parse(process.argv[1])).get('s');"
               "console.log(JSON.stringify({available:c.available,open:c.open,gap:c.gap}));")
@@ -41,3 +42,10 @@ def test_nobody_absent_keeps_the_checked_places(client_modules):
     # Another kind of conflict (a double booking) is not an absence: the person still fills the place.
     other = session(double_booking_conflicts=[{'person_id': 'p1', 'code': 'TIME_OVERLAP'}])
     assert cover(client_modules, other, ONE) == {'available': 1, 'open': 0, 'gap': False}
+
+
+def test_filtered_staff_participants_keep_the_authoritative_coverage(client_modules):
+    full = {**ONE, 'required': 3, 'scheduled': 3, 'available_eligible': 3, 'places_needed': 3, 'places_filled': 3}
+    gap = {**full, 'status': 'gap', 'available_eligible': 2, 'places_filled': 2, 'places_open': 1}
+    assert cover(client_modules, session(), full, participants_filtered=True) == {'available': 3, 'open': 0, 'gap': False}
+    assert cover(client_modules, session(), gap, participants_filtered=True) == {'available': 2, 'open': 1, 'gap': True}
