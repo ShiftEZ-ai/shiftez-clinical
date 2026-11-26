@@ -1734,7 +1734,6 @@ async function renderPage(live=false){
   // A planner redraw (view, filter, live update, save) keeps the shell and the current grid on screen until the new
   // one is ready: no "Loading…" flash, and the grid keeps its scroll position. Other pages rebuild the shell.
   const keep=view==='schedule'&&!schedSubPage()&&!changedPage&&!!document.querySelector('.topbar .planner-bar')&&!!document.querySelector('#main .planner-main');
-  const scroll=keep?plannerScroll():null;
   // Configuration: switching sections keeps the old section on screen (inert) until the new one is ready, instead of a
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
@@ -1816,7 +1815,7 @@ async function renderPage(live=false){
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
-      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
+      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){const scroll=plannerScroll();keepFocus(main,()=>main.replaceChildren(body));scroll();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
       void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
@@ -4480,22 +4479,33 @@ function myLeave():Promise<Span[]>{
   if(!leaveRead||leaveRead.who!==me!.identity_id||Date.now()-leaveRead.at>60000)leaveRead={at:Date.now(),who:me!.identity_id,rows:get<{availability:Row[]}>('/api/availability').then(r=>r.availability.filter(a=>!a.retracted).map(a=>({start:Date.parse(a.start),end:Date.parse(a.end)})))};
   return leaveRead.rows;
 }
-/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read before a redraw;
- *  the result puts it back when the redrawn view is the same one (rota, saved view, layout and layer: its viewKey),
- *  so another rota or view starts at the top. The list's table keeps its own (table_view). */
+/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read as a redraw
+ *  swaps the view in (not when it starts: a scroll made while it loads is the one kept); the result puts it back when
+ *  the redrawn view is the same one (rota, saved view, layout and layer: its viewKey), so another rota or view starts
+ *  at the top. The list's table keeps its own (table_view). */
 let stopScrollRestore=()=>{};
+// The put-back in force: where it aims, and where it last left each scroller (short of the aim until the grid has its height).
+let scrollKept:{view:string,kept:number[][],left:number[][]}|null=null;
+// Still where the put-back left it, or as near as its content now allows (a collapsed grid clamps its scroll): nothing else moved it.
+const scrollHeld=(n:HTMLElement,p:number[])=>[[n.scrollTop,p[0],n.scrollHeight-n.clientHeight],[n.scrollLeft,p[1],n.scrollWidth-n.clientWidth]]
+  .every(([now,was,max])=>Math.abs(now-was)<=1||Math.abs(now)<Math.abs(was)&&Math.abs(now)>=max-1);
 function plannerScroll(){
-  stopScrollRestore();  // the previous draw's put-back must not fight this one's reading
   const at=()=>[...document.querySelectorAll<HTMLElement>('#main .planner-main,#main .planner-main .wk-scroller')];
-  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),kept=at().map(n=>[n.scrollTop,n.scrollLeft]);
-  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];}});
+  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),was=scrollKept?.view===view?scrollKept:null;
+  // A scroller the last put-back is still bringing to its place keeps that aim (read now, it would say the clamped place).
+  const kept=at().map((n,i)=>was?.left[i]&&scrollHeld(n,was.left[i])?was.kept[i]:[n.scrollTop,n.scrollLeft]),left:number[][]=[];
+  stopScrollRestore();  // the previous draw's put-back must not fight this one
+  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];left[i]=[n.scrollTop,n.scrollLeft];}});
   // The grid's fitting (observeSize: pill names, toolbar rows) changes its height after the draw, however many frames
   // later a loaded machine takes, which clamped the scroll just put back (Month to the top): each size change of what
   // scrolls puts it back again, until the person moves it, another view is shown or the next draw reads it afresh.
   const watch=()=>{for(const n of at())for(const e of ['wheel','pointerdown','keydown','touchstart'])n.addEventListener(e,()=>stopScrollRestore(),{once:true,passive:true});};
   return ()=>{if(!view||key()!==view)return;put();watch();
-    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view)put();else stopScrollRestore();}));
-    stopScrollRestore=()=>{stops.forEach(s=>s());stopScrollRestore=()=>{};};};
+    // Only while every scroller is where the put-back left it: a scroll made since (the page's own too, which fires none
+    // of the events above) is newer than the aim and ends it.
+    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view&&at().every((n,i)=>!left[i]||scrollHeld(n,left[i])))put();else stopScrollRestore();}));
+    scrollKept={view,kept,left};
+    stopScrollRestore=()=>{stops.forEach(s=>s());scrollKept=null;stopScrollRestore=()=>{};};};
 }
 // A published session (the published layer) opens read-only; set by the Schedule for the sessions it draws.
 let readOnlySession:(s:Row)=>void=()=>{};
