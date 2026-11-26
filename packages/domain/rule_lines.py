@@ -1017,18 +1017,50 @@ def has_value(line, key):
     return number is not None and (key == 'apply' or number.get('value') is not None)
 
 
+def _weekly_workload(kind, settings):
+    """Match the basic calendar-week workload measures across limit and quota slots."""
+    if kind in ('max_duties', 'max_hours'):
+        if settings['window'] == 'week' and settings.get('group_by', 'all') == 'all':
+            metric = 'duties' if kind == 'max_duties' else 'scheduled_hours'
+            return metric, 'include' if settings['include_overtime'] else 'exclude'
+    elif kind == 'block_quota' and settings['window_alignment'] == 'calendar_week':
+        metric = settings.get('metric')
+        if (metric in ('duties', 'scheduled_hours') and not settings['assignment_type_ids']
+                and not settings['participation'] and not settings['prorate_partial_windows']
+                and not settings['prorate_department_days']):
+            return metric, settings['overtime']
+    return None
+
+
 def _group(rule, line, k, keys, *, default_partition=None):
     """A number's group key: the line's where, days, hours and what number `k` counts there (the old kind it writes
     beside `keys` and that kind's settings, a quota's block aside). Lines share a number only within one group."""
     entry = _entry(rule)
-    kind = _slot(entry, k, rule, line, keys)['kind']
-    given = resolved_settings(kind, _settings(rule, line).get(kind, {}))
+    slot = _slot(entry, k, rule, line, keys)
+    kind = slot['kind']
+    settings = _settings(rule, line)
+    given = resolved_settings(kind, settings.get(kind, {}))
     counts = {f: given.get(f) for f in entry['line_settings'][kind]
               if not (kind == 'balance_goal' and f in FAIR_SHARE_DIALS)
               and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))}
     if kind == 'allocation_overtime':
         counts.pop('volunteer_required', None)  # Volunteering changes permission, not the duty a line applies to.
-    partition = ((line.get('source_bindings') or {}).get(k) or {}).get('precedence_partition')
+    bindings = line.get('source_bindings') or {}
+    partition = (bindings.get(k) or {}).get('precedence_partition')
+    weekly = _weekly_workload(kind, {**given, **slot['fixed']})
+    numbers = line.get('numbers') or {}
+    if (weekly is None and kind == 'block_quota' and k not in numbers
+            and 'max' in numbers and not settings.get('block_quota')):
+        limit = _slot(entry, 'max', rule, line, list(numbers))
+        limit_kind = limit['kind']
+        weekly = _weekly_workload(limit_kind, resolved_settings(
+            limit_kind, {**settings.get(limit_kind, {}), **limit['fixed']}))
+    if weekly is not None:
+        kind, counts = 'weekly_workload', weekly
+        if k not in numbers:
+            partitions = {pin['precedence_partition'] for key, pin in bindings.items() if key in numbers}
+            if len(partitions) == 1:
+                partition = next(iter(partitions))
     if partition is None:
         partition = default_partition
     return json.dumps([partition, _canonical_tree(line.get('where')), sorted(line.get('weekdays') or range(7)), line.get('start_time') or '00:00',
@@ -1480,7 +1512,8 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
         return None
     scope = valid['scope']
     if winners:
-        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])}
+        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])
+                  and _slot(_entry(d['rule']), numbers[0][2], d['rule'], lines[w], list(lines[w]['numbers']))['kind'] == kind}
         people = sorted({p for w in direct for p in named_people(lines[w])})
         dynamic = [guard or source_key(policy, lines[w]) for w, guard in winners if w not in direct]
         extra = ([{'field': 'person_ids', 'op': 'none', 'values': people}] if people else []) + (
