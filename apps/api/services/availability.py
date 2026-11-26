@@ -3,6 +3,7 @@ from sqlalchemy import and_, case, false, func, literal, or_, select, true, unio
 from sqlalchemy.orm import aliased, defer
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+from typing import get_args
 from packages.contracts import schemas as s
 from packages.domain.time import aware
 from packages.domain.validation import ROTATION_LEAVE_KINDS, rotation_leave_findings
@@ -24,6 +25,7 @@ UPDATE_SNAPSHOT_FIELDS = (*UPDATE_FIELDS, 'counts_as_unavailable', 'leave_type',
 RECORDED_FACT_KINDS = frozenset({'actual_absence', 'external_commitment', 'off_duty'})
 LEAVE_APPROVAL_REQUEST_KINDS = frozenset({'leave', 'absence_report'})
 REQUEST_AVAILABILITY_KINDS = LEAVE_APPROVAL_REQUEST_KINDS | {'meeting'}
+EDITABLE_REQUEST_KINDS = frozenset(get_args(s.LeaveInput.model_fields['kind'].annotation))
 
 
 def redact_rotation_leave_findings(findings, *, rotation_ids, availability_ids, request_ids=()):
@@ -389,6 +391,49 @@ def require_request_person(actor, person_id):
             "FORBIDDEN", "Staff may submit only their own requests", 403)
 
 
+def _ordinary_request_values(db, actor, value, original=None, *, undo_snapshot=None):
+    person_access(db, actor, value.person_id)
+    require_request_person(actor, value.person_id)
+    require((value.end - value.start).days <= 366, "INTERVAL_TOO_LONG", "Requests are bounded to one year")
+    require(value.kind == 'leave' or value.leave_type_id is None, 'LEAVE_TYPE_NOT_APPLICABLE', 'Only leave requests use a leave type')
+    same_type = original is not None and value.kind == original.kind and value.leave_type_id == original.leave_type_id
+    if undo_snapshot is not None:
+        type_id = value.leave_type_id
+        if type_id is not None:
+            scoped(db, m.LeaveType, type_id, actor)
+        counts_as_unavailable = undo_snapshot['counts_as_unavailable']
+    elif same_type:
+        type_id, counts_as_unavailable = original.leave_type_id, original.counts_as_unavailable
+    else:
+        typ = leave_types.resolve(db, actor, value.leave_type_id, required=value.kind == 'leave')
+        type_id, counts_as_unavailable = (typ.id, typ.counts_as_unavailable) if typ else (None, True)
+    competing = select(m.RequestRecord.id).where(
+        m.RequestRecord.department_id == actor.department_id, m.RequestRecord.person_id == value.person_id,
+        m.RequestRecord.status.in_(("submitted", "approved")))
+    if original is not None:
+        competing = competing.where(m.RequestRecord.id != original.id)
+    duplicate = db.scalar(competing.where(
+        m.RequestRecord.kind == value.kind, m.RequestRecord.leave_type_id == type_id,
+        m.RequestRecord.start == value.start, m.RequestRecord.end == value.end).limit(1))
+    require(duplicate is None, "REQUEST_DUPLICATE", "This exact request is already waiting or approved. Open the existing request.",
+            409, {"request_id": duplicate})
+    warnings = []
+    findings = rotation_leave_conflicts(db, actor, absence=value) if value.kind == 'leave' else []
+    require_rotation_leave(findings)
+    warnings.extend(finding['message'] for finding in findings)
+    if value.kind == 'leave':
+        requests = competing.where(m.RequestRecord.kind == 'leave',
+            m.RequestRecord.start < value.end, m.RequestRecord.end > value.start)
+        absences = select(m.Availability.id).where(
+            m.Availability.department_id == actor.department_id, m.Availability.person_id == value.person_id,
+            m.Availability.kind.in_(leave_types.LEAVE_KINDS), m.Availability.retracted.is_(False),
+            m.Availability.start < value.end, m.Availability.end > value.start)
+        if db.scalar(requests.limit(1)) or db.scalar(absences.limit(1)):
+            warnings.append('This overlaps existing waiting or approved leave, or a recorded absence.')
+    values = {**value.model_dump(), 'leave_type_id': type_id, 'counts_as_unavailable': counts_as_unavailable}
+    return values, findings, warnings
+
+
 def create_request(db, actor, command):
     require_role(actor, "staff", "coordinator")
     if command.payload.get("kind") == "absence_report":
@@ -402,36 +447,7 @@ def create_request(db, actor, command):
         outbox(db, actor, "request:" + row.id, "request", {"request_id": row.id, "person_id": row.person_id,
                "request_status": row.status, "request_kind": row.kind})
         return {"record": record(row), "warnings": [], "message": "Overtime availability submitted for a coordinator's decision."}
-    value = s.LeaveInput.model_validate(command.payload)
-    person_access(db, actor, value.person_id)
-    require_request_person(actor, value.person_id)
-    require((value.end - value.start).days <= 366, "INTERVAL_TOO_LONG", "Requests are bounded to one year")
-    require(value.kind == 'leave' or value.leave_type_id is None, 'LEAVE_TYPE_NOT_APPLICABLE', 'Only leave requests use a leave type')
-    typ = leave_types.resolve(db, actor, value.leave_type_id, required=value.kind == 'leave')
-    duplicate = db.scalar(select(m.RequestRecord.id).where(
-        m.RequestRecord.department_id == actor.department_id, m.RequestRecord.person_id == value.person_id,
-        m.RequestRecord.kind == value.kind, m.RequestRecord.leave_type_id == (typ.id if typ else None),
-        m.RequestRecord.start == value.start, m.RequestRecord.end == value.end,
-        m.RequestRecord.status.in_(("submitted", "approved"))).limit(1))
-    require(duplicate is None, "REQUEST_DUPLICATE", "This exact request is already waiting or approved. Open the existing request.",
-            409, {"request_id": duplicate})
-    warnings = []
-    findings = rotation_leave_conflicts(db, actor, absence=value) if value.kind == 'leave' else []
-    require_rotation_leave(findings)
-    warnings.extend(finding['message'] for finding in findings)
-    if value.kind == 'leave':
-        requests = select(m.RequestRecord.id).where(
-            m.RequestRecord.department_id == actor.department_id, m.RequestRecord.person_id == value.person_id,
-            m.RequestRecord.kind == 'leave', m.RequestRecord.status.in_(['submitted', 'approved']),
-            m.RequestRecord.start < value.end, m.RequestRecord.end > value.start)
-        absences = select(m.Availability.id).where(
-            m.Availability.department_id == actor.department_id, m.Availability.person_id == value.person_id,
-            m.Availability.kind.in_(leave_types.LEAVE_KINDS), m.Availability.retracted.is_(False),
-            m.Availability.start < value.end, m.Availability.end > value.start)
-        if db.scalar(requests.limit(1)) or db.scalar(absences.limit(1)):
-            warnings.append('This overlaps existing waiting or approved leave, or a recorded absence.')
-    values = {**value.model_dump(), 'leave_type_id': typ.id if typ else None,
-              'counts_as_unavailable': typ.counts_as_unavailable if typ else True}
+    values, findings, warnings = _ordinary_request_values(db, actor, s.LeaveInput.model_validate(command.payload))
     row = m.RequestRecord(department_id=actor.department_id, created_by=actor.identity_id, **values)
     db.add(row)
     db.flush()
@@ -440,6 +456,49 @@ def create_request(db, actor, command):
     return {"record": leave_types.names(db, actor.department_id, [record(row, exclude=("private_reason",))])[0],
             "warnings": warnings, 'conflicts': findings, "message": "Request submitted. No availability or published rota has changed."
             + (" Warning: " + " ".join(warnings) if warnings else "")}
+
+
+def edit_request(db, actor, command):
+    row = scoped(db, m.RequestRecord, command.target_id, actor)
+    require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can change this request', 403)
+    expected(row, command.expected_revision)
+    require(row.status == 'submitted' and row.kind in EDITABLE_REQUEST_KINDS,
+            'WORKFLOW_STATE', 'Only a waiting leave or other request can be changed', 409)
+    before = {name: getattr(row, name) for name in s.LeaveInput.model_fields}
+    for name in ('start', 'end'):
+        before[name] = aware(before[name])
+    undo_snapshot = None
+    if command.kind == 'request.undo_edit':
+        undo = s.RequestEditUndo.model_validate(command.payload)
+        receipt = scoped(db, m.CommandReceipt, undo.receipt_id, actor)
+        latest = receipt.result.get('record', {})
+        require(receipt.actor_id == actor.identity_id and receipt.command_kind == 'request.edit'
+                and latest.get('id') == row.id and latest.get('revision') == row.revision
+                and receipt.result.get('_request_edit_previous'), 'NOT_FOUND', 'Request change not found', 404)
+        undo_snapshot = receipt.result['_request_edit_previous']
+        payload = {**before, **undo_snapshot['fields']}
+        if row.private_undo_note is not None:
+            payload['private_reason'] = row.private_undo_note
+    else:
+        payload = command.payload
+    value = s.LeaveInput.model_validate(payload)
+    require(value.person_id == row.person_id, 'REQUEST_PERSON_CHANGED', 'Keep the same person on this request', 422)
+    values, findings, warnings = _ordinary_request_values(db, actor, value, original=row, undo_snapshot=undo_snapshot)
+    previous = {name: old for name, old in before.items() if values[name] != old}
+    require(bool(previous), 'NOTHING_TO_CHANGE', 'Change the dates, type or reason before saving')
+    row.private_undo_note = None
+    if undo_snapshot is None:
+        row.private_undo_note = previous.pop('private_reason', None)
+        db.info['_request_edit_previous'] = {'fields': json_value(previous), 'counts_as_unavailable': row.counts_as_unavailable}
+    for name, changed in values.items():
+        setattr(row, name, changed)
+    row.revision += 1
+    result = {'record': leave_types.names(db, actor.department_id, [record(row, exclude=('private_reason',))])[0],
+              'conflicts': findings, 'warnings': warnings}
+    if undo_snapshot is None:
+        result['undo'] = {'kind': 'request.undo_edit', 'target_id': row.id, 'expected_revision': row.revision,
+                          'payload': {'receipt_id': db.info['receipt_id']}}
+    return result
 
 
 def decision_scope(db, actor, cls, *, include_independence=True, approval_context=None):
@@ -590,6 +649,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
         bump_inputs(db, actor, availability=True)
     row.decision_reason = value.reason
     row.decided_at = m.now()
+    row.private_undo_note = None
     row.revision += 1
     # A decision undone and made again is a new event (the revision tells them apart).
     outbox(db, actor, f"request-decision:{row.id}" + (f":{row.revision}" if row.revision > 2 else ""), "request",

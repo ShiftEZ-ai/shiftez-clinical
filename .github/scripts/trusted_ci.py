@@ -24,6 +24,7 @@ from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
+TOP_LEVEL_TEST = policy.re.compile(r"tests/test_[\w-]+\.py")
 
 
 def settings(*, plan=None):
@@ -58,14 +59,6 @@ def output(values):
             destination.write(key + "=" + str(value) + "\n")
 
 
-def require_pr_merge(data, git, candidate):
-    pr = data["pull_request"]
-    base, head = policy.commit(pr["base"]["sha"]), policy.commit(pr["head"]["sha"])
-    if (candidate != policy.commit(os.environ["GITHUB_SHA"])
-            or git("rev-list", "--parents", "-n", "1", candidate).decode().split() != [candidate, base, head]):
-        raise ValueError("PR candidate must be the event merge of the target base and head")
-
-
 def select():
     data = policy.decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     kind = os.environ["GITHUB_EVENT_NAME"]
@@ -97,13 +90,12 @@ def quarantine_revision(branch, default, base, candidate):
     return base if branch == "main" and default != "main" else candidate
 
 
-def pr_scope(data, git, trusted_sha, candidate):
+def pr_scope(data, git, trusted_sha, base, candidate):
     pr = data["pull_request"]
     branch = pr["base"]["ref"]
     if ((branch != policy.default_branch(data) and not policy.release_branch(branch))
             or any(label["name"] == "full-ci" for label in pr["labels"])):
         return None
-    base = policy.commit(pr["base"]["sha"])
     changed = pr_changed_files(base, candidate, git)
     if any(policy.protected(path.encode()) or path.rsplit("/", 1)[-1] == "generated.ts"
            or path.startswith(("migrations/", "packages/contracts/")) or path.endswith((".lock", "-lock.json"))
@@ -126,7 +118,7 @@ def pr_scope(data, git, trusted_sha, candidate):
 def ordinary_test_module(path, before, after, inventory):
     """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
     if (after is None or path in inventory["product_imports"]
-            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
+            or not TOP_LEVEL_TEST.fullmatch(path)):
         return False
     try:
         if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
@@ -138,7 +130,10 @@ def ordinary_test_module(path, before, after, inventory):
 
 def affected_files(changed, files):
     required = PR_SMOKE | (changed & files)
-    if not PR_SMOKE <= files:
+    # The guard scans top-level Python tests without importing them.
+    if any(TOP_LEVEL_TEST.fullmatch(path) for path in changed):
+        required.add("tests/test_cpu_budget.py")
+    if not required <= files:
         return None
     if not changed:
         return required
@@ -154,6 +149,14 @@ def affected_files(changed, files):
 def plan(base, measurement):
     candidate = hosted.git("rev-parse", "HEAD")
     candidate_tree = hosted.git("rev-parse", "HEAD^{tree}")
+    event = None
+    if (not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
+            and os.getenv("TRUSTED_BOOTSTRAP") != "true"):
+        event = policy.event()
+        merge_base = policy.pr_test_base(event, candidate)
+        branch = event["pull_request"]["base"]["ref"]
+        if branch == policy.default_branch(event) or policy.release_branch(branch):
+            base = merge_base
     if measurement:
         root = pinned_root()
         if (candidate, candidate_tree) != (root["sha"], root["tree"]):
@@ -173,15 +176,11 @@ def plan(base, measurement):
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
     selected_files = None
-    pull_request = not measurement and os.getenv("GITHUB_EVENT_NAME") == "pull_request"
-    if pull_request and os.getenv("TRUSTED_BOOTSTRAP") != "true":
-        event = policy.event()
-        require_pr_merge(event, policy.git, candidate)
-        if not context["bootstrap"]:
-            trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
-            changed = pr_scope(event, policy.git, trusted_sha, candidate)
-            if changed is not None:
-                selected_files = affected_files(changed, set(files))
+    if event is not None and not context["bootstrap"]:
+        trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
+        changed = pr_scope(event, policy.git, trusted_sha, base, candidate)
+        if changed is not None:
+            selected_files = affected_files(changed, set(files))
     if selected_files is not None:
         result["selection"] = {"reason": "affected"}
         files = sorted(selected_files)
@@ -206,7 +205,7 @@ def census_files(plan, files):
     return set(files)
 
 
-def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False):
+def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False, trace=False):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -274,6 +273,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             collected = json.loads(census.read_text(encoding="utf-8"))
         # The parent retains the collection snapshot; the test process cannot change this in-memory copy.
         env.pop("TRUSTED_COLLECTION_OUTPUT")
+        env["PW_TRACE_MODE"] = "on" if trace else "off"
         code = subprocess.call([*command, "-n", workers, "--dist", "worksteal", "--hosted-deselected-output=" + str(deselected),
                                 "--junitxml=" + str(raw)], env=env)
         if flags['canaries'] and code != 1:
@@ -309,8 +309,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
 
 
 def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
-    def attempt(selected, path, options, parallelism, before, *, partial=False):
-        code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
+    def attempt(selected, path, options, parallelism, before, *, partial=False, trace=False):
+        code = invocation(selected, suite, path, options, parallelism, before, partial=partial, trace=trace)
         files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
         return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
 
@@ -320,7 +320,7 @@ def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, 
         failures = maker.retry_nodes(original, listed)
         if failures:
             path = report.with_name(report.stem + "-retry.xml")
-            first["retry"] = attempt(failures, path, [], "0", None)
+            first["retry"] = attempt(failures, path, [], "0", None, trace=suite == "browser")
             canaries.recovered_nodes(report, first, failures, allow_retry=True)
     return first
 

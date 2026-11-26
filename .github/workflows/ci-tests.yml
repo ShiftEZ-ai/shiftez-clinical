@@ -12,6 +12,8 @@ jobs:
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
       ROTA_ALLOW_TEST_ROLES: 'yes'
       PW_TRACE_DIR: .run/traces
+      PW_SCREENSHOT_DIR: .run/failure-screenshots
+      PW_TRACE_MODE: 'off'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
       SUITE: ${{ inputs.suite }}
       CI_UNIT_WORKERS: ${{ vars.CI_UNIT_WORKERS }}
@@ -202,7 +204,9 @@ jobs:
         path: |-
           candidate/.run/reports/
           candidate/.run/traces/
+          candidate/.run/failure-screenshots/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
@@ -214,7 +218,9 @@ jobs:
         path: |-
           candidate/.run/reports/
           candidate/.run/traces/
+          candidate/.run/failure-screenshots/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7

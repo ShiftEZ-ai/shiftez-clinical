@@ -22,6 +22,7 @@ from .db import current_request_parent, liveness_write, log_row_lock_diagnostic
 # Bound concurrent 64 MiB verification/rehash work within the API's 1 GiB memory budget.
 PASSWORD_VERIFICATIONS = BoundedSemaphore(4)
 LOGIN_ACCOUNT_BUCKET_COUNT = 1 << 16
+_PASSWORD_SESSION_REFUSALS = {"DEPARTMENT_REQUIRED", "UNPROVISIONED_IDENTITY", "FORBIDDEN"}
 CATALOGUE_READ_ROLES = PERMISSIONS["catalogue.read"]
 log = logging.getLogger("rota.auth")
 
@@ -425,7 +426,8 @@ def login_event(db, keys, outcome, correlation_id, session_id=None, *, window, k
     if outcome != "success":
         from .rate_limit import hit
         # Untrusted input shares outcome counters; callers can request one retained row per attempt.
-        subject = keys[0] if known_identity and outcome in {"INVALID_LOGIN", "DEPARTMENT_REQUIRED", "SIGN_IN_BUSY"} else "rejected"
+        account_outcome = outcome in _PASSWORD_SESSION_REFUSALS or outcome in {"INVALID_LOGIN", "SIGN_IN_BUSY"}
+        subject = keys[0] if known_identity and account_outcome else "rejected"
         hits, _ = hit(db.connection(), "login-audit:" + outcome, subject, window, now())
         if hits != 1 and not record_each:
             return
@@ -681,16 +683,17 @@ def password_login(engine, data, peer: str, settings, *, user_agent=None, correl
             try:
                 values = issue_session(db, current_identity, data.department_id, settings, user_agent=user_agent, peer=peer,
                                        correlation_id=correlation_id, method="password", remember_me=data.remember_me)
+            except Problem as exc:
+                if exc.code in _PASSWORD_SESSION_REFUSALS:
+                    problem = exc
+            else:
                 if previous_token:
                     previous = db.scalar(select(Session).where(Session.token_hash == digest(previous_token)).with_for_update())
                     if previous and not previous.revoked:
                         revoke_session(previous)
                         prior_identity = db.get(Identity, previous.identity_id)
                         session_event(db, previous, prior_identity.person_id, "auth.session_revoke", correlation_id=correlation_id)
-            except Problem as exc:
-                if exc.code == "DEPARTMENT_REQUIRED":
-                    problem = exc
-        if values is not None or problem.code == "DEPARTMENT_REQUIRED":
+        if values is not None or problem.code != "INVALID_LOGIN":
             _release_failure_reservation(db)
         login_event(db, keys, "success" if values else problem.code, correlation_id, values["session_id"] if values else None,
                     window=window, known_identity=bool(current_account or current_identity))

@@ -945,7 +945,12 @@ def activation_shared_inputs(db, org):
 
 
 def prepared_snapshot_inputs(db, org):
-    """Reuse frozen preparation inputs; independently reacquire them in the final writer."""
+    """Reuse frozen preparation inputs or the fast edit writer's own input projection."""
+    memo = db.info.get('_assignment_reply_inputs')
+    if memo is not None:
+        if org.id not in memo:
+            memo[org.id] = snapshot_inputs(db, org)
+        return memo[org.id]
     state = db.info.get('_planning_preparation')
     if state is None or state['replay']:
         return snapshot_inputs(db, org)
@@ -1068,7 +1073,7 @@ def _draft_catalogue_refs(db, workspace):
 def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_overrides,
                       current_scheduling, mandatory_rules, current_mandatory, shared_inputs,
                       scope_interval_cache, rule_map_bindings, current_goals=False, current_generation_defaults=False,
-                      draft_inputs=None, draft_refs=None, reuse_catalogue=False):
+                      draft_inputs=None, draft_refs=None, reuse_catalogue=False, live_memberships=False):
     if current_goals:
         from .workspace_baselines import workspace_generation_context
         department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
@@ -1138,6 +1143,9 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                     validity_baseline=validity_baseline)["policies"]
                 if captured != effective:
                     shared_inputs['_rule_map_policies'] = (captured, effective)
+            if live_memberships and workspace.status == 'published':
+                # Rank previews compare current cover under the issued rules.
+                shared_inputs = {**shared_inputs, 'memberships': live_inputs['memberships']}
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
@@ -1351,7 +1359,8 @@ def _edit_snapshot_context(db, workspace, sources, options):
     draft = _verified_baseline(db, workspace)
     refs = _draft_catalogue_refs(db, workspace) if draft[0] is not None else None
     refs_key = tuple(tuple(ids) for ids in refs) if refs is not None else None
-    key = refs_key, options['operational'], options['mandatory_rules'], options['current_mandatory']
+    key = (refs_key, options['operational'], options['mandatory_rules'], options['current_mandatory'],
+           options['live_memberships'])
     held = sources.get('context')
     if held is not None and held[0] == key:
         result, department_settings = pickle.loads(held[1])
@@ -1448,13 +1457,14 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     rule_map_bindings: bool = False, include_manifest: bool = True,
                     include_manifest_sources: bool = True,
                     fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
-                    _event_now=None) -> dict:
+                    _event_now=None, live_memberships: bool = False) -> dict:
     current_scheduling = current_scheduling or current_goals
     options = dict(operational=operational, policy_overrides=policy_overrides, fact_overrides=fact_overrides,
                    current_scheduling=current_scheduling, mandatory_rules=mandatory_rules,
                    current_mandatory=current_mandatory, shared_inputs=shared_inputs,
                    scope_interval_cache=scope_interval_cache, rule_map_bindings=rule_map_bindings,
-                   current_goals=current_goals, current_generation_defaults=current_generation_defaults)
+                   current_goals=current_goals, current_generation_defaults=current_generation_defaults,
+                   live_memberships=live_memberships)
     if _edit_sources is None:
         context = _snapshot_context(db, workspace, **options)
     else:
@@ -1637,8 +1647,12 @@ def _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, option
     return held[1]
 
 
-def domain_snapshot(db, workspace, *args, **kwargs):
+def domain_snapshot(db, workspace, *args, edit_sources=None, **kwargs):
     """Reuse detached preparation inputs only after checking current relational currency."""
+    if edit_sources is not None:
+        # One stamped assignment shares inputs only within its writer transaction.
+        db.flush()
+        return _domain_snapshot(db, workspace, *args, _edit_sources=edit_sources, **kwargs)
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')

@@ -38,10 +38,10 @@ def test_approver_phone_home_lists_the_request_waiting_and_names_desktop_work(br
         main = page.locator('#main')
         request = main.locator('.home-needs-list li[data-need=requests]')
         expect(request).to_contain_text('Leave request')
-        expect(request.get_by_role('button', name='Review', exact=True)).to_be_visible()
+        expect(request.get_by_role('button', name='Review, Leave request,')).to_be_visible()
         # A rule change is Rules work (desktop): it still counts, and the line says what it is.
         expect(main.locator('.home-elsewhere')).to_have_text('1 more item needs a desktop: Rule change')
-        request.get_by_role('button', name='Review', exact=True).click()
+        request.get_by_role('button', name='Review, Leave request,').click()
         expect(page).to_have_url(re.compile(r'#requests\?status=waiting$'))
         expect_loaded(page, 'requests')
         # Grouped by status, a card does not repeat its group's value (table_view.ts card, 0b98c6416): the heading says it.
