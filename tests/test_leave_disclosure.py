@@ -174,6 +174,8 @@ def test_absence_report_privacy_matrix_runs_on_sqlite(h, mode):
 
 def test_migration_adds_the_setting_defaulting_to_type(tmp_path):
     """Data safety: 0057 adds one column in place; existing departments show the leave type."""
+    from .migration_support import add_historical_admin
+
     from alembic import command
     from scripts.manage import alembic_config, migrate
     url = 'sqlite:///' + str(tmp_path / 'before.db')
@@ -185,6 +187,7 @@ def test_migration_adds_the_setting_defaulting_to_type(tmp_path):
                        "VALUES (:id, 1, '2026-01-01', 'Org', 'Asia/Riyadh', 6, 1, 1)"), {'id': org})
         c.execute(text("INSERT INTO departments (id, revision, created_at, organisation_id, name, generation_defaults) "
                        "VALUES (:id, 1, '2026-01-01', :o, 'Dept', '{}')"), {'id': dept, 'o': org})
+        add_historical_admin(c, dept)
     engine.dispose()
     migrate(url)
     engine = make_engine(url)
