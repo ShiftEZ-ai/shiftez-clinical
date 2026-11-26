@@ -62,6 +62,34 @@ def test_the_assign_is_bound_to_the_candidates_fingerprint(client_modules):
     assert log['final']['assign'] == 'f1'  # sent as expected_fingerprint (a supervised trainee's own trial would win)
 
 
+def test_assign_sends_the_checked_stamp_and_the_workspace_revision(client_modules):
+    script = f"""const planner=await import({json.dumps((client_modules / 'planner_week.js').as_uri())});
+globalThis.window=Object.assign(new EventTarget(),{{setTimeout,clearTimeout}});
+globalThis.document={{cookie:'',querySelectorAll:()=>[],createElement:()=>({{setAttribute(){{}},
+  classList:{{contains:()=>false,add(){{}},remove(){{}}}}}})}};
+const sent=[];
+globalThis.fetch=async(path,options)=>{{
+  sent.push(JSON.parse(options.body));
+  return new Response('{{"validation":{{"error_count":0}}}}',{{headers:{{'Content-Type':'application/json'}}}});
+}};
+const w={{id:'w1',revision:4}},shift={{id:'s1',participants:[]}};
+const result={{slot:{{start:'start',end:'end'}},source_fingerprint:'legacy',assignment_stamp:'assign:base'}};
+for(const candidate of [
+  {{person_id:'p1'}},
+  {{person_id:'p2',assignment_stamp:'assign:fresh',source_fingerprint:'fresh'}},
+  {{person_id:'p3',source_fingerprint:'fresh-legacy'}},
+])await planner.assignCandidate(w,shift,candidate,result);
+console.log(JSON.stringify(sent.map(row=>[row.kind,row.expected_revision,row.expected_fingerprint])));"""
+    out = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True,
+                         text=True, timeout=15)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [
+        ['shift.update', 4, 'assign:base'],
+        ['shift.update', 4, 'assign:fresh'],
+        ['shift.update', 4, 'fresh-legacy'],
+    ]
+
+
 def test_the_panels_options_go_with_the_same_ask(client_modules):
     # The session panel's replace and chosen supervisor are fields of the one request (FillOptionsInput), on the job too;
     # its search filters the answer on the client.

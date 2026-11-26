@@ -165,6 +165,8 @@ def test_fill_options_reports_first_page_and_honours_generic_cancellation(monkey
     actor = SimpleNamespace(department_id=workspace.department_id, permits=lambda *roles: True)
     monkeypatch.setattr(staffing, 'scoped', lambda *args: workspace)
     monkeypatch.setattr(staffing, 'domain_snapshot', lambda *args: data)
+    stamp = s.ASSIGNMENT_STAMP_PREFIX + 'a' * 64
+    monkeypatch.setattr(staffing, 'assignment_stamp', lambda *args: stamp)
     from apps.api.services import published_changes
     monkeypatch.setattr(published_changes, 'validation_scope', lambda *args, **kwargs: None)
     pages = []
@@ -174,3 +176,4 @@ def test_fill_options_reports_first_page_and_honours_generic_cancellation(monkey
             progress=pages.append, cancelled=lambda: bool(pages))
     assert pages and pages[0]['evaluated_count'] == 20 and pages[0]['total'] == 148
     assert len(pages[0]['candidates']) == 20 and pages[0]['provisional_page'] is True
+    assert pages[0]['assignment_stamp'] == stamp

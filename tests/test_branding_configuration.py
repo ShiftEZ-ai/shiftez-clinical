@@ -154,8 +154,11 @@ def test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_asse
     image = upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type)
     assert upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type) == image
     assert h.client('staff').get(image['url']).status_code == 404  # staging does not publish
-    saved = h.command('admin', 'branding.update', names(emblem_image_id=image['image_id'],
-        wordmark_image_id=image['image_id'], emblem_alt='Department emblem'), revision=1)
+    settings = names(emblem_image_id=image['image_id'], wordmark_image_id=image['image_id'],
+        emblem_alt='Department emblem')
+    saved = h.command('admin', 'branding.update', settings, revision=1)
+    stale = h.command('admin', 'branding.update', settings, revision=1, status=409)
+    assert stale['error']['code'] == 'STALE_REVISION'
     assert saved['branding']['emblem_url'] == saved['branding']['wordmark_url'] == image['url']
     response = h.client('staff').get(image['url'])
     assert response.status_code == 200 and response.headers['content-type'] == 'image/png'
@@ -166,10 +169,11 @@ def test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_asse
     kept = h.command('admin', 'branding.update', names(app_name='Renamed'), revision=2)
     assert kept['settings']['emblem_image_id'] == image['image_id']
     assert kept['settings']['emblem_alt'] == 'Department emblem'
-    reset = h.command('admin', 'branding.update', names(emblem_image_id=None), revision=3)
+    reset = h.command('admin', 'branding.update', names(emblem_image_id=None, wordmark_image_id=None), revision=3)
     assert reset['branding']['emblem_url'] == public_defaults()['emblem_url']
+    assert reset['branding']['wordmark_url'] == s.BRANDING_DEFAULTS['wordmark_url']
     restored = h.command('admin', 'branding.undo', {'reason': 'Restore previous emblem'}, revision=4)
-    assert restored['branding']['emblem_url'] == image['url']
+    assert restored['branding']['emblem_url'] == restored['branding']['wordmark_url'] == image['url']
     assert h.client('staff').get(image['url']).status_code == 200
     histories = h.get('admin', '/api/admin/branding/history')['versions']
     assert all('content' not in v['snapshot'] for v in histories)
@@ -202,5 +206,4 @@ def test_upload_and_update_boundaries_reject_unsafe_or_missing_assets(h, monkeyp
 
 
 def public_defaults():
-    return {**s.BRANDING_DEFAULTS, **{key + '_url': asset_url(s.BRANDING_DEFAULTS[key + '_url'])
-            for key in ('emblem', 'wordmark')}}
+    return {**s.BRANDING_DEFAULTS, 'emblem_url': asset_url(s.BRANDING_DEFAULTS['emblem_url'])}

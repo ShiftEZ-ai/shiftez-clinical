@@ -44,10 +44,9 @@ def test_rota_rules_change_needs_a_justification_and_safety_stays_locked(browser
         expect(toast.get_by_role('button', name='Undo')).to_be_visible()
         [adjustment] = h.detail(w)['workspace']['rule_adjustments']
         assert adjustment['amount'] == 4 and adjustment['reason'] == WHY
-        # The changed rule says so; opened, one sentence says what changed, who, when and why, then its review state.
-        changed = rule_row(panel, 'Weekly duty limit')
-        expect(changed.locator('.rk-row-head')).to_contain_text('Changed for this rota.')
-        detail = changed.locator('.rk-detail')
+        # The save notice can precede the redraw. Wait for the adjusted row and its review details.
+        expect(duties.locator('.rk-row-head')).to_contain_text('Changed for this rota.')
+        detail = duties.locator('.rk-detail')
         expect(detail).to_contain_text(re.compile(r'Lowered from 5 to 4 for this rota by you on .+: “' + re.escape(WHY) + '”'))
         expect(detail).to_contain_text('Reviewed when the rota is submitted.')
         assert errors == []
