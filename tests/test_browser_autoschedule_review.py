@@ -14,6 +14,7 @@ from .test_browser_cp_sat import cp_server, _review, _finish, _job, _still, _app
 from .browser_acceptance_support import shot
 from .test_browser_disclosure import no_disclosure_markers
 from .test_browser_person_card import shoot
+from .test_browser_rule_catalogue import flag
 
 pytestmark = pytest.mark.browser
 DESKTOP, PHONE = {'width': 1440, 'height': 1000}, {'width': 390, 'height': 844}
@@ -329,6 +330,22 @@ def test_review_counts_places_numbers_and_week_ranges(browser, cp_server, h, vie
         expect(dialog.get_by_role('cell', name=re.compile(r'^\d+–\d+ Oct 2026$')).first).to_be_visible()
         expect(dialog).not_to_contain_text('00:00–00:00')
         shot(page, f'after-week-range-{_name(view, scheme)}', full_page=False)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('view,scheme', TWO)
+def test_run_priorities_link_to_the_fair_share_rule(browser, cp_server, h, view, scheme):
+    flag(h, legacy=False)
+    w = h.shift(h.workspace(), people=[])['workspace']
+    context, page, panel = _open(browser, cp_server, h, w, view, scheme)
+    try:
+        priorities = panel.get_by_role('radiogroup', name='Priorities')
+        expect(priorities).to_have_accessible_description('Fairness balances duties only where a Fair share rule applies.')
+        link = panel.get_by_role('link', name='Fair share', exact=True)
+        expect(link).to_be_visible()
+        link.click()
+        expect(page.locator('#main').get_by_role('heading', name='Fair share', exact=True)).to_be_visible()
     finally:
         context.close()
 
