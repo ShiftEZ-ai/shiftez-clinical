@@ -2,20 +2,25 @@
 import io
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
+from threading import Barrier
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from PIL import Image, PngImagePlugin
 import pytest
 from sqlalchemy import select
-from apps.api import models as m
+from apps.api import auth, models as m
 from apps.api.db import transaction
 from apps.api.services import branding
 from packages.contracts import schemas as s
 from packages.web_assets import asset_url
+from .clock_support import freeze_clock
 
 
-def test_application_permission_streams_and_stops_at_the_first_unowned_department():
+def test_application_permission_streams_and_stops_at_the_first_unowned_department(monkeypatch):
+    """Department coverage no longer decides access. Only live installation grants are streamed."""
+    monkeypatch.setattr(auth, 'now', lambda: datetime(2026, 10, 5, 23, tzinfo=timezone.utc))
+
     class Rows:
         closed = False
 
@@ -26,19 +31,19 @@ def test_application_permission_streams_and_stops_at_the_first_unowned_departmen
             self.closed = True
 
         def __iter__(self):
-            yield SimpleNamespace(scope_id='unowned', scope_timezone='UTC', role=None)
-            yield SimpleNamespace(scope_id='later', scope_timezone='UTC', role=None)
-            pytest.fail('An unowned department must deny without reading the remaining application')
+            yield SimpleNamespace(timezone='UTC', starts_on=date(2026, 10, 6), ends_on=None, revoked=False)
+            yield SimpleNamespace(timezone='Etc/GMT-2', starts_on=date(2026, 10, 6), ends_on=None, revoked=False)
+            pytest.fail('A live installation grant should stop the bounded read')
 
     rows = Rows()
 
     class Database:
         def execute(self, statement):
-            assert statement.get_execution_options().get('stream_results'), 'Do not buffer all departments and grants'
+            assert statement.get_execution_options().get('stream_results')
+            assert s.INSTALLATION_ADMIN_ROLE in statement.compile().params.values()
             return rows
 
-    actor = SimpleNamespace(identity_id=str(uuid.uuid4()), permits=lambda role: role == 'admin')
-    assert branding.can_edit(Database(), actor) is False
+    assert auth.has_installation_admin(Database(), str(uuid.uuid4()))
     assert rows.closed
 
 
@@ -63,6 +68,7 @@ def upload(h, content=None, media_type='image/png', role='admin', status=200):
     return response.json()
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_public_default_and_saved_projection_are_minimal_and_independent_of_departments(h):
     with TestClient(h.app, base_url=h.settings.public_origin) as public:
         first = public.get('/api/branding')
@@ -77,12 +83,14 @@ def test_public_default_and_saved_projection_are_minimal_and_independent_of_depa
     me = h.get('admin', '/api/me')
     assert me['department']['name'] != 'Department rota'
     assert me['organisation']['name'] != 'Test institution'
-    for role in ('staff', 'coordinator', 'operator'):
+    denied_roles = set(h.seed['identities']) - {'admin', *s.SYSTEM_ROLES}
+    for role in (role for role in s.ROLE_NAMES if role in denied_roles):
         h.get(role, '/api/admin/branding', status=403)
         h.command(role, 'branding.update', names(), revision=2, status=403)
         upload(h, role=role, status=403)
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_branding_is_revision_guarded_audited_and_undoable_without_rewriting_history(h):
     h.command('admin', 'branding.update', names(), status=428)
     first = h.command('admin', 'branding.update', names(), revision=1)
@@ -107,6 +115,7 @@ def names_without_reason():
     return {**s.BrandingSettings().model_dump(), **{k: v for k, v in names().items() if k != 'reason'}}
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_two_simultaneous_updates_have_one_winner(h):
     client = h.client('admin')
 
@@ -120,11 +129,17 @@ def test_two_simultaneous_updates_have_one_winner(h):
 
 
 @pytest.mark.parametrize('grant', ['missing', 'revoked', 'expired', 'future', 'current'])
-def test_all_application_departments_require_current_admin_even_across_organisations(h, grant):
+@pytest.mark.usefixtures('branding_editor')
+def test_all_application_departments_require_current_admin_even_across_organisations(h, grant, monkeypatch):
+    # The signed-in department is already on October 4, while the other grant's department is on October 3.
+    freeze_clock(monkeypatch, datetime(2026, 10, 3, 22, tzinfo=timezone.utc))
     client = h.client('admin')
     actor_id = h.get('admin', '/api/me')['identity_id']
     original = h.command('admin', 'branding.update', names(), revision=1, key='branding-scope-replay')
     with transaction(h.app.state.engine, write=True) as db:
+        initial = db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == actor_id,
+                            m.RoleBinding.role == s.INSTALLATION_ADMIN_ROLE))
+        initial.revoked = True
         org = m.Organisation(name='Another organisation', timezone='UTC')
         db.add(org)
         db.flush()
@@ -133,9 +148,10 @@ def test_all_application_departments_require_current_admin_even_across_organisat
         db.flush()
         if grant != 'missing':
             today = m.now().date()
-            db.add(m.RoleBinding(department_id=dept.id, identity_id=actor_id, role='admin',
+            db.add(m.RoleBinding(department_id=dept.id, identity_id=actor_id, role=s.INSTALLATION_ADMIN_ROLE,
                 starts_on=today + timedelta(days=1) if grant == 'future' else today - timedelta(days=2),
-                ends_on=today if grant == 'expired' else None, revoked=grant == 'revoked'))
+                ends_on={'expired': today, 'current': today + timedelta(days=1)}.get(grant),
+                revoked=grant == 'revoked'))
     allowed = grant == 'current'
     assert h.get('admin', '/api/admin/branding')['can_edit'] is allowed
     h.get('admin', '/api/admin/branding/history', status=200 if allowed else 403)
@@ -149,7 +165,140 @@ def test_all_application_departments_require_current_admin_even_across_organisat
             headers={'idempotency-key': str(uuid.uuid4())}).status_code == 403
 
 
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+@pytest.mark.usefixtures('branding_editor')
+def test_operator_edits_branding_after_department_creation(h):
+    from .test_department_create import name_test_administrators, payload, token
+
+    name_test_administrators(h)
+    original = h.get('staff', '/api/branding')
+    spec = payload(h, first_admin_identity_id=h.seed['identities']['coordinator'])
+    assert h.get('admin', '/api/admin/branding')['can_edit']
+    h.command('operator', 'department.create', spec, expected_fingerprint=token(h, spec))
+    assert h.get('admin', '/api/admin/branding')['can_edit']
+
+    status = h.get('operator', '/api/admin/branding')
+    assert status['can_edit'] and not status['can_undo']
+    image = upload(h, role='operator')
+    change = names(emblem_image_id=image['image_id'])
+    revision = status['branding']['revision']
+    saved = h.command('operator', 'branding.update', change, revision=revision, key='operator-branding')
+    assert saved['can_edit'] and saved['can_undo']
+    assert saved['branding']['emblem_url'] == image['url']
+    replayed = h.command('operator', 'branding.update', change, revision=revision, key='operator-branding')
+    assert replayed == saved
+    assert h.get('admin', '/api/admin/branding')['branding'] == saved['branding']
+    assert h.command('operator', 'branding.update', change, revision=revision, status=409)['error']['code'] == 'STALE_REVISION'
+    assert h.get('operator', '/api/admin/branding/history')['versions'][-1]['actor_id'] == h.seed['identities']['operator']
+    undone = h.command('operator', 'branding.undo', {'reason': 'Restore shared branding'}, revision=revision + 1)
+    assert undone['branding'] == {**original, 'revision': revision + 2}
+
+    image = upload(h)
+    saved = h.command('admin', 'branding.update', names(emblem_image_id=image['image_id']), revision=revision + 2)
+    assert saved['branding']['emblem_url'] == image['url']
+    original_name = h.command('admin', 'branding.undo', {'reason': 'Restore shared branding'}, revision=revision + 3)
+    assert original_name['branding'] == {**original, 'revision': revision + 4}
+
+
+@pytest.mark.parametrize('h', ['sqlite', 'postgresql'], indirect=True)
+@pytest.mark.usefixtures('branding_editor')
+def test_installation_admin_grants_are_explicit_audited_and_keep_a_live_holder(h):
+    role = s.INSTALLATION_ADMIN_ROLE
+    reason = {'reason': 'Transfer installation administration'}
+    admin_id = h.seed['identities']['admin']
+    coordinator_id = h.seed['identities']['coordinator']
+    with transaction(h.app.state.engine) as db:
+        first = db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == admin_id, m.RoleBinding.role == role))
+        first_id, first_revision = first.id, first.revision
+    day = '2020-01-01'
+    h.command('admin', 'role.grant', {'identity_id': coordinator_id, 'role': 'admin', 'starts_on': day, **reason})
+    first_revoke = h.command('operator', 'role.revoke', reason, first_id, first_revision, status=409)
+    assert first_revoke['error']['code'] == 'LAST_INSTALLATION_ADMIN'
+    grant = {'identity_id': coordinator_id, 'role': role, 'starts_on': day, **reason}
+    h.command('coordinator', 'role.grant', grant, status=403)
+    h.command('coordinator', 'role.revoke', reason, first_id, first_revision, status=403)
+
+    h.command('operator', 'role.grant', {**grant, 'identity_id': h.seed['identities']['staff'],
+        'ends_on': (date.today() + timedelta(days=30)).isoformat()})
+    assert h.get('staff', '/api/admin/branding')['can_edit']
+    assert h.command('operator', 'role.revoke', reason, first_id, first_revision, status=409)[
+        'error']['code'] == 'LAST_INSTALLATION_ADMIN'
+
+    second = h.command('operator', 'role.grant', grant)['record']
+    assert h.get('coordinator', '/api/admin/branding')['can_edit']
+    h.command('coordinator', 'role.revoke', reason, first_id, first_revision)
+    assert not h.get('admin', '/api/admin/branding')['can_edit']
+    denied = h.command('coordinator', 'role.revoke', reason, second['id'], second['revision'], status=409)
+    assert denied['error']['code'] == 'LAST_INSTALLATION_ADMIN'
+
+    third = h.command('coordinator', 'role.grant', {**grant, 'identity_id': admin_id})['record']
+    h.command('operator', 'role.revoke', reason, second['id'], second['revision'])
+    assert h.get('admin', '/api/admin/branding')['can_edit']
+    assert not h.get('coordinator', '/api/admin/branding')['can_edit']
+    with transaction(h.app.state.engine) as db:
+        events = db.scalars(select(m.AuditEvent).where(
+            m.AuditEvent.action.in_(('role.grant', 'role.revoke')),
+            m.AuditEvent.target_id.in_([first_id, second['id'], third['id']]))).all()
+        assert {(e.action, e.target_id, e.actor_id) for e in events} == {
+            ('role.grant', second['id'], h.seed['identities']['operator']),
+            ('role.revoke', first_id, coordinator_id),
+            ('role.grant', third['id'], coordinator_id),
+            ('role.revoke', second['id'], h.seed['identities']['operator']),
+        }
+        assert {event.reason for event in events} == {reason['reason']}
+
+
+def test_disabling_the_last_installation_admin_is_refused(h):
+    identity_id = h.seed['identities']['staff']
+    reason = {'reason': 'Transfer installation administration'}
+    h.command('operator', 'role.grant', {'identity_id': identity_id, 'role': s.INSTALLATION_ADMIN_ROLE,
+        'starts_on': '2020-01-01', **reason})
+
+    refused = h.command('admin', 'identity.disable', reason, identity_id, 1, status=409)
+
+    assert refused['error']['code'] == 'LAST_INSTALLATION_ADMIN'
+    assert h.get('staff', '/api/admin/branding')['can_edit']
+
+
+@pytest.mark.usefixtures('branding_editor')
+def test_pending_managed_account_has_no_installation_authority_in_its_department(h):
+    admin_id = h.seed['identities']['admin']
+    assert h.get('admin', '/api/admin/branding')['can_edit']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.Account(identity_id=admin_id, username='pending.setup', email='pending.setup@example.test'))
+    assert not h.get('admin', '/api/admin/branding')['can_edit']
+
+
+def test_concurrent_revoke_and_disable_preserve_installation_admin(pg):
+    h = pg
+    role = s.INSTALLATION_ADMIN_ROLE
+    reason = {'reason': 'Transfer installation administration'}
+    staff, coordinator = (h.seed['identities'][name] for name in ('staff', 'coordinator'))
+    grant = h.command('operator', 'role.grant', {'identity_id': staff, 'role': role,
+        'starts_on': '2020-01-01', **reason})['record']
+    h.command('operator', 'role.grant', {'identity_id': coordinator, 'role': role,
+        'starts_on': '2020-01-01', **reason})
+    h.client('operator')
+    h.client('admin')
+    ready = Barrier(2)
+
+    def change(actor, kind, target, revision):
+        ready.wait(timeout=10)
+        return h.command(actor, kind, reason, target, revision, status=(200, 409))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            pool.submit(change, 'operator', 'role.revoke', grant['id'], grant['revision']),
+            pool.submit(change, 'admin', 'identity.disable', coordinator, 1),
+        ]
+        failures = [error['code'] for result in results if (error := result.result().get('error'))]
+    assert failures == ['LAST_INSTALLATION_ADMIN']
+    with transaction(h.app.state.engine) as db:
+        assert auth.has_installation_admin(db)
+
+
 @pytest.mark.parametrize('fmt,media_type', [('PNG', 'image/png'), ('JPEG', 'image/jpeg'), ('WEBP', 'image/webp')])
+@pytest.mark.usefixtures('branding_editor')
 def test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_assets(h, fmt, media_type):
     image = upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type)
     assert upload(h, raster(fmt, metadata=fmt == 'PNG'), media_type) == image
@@ -180,6 +329,7 @@ def test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_asse
     assert 'image_id' not in h.get('staff', '/api/branding')
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_upload_and_update_boundaries_reject_unsafe_or_missing_assets(h, monkeypatch):
     upload(h, b'<svg onload="alert(1)"/>', 'image/svg+xml', status=415)
     upload(h, b'<svg onload="alert(1)"/>', status=422)

@@ -7,7 +7,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, navigate, pick_view, sign_in, show_names  # noqa: F401
+from .test_browser import browser, expect_loaded, live_server, navigate, pick_view, sign_in, show_names  # noqa: F401
 from .test_browser_autoschedule_live import Stream
 from .test_browser_rule_catalogue import flag
 from .test_governed_leadership import activate, line, proposal
@@ -63,6 +63,8 @@ def calendar(page, w, view):
 
 
 def member(grid, session, person):
+    # The previous grid stays visible while the Schedule redraws.
+    expect_loaded(grid.page, 'schedule')
     return grid.locator(f'.pchip[data-shift="{session}"][data-person="{person}"]')
 
 

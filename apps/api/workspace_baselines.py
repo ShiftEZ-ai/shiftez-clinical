@@ -648,6 +648,14 @@ def _canonical(payload, included):
     return scoped_payload(payload, included)
 
 
+def _current_safety_inputs(db, workspace, organisation, current):
+    if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
+            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
+            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
+        return _live_safety_snapshot(db, workspace)
+    return current
+
+
 def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, current=None, include_mandatory=False,
                        current_mandatory=False, validity_baseline=None):
     """Overlay live facts; rows can share nested values, so callers must copy before writing."""
@@ -662,10 +670,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         return frozen
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
-            or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
-            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
-        current = _live_safety_snapshot(db, workspace)
+    current = _current_safety_inputs(db, workspace, organisation, current)
     result = dict(frozen)
     for key in LIVE_OPERATIONAL_KEYS:
         if current.get(key) is not None:

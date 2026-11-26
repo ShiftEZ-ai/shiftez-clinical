@@ -95,13 +95,22 @@ def test_feedback_bulk_selection_uses_current_read_all_permission(h, actor, monk
 
 
 @pytest.mark.parametrize("collection", ["identities", "roles"])
-@pytest.mark.parametrize("actor", ["admin", "operator", "auditor", "staff", "coordinator"])
+@pytest.mark.parametrize("actor", ["admin", "operator", "auditor", "staff", "coordinator", s.INSTALLATION_ADMIN_ROLE])
 def test_access_bulk_selection_uses_current_system_role_permission(h, collection, actor, monkeypatch):
     monkeypatch.setitem(s.PERMISSIONS, "access.system_roles", ("coordinator",))
     expected = 200 if actor in {"admin", "coordinator"} else 403
-    listed = h.get(actor, "/api/access", status=expected)
+    limited = actor in s.PERMISSIONS["access.installation_admin"] and expected == 403
+    if limited:
+        holder_id = h.get(s.INSTALLATION_ADMIN_ROLE, "/api/me")["identity_id"]
+    listed = h.get(actor, "/api/access", status=200 if limited else expected)
     selected = bulk_ids(h, actor, collection, status=expected)
-    if expected == 200:
+    if limited:
+        assert set(listed) == {"bindings", "identities"}
+        assert listed["identities"] and all(set(row) == {"id", "display_name", "disabled"} for row in listed["identities"])
+        assert all(row["role"] == s.INSTALLATION_ADMIN_ROLE for row in listed["bindings"])
+        assert {row["identity_id"] for row in listed["bindings"]} == {holder_id}
+        assert selected is None
+    elif expected == 200:
         assert selected == {row["id"] for row in listed[LISTS[collection][1]]}
 
 

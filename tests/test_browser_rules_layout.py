@@ -3,7 +3,7 @@ document), the rule sheet never scrolls sideways, and the sheet's draft section 
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, navigate, open_rule  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, open_rota, open_rule  # noqa: F401
 from .test_rule_templates import activate, propose
 
 pytestmark = pytest.mark.browser
@@ -69,29 +69,49 @@ def test_draft_section_follows_the_schedule_then_a_draft_with_sessions_and_switc
     activate(h, propose(h, {'kind': 'max_hours', 'hours': 6, 'window': 'day'}, name='Daily hours'))
     draft = h.workspace('November draft', '2026-11-01', '2026-12-01')
     draft = h.shift(draft, '2026-11-08T08:00:00+03:00', '2026-11-08T16:00:00+03:00', people=[a])['workspace']
-    empty = h.workspace('December draft', '2026-12-01', '2027-01-01')
+    empty = h.workspace('October draft', '2026-10-01', '2026-11-01')
     h.lifecycle(draft, 'validate')
     context, page = sign_in(browser, live_server, 'coordinator')
+    reads = []
+
+    def record_rule_map(request):
+        if request.url.endswith('/rule-map'):
+            reads.append(request.url)
+
     try:
-        # Nothing open in Schedule: the draft with sessions, not the newest empty one.
+        # With both drafts ended and none open, the newest is offered.
+        page.clock.set_fixed_time('2026-12-02T06:00:00Z')
+        page.on('request', record_rule_map)
         navigate(page, 'rules')
         sheet = open_rule(page, 'Daily hours')
         section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In November draft'))
-        section.get_by_role('button', name='Show effect in November draft', exact=True).click()
+        show = section.get_by_role('button', name='Show effect in November draft', exact=True)
+        expect(show).to_be_visible()
+        assert not reads, reads
+        show.click()
         expect(section.locator('.rl-day.short')).to_have_count(1)
         # Several drafts: switch in the section's head.
-        section.get_by_label('Draft').select_option(label='December draft')
-        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In December draft'))
+        section.get_by_label('Draft').select_option(label='October draft')
+        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In October draft'))
         expect(section.get_by_text('No duties yet.', exact=True)).to_be_visible()
         expect(section.locator('.rl-day.short')).to_have_count(0)
         sheet.get_by_role('heading', level=2).click()   # out of the select
         page.keyboard.press('Escape')
         expect(sheet).to_have_count(0)
-        # An empty draft open in Schedule does not displace the draft with sessions (RU-02, rc.16).
-        navigate(page, f'schedule?edit={empty["id"]}')
+        # Schedule may read its own map on hover. Check requests on the Rules visits.
+        page.remove_listener('request', record_rule_map)
+        page.mouse.move(0, 0)
+        open_rota(page, empty['id'])
+        expect(page.get_by_role('button', name='Switch draft · October draft', exact=True)).to_be_visible()
+        reads.clear()
+        page.on('request', record_rule_map)
         navigate(page, 'rules')
         sheet = open_rule(page, 'Daily hours')
-        expect(sheet.get_by_role('heading', name='In November draft')).to_be_visible()
+        show = sheet.get_by_role('button', name='Show effect in October draft', exact=True)
+        expect(show).to_be_visible()
+        assert not reads, reads
+        show.click()
+        expect(sheet.get_by_text('No duties yet.', exact=True)).to_be_visible()
     finally:
         context.close()
 

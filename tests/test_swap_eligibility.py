@@ -737,8 +737,10 @@ def department_swap_options(scale_harness):
                                       for row in list(data[name]) if row['person_id'] == source)
             data['shifts'] = [template]
             data['workspace']['ends_on'] = '2026-11-01'
-            for location in data['locations'].values():
+            limits = data.get('place_capacity', {}).get('limits', {})
+            for ident, location in data['locations'].items():
                 location['capacity'] = 1000
+                limits[ident] = 1000
             for person_id in people:
                 for day in range(10):
                     on = date(2026, 10, 5) + timedelta(days=day)
