@@ -330,7 +330,7 @@ export function csvOf(view:HTMLElement):string|null{
   return csvText([...table.rows].map(r=>[...r.cells].filter((_,i)=>named[i]!==false).map(text)));
 }
 const fileName=(name:string)=>name.replace(/[\\/:*?"<>|]+/g,'-');
-function download(blob:Blob,name:string){
+export function download(blob:Blob,name:string){
   const a=el('a',{href:URL.createObjectURL(blob),download:fileName(name)}) as HTMLAnchorElement;
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
 }

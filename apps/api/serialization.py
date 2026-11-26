@@ -73,9 +73,11 @@ def compact_reply(result):
 
 
 _RECORD_EXCLUSIONS = {
+    'publications': ('calendar_lineage',),
     'push_subscription_versions': ('endpoint_ciphertext', 'endpoint_digest', 'p256dh_ciphertext', 'auth_ciphertext'),
     'jobs': ('resume_state', 'resume_checkpoint', 'read_metadata', 'result_summary', 'worker_id', 'supersedes'),
     'rotations': ('mentor_id',),
+    'requests': ('private_undo_note',),
     'mailbox_connections': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
     'mailbox_oauth_flows': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
     'integration_credentials': ('token_ciphertext',),

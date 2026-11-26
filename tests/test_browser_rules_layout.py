@@ -67,19 +67,22 @@ def test_rules_scroll_inside_the_page_not_the_document(browser, live_server, h, 
 def test_draft_section_follows_the_schedule_then_a_draft_with_sessions_and_switches(browser, live_server, h):
     a = h.seed['people'][0]
     activate(h, propose(h, {'kind': 'max_hours', 'hours': 6, 'window': 'day'}, name='Daily hours'))
-    september = h.workspace('September draft', '2026-09-01', '2026-10-01')
-    h.shift(september, '2026-09-06T08:00:00+03:00', '2026-09-06T16:00:00+03:00', people=[a])
-    empty = h.workspace('UIUX QA', '2026-10-01', '2026-11-01')   # newer, and empty
+    draft = h.workspace('November draft', '2026-11-01', '2026-12-01')
+    draft = h.shift(draft, '2026-11-08T08:00:00+03:00', '2026-11-08T16:00:00+03:00', people=[a])['workspace']
+    empty = h.workspace('December draft', '2026-12-01', '2027-01-01')
+    h.lifecycle(draft, 'validate')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         # Nothing open in Schedule: the draft with sessions, not the newest empty one.
         navigate(page, 'rules')
         sheet = open_rule(page, 'Daily hours')
-        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In September draft'))
-        expect(section.locator('.rl-day.short')).to_have_count(1)   # 8 hours on 6 Sep
+        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In November draft'))
+        section.get_by_role('button', name='Show effect in November draft', exact=True).click()
+        expect(section.locator('.rl-day.short')).to_have_count(1)
         # Several drafts: switch in the section's head.
-        section.get_by_label('Draft').select_option(label='UIUX QA')
-        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In UIUX QA'))
+        section.get_by_label('Draft').select_option(label='December draft')
+        section = sheet.locator('.rl-sec').filter(has=page.get_by_role('heading', name='In December draft'))
+        expect(section.get_by_text('No duties yet.', exact=True)).to_be_visible()
         expect(section.locator('.rl-day.short')).to_have_count(0)
         sheet.get_by_role('heading', level=2).click()   # out of the select
         page.keyboard.press('Escape')
@@ -88,7 +91,7 @@ def test_draft_section_follows_the_schedule_then_a_draft_with_sessions_and_switc
         navigate(page, f'schedule?edit={empty["id"]}')
         navigate(page, 'rules')
         sheet = open_rule(page, 'Daily hours')
-        expect(sheet.get_by_role('heading', name='In September draft')).to_be_visible()
+        expect(sheet.get_by_role('heading', name='In November draft')).to_be_visible()
     finally:
         context.close()
 
