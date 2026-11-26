@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from apps.api import models as m
 from apps.api.db import DatabaseWriteDeferred, transaction
@@ -226,6 +226,27 @@ def test_lane_refuses_a_kind_that_stores_a_check(h, rota):
     refused = job(h, queued['id'])
     assert refused['status'] == 'failed' and refused['error_code'] == 'INTERACTIVE_WRITE_REFUSED'
     assert stored_check(h, workspace['id'], queued['id'])[0] == before
+
+
+@both
+def test_lane_refuses_feasibility_before_staging_a_proof(h, rota, monkeypatch):
+    workspace, _ = rota
+    workspace = h.detail(workspace)['workspace']
+    queued = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility'},
+                       revision=workspace['revision'])['job']
+
+    def unexpected_check(*args, **kwargs):
+        pytest.fail('The interactive lane computed a feasibility proof')
+
+    monkeypatch.setattr('packages.domain.feasibility.check', unexpected_check)
+    engine = h.app.state.engine
+    assert worker.process_one(engine, kinds=frozenset({'feasibility'}))
+    refused = job(h, queued['id'])
+    assert refused['status'] == 'failed' and refused['error_code'] == 'INTERACTIVE_WRITE_REFUSED'
+    assert refused['result'] is None
+    with transaction(engine) as db:
+        assert db.scalar(select(m.JobFeasibilityResult.job_id)
+                         .where(m.JobFeasibilityResult.job_id == queued['id'])) is None
 
 
 def test_lane_loop_claims_only_its_kinds_and_waits_for_its_own_wake(monkeypatch):

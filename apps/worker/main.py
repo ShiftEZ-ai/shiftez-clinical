@@ -1686,6 +1686,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                                'line': origin.tb_lineno} if origin is not None else None})
                         result.update(generation_fix_lists_fallback(claim['input'], result))
             elif claim['kind'] == 'feasibility':
+                if interactive:
+                    # The proof row is written outside the guarded finish transaction.
+                    raise InteractiveWriteRefused()
                 from packages.domain.feasibility import check
                 result = check(claim['input'], progress=report, cancelled=stopped.is_set)
             elif claim['kind'] == 'planner_preview':
@@ -1796,9 +1799,10 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     claim['check_stamp'] = (since, preparation_stamp(db, workspace),
                                             selection and (selection['start'], selection['end']))
         except Exception as exc:
-            error = error or (getattr(exc, 'code', type(exc).__name__)
-                              if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
-                              else type(exc).__name__)
+            coded_failure = (isinstance(exc, InteractiveWriteRefused)
+                             or claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview',
+                                                  'fill_options', 'merge_preview', 'merge_apply'})
+            error = error or (getattr(exc, 'code', type(exc).__name__) if coded_failure else type(exc).__name__)
             # Code metadata only: messages, locals and formatted tracebacks can carry rota data.
             origin = exc.__traceback__
             while origin.tb_next is not None:
