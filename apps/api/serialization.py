@@ -373,6 +373,8 @@ def job_read_metadata(snapshot, result):
     value = {'input_snapshot': {key: snapshot[key] for key in JOB_INPUT_FIELDS if key in snapshot
                                 and (snapshot[key] is not None or key in ('generation_engine', 'run_context'))},
              'result': result_value}
+    if snapshot.get('_generation_authority_pending'):
+        value['_generation_authority_pending'] = True
     if snapshot.get('_deferred_generation'):
         # The request token is an internal lease value until the worker freezes the inputs.
         value['input_fingerprint'] = None
