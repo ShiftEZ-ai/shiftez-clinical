@@ -6,12 +6,14 @@ import time
 
 import pytest
 from sqlalchemy import event, select
+from sqlalchemy.orm import Session
 
 from apps.api import models as m
 from apps.api.auth import Actor
 from apps.api.db import transaction
 from apps.api.serialization import record
 from apps.api.services import calendar, fairness, people, schedule_view
+from tests.test_backend_scale import measure
 from tests.test_performance_budget import python_budget
 
 
@@ -31,7 +33,8 @@ def read_department(scale_harness):
                     for i in range(50)]
         db.add_all([*extra, programme, rotation_type, *services])
         db.flush()
-        ids = [*h.seed['people'], *(p.id for p in extra)]
+        seeded_people = h.seed['people']
+        ids = [*seeded_people, *(p.id for p in extra)]
         cohort = m.Cohort(department_id=actor.department_id, programme_id=programme.id, name='Synthetic cohort',
                           starts_on=date(2020, 1, 1), ends_on=date(2028, 1, 1))
         db.add(cohort)
@@ -43,8 +46,11 @@ def read_department(scale_harness):
                 span = dict(department_id=actor.department_id, person_id=pid,
                             starts_on=date(year, 1, 1), ends_on=date(year + 1, 1, 1))
                 additions.extend([m.Membership(**span, category_id=h.seed['category']),
-                    m.ProgrammeMembership(**span, programme_id=programme.id),
-                    m.CapabilityGrant(**span, capability_id=capability.id, granted_by=actor.identity_id, evidence='Synthetic')])
+                    m.ProgrammeMembership(**span, programme_id=programme.id)])
+                # The seed already supplies current eligibilities and grants for its people.
+                if year != FIRST.year or pid not in seeded_people:
+                    additions.extend([m.Eligibility(**span, service_id=services[i % len(services)].id),
+                        m.CapabilityGrant(**span, capability_id=capability.id, granted_by=actor.identity_id, evidence='Synthetic')])
                 for month in range(1, 13):
                     additions.append(m.Rotation(**{**span, 'starts_on': date(year, month, 1),
                         'ends_on': date(year + month // 12, month % 12 + 1, 1)},
@@ -53,6 +59,7 @@ def read_department(scale_harness):
             span = dict(department_id=actor.department_id, person_id=ids[0], starts_on=start, ends_on=end)
             additions.extend([m.Membership(**span, category_id=h.seed['category']),
                 m.ProgrammeMembership(**span, programme_id=programme.id),
+                m.Eligibility(**span, service_id=services[0].id),
                 m.CapabilityGrant(**span, capability_id=capability.id, granted_by=actor.identity_id, evidence='Boundary'),
                 m.Rotation(**span, cohort_id=cohort.id, service_id=services[0].id, rotation_type_id=rotation_type.id)])
         additions.extend(m.ProgrammeCalendarEntry(department_id=actor.department_id, programme_id=programme.id,
@@ -79,7 +86,7 @@ def read_department(scale_harness):
 
 @pytest.fixture(scope='module')
 def dated_read_measurement(read_department):
-    h, actor, _, _ = read_department
+    h, actor, ids, _ = read_department
     began = time.process_time()
     with transaction(h.app.state.engine) as db:
         data = fairness.department_data(db, actor, FIRST, LAST)
@@ -90,7 +97,7 @@ def dated_read_measurement(read_department):
                 loaded.update({key: len(value[key]) for key in ('memberships', 'programme_memberships', 'rotations')})
                 return original(value, day)
             patch.setattr(people, 'project_people', projected)
-            current = people.current_people(db, actor, FIRST)
+            current = people.current_people(db, actor, FIRST, person_ids=ids)
     elapsed = time.process_time() - began
     print('dated reads', {'cpu_seconds': elapsed, 'fairness_rows': {
         key: len(data[key]) for key in ('memberships', 'grants', 'programme_memberships', 'rotations')}, 'people_rows': loaded})
@@ -106,6 +113,87 @@ def test_dated_readers_exclude_five_year_history_and_touching_boundaries(dated_r
     assert all(count <= 153 for count in loaded.values()), loaded
     assert current['active_people'] == 150 and current['people_without_current_rank'] == 0
     assert all(row['current_rotation_type_ids'] and row['current_programme_ids'] for row in current['people'].values())
+
+
+@pytest.fixture
+def coordinator_read_client(read_department, monkeypatch):
+    h, _, _, _ = read_department
+    monkeypatch.setattr(m, 'clock_now', lambda: datetime(2026, 10, 2, 12, tzinfo=timezone.utc))
+    return h.client('coordinator')
+
+
+@pytest.mark.parametrize('path,person_rows', [
+    ('/api/catalogues?include=people', True),
+    ('/api/directory', False),
+    ('/api/people/summary', False),
+])
+def test_people_reads_use_one_person_query(read_department, coordinator_read_client, path, person_rows):
+    h, _, ids, _ = read_department
+    statements, loaded = [], []
+
+    def sql(_conn, _cursor, statement, _parameters, _context, _many):
+        if ' from people ' in ' '.join(statement.lower().split()):
+            statements.append(statement)
+
+    def row(_session, instance):
+        if isinstance(instance, m.Person):
+            loaded.append(instance.id)
+
+    event.listen(h.app.state.engine, 'before_cursor_execute', sql)
+    event.listen(Session, 'loaded_as_persistent', row)
+    try:
+        label = path.rsplit('/', 1)[-1].split('?')[0]
+        response, _ = measure(h, label, lambda: coordinator_read_client.get(path))
+    finally:
+        event.remove(h.app.state.engine, 'before_cursor_execute', sql)
+        event.remove(Session, 'loaded_as_persistent', row)
+    assert response.status_code == 200
+    if path.endswith('/summary'):
+        assert response.json() == {'active_people': len(ids), 'people_without_current_rank': 0}
+    else:
+        assert {person['id'] for person in response.json()['people']} == set(ids)
+    assert (len(statements), len(loaded)) == (1, len(ids) if person_rows else 0)
+
+
+def test_rule_reach_reads_only_period_facts_and_live_rules(read_department, coordinator_read_client):
+    h, actor, ids, _ = read_department
+    rule = {'rule': {'kind': 'max_hours', 'hours': 48}, 'scope': {}, 'severity': 'mandatory'}
+    with transaction(h.app.state.engine, write=True) as db:
+        active = m.Policy(department_id=actor.department_id, kind='max_hours', name='Synthetic current rule',
+            definition=rule, starts_on=FIRST, status='active', owner='', source='', created_by=actor.identity_id)
+        db.add(active)
+        db.add_all(m.Policy(department_id=actor.department_id, kind='max_hours', name='Synthetic retired rule',
+            definition=rule, starts_on=date(2022, 1, 1), status='retired', owner='', source='',
+            created_by=actor.identity_id) for _ in range(50))
+        db.flush()
+        active_id = active.id
+        live_ids = set(db.scalars(select(m.Policy.id).where(m.Policy.status.in_(('active', 'proposed')))))
+
+    tables = {cls.__tablename__ for cls in
+              (m.Policy, m.Membership, m.Eligibility, m.CapabilityGrant, m.ProgrammeMembership, m.Rotation)}
+    statements, loaded = Counter(), Counter()
+
+    def sql(_conn, _cursor, statement, _parameters, _context, _many):
+        statement = ' '.join(statement.lower().split())
+        statements.update(table for table in tables if f' from {table} ' in statement)
+
+    def row(_session, instance):
+        if instance.__tablename__ in tables:
+            loaded[instance.__tablename__] += 1
+
+    event.listen(h.app.state.engine, 'before_cursor_execute', sql)
+    event.listen(Session, 'loaded_as_persistent', row)
+    try:
+        response, _ = measure(h, 'rule reach', lambda: coordinator_read_client.get(f'/api/policies/reach?day={FIRST.isoformat()}'))
+    finally:
+        event.remove(h.app.state.engine, 'before_cursor_execute', sql)
+        event.remove(Session, 'loaded_as_persistent', row)
+    assert response.status_code == 200
+    assert set(response.json()['reach']) == live_ids
+    assert response.json()['reach'][active_id] == len(ids)
+    assert statements == dict.fromkeys(tables, 1)
+    assert loaded['policies'] == len(live_ids)
+    assert all(len(ids) <= loaded[table] <= len(ids) + 3 for table in tables - {'policies'}), loaded
 
 
 @pytest.mark.cpu_budget

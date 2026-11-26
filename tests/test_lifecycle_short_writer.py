@@ -80,6 +80,47 @@ def test_unrelated_input_revision_is_resolved_after_releasing_writer(check_harne
     assert len(calls) == 2, 'One coherent preparation and one canonical drift check, both outside the writer'
 
 
+@pytest.mark.parametrize('action,role', [('submit', 'coordinator'), ('approve', 'approver')])
+@pytest.mark.parametrize('changes', [1, 3], ids=['one-change', 'continuous-changes'])
+def test_review_rechecks_at_most_twice_after_an_unrelated_write(check_harness, monkeypatch, action, role, changes):
+    from apps.api import commands
+
+    h = check_harness
+    w = h.shift(h.checked_workspace)['workspace']
+    if action == 'approve':
+        w = h.lifecycle(w, 'submit')['workspace']
+    original_write = commands.retry_write
+    original_check = planning.revalidate
+    writes = 0
+    rechecks = []
+
+    def changed_inputs(engine, operation, **kwargs):
+        nonlocal writes
+        if kwargs.get('context', {}).get('command_kind') == 'workspace.' + action:
+            writes += 1
+            if writes <= changes:
+                with transaction(engine, write=True) as db:
+                    db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+        return original_write(engine, operation, **kwargs)
+
+    def counted_check(db, *args, **kwargs):
+        if kwargs.get('acquired_data') is not None:
+            assert not db.connection().info.get('rota_write')
+            rechecks.append(1)
+        return original_check(db, *args, **kwargs)
+
+    monkeypatch.setattr(commands, 'retry_write', changed_inputs)
+    monkeypatch.setattr(planning, 'revalidate', counted_check)
+    result = h.lifecycle(w, action, role, status=200 if changes == 1 else 409)
+    if changes == 1:
+        assert result['workspace']['status'] == {'submit': 'submitted', 'approve': 'approved'}[action]
+        assert writes == 2 and len(rechecks) == 1
+    else:
+        assert result['error']['code'] == 'STALE_INPUTS' and result['error']['details']['recoverable']
+        assert writes == 3 and len(rechecks) == 2
+        assert h.detail(w)['workspace']['revision'] == w['revision']
+
+
 def test_revision_only_race_is_checked_inside_final_writer(check_harness, paused_check):
     h, workspace = check_harness, check_harness.checked_workspace
     before = stored_check(h, workspace)

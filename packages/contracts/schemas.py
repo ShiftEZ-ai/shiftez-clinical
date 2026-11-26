@@ -23,11 +23,13 @@ TAG_LIMITS = {"length": 24, "per_person": 30}
 Tag = Annotated[str, Field(min_length=1, max_length=TAG_LIMITS["length"])]
 Clock = Annotated[str, StringConstraints(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$")]
 # The one list of roles: the server, the database check and the generated frontend types all read it.
-RoleName = Literal["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator"]
+RoleName = Literal["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator",
+                   "installation_admin"]
 ROLE_NAMES: tuple[str, ...] = get_args(RoleName)
 TEAM_READER_ROLES: tuple[RoleName, ...] = ("admin", "coordinator", "approver", "programme_lead", "auditor")
 SYSTEM_ROLES: tuple[RoleName, ...] = ("operator",)
-EXPLICIT_ROLES: frozenset[RoleName] = frozenset((*SYSTEM_ROLES, "auditor"))
+INSTALLATION_ADMIN_ROLE: RoleName = "installation_admin"
+EXPLICIT_ROLES: frozenset[RoleName] = frozenset((*SYSTEM_ROLES, "auditor", INSTALLATION_ADMIN_ROLE))
 ROLE_LABELS: dict[RoleName, str] = {role: role.replace("_", " ").capitalize() for role in ROLE_NAMES}
 ROLE_LABELS["operator"] = "Developer"
 # A 503 is definite only when raised before any request write can commit; otherwise the client must confirm.
@@ -113,7 +115,9 @@ PERMISSIONS: dict[str, tuple[RoleName, ...]] = {
     "publications.read_team": ("coordinator", "approver", "auditor"),
     "date_sets.read_all": ("admin", "coordinator"),
     "access.system_roles": ("operator",),
+    "access.installation_admin": (INSTALLATION_ADMIN_ROLE, *SYSTEM_ROLES),
     "department.create": SYSTEM_ROLES,
+    "branding.configure": (INSTALLATION_ADMIN_ROLE, *SYSTEM_ROLES),
     "feedback.read_all": ("operator", "auditor"),
     "feedback.triage": ("operator",),
     "feedback.export_github": ("operator",),
@@ -200,6 +204,12 @@ for _family in ('membership', 'eligibility', 'programme_membership'):
 # intentionally backed by the same map the server uses for command enforcement. Keep the command permission
 # registry unchanged: `/api/me.permissions` is an action list, while this UI map also carries role-shaped gates.
 PERMISSION_NAMES: tuple[str, ...] = tuple(PERMISSIONS)
+ROLE_GRANT_PERMISSIONS = {
+    role: ("access.installation_admin" if role == INSTALLATION_ADMIN_ROLE else
+           "access.system_roles" if role in EXPLICIT_ROLES else "role.grant")
+    for role in ROLE_NAMES
+}
+
 CAPABILITIES: dict[str, tuple[RoleName, ...]] = {
     **PERMISSIONS,
     **{f'ui.{role}': (role,) for role in ROLE_NAMES},
@@ -1633,7 +1643,7 @@ class Audience(Schema):
     (groups narrow each other; several values in one group widen it; roles and named people always count) still reads."""
     everyone: bool = False
     where: Conditions | None = None
-    roles: list[RoleName] = Field(default_factory=list, max_length=8)
+    roles: list[RoleName] = Field(default_factory=list, max_length=len(ROLE_NAMES))
     person_ids: list[ID] = Field(default_factory=list, max_length=500)
     category_ids: list[ID] = Field(default_factory=list, max_length=100)
     service_ids: list[ID] = Field(default_factory=list, max_length=64)
@@ -5238,6 +5248,10 @@ class FillOptionsInput(Schema):
     supervisor_person_id: ID | None = None
 
 
+ASSIGNMENT_STAMP_PREFIX = 'assign:'
+AssignmentStamp = Annotated[str, StringConstraints(pattern=rf'^{ASSIGNMENT_STAMP_PREFIX}[a-f0-9]{{64}}$')]
+
+
 class FillOptionsResult(Schema):
     """A checked fill-options page or the final complete candidate result."""
     provisional_page: bool
@@ -5248,6 +5262,7 @@ class FillOptionsResult(Schema):
     replace_refusal: str | None = None
     slot: dict[str, Any]
     source_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    assignment_stamp: AssignmentStamp | None = None
     evaluated_at: datetime
     candidates: list[dict[str, Any]]
     basis: str
@@ -6553,7 +6568,7 @@ class AccountInvite(Schema):
     email: Email
     username: Username
     person_id: ID | None = None
-    roles: list[RoleName] = Field(default_factory=list, max_length=8)
+    roles: list[RoleName] = Field(default_factory=list, max_length=len(ROLE_NAMES))
     reason: Reason
 
 
@@ -8177,7 +8192,7 @@ class GenerationContinue(Decision):
 
 
 class Command(Schema):
-    expected_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
+    expected_fingerprint: Annotated[str, StringConstraints(pattern=rf'^(?:{ASSIGNMENT_STAMP_PREFIX})?[a-f0-9]{{64}}$')] | None = None
     # Async planner previews bind the eventual write to the durable preview receipt.
     preview_job_id: ID | None = None
     kind: Annotated[str, StringConstraints(min_length=3, max_length=80)]

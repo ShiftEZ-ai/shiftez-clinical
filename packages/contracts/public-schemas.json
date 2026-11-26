@@ -159,11 +159,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -302,11 +303,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -3010,7 +3012,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -3610,7 +3613,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -11983,11 +11987,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Approver Roles",
             "type": "array"
           }
@@ -12720,6 +12725,19 @@
         "pattern": "^[a-f0-9]{64}$",
         "title": "Source Fingerprint",
         "type": "string"
+      },
+      "assignment_stamp": {
+        "anyOf": [
+          {
+            "pattern": "^assign:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Assignment Stamp"
       },
       "evaluated_at": {
         "format": "date-time",
@@ -20856,7 +20874,7 @@
       "expected_fingerprint": {
         "anyOf": [
           {
-            "pattern": "^[a-f0-9]{64}$",
+            "pattern": "^(?:assign:)?[a-f0-9]{64}$",
             "type": "string"
           },
           {
@@ -21068,7 +21086,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -26483,7 +26502,8 @@
           "admin",
           "auditor",
           "programme_lead",
-          "operator"
+          "operator",
+          "installation_admin"
         ],
         "title": "Role",
         "type": "string"
@@ -28105,11 +28125,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -28949,7 +28970,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -29931,11 +29953,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Roles",
         "type": "array"
       },
@@ -36389,7 +36412,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
@@ -37531,11 +37555,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -37817,11 +37842,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -38168,11 +38194,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Role Names",
             "type": "array"
           },
@@ -40616,11 +40643,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -41218,11 +41246,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -42049,11 +42078,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -45799,7 +45829,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -46754,7 +46785,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -47166,7 +47198,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -49566,7 +49598,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -54026,7 +54059,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -55011,7 +55045,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -66354,7 +66389,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -80279,7 +80314,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },

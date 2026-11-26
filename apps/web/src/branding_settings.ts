@@ -1,11 +1,10 @@
-/** Configuration › Department settings › Name and logo: the application's name and logos. They are application-wide
- *  (every department, sign-in included), so only an admin with admin access in every department may change them; other
- *  admins read them and are told who can. Each change is a version with a reason, Undo and history (branding.* commands). */
-import {el,field,area,button,note,readFailed,sectionHead,formDialog,historyDialog,confirmAction,notify,withIcon,formatDate} from './dom.js';
+/** Application-wide name and logos, including sign-in. The server decides who can edit.
+ *  Each change is a version with a reason, Undo and history (branding.* commands). */
+import {el,field,area,button,note,readFailed,sectionHead,formDialog,historyDialog,confirmAction,notify,withIcon,formatDate,roleLabel} from './dom.js';
 import {get,request,command,sessionChanged,keptRead,type KeptReadOptions} from './api.js';
 import {skeleton} from './loading.js';
 import {BRANDING_DEFAULTS} from './brand.js';
-import {BRANDING_IMAGE_FORMATS,BRANDING_IMAGE_LIMITS,type BrandingImage,type BrandingSettings,type BrandingStatus} from './generated.js';
+import {BRANDING_IMAGE_FORMATS,BRANDING_IMAGE_LIMITS,INSTALLATION_ADMIN_ROLE,type BrandingImage,type BrandingSettings,type BrandingStatus} from './generated.js';
 
 // The image types and limits POST /api/admin/branding/images accepts (its contract): checked here first, so a file it
 // would refuse is never read into a preview or sent.
@@ -77,7 +76,7 @@ export function brandingPanel():HTMLElement{
         const image=preview(k,b[`${k}_url`],b[`${k}_alt`]);
         return image?el('figure',{},image,el('figcaption',{},label)):null;})),
       installed(status,(fields,what)=>look(status,fields,what)),
-      status.can_edit?'':note('The name and logo apply to every department. Only an admin with admin access in every department can change them.'));};
+      status.can_edit?'':note(`Ask an ${roleLabel(INSTALLATION_ADMIN_ROLE)} to change the name and logo`));};
   const saved=(result:BrandingStatus)=>{if(box.isConnected)draw(result);};
   /** One change to how the installed app looks, as its own branding version with a reason (Undo and History as any). */
   const look=(status:BrandingStatus,fields:Record<string,unknown>,what:string)=>{const st=status.settings,b=status.branding;
