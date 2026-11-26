@@ -327,7 +327,7 @@ def test_staff_ask_for_leave_and_an_approver_decides_it_on_a_phone(browser, live
         expect(needs).to_contain_text('Leave request')
         expect(needs.locator('li')).to_have_count(1)
         shot(page, f'home-approver-{theme}')
-        needs.get_by_role('button', name='Review', exact=True).click()
+        needs.get_by_role('button', name='Review, Leave request,').click()
         expect_loaded(page, 'requests')
         card = page.locator('#main .dt-card').filter(has_text='Leave').first
         expect(card).to_contain_text('Approving opens 1 place')

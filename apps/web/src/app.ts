@@ -58,7 +58,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -1579,7 +1579,13 @@ async function rotateIfDue(){let last=0;try{last=Number(localStorage.getItem(ROT
 /** The deployment's branding, read once per page load and never waited for: sign-in and start-up draw at once with what
  *  is shown (the generated defaults until it answers; unread or unreadable, they stay). A saved change or its Undo
  *  applies its reply at once. */
-const readBranding=()=>void request<unknown>('/api/branding').then(v=>applyBranding(parseBranding(v)),()=>{});
+const readBranding=()=>{
+  // This public read still applies when boot clears the signed-out session.
+  const stop=new AbortController(),timer=setTimeout(()=>stop.abort(),READ_TIMEOUT);
+  void fetch('/api/branding',{credentials:'omit',cache:'no-store',signal:stop.signal})
+    .then(r=>r.ok?r.json():null).then(v=>{if(v)void applyBranding(parseBranding(v));},()=>{})
+    .finally(()=>clearTimeout(timer));
+};
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(String(d?.kind).startsWith('branding.')&&d.result?.branding)void applyBranding(parseBranding(d.result.branding));});
 async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
