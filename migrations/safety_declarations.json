@@ -700,9 +700,9 @@
     "sha256": "de177afa5a7c37ff51290d0d73e72f5a62422b0a511812d7410cc405fc0836a1",
     "review": "Widens the role binding check and adds one installation administrator grant and its audit event. Requires confirmation of this revision after a verified backup. Existing rows are retained."
   },
-  "0156_leave_balance_policy": {
+  "0157_leave_balance_policy": {
     "class": "additive",
-    "sha256": "b9b378f22bb771853e5cc9e3ca456dd1db25118c351506f8b9293124bbd12c82",
+    "sha256": "3f6c63ed813062ae6b45644706e2941f6d6106d7f7cb77c1d333424bc3a94126",
     "review": "Adds department-owned leave policy storage and its lookup index without updating any existing records."
   }
 }
