@@ -1181,6 +1181,13 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
+
+    @cache
+    def rule_boundaries(start, end):
+        return {boundary for policy in data['policies']
+                for interval in scope_intervals(data, policy['definition']['scope'], None, start, end)
+                for boundary in interval}
+
     for shift in shifts:
         control.check()
         sid = shift['id']
@@ -1193,9 +1200,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 model.add(staffed >= choices[sid, pid])
             model.add(staffed <= sum(choices[sid, pid] for pid in by_shift[sid]))
         bounds = {start, end, *(t for lo, hi, _ in leadership.segments(data, shift, start, end) for t in (lo, hi))} | {t for t in authority | peer_bounds if start < t < end}
-        for policy in data['policies']:
-            for lo, hi in scope_intervals(data, policy['definition']['scope'], None, start, end):
-                bounds.update((lo, hi))
+        bounds.update(rule_boundaries(start, end))
         for r in definition['requirements']:
             bounds.update(t for t in (start + timedelta(minutes=r['from_minute']),
                 start + timedelta(minutes=r['to_minute']) if r.get('to_minute') is not None else end) if start < t < end)
@@ -1849,6 +1854,8 @@ def _generate(snapshot, time_budget_seconds, workers, control, options, feasibil
                             diagnostic_proposal, deterministic, _on_model, _on_objectives, _diagnostic_continuation, _candidate_evidence)
         if 'status' in prepared:
             return prepared
+        if checkpoint is not None:
+            control.phase('checkpoint_preparation')
         state = prepared_state(key, prepared) if checkpoint is not None else {'key': key, 'hint': []}
         # A changed rule/input fingerprint invalidates the serialized model, but
         # the compact assignment-id checkpoint is still useful.  It is repaired
@@ -1859,6 +1866,7 @@ def _generate(snapshot, time_budget_seconds, workers, control, options, feasibil
         state['search_elapsed_seconds'] = control.search_spent
         if checkpoint is not None:
             checkpoint(state)
+            control.phase('preparation')
     else:
         state = dict(resume_state)
         issues = []
