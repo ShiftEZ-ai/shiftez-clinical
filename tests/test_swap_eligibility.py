@@ -331,7 +331,39 @@ def test_stored_swap_refusal_is_projected_for_the_current_reader(h, code, suffix
         assert saved.reason == message and saved.detail == detail
 
 
+@pytest.mark.parametrize('code', sorted(swaps.NOT_FREE_CODES - {swaps.COLLEAGUE_NOT_FREE}))
+def test_every_not_free_code_reads_the_same_to_staff(h, monkeypatch, code):
+    publication, first, _, _ = source_pair(h, third=True)
+    proposer, colleague, _ = h.seed['people']
+    evaluate = swaps.evaluate
+
+    def away(*args, **kwargs):
+        result = evaluate(*args, **kwargs)
+        return {**result, 'session_findings': result['session_findings'] + [
+            {'code': code, 'severity': 'error', 'message': 'Private validator detail', 'person_id': colleague}]}
+    monkeypatch.setattr(swaps, 'evaluate', away)
+
+    path = f'/api/swaps/options?assignment_id={first}&kind=give'
+    safe = {'code': 'COLLEAGUE_NOT_FREE', 'message': 'This colleague is not free at that time.'}
+    options = h.get('staff', path)
+    assert code not in json.dumps(options) and 'Private validator detail' not in json.dumps(options)
+    for row in options['recipients']:
+        assert {key: value for key, value in row.items() if key not in {'id', 'display_name'}} == {
+            'eligible': False, 'message': safe['message'], 'findings': [safe]}
+    assert options['no_eligible_recipients_reason'] == 'Colleagues are not free at that time.'
+    refusal = h.command('staff', 'swap.offer', offer_payload(h, publication, first, 'give'), status=422)
+    assert refusal['error'] == {'code': 'SWAP_INELIGIBLE', 'message': safe['message'], 'details': {'findings': [safe]}}
+
+    identity(h, 'coordinator_staff', ['staff', 'coordinator'], proposer)
+    assert [f['code'] for f in recipient(h.get('coordinator_staff', path), colleague)['findings']] == [code]
+    # Only a coordinator or approver reads the specific finding; other team readers who are staff read what staff read.
+    identity(h, 'lead_staff', ['staff', 'programme_lead', 'auditor'], proposer)
+    assert h.get('lead_staff', path)['recipients'] == options['recipients']
+
+
 def test_audience_words_cover_codes_from_the_swap_validator():
+    assert {'UNAVAILABLE', 'RESTRICTION', 'EXTERNAL_ROTATION', 'ROTATION_LEAVE_NEEDS_APPROVAL',
+            'ROTATION_LEAVE_NOT_ALLOWED'} <= swaps.NOT_FREE_CODES
     # Read the producers used by partial validation. Some warnings share these producers with errors.
     def codes(expression):
         if isinstance(expression, ast.IfExp):

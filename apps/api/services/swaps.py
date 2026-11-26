@@ -26,7 +26,7 @@ from .person_record import require_person
 
 OPEN_STATES = {"offered", "counteroffered", "accepted", "reviewing"}
 # Validator findings that depend only on the person and the duty they would take, never on other duties.
-RECIPIENT_DUTY_CODES = {"NOT_ELIGIBLE", "UNAVAILABLE", "EXTERNAL_ROTATION"}
+RECIPIENT_DUTY_CODES = {"NOT_ELIGIBLE", "UNAVAILABLE", "RESTRICTION", "EXTERNAL_ROTATION"}
 PRIVATE_TIME_WORDS = {
     "UNAVAILABLE": "is unavailable at that time.",
     "RESTRICTION": "has protected time then.",
@@ -118,6 +118,8 @@ AUDIENCE_WORDS = {
     "TYPE_VERSION_CHANGED": "The duty type has changed and needs review.",
 }
 SAFE_AUDIENCE_REASONS = frozenset(AUDIENCE_WORDS.values()) | {NO_OTHER_STAFF, UNKNOWN_AUDIENCE_REASON}
+# One source: a code the audience table words as "not free" is also neutral on a staff reader's row.
+NOT_FREE_CODES = frozenset(code for code, words in AUDIENCE_WORDS.items() if words == _AUDIENCE_NOT_FREE)
 OPTIONAL_NOTE_COMMANDS = {"swap.offer", "swap.accept", "swap.counteroffer", "swap.confirm", "swap.withdraw"}
 
 
@@ -127,13 +129,14 @@ def optional_swap_note(kind, reason):
 
 
 def can_read_private_time(actor):
-    return actor is not None and actor.permits(*s.PERMISSIONS["fairness.read_team"])
+    # The pair that reads every swap in the department and a colleague's availability on their card.
+    return actor is not None and actor.permits("coordinator", "approver")
 
 
 def staff_refusal(value):
     """Project machine-generated refusal evidence without touching the stored event."""
     if isinstance(value, dict):
-        if value.get("code") in PRIVATE_TIME_WORDS or value.get("error_code") in PRIVATE_TIME_WORDS:
+        if value.get("code") in NOT_FREE_CODES or value.get("error_code") in NOT_FREE_CODES:
             return {"code": COLLEAGUE_NOT_FREE, "message": COLLEAGUE_NOT_FREE_MESSAGE}
         return {key: staff_refusal(child) for key, child in value.items()}
     if isinstance(value, list):
@@ -144,7 +147,7 @@ def staff_refusal(value):
                 result.append(projected)
         return result
     if isinstance(value, str):
-        if value in PRIVATE_TIME_WORDS:
+        if value in NOT_FREE_CODES:
             return COLLEAGUE_NOT_FREE
         if value.startswith("The person taking ") and value.endswith(tuple(PRIVATE_TIME_WORDS.values())):
             return COLLEAGUE_NOT_FREE_MESSAGE
@@ -154,7 +157,9 @@ def staff_refusal(value):
 def eligibility_for_reader(actor, result):
     if result["eligible"] or can_read_private_time(actor):
         return result
-    return staff_refusal(result)
+    shown = staff_refusal(result)
+    # The headline is the first finding's sentence, so it cannot say more than the row does.
+    return {**shown, "message": shown["findings"][0]["message"]} if shown["findings"] else shown
 
 
 def stored_audience_reason(message):
