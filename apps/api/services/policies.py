@@ -14,6 +14,7 @@ from packages.domain.validation import evaluate, finding_observations
 from packages.domain.feasibility import unchanged_input_issues
 from packages.domain.solver_rules import definition_issues, COMPILER_VERSION
 from packages.domain.rule_map import numeric_limit
+from packages.domain.rule_lines import weakens_safety_rules
 from packages.domain.rule_serialization import stored_definition
 from apps.api import models as m
 from apps.api.auth import require_catalogue_read, require_permission, require_role, person_access, current_roles
@@ -838,7 +839,7 @@ def _activation_commands(command):
             for index, item in enumerate(value.items)]
 
 
-def _activation_inputs(db, actor, commands, *, enforce_independence=True):
+def _activation_inputs(db, actor, commands):
     """Read and validate activation candidates without changing lifecycle state."""
     pending, decisions = [], []
     require_role(actor, "approver")
@@ -851,9 +852,6 @@ def _activation_inputs(db, actor, commands, *, enforce_independence=True):
         policy = scoped(db, m.Policy, command.target_id, actor)
         expected(policy, command.expected_revision)
         require(policy.status == "proposed", "WORKFLOW_STATE", "Only a proposed policy can be activated", 409)
-        if enforce_independence:
-            independence.ensure(db, actor, "rule.activate", person_key(db, policy.created_by) != person_key(db, actor.identity_id),
-                                "Another authorised person must approve this policy", value.reason, policy.id)
         if previous := policy.definition.get("replaces_id"):
             old = scoped(db, m.Policy, previous, actor)
             require(old.status == "active", "WORKFLOW_STATE", "Only an active rule can be replaced", 409)
@@ -887,6 +885,34 @@ def _activation_inputs(db, actor, commands, *, enforce_independence=True):
     return pending, decisions
 
 
+def _require_independent_safety_change(weakens):
+    require(not weakens, 'SELF_APPROVAL',
+            'Another authorised person must approve a change that weakens a safety rule', 403)
+
+
+def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessors=None):
+    from .rule_effects import predecessor_rows
+    from .scoring_defaults import seeded_rows
+
+    before = (predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+              if predecessors is None else list(predecessors))
+    replaced = {old.id for old in before}
+    require(set(replaces_ids) <= replaced, 'NOT_FOUND', 'Record not found', 404)
+    if entry := policy.definition.get('calendar_entry_id'):
+        before.extend(old for old in policies_with_status(db, actor, 'active')
+                      if old.id not in replaced and old.definition.get('calendar_entry_id') == entry)
+    before = [record(old) for old in before if old.status == 'active']
+    return bool(before) and weakens_safety_rules(seeded_rows(db, before), [{**record(policy), 'status': 'active'}])
+
+
+def _activation_independence(db, actor, policy, value):
+    independent = person_key(db, policy.created_by) != person_key(db, actor.identity_id)
+    if not independent:
+        _require_independent_safety_change(activation_weakens_safety(db, actor, policy, value.replaces_ids))
+    independence.ensure(db, actor, 'rule.activate', independent,
+                        'Another authorised person must approve this policy', value.reason, policy.id)
+
+
 def _activation_stamp(db, actor):
     """Compact relational revisions, including new drafts and check receipts, bind the read to the write."""
     W, P, J = m.Workspace, m.Policy, m.Job
@@ -912,7 +938,7 @@ def prepare_activation(db, actor, command, require_checks=False):
     activation_phase_timings(db)
     stamp = _activation_stamp(db, actor)
     commands = _activation_commands(command)
-    pending, decisions = _activation_inputs(db, actor, commands, enforce_independence=False)
+    pending, decisions = _activation_inputs(db, actor, commands)
     retired_ids = {old_id for (policy, _), decision in zip(pending, decisions)
                    for old_id in (set(decision.replaces_ids) | set(policy.definition.get('merged_ids') or []) |
                                   ({policy.definition['replaces_id']} if policy.definition.get('replaces_id') else set()))}
@@ -964,10 +990,10 @@ def activate_policies(db, actor, commands, require_checks=False):
             policy = scoped(db, m.Policy, command.target_id, actor)
             expected(policy, command.expected_revision)
             require(policy.status == 'proposed', 'WORKFLOW_STATE', 'Only a proposed policy can be activated', 409)
-            independence.ensure(db, actor, 'rule.activate', person_key(db, policy.created_by) != person_key(db, actor.identity_id),
-                                'Another authorised person must approve this policy', value.reason, policy.id)
             pending.append((policy, value.reason))
             decisions.append(value)
+    for (policy, _), value in zip(pending, decisions):
+        _activation_independence(db, actor, policy, value)
     if prepared is not None:
         require([p.id for p, _ in pending] == prepared['policy_ids'], 'STALE_INPUTS',
                 'The policy proposal changed; prepare the activation again', 409)
@@ -1118,11 +1144,18 @@ def transition_approval_state(db, actor, policy, *, excluded=()):
     return max([last_revision, *(row.object_revision for row in pending)]), approved
 
 
-def transition_approval(db, actor, policy, action, reason, effects, *, excluded=()):
+def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), restoring=()):
     required = db.get(m.Department, actor.department_id).policy_retire_approvals_required
     proposers = {independence.person_key(db, policy.created_by), *excluded}
     reviewer = independence.person_key(db, actor.identity_id)
     safety = s.safety_rule(policy.definition)
+    if action == 'retire' and reviewer in proposers and safety:
+        from .scoring_defaults import seeded_rows
+
+        before = seeded_rows(db, [record(policy)])
+        after = seeded_rows(db, [{**record(old), 'status': 'active',
+                                  'active': approved_active_before_retirement(db, actor, old)} for old, _ in restoring])
+        _require_independent_safety_change(weakens_safety_rules(before, after))
     independence.ensure(db, actor, "rule.activate", reviewer not in proposers,
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,
         allow_self_approval=required == 1 and (
@@ -1197,7 +1230,8 @@ def policy_transition(db, actor, command, require_checks=False):
             restoring.append((old, last))
     require_policy_version(db, actor, *(old.definition for old, _ in restoring), retained=[old for old, _ in restoring])
     approval = transition_approval(db, actor, policy, "retire", value.reason,
-        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason})
+        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason},
+        restoring=restoring)
     if approval and not approval["complete"]:
         return {"record": record(policy), "impact": [], "restored_ids": [], "restored": [], "approval": approval}
     policy.status, policy.active = "retired", False
