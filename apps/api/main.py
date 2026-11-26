@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -152,10 +152,6 @@ class BodyLimitMiddleware:
                 return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
             return await receive()
         return await self.app(scope, replay, send)
-
-
-# Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
-INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
@@ -373,9 +369,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                  'correlation_id': request.state.correlation_id}, status_code=400)
         request.state.error_code = "SCHEMA_INVALID"
         # Field path, message and type only; never the input value or context (they can carry private or secret text).
-        errors = [{"field": ".".join(str(x) for x in e["loc"])[:200], "code": e["type"],
-                   "message": safe_message(e["msg"]) if e["type"] in INPUT_ECHOING or "error" in (e.get("ctx") or {}) else e["msg"][:300]}
-                  for e in exc.errors()[:50]]
+        errors = validation_issues(exc.errors())
         return JSONResponse({"error": {"code": "SCHEMA_INVALID", "message": "Review the highlighted fields", "details": errors}, "correlation_id": request.state.correlation_id}, status_code=422)
 
     @app.exception_handler(ValueError)
@@ -703,13 +697,16 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
+        identity_id = session_identity(engine, request.cookies.get(cookie_name))
+        enforce(engine, "password-change", [identity_id or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
         def operation(db):
+            # A concurrent disable or reset can make this session unusable while the account lock is contended.
+            account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id)
+            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
         return liveness_write(engine, operation, context={"route": "auth.password_change"})
 
     @app.get("/auth/start")
@@ -1945,7 +1942,13 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post("/api/planner/why", response_model=s.WhyResult, response_model_exclude_unset=True)
     def planner_why(value: s.WhyInput, request: Request):
         from .services.staffing import prepare_why, why
-        with transaction(engine) as db:
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+        with transaction(reader) as db:
+            if not postgres:
+                db.execute(text('BEGIN'))
+            # Authentication and input capture can share the department row from this read view.
+            db.info['_request_parents'] = {}
             actor = actor_for(request, db)
             source, options = prepare_why(db, actor, value)
         result = why(source, options, value)
@@ -2510,14 +2513,17 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules-explained", response_model=s.DepartmentRulesExplainedResponse)
     def department_rules_explained(request: Request, group_by: Literal['question'] = 'question',
-                                   at: s.date | None = Query(None)):
+                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None),
+                                   baseline_id: s.ID | None = Query(None)):
         """Explain department rules for a date without inventing a rota status."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_permission(actor, 'rules.read')
+            require(baseline_id is None or workspace_id is not None, 'TARGET_REQUIRED', 'Choose a draft', 422)
             from .services import rule_catalogue
             day = at or rule_catalogue.independence.today(db, actor.department_id)
-            return rule_catalogue.department_rules_explained(db, actor, day)
+            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id,
+                                                           baseline_id=baseline_id)
 
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
@@ -3110,7 +3116,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules/catalogue")
     def rule_catalogue_page(request: Request, response: Response, version: int = Query(1, ge=1, le=2), include_hidden: bool = False,
-                            day: s.date | None = None):
+                            day: s.date | None = None, workspace_id: s.ID | None = Query(None)):
         """The rule catalogue: every entry, its rule in force, the version waiting for approval (with its line diff),
         each line's reach today and its overlaps."""
         from .services import rule_catalogue
@@ -3119,6 +3125,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
             actual_day = day or rule_catalogue.independence.today(db, actor.department_id)
+            if workspace_id is not None:
+                return rule_catalogue.catalogue(db, actor, version, include_hidden, actual_day, workspace_id=workspace_id)
             stamp = rule_catalogue.catalogue_stamp(db, actor)
             tag = rule_catalogue.catalogue_etag(actor, version, include_hidden, actual_day, stamp)
             cached = conditional_response(request, tag)
