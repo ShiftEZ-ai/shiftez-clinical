@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Explicit operator entry points. No migrations or demo seeding on normal reads."""
 import argparse
+from contextlib import suppress
+from dataclasses import replace
 from datetime import date
 import json
 import os
@@ -13,6 +15,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
+from pydantic import ValidationError
 from sqlalchemy import func, inspect, select
 from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
                                refuse_test_flags, secret_from_env)
@@ -20,7 +23,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import TypeDefinition
+from packages.contracts.schemas import AccountInvite, Decision, PERMISSIONS, TypeDefinition
 from migrations import safety
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,20 +158,138 @@ def demo_data(db, passwords=None, empty=False):
     return result
 
 
+BOOTSTRAP_AUDIT_ACTION = "installation.bootstrap"
+UNVERIFIED_BOOTSTRAP = ("No unique pending first administrator with verifiable setup evidence. "
+                        "Use the original setup link if it still works. Otherwise ask the installation "
+                        "owner for verified recovery before upgrading.")
+
+
+def first_admin_invitation(db):
+    """Find the original pending bootstrap invitation from its receipt, audit and stored link."""
+    from apps.api.auth import held_roles
+    from apps.api.services.accounts import LOCAL_ISSUER, lock_link_account
+    from scripts.system_command import MAINTENANCE_ISSUER, MAINTENANCE_SUBJECT
+
+    maintenance = db.scalar(select(m.Identity).where(m.Identity.issuer == MAINTENANCE_ISSUER,
+        m.Identity.subject == MAINTENANCE_SUBJECT, m.Identity.disabled.is_(True)))
+    if maintenance is None:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    events = list(db.scalars(select(m.AuditEvent).where(
+        m.AuditEvent.actor_id == maintenance.id, m.AuditEvent.action == BOOTSTRAP_AUDIT_ACTION).limit(2)))
+    if len(events) != 1:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    event, = events
+    receipt_id = event.detail.get("receipt_id")
+    receipt = db.get(m.CommandReceipt, receipt_id) if receipt_id is not None else None
+    if (not event.detail.get("maintenance") or receipt is None or receipt.actor_id != maintenance.id
+            or receipt.department_id != event.department_id or receipt.command_kind != "account.invite"):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    target_id = receipt.result.get("record", {}).get("id")
+    link_id = receipt.result.get("link", {}).get("id")
+    if not target_id or target_id != event.target_id or not link_id or link_id != event.detail.get("link_id"):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    # Acceptance and disable can change eligibility while recovery waits for the account.
+    if lock_link_account(db, target_id) is None:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    link = db.get(m.AccountLink, link_id)
+    if (link is None or link.identity_id != target_id or link.department_id != event.department_id
+            or link.created_by != maintenance.id or link.purpose != "invite" or link.used_at is not None):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    pending = db.scalar(select(m.Account).join(m.Identity, m.Identity.id == m.Account.identity_id).where(
+        m.Account.identity_id == target_id, m.Account.accepted_at.is_(None), m.Identity.disabled.is_(False),
+        m.Identity.issuer == LOCAL_ISSUER, m.Identity.subject == m.Account.username))
+    department = db.get(m.Department, event.department_id)
+    if pending is None or department is None or "admin" not in held_roles(db, target_id, department.id):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    return maintenance, department, pending
+
+
+def reissue_first_admin(settings, reason, output):
+    from apps.api.auth import Actor
+    from apps.api.schema import require_current_schema
+    from apps.api.services.accounts import issue_link, store
+
+    if os.name != "posix":
+        raise RuntimeError("First administrator recovery needs a POSIX host and a private output directory")
+    directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    engine = None
+    created = None
+    prepared = False
+    try:
+        parent = os.fstat(directory)
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+            raise RuntimeError("Use an existing output directory accessible only to its owner")
+        engine = make_engine(settings.database_url, settings=settings)
+        with transaction(engine, write=True) as db:
+            require_current_schema(db)
+            maintenance, department, account = first_admin_invitation(db)
+            target_id = account.identity_id
+            user = store(settings).get(account.username)
+            if not user or user.get("disabled") is not True or user.get("email") != account.email:
+                raise RuntimeError("The pending first administrator is missing or changed in the sign-in store")
+            # Keep the requested name free until the private inode is known and its contents are durable.
+            staging = f".first-admin-{m.uid()}"
+            staged_link = f"{staging}/link"
+            os.mkdir(staging, mode=0o700, dir_fd=directory)
+            try:
+                with open(staged_link, "x", encoding="utf-8",
+                          opener=lambda name, flags: os.open(name, flags, 0o600, dir_fd=directory)) as private:
+                    created = os.fstat(private.fileno())
+                    if created.st_uid != os.geteuid() or created.st_mode & 0o077:
+                        raise RuntimeError("The output filesystem did not create a private file")
+                    actor = Actor(maintenance.id, department.id, department.organisation_id, maintenance.display_name,
+                                  frozenset(PERMISSIONS["access.system_roles"]), None, "maintenance")
+                    link = issue_link(db, actor, target_id, "invite", settings)
+                    db.add(m.AuditEvent(department_id=department.id, actor_id=maintenance.id, action="account.resend",
+                        target_id=target_id, reason=reason, detail={"link_id": link["id"], "maintenance": True},
+                        correlation_id=m.uid()))
+                    db.flush()
+                    private.write(db.info.pop("one_time_link") + "\n")
+                    private.flush()
+                    os.fsync(private.fileno())
+                os.link(staged_link, output.name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+                if not os.path.samestat(os.stat(output.name, dir_fd=directory, follow_symlinks=False), created):
+                    raise RuntimeError("The private output file changed during recovery")
+            finally:
+                with suppress(FileNotFoundError):
+                    os.unlink(staged_link, dir_fd=directory)
+                os.rmdir(staging, dir_fd=directory)
+            os.fsync(directory)
+            prepared = True
+    except BaseException as exc:
+        if prepared:
+            raise RuntimeError("Could not confirm the recovery transaction. Keep the output private. "
+                               "If the link does not work, retry recovery to a new file.") from exc
+        if created is not None:
+            try:
+                current = os.stat(output.name, dir_fd=directory, follow_symlinks=False)
+                if os.path.samestat(current, created):
+                    os.unlink(output.name, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+        raise
+    finally:
+        os.close(directory)
+        if engine is not None:
+            engine.dispose()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["migrate", "check-migrations", "init-demo", "init-institution", "init-production-seed", "rebuild-fairness"])
+    parser.add_argument("action", choices=["migrate", "check-migrations", "init-demo", "init-institution",
+                        "reissue-first-admin", "init-production-seed", "rebuild-fairness"])
     parser.add_argument("--confirm-destructive", default="", metavar="REV[,REV]",
                         help="Production: allow these exact reviewed destructive revisions to run")
     parser.add_argument("--database-url", default=secret_from_env("DATABASE_URL", "sqlite:///./var/rota.db"))
     parser.add_argument("--empty", action="store_true", help="Demo identities/people only, no operational catalogues")
     parser.add_argument("--organisation")
     parser.add_argument("--department")
-    parser.add_argument("--issuer")
-    parser.add_argument("--subject")
-    parser.add_argument("--display-name")
+    parser.add_argument("--username", help="First administrator's sign-in name")
+    parser.add_argument("--email", help="First administrator's email")
+    parser.add_argument("--display-name", help="First administrator's display name")
     parser.add_argument("--seed-version", type=int, choices=[1])
-    parser.add_argument("--reason", help="Recorded owner reason for the explicit initial seed")
+    parser.add_argument("--reason", help="Recorded owner reason for the initial seed or administrator invitation")
+    parser.add_argument("--output", type=Path, help="New file in a private directory for the replacement setup link")
     parser.add_argument("--timezone", default="Asia/Riyadh")
     parser.add_argument("--week-start", type=int, choices=range(7), default=6, help="Institution calendar: Monday=0 through Sunday=6")
     args = parser.parse_args()
@@ -180,12 +301,36 @@ def main():
     if args.action == "init-demo" and os.getenv("ROTA_ENV") == "production":
         parser.error("Demo bootstrap is prohibited in production")
     if args.action == "init-institution":
-        if not all([args.organisation, args.department, args.issuer, args.subject, args.display_name]):
-            parser.error("Institution bootstrap requires --organisation, --department, --issuer, --subject and --display-name")
+        if not all([args.organisation, args.department, args.username, args.email, args.display_name, args.reason]):
+            parser.error("Institution bootstrap requires --organisation, --department, --username, --email, --display-name and --reason")
         from zoneinfo import ZoneInfo
         ZoneInfo(args.timezone)
+        try:
+            invite = AccountInvite(username=args.username, email=args.email, display_name=args.display_name,
+                                   roles=["admin"], reason=args.reason)
+            settings = replace(Settings.from_env(), database_url=args.database_url)
+            if not settings.identity_users_file:
+                parser.error("Institution bootstrap requires a managed sign-in users file")
+            settings.check()
+        except ValidationError:
+            parser.error("Enter a valid sign-in name, email, display name and reason for the first administrator")
+        except RuntimeError as exc:
+            parser.error(str(exc))
     if os.getenv("ROTA_ENV") == "production" and not args.database_url.startswith("postgresql+psycopg://"):
         parser.error("Production migration/bootstrap requires an explicit PostgreSQL psycopg URL")
+    if args.action == "reissue-first-admin":
+        if args.output is None:
+            parser.error("First administrator recovery requires --output and --reason")
+        try:
+            decision = Decision(reason=args.reason)
+            settings = replace(Settings.from_env(), database_url=args.database_url)
+            if not settings.identity_users_file:
+                parser.error("First administrator recovery requires a managed sign-in users file")
+            settings.check()
+        except ValidationError:
+            parser.error("Enter a valid reason for replacing the first administrator invitation")
+        reissue_first_admin(settings, decision.reason, args.output)
+        return
     if args.action == "init-production-seed":
         if args.seed_version is None or not args.reason:
             parser.error("Initial seed requires --seed-version 1 and --reason; it never runs automatically")
@@ -224,10 +369,7 @@ def main():
                 json.dump({"warning": "Local fictional demonstration only", "accounts": values["credentials"]}, handle, indent=2)
             print(f"Fictional demo initialized. Generated credentials: {path}\nNo credentials are committed or included in deliverable archives.")
         else:
-            if not all([args.organisation, args.department, args.issuer, args.subject, args.display_name]):
-                parser.error("Institution bootstrap requires --organisation, --department, --issuer, --subject and --display-name")
-            from zoneinfo import ZoneInfo
-            ZoneInfo(args.timezone)
+            from scripts.system_command import apply, maintenance_identity
             with transaction(engine, write=True) as db:
                 if db.scalar(select(func.count()).select_from(m.Organisation)):
                     raise RuntimeError("Refusing to bootstrap a nonempty installation")
@@ -235,8 +377,7 @@ def main():
                 db.add(org); db.flush()
                 dept = m.Department(organisation_id=org.id, name=args.department,
                                     display_settings=new_department_display_settings(), **new_department_session_limits())
-                identity = m.Identity(issuer=args.issuer, subject=args.subject, display_name=args.display_name)
-                db.add_all([dept, identity]); db.flush()
+                db.add(dept); db.flush()
                 from apps.api.services.event_defaults import seed_department
                 seed_department(db, dept)
                 from apps.api.services.leave_types import seed as seed_leave_types
@@ -245,8 +386,15 @@ def main():
                 seed_contacts(db, dept.id)
                 from apps.api.services.scoring_defaults import seed as seed_scoring_defaults
                 seed_scoring_defaults(db, dept.id)
-                db.add(m.RoleBinding(identity_id=identity.id, department_id=dept.id, role="admin", starts_on=m.now().date()))
-            print("Institution initialized with one explicitly bound administrative identity. No clinical/approval role was inferred.")
+                actor = maintenance_identity(db, m, select)
+                correlation_id = m.uid()
+                [receipt] = apply(db, actor, dept, [{"kind": "account.invite", "payload": invite.model_dump(mode="json")}],
+                                  correlation_id, settings)
+                db.add(m.AuditEvent(department_id=dept.id, actor_id=actor.id, action=BOOTSTRAP_AUDIT_ACTION,
+                    target_id=receipt["record"]["id"], reason=invite.reason, correlation_id=correlation_id,
+                    detail={"receipt_id": receipt["receipt_id"], "link_id": receipt["link"]["id"], "maintenance": True}))
+            print("Institution initialized. Give this private one-time setup link to the first administrator:")
+            print(receipt["one_time_link"])
     finally:
         engine.dispose()
 

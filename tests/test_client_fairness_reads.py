@@ -30,10 +30,13 @@ def test_a_rebuilt_insights_page_shares_each_read_until_a_change_can_alter_it(cl
         "api.forgetReads(null);await f.fairnessRead(D);const unnamed=n();"
         # Sign-out forgets them (api.ts onSessionReset).
         "api.clearSessionState();await f.fairnessRead(D);const signedOut=n();"
+        # The unscoped goals lookup shares its answer and follows the same invalidation.
+        "const U='/api/fairness/goals';await f.fairnessRead(U);await f.fairnessRead(U);const unscoped=n();"
+        "api.forgetReads(new Set(['workspace']));await f.fairnessRead(U);const unscopedChanged=n();"
         "console.log(JSON.stringify({inFlight,answered,draft,published,unnamed,signedOut,"
-        "goals:sent.filter(p=>p===G).length,dist:sent.filter(p=>p===D).length}));")
+        "goals:sent.filter(p=>p===G).length,dist:sent.filter(p=>p===D).length,unscoped,unscopedChanged}));")
     out = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert got == {'inFlight': 2, 'answered': 2, 'draft': 3, 'published': 5, 'unnamed': 6, 'signedOut': 7,
-                   'goals': 3, 'dist': 4}
+                   'goals': 3, 'dist': 4, 'unscoped': 8, 'unscopedChanged': 9}

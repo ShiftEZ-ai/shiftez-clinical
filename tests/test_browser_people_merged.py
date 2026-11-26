@@ -16,6 +16,7 @@ from .governance_support import identity
 from .test_browser import TEST_PASSWORD, browser, live_server, sign_in, navigate, filter_by, save_dialog, pick, wait_held, wait_until  # noqa: F401
 from .test_browser_access_page import sign_out
 from .test_browser_catalogue_hydration import held_app
+from .test_contact_configuration import contact_type, set_value
 from .test_browser_w3_setup_today import no_page_overflow
 
 pytestmark = pytest.mark.browser
@@ -163,6 +164,45 @@ def test_staff_directory_search_preserves_contact_privacy(browser, live_server, 
         # No management action anywhere for staff.
         expect(page.locator('.topbar .page-actions .button')).to_have_count(0)
         expect(page.get_by_role('button', name=re.compile('^(Edit|More actions for)'))).to_have_count(0)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('viewport', [None, PHONE], ids=['desktop', 'phone'])
+def test_staff_find_configured_contact_by_number_and_open_the_card(browser, live_server, h, viewport):
+    person = contact(h)
+    mobile = contact_type(h, name='Mobile', visibility={'mode': 'roles', 'roles': ['staff', 'admin']})
+    private = contact_type(h, name='Private phone', visibility={'mode': 'self_and_admins'})
+    set_value(h, mobile, '+1 202 555 0144', person=person['id'])
+    set_value(h, private, '+1 202 555 0188', person=person['id'])
+
+    context, page = sign_in(browser, live_server, 'staff', viewport=viewport,
+                            phone_notice=viewport is not None)
+    try:
+        navigate(page, 'people')
+        search = page.get_by_role('searchbox', name='Search people', exact=True)
+        search.fill('12025550188')
+        expect(page.get_by_role('heading', name='No matching people', exact=True)).to_be_visible()
+        search.fill('12025550144')
+        found = row(page, person['display_name'])
+        expect(found).to_be_visible()
+        expect(page.locator('.app-footer .dt-count')).to_contain_text('1 of')
+
+        page.get_by_role('button', name=re.compile('^View')).click()
+        settings = page.get_by_role('dialog', name='View settings')
+        expect(settings.get_by_role('checkbox', name='Private phone', exact=True)).to_have_count(0)
+        settings.get_by_role('checkbox', name='Mobile', exact=True).check()
+        page.keyboard.press('Escape')
+        expect(found.get_by_text('+1 202 555 0144', exact=True)).to_be_visible()
+
+        found.locator('strong').first.click()
+        panel = page.get_by_role('region', name=person['display_name'])
+        open_contact_details(panel)
+        expect(panel.get_by_role('button', name='Copy Mobile +1 202 555 0144', exact=True)).to_be_visible()
+        call = panel.get_by_role('link', name=f"Call {person['display_name']}, Mobile +1 202 555 0144", exact=True)
+        expect(call).to_have_attribute('href', 'tel:+12025550144')
+        expect(panel).not_to_contain_text('+1 202 555 0188')
+        no_page_overflow(page)
     finally:
         context.close()
 
