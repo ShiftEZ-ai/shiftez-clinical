@@ -133,7 +133,7 @@ def _pair_deficit(model, attendance, need):
 
 
 def add_balance_goals(model, data, choices, participants, overtime_choices, pairings, focus, strengths, leads=None,
-                      *, score=None, presence=None):
+                      *, score=None, presence=None, fixed_goals=None):
     terms, worst = [], 0
     worst_off_emphasis = round(10 * scoring_settings(data)['fairness_worst_off_emphasis'])
     check = data.get('_check_budget', lambda: None)
@@ -291,7 +291,10 @@ def add_balance_goals(model, data, choices, participants, overtime_choices, pair
                 terms.append(weight * scaled)
                 worst += weight * 1000
             if score is not None and costs:
-                terms.append((weight / strengths['medium'], score.mean(costs)))
+                term = (weight / strengths['medium'], score.mean(costs))
+                terms.append(term)
+                if fixed_goals is not None:
+                    fixed_goals.append(term)
                 if presence is not None:
                     presence.append(1)
             continue
@@ -434,8 +437,10 @@ def add_balance_goals(model, data, choices, participants, overtime_choices, pair
                 costs.append((weights[pid], _report_cost(score, outside, denominator)))
             mean = score.mean(costs)
             worst_cost = score.maximum([cost for _, cost in costs], 1_000_000)
-            terms.append((sum(weights.values()) / (len(who) * strengths['medium']),
-                          score.share_loss(mean, worst_cost)))
+            term = (sum(weights.values()) / (len(who) * strengths['medium']), score.share_loss(mean, worst_cost))
+            terms.append(term)
+            if fixed_goals is not None and rule['aim'] == 'target':
+                fixed_goals.append(term)
             if presence is not None:
                 presence.append(1)
             continue
@@ -684,10 +689,10 @@ def _shared_lead_terms(model, data, shifts, leads):
 
 
 def add_score_goals(model, data, choices, participants, overtime_choices, pairings, focus, strengths, leads=None,
-                    *, presence=None):
+                    *, presence=None, fixed_goals=None):
     """Fair share and lead goals as the same weighted, normalized losses the schedule score reads."""
     from .cp_sat_score import ScoreModel
     terms, _ = add_balance_goals(model, data, choices, participants, overtime_choices, pairings, focus, strengths,
                                  leads, score=ScoreModel(model, (data.get('generation_options') or {}).get('scoring')),
-                                 presence=presence)
+                                 presence=presence, fixed_goals=fixed_goals)
     return terms

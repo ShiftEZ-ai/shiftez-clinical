@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError, OperationalError
 from packages.contracts import schemas as s
 from . import models as m
-from .auth import authenticate, require_permission, require_role
+from .auth import authenticate, person_access, require_permission, require_role
 from .db import DatabaseWriteTimeout, retry_write, transaction
 from . import live
 from .schema import require_current_schema
@@ -156,7 +156,7 @@ def command_roles(command):
         return ["coordinator", "approver", "programme_lead"]
     if kind in {"policy.create", "policy.group", "rule.migrate_to_catalogue", "rule.acknowledge", "rule.unacknowledge"}:
         return ["admin", "coordinator"]
-    if kind == "request.create":
+    if kind in {"request.create", "request.edit", "request.undo_edit"}:
         return ["staff", "coordinator"]
     if kind in {"notification.ack", "notification.ack_all", "notification.unack", "notification.acknowledge", "session.logout", "session.revoke"} or kind.startswith("table_view.") or kind.startswith("calendar_feed."):
         return ALL_ROLES
@@ -520,6 +520,8 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.note_command(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
+    if kind in {"request.edit", "request.undo_edit"}:
+        return availability.edit_request(db, actor, command)
     if kind == "request.decide":
         return availability.decide_request(db, actor, command)
     if kind == "request.decide_many":
@@ -724,6 +726,11 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
         availability.lead_protects(db, actor, item["kind"], item["person_id"], item["start"], item["end"])
     if kind in {"request.decide", "request.decide_many", "request.undo"}:
         _authorize_request_results(db, actor, [(kind, result)])
+    if kind in {"request.edit", "request.undo_edit"}:
+        row = scoped(db, m.RequestRecord, result['record']['id'], actor)
+        person_access(db, actor, row.person_id)
+        availability.require_request_person(actor, row.person_id)
+        require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can read this change', 403)
     if kind.startswith("trainee_note."):
         from .services.training import note_access
         note_access(db, actor, result["record"]["person_id"])
@@ -778,6 +785,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if kind == "feedback.export_github" and db is not None:
         from .services import feedback
         return feedback.redact_export_result(db, actor, result, settings)
+    if kind in {'request.edit', 'request.undo_edit'}:
+        return {key: value for key, value in result.items() if key != '_request_edit_previous'}
     return {key: value for key, value in result.items() if key != 'path'} if kind == 'calendar_feed.create' else result
 
 
@@ -1132,9 +1141,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             fresh_activation = True
         # A calendar URL is a bearer credential shown once, like invitation/reset links. Keep the committed
         # outcome for retries without storing its secret in receipt evidence or returning it on recovery.
+        outcome = receipt_result(command.kind, result)
+        if previous := db.info.pop('_request_edit_previous', None):
+            outcome = {**outcome, '_request_edit_previous': previous}
         db.add(m.CommandReceipt(id=receipt_id, department_id=actor.department_id, actor_id=actor.identity_id,
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
-                                payload_hash=payload_hash, result=receipt_result(command.kind, result)))
+                                payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
         reason = str(command.payload.get("reason", command.kind))[:500]
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':

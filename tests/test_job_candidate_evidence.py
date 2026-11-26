@@ -29,20 +29,25 @@ def migration_url(request, tmp_path):
 
 
 def test_candidate_evidence_migration_is_additive(migration_url):
-    path = safety.VERSIONS / '0151_job_candidate_evidence.py'
-    assert safety.classification(path) == 'additive'
-    new = safety.VERSIONS / '0152_feasibility_results.py'
-    assert safety.classification(new) == 'additive'
-    assert manage.check_migrations(migration_url)[-2:] == [safety.revision(path), safety.revision(new)]
+    evidence_migration = safety.VERSIONS / '0151_job_candidate_evidence.py'
+    feasibility_migration = safety.VERSIONS / '0152_feasibility_results.py'
+    assert safety.classification(evidence_migration) == 'additive'
+    assert safety.classification(feasibility_migration) == 'additive'
+    evidence, feasibility = safety.revision(evidence_migration), safety.revision(feasibility_migration)
+
+    def pending_through_feasibility():
+        pending = manage.check_migrations(migration_url)
+        return pending[:pending.index(feasibility) + 1]
+
+    assert pending_through_feasibility()[-2:] == [evidence, feasibility]
     config = manage.alembic_config(migration_url)
     command.upgrade(config, '0148_bulk_analyze')
-    assert manage.check_migrations(migration_url) == [
-        '0150_person_inactive_from', safety.revision(path), safety.revision(new)]
+    assert pending_through_feasibility() == ['0150_person_inactive_from', evidence, feasibility]
     command.upgrade(config, '0150_person_inactive_from')
     engine = make_engine(migration_url)
     try:
         before = set(inspect(engine).get_table_names())
-        command.upgrade(config, safety.revision(path))
+        command.upgrade(config, evidence)
         schema = inspect(engine)
         assert set(schema.get_table_names()) - before == {'job_candidate_evidence'}
         assert before <= set(schema.get_table_names())
@@ -54,7 +59,7 @@ def test_candidate_evidence_migration_is_additive(migration_url):
         with engine.connect() as connection:
             assert not connection.execute(select(m.JobCandidateEvidence)).first()
         before = set(schema.get_table_names())
-        command.upgrade(config, 'head')
+        command.upgrade(config, feasibility)
         schema = inspect(engine)
         assert set(schema.get_table_names()) == before | {'job_feasibility_results'}
         assert schema.get_pk_constraint('job_feasibility_results')['constrained_columns'] == ['job_id', 'attempt']
