@@ -465,9 +465,14 @@ class TwoObservationGateTests(unittest.TestCase):
 
         config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
-        for producer in ("static", "ci-gate"):
-            self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
-                          [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
+        planned_sha = "${{ needs.checks.outputs.trusted_sha }}"
+        self.assertIn(planned_sha, [step.get("with", {}).get("ref") for step in config["jobs"]["static"]["steps"]])
+        verdict_steps = config["jobs"]["ci-gate"]["steps"]
+        binding, = (step for step in verdict_steps if step.get("env", {}).get("TRUSTED_SHA") == planned_sha)
+        reader = next(step for step in verdict_steps if "trusted_verdict.py --plan" in step.get("run", ""))
+        self.assertEqual(binding["working-directory"], ".trusted-verdict")
+        self.assertEqual(binding["if"], reader["if"])
+        self.assertLess(verdict_steps.index(binding), verdict_steps.index(reader))
         event = self.folder / "schedule.json"
         event.write_text("{}")
         pin, default_sha = "a" * 40, "b" * 40
@@ -479,6 +484,7 @@ class TwoObservationGateTests(unittest.TestCase):
              patch.object(trusted_ci, "output") as selected:
             trusted_ci.select()
             self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
+            self.assertEqual(selected.call_args.args[0]["trusted_sha"], pin)
         with patch.dict(os.environ, nightly), \
              patch.object(trusted_ci.policy, "event", return_value={"repository": {"default_branch": "dev"}}), \
              patch.object(trusted_ci.policy, "git", return_value=pin.encode()):

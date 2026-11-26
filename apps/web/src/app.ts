@@ -58,7 +58,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -1579,7 +1579,13 @@ async function rotateIfDue(){let last=0;try{last=Number(localStorage.getItem(ROT
 /** The deployment's branding, read once per page load and never waited for: sign-in and start-up draw at once with what
  *  is shown (the generated defaults until it answers; unread or unreadable, they stay). A saved change or its Undo
  *  applies its reply at once. */
-const readBranding=()=>void request<unknown>('/api/branding').then(v=>applyBranding(parseBranding(v)),()=>{});
+const readBranding=()=>{
+  // This public read still applies when boot clears the signed-out session.
+  const stop=new AbortController(),timer=setTimeout(()=>stop.abort(),READ_TIMEOUT);
+  void fetch('/api/branding',{credentials:'omit',cache:'no-store',signal:stop.signal})
+    .then(r=>r.ok?r.json():null).then(v=>{if(v)void applyBranding(parseBranding(v));},()=>{})
+    .finally(()=>clearTimeout(timer));
+};
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(String(d?.kind).startsWith('branding.')&&d.result?.branding)void applyBranding(parseBranding(d.result.branding));});
 async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
@@ -2066,9 +2072,14 @@ const checkSaid=()=>checkingWords(checkJob?checkJob.status:checkSync?'running':'
 /** The job's status moved (queued → running): every check line drawn says it in place, without a redraw. */
 const sayCheck=()=>{for(const line of document.querySelectorAll<HTMLElement>('[data-check-line]')){const said=checkSaid();
   if(line.dataset.checkLine!==said){line.dataset.checkLine=said;line.childNodes[1].textContent=said+' · ';line.querySelector('button')?.setAttribute('aria-label','Cancel: '+said.toLowerCase());}}
-  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();};
+  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();
+  // Submit, Approve and Publish held for this check say what its line says (schedulePage checkHold).
+  for(const b of document.querySelectorAll<HTMLElement>('[data-check-hold]'))notYet(b,checkSaid());};
 /** Someone is mid-task (a dialog, a popover, a field, a session panel): a redraw would rebuild it under them. */
-const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]'))||!!document.activeElement?.closest('.wk-panel');
+const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]')&&!document.activeElement.matches('.wk-panel input[type=search]'))
+  // A session panel is mid-task while it saves or a reason or confirm is open; idle (after its save), the check's result
+  // draws beside it at once (its redraw keeps the panel and its focus), so the next edit never waits for it.
+  ||!!document.querySelector('.wk-panel :is(.save-mark.saving,.wk-save-slot .spinner,form,.armed)');
 /** The bound passed with the job still queued (at once when no worker answers): the page takes the check over, once; a
  *  job it may not take over again stops saying it waits (drawn once nobody is mid-task). */
 const checkDue=(id:string)=>{const job=checkJob;if(job?.id!==id||!autoChecking)return;
@@ -2122,7 +2133,9 @@ const readWorkers=(id:string,w:Row,then:()=>void)=>{let read=workerReads.get(id)
     while(workerReads.size>8){const old=workerReads.keys().next().value!;workerReads.delete(old);jobWorkers.delete(old);}}
   void read.then(then,()=>{});};
 /** Each status read of the joined job: its words follow it. */
-const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;const was=checkStalled();checkJob.status=String(j.status);
+const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;
+  if(j.status==='failed'&&j.error_code==='STALE_INPUTS')return;  // maybe replaced by a newer edit's check: checkEnded says
+  const was=checkStalled();checkJob.status=String(j.status);
   if(was)void redraw();else sayCheck();};  // picked up after all: the pill gives way to the running check
 /** One rota check: a validation job (waited for, read each second) when workers serve jobs, else synchronous.
  *  shortcut: a worker lost after its probe leaves the job queued (Cancel still stops it). */
@@ -2147,8 +2160,11 @@ async function runCheck(w:Row,key:string,existing?:Row):Promise<Row|null>{
 /** The joined job ended. Set aside by someone else (their Cancel, or a take-over from another page on this rota): the
  *  rota's check is read first, and only one that is not current stopped (rule_check_api.ts checkEndedStopped, DL-024).
  *  A stale or failed job names why, as a refused synchronous check does (maintenance cause via its input changes). */
-async function checkEnded(last:Row,w:Row,key:string):Promise<Row>{
+async function checkEnded(last:Row,w:Row,key:string):Promise<Row|null>{
   if(checkCancelled===key)return last;  // this person's own Cancel: "Not checked" (autoCheck)
+  // Failed as stale because the rota was edited again (queue_validation): the newer edit's check counts, so this one is
+  // dropped like a check superseded before it started, never drawn as stopped, also before the newer check is on the page.
+  if(last.error_code==='STALE_INPUTS'&&await rotaMeta(String(w.id)).then(d=>d.workspace.revision>w.revision,()=>false))return null;
   const current=last.status==='cancelled'&&await rotaCheckCurrent(String(w.id));
   if(!checkEndedStopped(last.status,current))return last;
   const details=last.error_code==='STALE_INPUTS'?await get<Row>(`/api/jobs/${last.id}/input-changes?offset=0&limit=1`).then(r=>({changed_facts:r.changes}),()=>undefined):undefined;
@@ -2185,7 +2201,10 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
-  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key)return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key)return;autoChecking=false;
+  // Superseded by a newer edit's check on this rota (autoCheckKey moved on): this one's result is dropped, never drawn,
+  // and the checking state stays the newer check's.
+  const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
+  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
@@ -2475,7 +2494,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
-  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  const liveCheck=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive:null;
+  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,liveCheck?stagedCoverage(liveCheck.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
   if(!draftData&&!(source?may('publications.read_team'):team))shown.participantsFiltered=true;
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
@@ -2619,9 +2639,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     const stalled=unstarted||autoChecking&&draft&&checkJob?.key.startsWith(w.id+':')===true&&checkStalled();
     const unfinished=unstarted?CHECK_NOT_STARTED:stalled?checkingWords(checkJob!.status,Date.now()-checkJob!.since,jobWorkers.get(checkJob!.id)):draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id?checkingWords('failed'):'';
     const refused=!stalled&&!!unfinished&&checkStop!.refused;
+    // This person cancelled the latest revision's check: nothing is queued, so it is "Not checked", never "Waiting to check".
+    const cancelled=!unfinished&&draft&&(!fresh||serverChecking(w.validation))&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':');
     if(unfinished){validate.lastElementChild!.textContent=refused?unfinished:unfinished+' · '+CHECK_AGAIN;validate.disabled=refused;delete validate.dataset.tip;
       if(refused)validate.setAttribute('aria-describedby',CHECK_STOPPED_WHY);}  // DL-007: a disabled control says why (the line above the grid)
-    else if(draft&&!fresh&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':')){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
+    else if(cancelled){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
     // A recheck keeps the last counts with a spinner (R1: counts never blank) beside its elapsed time and Cancel (B7).
     const checking=autoChecking&&draft&&(!fresh||!!checkJob||serverChecking(w.validation))&&!stalled,longCheck=checkLine;
     // maintenance: a stored check that covers only the last edit (someone's, its complete check queued with the workers) is
@@ -2636,7 +2658,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(partialCheck&&!workersKnown())void reprobeWorkers(w.id+':'+w.revision);  // the stale "no worker" answer is asked again
     // A published rota has nothing to check in place (its changes are amendments): its footer is the published layer's.
     const kind=footerCheck({stalled,checking:!!checking,provisional:!!provisional,checked:!!w.validation,counts:!!fixSum,current:fresh,
-      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished,whole:!!data,draft});
+      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished||cancelled,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
     rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
@@ -2646,6 +2668,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
       :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
+    // Submit, Approve and Publish wait while the latest revision is not checked, whatever the check's state (running,
+    // waiting, stalled, not started, cancelled, failed): held in place (D59 notYet), saying what the footer says.
+    const checkHold=reading||!draft||fresh&&!serverChecking(w.validation)?'':kind==='checking'?checkSaid():kind==='provisional'?checkingWords(provisional!.status)
+      :kind==='waiting'?waitingWord('queued'):kind==='not-checked'?TERMS.notChecked
+      :['stalled','stale','check-now'].includes(kind)?validate.lastElementChild!.textContent!.split(' · ')[0]:TERMS.needsCheck;
+    if(checkHold)for(const b of workflow.children)if(b instanceof HTMLButtonElement){notYet(b,checkHold);if(kind==='checking')b.dataset.checkHold='';}
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
@@ -2694,11 +2722,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   }
   const planning=w?planningOf(whole):null;
   const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
-  // Phones always take the smallest step: icon + count pills and icon-only actions on one row under the title.
-  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // A load that finishes after you have moved on must not take over the new page's top bar.
   if(mySerial!==renderSerial)return;
   swapPlannerBar(bar,target);
+  // Fit after the swap so fitRow can release the outgoing toolbar's observers.
+  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // The bar now names the new rota or view. A body still on screen from another rota or view goes to its skeleton at
   // once, toolbar included, so the two states never mix while this one loads (S-27); a live redraw of the same view
   // keeps what it shows.
@@ -2864,6 +2892,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
+  viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
   // The window on screen until the whole rota lands (wholeRota): read-only, its writes held; then the page draws it whole.
   // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it is read,
@@ -2896,6 +2926,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekView.matchPeople=schedView==='people'?[]:about.length?about:byText?rows('people').filter(p=>byText(fullNameOf(p))).map(p=>String(p.id)):[];
   // An empty view tells the filters hiding everything (Show all) from a period with nothing in it (S-01).
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
+  // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
+  weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
+  // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
+  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
