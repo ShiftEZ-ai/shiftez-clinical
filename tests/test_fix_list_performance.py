@@ -160,20 +160,17 @@ def test_slow_lifecycle_check_does_not_hold_writer_lock_and_rechecks_inputs(back
             writing = pool.submit(h.command, 'staff', 'table_view.create', {'table_key': 'people',
                 'name': 'Writer continues during lifecycle check', 'definition': {}})
             assert writing.result(timeout=120)['view']
-            # A real scheduling input must invalidate the prepared candidate, regardless of
-            # maintenance's narrower treatment of unrelated table-view activity.
+            # Change a participant's scheduling facts while the check holds the old snapshot.
             if relevant:
                 with transaction(h.app.state.engine, write=True) as db:
-                    department = db.get(m.Department, h.seed['department_id'])
-                    department.revision += 1
-                    department.generation_defaults = {**(department.generation_defaults or {}), 'mode': 'rebalance'}
-                    db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+                    db.get(m.Person, h.seed['people'][0]).active = False
             assert not checking.done()
         finally:
             release.set()
         result = checking.result(timeout=120)
         if relevant:
             assert result['error']['code'] == 'STALE_INPUTS'
+            assert h.detail(w)['workspace']['status'] == w['status']
         else:
             assert result['workspace']['status'] == ('submitted' if action == 'submit' else 'approved')
 
