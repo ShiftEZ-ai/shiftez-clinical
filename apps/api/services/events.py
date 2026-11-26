@@ -528,13 +528,13 @@ def schedule_occurrences(db, actor, starts_on, ends_on):
         for row, in_audience in viewer_occurrence_audiences(db, actor, starts_on, ends_on) if planner or in_audience]
 
 
-def invalidate_audience_inputs(db, actor):
-    if db.scalar(select(m.EventOccurrence.id).where(m.EventOccurrence.department_id == actor.department_id,
-            m.EventOccurrence.cancelled.is_(False),
-            m.EventOccurrence.data['type']['blocks_duties'].as_boolean().is_(True)).limit(1)) or db.scalar(
-            select(m.Event.id).where(m.Event.department_id == actor.department_id, m.Event.cancelled.is_(False),
-            m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True)).limit(1)):
-        bump_inputs(db, actor, availability=True)
+def has_blocking_audience_inputs(db, department_ids):
+    occurrence = select(m.EventOccurrence.id).where(m.EventOccurrence.department_id.in_(department_ids),
+        m.EventOccurrence.cancelled.is_(False),
+        m.EventOccurrence.data['type']['blocks_duties'].as_boolean().is_(True)).exists()
+    event = select(m.Event.id).where(m.Event.department_id.in_(department_ids), m.Event.cancelled.is_(False),
+        m.Event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True)).exists()
+    return bool(db.scalar(select(occurrence | event)))
 
 
 def occurrences(db, actor, starts_on, ends_on):

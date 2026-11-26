@@ -1647,8 +1647,12 @@ def _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, option
     return held[1]
 
 
-def domain_snapshot(db, workspace, *args, **kwargs):
+def domain_snapshot(db, workspace, *args, edit_sources=None, **kwargs):
     """Reuse detached preparation inputs only after checking current relational currency."""
+    if edit_sources is not None:
+        # One stamped assignment shares inputs only within its writer transaction.
+        db.flush()
+        return _domain_snapshot(db, workspace, *args, _edit_sources=edit_sources, **kwargs)
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')

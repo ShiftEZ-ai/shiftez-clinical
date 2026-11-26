@@ -60,6 +60,72 @@ def no_horizontal_scroll(page):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 1000}, PHONE])
+def test_change_a_waiting_request_and_undo(browser, live_server, h, viewport):
+    person = h.seed['people'][0]
+    start = f'{day()}T09:00:00+03:00'
+    request = h.command('staff', 'request.create', {'person_id': person, 'start': start,
+        'end': f'{day()}T11:00:09.654321+03:00', 'kind': 'administrative', 'private_reason': 'Initial request note'})['record']
+    url = '/api/requests/all?id=' + request['id']
+    context, page = sign_in(browser, live_server, 'staff', viewport=viewport)
+    try:
+        navigate(page, 'requests')
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('Reason', exact=True)).to_have_value('Initial request note')
+        dialog.get_by_label('Request type', exact=True).select_option('meeting')
+        dialog.get_by_label('Request from', exact=True).fill(day(-1))
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='Request updated')
+        expect(toast).to_be_visible()
+        after = h.get('staff', url)['item']
+        assert (after['stage'], after['kind'], after['private_reason']) == ('waiting', 'meeting', 'Updated request note')
+        assert after['start'] != request['start']
+        assert after['end'] == request['end']
+
+        toast.get_by_role('button', name='Undo', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Undone')
+        restored = h.get('staff', url)['item']
+        for field in ('start', 'end', 'kind'):
+            assert restored[field] == request[field]
+        assert restored['private_reason'] == 'Initial request note'
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('zone,start,end,from_time,until_time,other', [
+    pytest.param('Europe/London', '2026-10-25T01:15:07.123456+01:00', '2026-10-25T01:30:09.654321+01:00',
+                 '01:15', '01:30', ('2026-10-25T01:15:00+00:00', '2026-10-25T01:30:00+00:00'), id='repeated-hour'),
+    pytest.param('America/Havana', '2026-11-01T00:00:00-04:00', '2026-11-01T00:00:00-05:00',
+                 '00:00', '00:00', None, id='repeated-midnight'),
+])
+def test_reason_edit_keeps_precise_times_in_repeated_hour(browser, live_server, h, zone, start, end, from_time, until_time, other):
+    with transaction(h.app.state.engine, write=True) as db:
+        department = db.get(m.Department, h.seed['department_id'])
+        db.get(m.Organisation, department.organisation_id).timezone = zone
+    payload = {'person_id': h.seed['people'][0], 'kind': 'meeting', 'private_reason': 'Initial request note'}
+    if other:
+        h.command('staff', 'request.create', {**payload, 'start': other[0], 'end': other[1]})
+    request = h.command('staff', 'request.create', {**payload, 'start': start, 'end': end})['record']
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        page.evaluate("id => location.hash = 'requests?open=' + id", request['id'])
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('All day', exact=True)).not_to_be_checked()
+        expect(dialog.get_by_label('Request from time', exact=True)).to_have_value(from_time)
+        expect(dialog.get_by_label('Request until time', exact=True)).to_have_value(until_time)
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Request updated')
+        updated = h.get('staff', '/api/requests/all?id=' + request['id'])['item']
+        assert (updated['start'], updated['end']) == (request['start'], request['end'])
+        assert updated['private_reason'] == 'Updated request note'
+    finally:
+        context.close()
+
+
 CONTRAST = '''els => els.map(el => {
   const rgb = c => (c.match(/[\\d.]+/g) || []).map(Number);
   const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };

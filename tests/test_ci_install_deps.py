@@ -28,7 +28,7 @@ def test_checks_prepares_one_image_bound_apt_bundle():
     download = steps["Download browser system packages"]
     archive = steps["Archive the shared downloads"]
     script = download["run"]
-    assert "if" not in download and "if" not in archive
+    assert download["if"] == archive["if"] == "steps.affected-scope.outputs.scope == ''"
     assert "apt_retry install --download-only -y --no-install-recommends" in script
     assert "mirror+file:" in script and script.count("https://") >= 3
     assert "arch=amd64" in script and 'Acquire::Languages "none"' in script
@@ -208,6 +208,10 @@ def test_the_shard_evidence_upload_is_retried_once():
     assert retry["if"] == "always() && steps.evidence.outcome == 'failure'" and "continue-on-error" not in retry
     assert retry["uses"] == first["uses"]
     assert {**first["with"], "overwrite": "true"} == retry["with"]
+
+    paths = set(first["with"]["path"].splitlines())
+    assert {"candidate/.run/reports/", "candidate/.run/traces/", "candidate/.run/api-logs/"} <= paths
+    assert "${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}" in paths
 
 
 def test_pull_request_checks_run_the_pipeline_tests_as_a_merge_group():

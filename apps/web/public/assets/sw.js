@@ -3,8 +3,15 @@
 // Build-time inputs from scripts/preload_web.py: the complete bundle, never a second hand-maintained list.
 const SHELL = 'rota-shell-__BUNDLE_VERSION__';
 const FILES = __SHELL_FILES__;
+// Each file is kept as it arrives, and an install fetches only what this version's cache lacks. An install that did not
+// finish (one failed file, or the browser discarding it) is retried from scratch by the next page load, so a single
+// addAll would download the whole bundle again; the install still fails until every file is stored.
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(SHELL).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(SHELL).then(async cache => {
+    const kept = new Set((await cache.keys()).map(r => new URL(r.url).pathname));
+    const failed = (await Promise.allSettled(FILES.filter(f => !kept.has(f)).map(f => cache.add(f)))).find(r => r.status === 'rejected');
+    if (failed) throw failed.reason;  // only after every other file is stored
+  }).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('rota-shell-') && k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim()));

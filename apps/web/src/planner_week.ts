@@ -6,7 +6,7 @@ import {fillOptions,assignFingerprint,askRegistry} from './candidates.js';
 import {dateMarks,dateMarkWords} from './date_sets.js';
 import {sidePanel,claimSlot,panelHead} from './side_panel.js';
 import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
-import {get,request,command,onSessionReset,ApiError} from './api.js';
+import {get,request,command,onSessionReset,ApiError,serverChecking} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
 import type {PlannerSession,Row,WorkspaceData} from './types.js';
@@ -62,6 +62,11 @@ export interface WeekHooks {
   rota?:Row[];
   /** A rota check is running now: "Checking…" instead of "Not checked yet" (a check that failed or never ran is not). */
   checking?:boolean;
+  /** The check behind the latest edit ended without a result (failed, not started, cancelled) or nobody runs it: a
+   *  panel never says it is checking then. Read when a panel draws (one redrawn from its own save's reply draws first). */
+  checkEnded?:()=>boolean;
+  /** An edit's reply arrived: Submit, Approve and Publish are held at once, before the page redraws. */
+  edited?:()=>void;
   /** D59: only the window of a rota is in (its whole detail still loading): its marks are the last check's, so nothing
    *  says a person passes every rule. */
   kept?:boolean;
@@ -143,7 +148,10 @@ type Panel={workspace:string;kind:'session'|'fill'|'person'|'help';shift?:string
   /** The session panel's tab (Session, Why or Rules) and what the Why tab looks at. */
   tab?:'session'|'why'|'rules';why?:WhyState;
   /** The fill search took the focus when this panel first opened: a redraw (a live update, a finished check) never takes it again. */
-  searched?:boolean};
+  searched?:boolean;
+  /** The revision this panel's own Assign saved: its result stays drawn while that revision is held, and the status slot
+   *  says the whole-rota check behind it until that check settles. */
+  flashRev?:number};
 
 /** The groups a person belongs to in a range when people are grouped: their rank then (one), or each of their tags. */
 export function personGroups(ctx:{catalogues:Record<string,Row[]>},pid:string,by:string,days:string[]):string[]{
@@ -1496,7 +1504,7 @@ function leadPicker(ctx:Context,data:WorkspaceData,shift:Row,hooks:WeekHooks,peo
     // One lead for the whole duty: every row of the chosen person leads, and (most 1) nobody else does.
     const parts=(shift.participants as Row[]).map(p=>({...keep(p),team_lead:p.person_id===pid||(most!==1&&!!p.team_lead)})) as unknown as Row[];
     try{const issues=await saveParticipants(w,shift,parts);
-      panel={workspace:w.id,kind:'fill',shift:shift.id,flash:`${who} leads this session. ${issues?mustWords(issues)+' left in the rota.':'Rota check passed.'}`};await hooks.refresh();}
+      panel={workspace:w.id,kind:'fill',shift:shift.id,flash:`${who} leads this session.${rotaWords(issues)}`};await hooks.refresh();}
     catch(error){box.querySelectorAll('button').forEach(x=>(x as HTMLButtonElement).disabled=false);b.textContent='Make team lead';notify((error as Error).message,'error',undefined,error);}
   }
   const load=()=>leadContext(w.id,w.revision,input).then(c=>draw(leadState(c,w.revision))).catch(e=>draw({state:'failed',error:e as Error}));
@@ -1509,8 +1517,9 @@ function leadPicker(ctx:Context,data:WorkspaceData,shift:Row,hooks:WeekHooks,peo
 export const joinsAsLead=(w:Row,shiftId:string,candidate:Row)=>!!candidate.can_lead&&((w.validation?.findings||[]) as Row[])
   .some(f=>f.code==='LEAD_GAP'&&f.shift_id===shiftId&&(f.detail?.required??0)>(f.detail?.available??0));
 /** Saves one checked fill-options candidate into a draft session (an ordinary undoable, fingerprint-bound edit) and
- *  returns the rota's mandatory issue count after it. Used by the fill panel and the auto-schedule review's "Use …". */
-export async function assignCandidate(w:Row,shift:Row,candidate:Row,result:Row,overrideReason=''):Promise<number>{
+ *  returns the rota's mandatory issue count after it (null: the reply checked only the edit). Used by the fill panel
+ *  and the auto-schedule review's "Use …". */
+export async function assignCandidate(w:Row,shift:Row,candidate:Row,result:Row,overrideReason=''):Promise<number|null>{
   // A supervised trainee goes in as the server trialled them (supervision.proposal: their named supervisor, times and
   // flags), saved only if the rota's inputs are still the ones it was checked against; with several qualified
   // supervisors one is chosen first (never guessed here).
@@ -1521,12 +1530,12 @@ export async function assignCandidate(w:Row,shift:Row,candidate:Row,result:Row,o
   const leaving=shift.participants.find((p:Row)=>p.id===result.replace_assignment_id);
   const added=plan?.proposal?{...plan.proposal}:{...result.slot,person_id:candidate.person_id,fixed:false,supervisor_person_id:null,team_lead:joinsAsLead(w,shift.id,candidate)};
   const back=onGrid(shift,[...(leaving?[leaving.person_id]:[])],nameOf(candidate));
-  // Bound to the fingerprint the candidates were checked under (PERF async fill-options, contract c): a rota that moved
-  // since fails closed (STALE_PREVIEW), never saves an unchecked placement.
+  // Use the candidate check's binding token so changed scheduling inputs refuse the save.
   return saveParticipants(w,shift,result.replace_assignment_id?shift.participants.map((p:Row)=>p.id===result.replace_assignment_id?added:keep(p)):[...shift.participants.map(keep),added],overrideReason,
     fingerprint).catch(e=>{back();throw e;});
 }
-/** Takes one person off a draft session (an ordinary undoable edit); returns the rota's mandatory issue count after it. */
+/** Takes one person off a draft session (an ordinary undoable edit); returns the rota's mandatory issue count after it
+ *  (null: the reply checked only the edit). */
 export function removeAssignment(w:Row,shift:Row,assignment:string){
   const back=onGrid(shift,[shift.participants.find((p:Row)=>p.id===assignment)?.person_id]);
   return saveParticipants(w,shift,shift.participants.filter((p:Row)=>p.id!==assignment).map(keep)).catch(e=>{back();throw e;});
@@ -1570,11 +1579,14 @@ export function workFacts(mine:Duty[],s:Row,dayOf:(s:Row)=>string,weekFrom:numbe
 const keep=(p:Row)=>({person_id:p.person_id,start:p.start,end:p.end,fixed:!!p.fixed,participation:p.participation||'staff',overtime:!!p.overtime,supervisor_person_id:p.supervisor_person_id||null,team_lead:!!p.team_lead,segments:p.segments||[]});
 /** Saves a session's people: one request. The edit re-checks the whole rota and its reply says what changed (the
  *  Schedule patches it in place); the draft's revision makes a stale edit refused, never merged. */
-async function saveParticipants(w:Row,shift:Row,participants:Row[],overrideReason='',fingerprint=''):Promise<number>{
+async function saveParticipants(w:Row,shift:Row,participants:Row[],overrideReason='',fingerprint=''):Promise<number|null>{
   const payload={workspace_id:w.id,shift_id:shift.id,assignment_type_id:shift.assignment_type_id,location_id:shift.location_id,service_ids:shift.service_ids,start:shift.start,end:shift.end,attributes:shift.attributes||{},participants,...(overrideReason?{override_reason:overrideReason}:{})};
   const saved=await command<Row>('shift.update',payload,undefined,w.revision,fingerprint||undefined);
-  return saved.validation?.error_count??0;
+  // A provisional reply (scope command_changes) checked only this edit: it has no count for the whole rota.
+  return serverChecking(saved.validation)?null:saved.validation?.error_count??0;
 }
+/** What a save's reply says of the whole rota: nothing when it checked only the edit (the complete check follows). */
+const rotaWords=(issues:number|null)=>issues===null?'':' '+(issues?mustWords(issues)+' left in the rota.':'Rota check passed.');
 interface PanelInfo{time:string;day:string;place:string;cover:Cover|undefined;rulesFor:(s:Row)=>Promise<Row>;close:()=>void;open:(p:Omit<Panel,'workspace'>)=>void;range:Row[];
   /** Moves the schedule's ring to what the panel now explains, without drawing anything again (SI-40). */highlight:()=>void}
 function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks:WeekHooks,info:PanelInfo){
@@ -1624,7 +1636,12 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
       if(was!==k&&k==='session'&&!body.childElementCount)redrawCurrent?.(undefined,true);else if(was!==k)info.highlight();}));
   aside.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();info.close();}});sidePanel(aside,{key:'schedule',dismiss:info.close});
   if((state.tab||'session')!=='session')return aside;
-  if(state.flash){body.append(el('div',{class:'wk-flash',role:'status'},icon('check'),state.flash));state.flash=undefined;}
+  // An Assign's own result stays through the redraws its check brings (same revision); any other result shows once.
+  const saved=state.flashRev!==undefined,own=saved&&state.flashRev===Number(data.workspace.revision);
+  if(state.flash&&(own||!saved)){body.append(el('div',{class:'wk-flash',role:'status'},icon('check'),state.flash));if(!saved)state.flash=undefined;}
+  // The fill panel's one status slot (its height kept when empty): Saving…, then the whole-rota check behind its edit.
+  const slot=el('p',{class:'wk-save-slot',role:'status'},own&&(serverChecking(data.workspace.validation)||!!hooks.checking)&&!hooks.checkEnded?.()?'Saved · checking the rest of the rota…':'');
+  if(state.kind==='fill')body.append(slot);
   if(state.kind==='session'){
     body.append(sessionSummary(ctx,shift,{validation:data.workspace.validation as Row|undefined,name:id=>fullNameOf(people.get(id)),code:id=>hooks.name(people.get(id)),refresh:hooks.refresh,fresh:hooks.fresh}));
     return aside;
@@ -1724,6 +1741,8 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
   const list=el('div',{class:'wk-cands','aria-live':'polite'},elapsed('Finding who can work it',held.started));
   const search=el('input',{type:'search',class:'wk-search','aria-label':'Find a person',placeholder:'Find a person or code',value:state.q||''}) as HTMLInputElement;
   body.append(search,list);
+  // While this panel saves, a press on its held controls does nothing (capture: before their own handlers).
+  list.addEventListener('click',e=>{if(list.getAttribute('aria-busy')==='true'&&(e.target as Element).closest('button')){e.preventDefault();e.stopPropagation();}},true);
   // Opened from the grid or Resolve: typing goes straight to the search (unless another field has focus). Only on the
   // panel's first draw: a redraw keeps the focus where the person is (D-057), e.g. a linked chip (G-05).
   if(!state.searched){state.searched=true;setTimeout(()=>{const a=document.activeElement;if(search.isConnected&&(!a||a===document.body||a.closest('.wk-grid,.ag,.wk-panel,.planner-bar')))search.focus({preventScroll:true});},0);}
@@ -1749,18 +1768,29 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
     pick.input.addEventListener('change',()=>{const chosen=pick.input.value;if(!chosen)return;pick.input.disabled=true;
       void fillOptions(askBody(result.issue_gone?'':findingKey,chosen)).then(fresh=>{if(!list.isConnected)return;const next=(fresh.candidates as Row[]).find(x=>x.person_id===c.person_id);
         if(fresh.workspace_revision!==w.revision||!next){notify('The rota changed. Open the session again to see who can work it now.','warning');return;}
-        result.candidates=(result.candidates as Row[]).map(x=>x===c?{...next,source_fingerprint:fresh.source_fingerprint}:x);render();},
+        result.candidates=(result.candidates as Row[]).map(x=>x===c?{...next,assignment_stamp:fresh.assignment_stamp,source_fingerprint:fresh.source_fingerprint}:x);render();},
         e=>{pick.input.disabled=false;notify((e as Error).message,'error',undefined,e);});});
     return pick.wrap;
   }
   async function assignPerson(candidate:Row,result:Row,overrideReason='',form?:HTMLFormElement){
-    list.querySelectorAll('button').forEach(b=>(b as HTMLButtonElement).disabled=true);
-    const progress=working(`Adding ${nameOf(candidate)} and re-checking the whole rota…`);list.prepend(progress);
+    if(list.getAttribute('aria-busy')==='true')return;
+    // Only this panel is held, and only until the save's reply: aria-disabled, so the pressed control keeps its focus.
+    const holdList=(on:boolean)=>{list.setAttribute('aria-busy',String(on));list.querySelectorAll('button').forEach(b=>on?b.setAttribute('aria-disabled','true'):b.removeAttribute('aria-disabled'));};
+    holdList(true);
+    slot.replaceChildren(el('span',{class:'spinner','aria-hidden':'true'}),'Saving…');
     try{
+      // The reply's own scope says whether it checked the whole rota (null: only the edit; its complete check follows).
       const issues=await assignCandidate(w,shift,candidate,result,overrideReason);
-      panel={workspace:w.id,kind:'fill',shift:shift.id,...(state.issue&&!state.replace?{issue:state.issue}:{}),flash:`${nameOf(candidate)} ${result.replace_assignment_id?'replaces '+fullNameOf(people.get(replacing?.person_id)):'added to the draft'}. ${issues?mustWords(issues)+' left in the rota.':'Rota check passed.'}`};
-      await hooks.refresh();
-    }catch(error){progress.remove();list.querySelectorAll('button').forEach(b=>(b as HTMLButtonElement).disabled=false);
+      if(issues===null)hooks.edited?.();
+      // The reply's delta has patched the held draft (app.ts patchDraft): the panel is drawn from it at once, live for the
+      // next edit at the new revision, with the edit's own findings. The page's redraw and the whole-rota check follow and
+      // are never waited for here; Submit waits for that check (app.ts checkHold).
+      const now=hooks.live?.()||data;
+      panel={workspace:w.id,kind:'fill',shift:shift.id,...(state.issue&&!state.replace?{issue:state.issue}:{}),flashRev:Number(now.workspace.revision),
+        flash:`${nameOf(candidate)} ${result.replace_assignment_id?'replaces '+fullNameOf(people.get(replacing?.person_id)):'added to the draft'}.${rotaWords(issues)}`};
+      redrawCurrent?.(undefined,true);
+      void hooks.refresh().catch(reportError);
+    }catch(error){slot.replaceChildren();holdList(false);
       // Admission and schema refusals stay beside the pending assignment; one no reason can admit takes the reason away.
       const said=form?.querySelector<HTMLElement>('.wk-override-error'),after=error instanceof ApiError?reasonRefusal(error.code):null;
       if(said&&after){said.textContent=(error as Error).message;
