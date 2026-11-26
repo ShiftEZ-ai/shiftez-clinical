@@ -1,7 +1,24 @@
-import {el,button,icon,iconButton,popover,note,notify,table,plural} from './dom.js';
+import {el,button,icon,iconButton,popover,note,notify,table,plural,formatDate,formatTime,departmentTimeZone} from './dom.js';
 import {request,command} from './api.js';
 import type {Command,CatalogueConflictDetails,TimelineConflict} from './generated.js';
 import {routeHash} from './routes.js';
+import type {Row} from './types.js';
+
+export type Impact={count?:number;sessions?:Row[]};
+export type Impacts={published_impact?:Impact;draft_impact?:Impact};
+
+export function coverLines(r:Impacts, zone=departmentTimeZone()){
+  // SW-24: name the person once and show each duty and its time. Extra rows open in place.
+  const part=(g:Impact|undefined,one:string,many:string,draft=false)=>{const list=g?.sessions||[],n=Number(g?.count||list.length);if(!n)return [];
+    const who=new Set(list.map(x=>x.person).filter(Boolean)),only=who.size===1?[...who][0]:'';
+    const items=list.map((x,i)=>el('li',{hidden:i>=10},[draft?x.rota_name:'',only?'':x.person,x.type,x.start?`${formatDate(String(x.start),zone)} ${formatTime(String(x.start),zone)}`:''].filter(Boolean).join(' · ')));
+    const rest=el('li',{class:'muted'}),more=list.length>10?button(`Show ${list.length-10} more`,()=>{items.forEach(x=>{x.hidden=false;});more!.parentElement!.remove();},'link-button'):null;
+    if(more)rest.append(more);else if(n>list.length)rest.textContent=`${n-list.length} more`;
+    return [note(`${only?only+'’s ':''}${plural(n,one,many)} would need cover:`,'warning'),el('ul',{class:'impact-list'},...items,...(rest.childNodes.length?[rest]:[]))];};
+  const lines=[...part(r.published_impact,'published duty','published duties'),...part(r.draft_impact,'duty in a draft','duties in drafts',true)];
+  // SW3-D-27: nothing affected is said too (an empty preview read as not worked out).
+  return lines.length?lines:[note('No duties need cover.','info')];
+}
 
 /** Findings counted once per cause: the same code AND explanation (one code can carry different explanations, e.g.
  *  "Morning cover" and "Night cover"), within `by` (a rota), most frequent first. */
@@ -28,6 +45,7 @@ export function configurationImpact(form:HTMLFormElement,read:()=>Command|Comman
   const many=()=>{const r=read();return Array.isArray(r)?r:[r];};
   let captured='',fingerprints:string[]=[],harmless=false;
   const show=(result:any,into:HTMLElement)=>{
+    if(result.rank_cover){into.append(...coverLines(result.rank_cover));return;}
     const scope=iconButton('What this preview checks','help',()=>popover(scope,panel=>{
       panel.append(el('p',{},result.scope),el('p',{},result.message));
       if(result.inventory_only)panel.append(el('p',{},'Saving this configuration does not create or update duties.'));
@@ -88,9 +106,13 @@ export function configurationImpact(form:HTMLFormElement,read:()=>Command|Comman
       const results=[];
       for(const value of values)results.push(await request<any>('/api/catalogue/preview',{method:'POST',body:JSON.stringify(value)}));
       if(JSON.stringify(many())!==body){output.replaceChildren(note('Calculating again for the values just changed. Nothing has been saved.'));soon();return;}
+      if(results.some(r=>r.rank_cover&&r.partial)){
+        output.replaceChildren(note('The full duty impact could not be checked. Nothing has been saved.','warning'));return;}
       captured=body;fingerprints=results.map(r=>r.source_fingerprint);
       // Nothing to read: no rota checked partly, no new conflict or warning. Save may go ahead on the click that asked.
-      harmless=results.every(r=>!r.partial&&r.impacts.every((i:any)=>!i.introduced.length));
+      harmless=results.every(r=>!r.partial&&(r.rank_cover
+        ?!r.rank_cover.published_impact.count&&!r.rank_cover.draft_impact.count
+        :r.impacts.every((i:any)=>!i.introduced.length)));
       form.dispatchEvent(new Event('impact-calculated'));
       output.replaceChildren();
       if(results.length===1)show(results[0],output);

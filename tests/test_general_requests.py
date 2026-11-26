@@ -2,7 +2,121 @@ import pytest
 from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
+from tests.governance_support import identity
 from tests.outbox_support import process_one_after_undo as process_one
+
+
+def test_author_changes_waiting_request_and_undo_restores_it(h):
+    person = h.seed['people'][0]
+    original = {'person_id': person, 'kind': 'administrative', 'start': '2026-10-04T09:00:00+03:00',
+                'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic original request note'}
+    row = h.command('staff', 'request.create', original)['record']
+    detail_url = '/api/requests/all?id=' + row['id']
+    before = h.get('staff', detail_url)['item']
+    draft = h.shift(h.workspace(), start='2026-10-05T09:00:00+03:00', end='2026-10-05T11:00:00+03:00',
+                    people=[person])['workspace']
+    h.publish(draft)
+    edited = {**original, 'kind': 'leave', 'start': '2026-10-05T09:00:00+03:00',
+              'end': '2026-10-05T10:00:00+03:00', 'private_reason': 'Synthetic updated request note'}
+
+    assert h.command('coordinator', 'request.edit', edited, row['id'], row['revision'],
+                     status=403)['error']['code'] == 'FORBIDDEN'
+    key = m.uid()
+    reply = h.command('staff', 'request.edit', edited, row['id'], row['revision'], key=key)
+    assert h.committed('staff', key)['undo'] == reply['undo']
+    assert original['private_reason'] not in str(h.committed('staff', key))
+    assert edited['private_reason'] not in str(reply)
+    with transaction(h.app.state.engine) as db:
+        receipt = db.scalar(select(m.CommandReceipt).where(m.CommandReceipt.key == key))
+        assert all(note not in str(receipt.result) for note in (original['private_reason'], edited['private_reason']))
+        assert db.get(m.RequestRecord, row['id']).private_undo_note == original['private_reason']
+    detail = h.get('staff', detail_url)
+    after = detail['item']
+    assert (after['id'], after['stage'], after['kind']) == (row['id'], 'waiting', 'leave')
+    assert after['start'] != before['start'] and after['impact_count'] == 1
+    assert after['private_reason'] == edited['private_reason']
+    assert 'private_undo_note' not in after
+    assert detail['history'][-1]['action'] == 'request.edit'
+    assert edited['private_reason'] not in str(detail['history'])
+    assert not h.get('staff', '/api/availability')['availability']
+
+    coordinator = h.client('coordinator')
+    selection = {'collection': 'requests', 'include_ids': [row['id']]}
+    page = coordinator.post('/api/bulk/rows', json={'selection': selection})
+    assert page.status_code == 200, page.text
+    assert any(item['id'] == row['id'] for item in page.json()['rows'])
+    assert all('private_undo_note' not in item for item in page.json()['rows'])
+    searched = coordinator.post('/api/bulk/rows', json={
+        'selection': {'collection': 'requests', 'where': {'q': original['private_reason']}}})
+    assert searched.status_code == 200 and searched.json()['total'] == 0, searched.text
+    filtered = coordinator.post('/api/bulk/rows', json={
+        'selection': {'collection': 'requests', 'where': {'filters': {'private_undo_note': [original['private_reason']]}}}})
+    assert filtered.status_code == 422, filtered.text
+
+    undo = reply['undo']
+    restored = h.command('staff', undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'])['record']
+    detail = h.get('staff', detail_url)
+    for field in ('start', 'end', 'kind', 'private_reason'):
+        assert detail['item'][field] == before[field]
+    assert detail['history'][-1]['action'] == 'request.undo_edit'
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.RequestRecord, row['id']).private_undo_note is None
+    decision = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Synthetic approval'},
+                         row['id'], restored['revision'])['record']
+    assert h.command('staff', 'request.edit', edited, row['id'], decision['revision'],
+                     status=409)['error']['code'] == 'WORKFLOW_STATE'
+
+
+def test_request_edit_receipts_require_current_subject_access(h):
+    role = 'request_editor'
+    author = identity(h, role, ['staff', 'coordinator'], h.seed['people'][0])
+    payload = {'person_id': h.seed['people'][1], 'kind': 'meeting', 'start': '2026-10-04T09:00:00+03:00',
+               'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic original request note'}
+    row = h.command(role, 'request.create', payload)['record']
+    edited = {**payload, 'end': '2026-10-04T11:00:00+03:00'}
+    edit_key, undo_key = m.uid(), m.uid()
+    result = h.command(role, 'request.edit', edited, row['id'], row['revision'], key=edit_key)
+    undo = result['undo']
+    h.command(role, undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'], key=undo_key)
+    assert h.committed(role, edit_key)['record']['id'] == row['id']
+    assert h.committed(role, undo_key)['record']['id'] == row['id']
+
+    with transaction(h.app.state.engine, write=True) as db:
+        db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == author,
+                                             m.RoleBinding.role == 'coordinator')).revoked = True
+
+    for key in (edit_key, undo_key):
+        reply = h.get(role, '/api/commands/' + key, status=403)
+        assert reply['error']['code'] == 'FORBIDDEN' and 'result' not in reply
+    assert h.command(role, 'request.edit', edited, row['id'], row['revision'], status=403,
+                     key=edit_key)['error']['code'] == 'FORBIDDEN'
+    assert h.command(role, undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'], status=403,
+                     key=undo_key)['error']['code'] == 'FORBIDDEN'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_undo_waiting_leave_restores_previous_type_and_availability(h, legacy):
+    original_type = {'name': 'Synthetic leave type', 'short_code': 'TSTA', 'counts_as_unavailable': False}
+    original = h.configure('leave_types', original_type)['record']
+    active = h.configure('leave_types', {'name': 'Synthetic other type', 'short_code': 'TSTB'})['record']
+    payload = {'person_id': h.seed['people'][0], 'kind': 'leave', 'start': '2026-10-04T09:00:00+03:00',
+               'end': '2026-10-04T10:00:00+03:00', 'private_reason': 'Synthetic leave request',
+               'leave_type_id': original['id']}
+    row = h.command('staff', 'request.create', payload)['record']
+    if legacy:
+        with transaction(h.app.state.engine, write=True) as db:
+            db.get(m.RequestRecord, row['id']).leave_type_id = None
+    h.configure('leave_types', {**original_type, 'active': False, 'counts_as_unavailable': True},
+                original['id'], original['revision'])
+    result = h.command('staff', 'request.edit', {**payload, 'leave_type_id': active['id']}, row['id'], row['revision'])
+    current = result['record']
+    assert current['leave_type_id'] == active['id'] and current['counts_as_unavailable'] is True
+    assert h.command('staff', 'request.edit', payload, row['id'], current['revision'],
+                     status=422)['error']['code'] == 'LEAVE_TYPE_ARCHIVED'
+    undo = result['undo']
+    restored = h.command('staff', undo['kind'], undo['payload'], undo['target_id'], undo['expected_revision'])['record']
+    assert restored['leave_type_id'] == (None if legacy else original['id'])
+    assert restored['counts_as_unavailable'] is False
 
 
 @pytest.mark.parametrize('database', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

@@ -114,6 +114,11 @@ def check_and_approve_in_panel(page, h, workspace, proposal, title):
     expect(effect).to_contain_text('Waiting to check · ')
     shot(page, 'catalogue-review-controls-' + proposal['id'], full_page=False)
     expect(approve).to_be_disabled()
+    # Issue 1248: all the while the drafts are checked, the disabled Approve says why in words beside it.
+    reason = review.locator('.rc-lp-foot .why-unavailable')
+    expect(reason).to_have_text('Waits until the effect of this change is known')
+    expect(reason).to_be_visible()
+    expect(approve).to_have_accessible_description(re.compile('Waits until the effect of this change is known'))
     # A check asked for and not started is shown as waiting; approving without it is offered only once it ended incomplete.
     expect(review.get_by_label('Approve without a complete check of these drafts', exact=True)).not_to_be_visible()
     assert policy(h, proposal['id'])['status'] == 'proposed'
@@ -134,6 +139,7 @@ def check_and_approve_in_panel(page, h, workspace, proposal, title):
     # The panel reads the effect again until it is known; a known effect needs no acknowledgement.
     expect(effect).to_contain_text(words, timeout=15000)
     expect(approve).to_be_enabled()
+    expect(reason).to_have_text('')
     expect(review.get_by_label('Approve without a complete check of these drafts', exact=True)).not_to_be_visible()
     assert h.detail(workspace)['shifts'] == before
     approve.click()
@@ -198,6 +204,8 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
         expect(review.get_by_text('Adds 1 problem', exact=True)).to_be_visible()
         approve = review.get_by_role('button', name='Approve and activate', exact=True)
         expect(approve).to_be_disabled()
+        reason = review.locator('.rc-lp-foot .why-unavailable')
+        expect(reason).to_have_text('Tick the box above first')
         disclosure = review.locator('details').filter(has=page.get_by_text('View problems', exact=True))
         open_problems = disclosure.locator('summary')
         expect(open_problems).to_have_accessible_name(f"View problems for {workspace['name']}")
@@ -210,12 +218,14 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
         expect(acknowledgement).not_to_be_checked()
         acknowledgement.check()
         expect(approve).to_be_disabled()
+        expect(reason).to_have_text('Give a reason (3 characters or more)')
         review.get_by_label('Reason', exact=True).fill('Reviewed the rest problem')
         expect(problems).to_be_visible()
         open_problems.press('Enter')
         expect(problems).to_have_count(0)
         expect(open_problems).to_be_focused()
         expect(approve).to_be_enabled()
+        expect(reason).to_have_text('')
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/api/commands')
                                   and r.request.post_data_json['kind'] == 'policy.activate') as response:
             approve.click()
@@ -224,6 +234,49 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
             'acknowledge_unresolved': True, 'reason': 'Reviewed the rest problem'}
         expect(review).to_have_count(0)
         assert policy(h, proposal['id'])['status'] == 'active'
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('blocker,words', [('RULE_INTRODUCES_CONFLICT', 'Makes this rota impossible'),
+                                           ('RULE_CHECK_FAILED', 'Check failed')])
+def test_catalogue_approval_says_why_a_finished_check_refuses_activation(browser, live_server, h, blocker, words):
+    """A finished check the server still refuses (rule_effects activation_blocker) says why beside the disabled
+    Approve, never "Adds 1 problem" with no way on; a failed check offers Check again, a proven conflict does not."""
+    workspace, proposal = rest_line_proposal(h)
+    h.command('approver', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': proposal['id'], 'expected_revision': proposal['revision']}]},
+        revision=workspace['revision'])
+    assert process_one(h.app.state.engine)
+
+    def blocked(route):
+        body = route_fetch(route).json()
+        body['effect'] = [{**row, 'activation_blocker': blocker} for row in body['effect']]
+        route.fulfill(json={**body, 'can_decide': False, 'ready': False})
+
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        page.route(re.compile(r'/api/policies/[^/]+/review$'), blocked)
+        navigate(page, 'rules/rest_between_duties')
+        page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
+        review = page.get_by_role('region', name='Add a line for everyone · turns the rule on', exact=True)
+        effect = review.locator('.rc-effect')
+        expect(effect.get_by_text(words, exact=True)).to_be_visible()
+        expect(effect.get_by_text('Adds 1 problem', exact=True)).to_have_count(0)
+        approve = review.get_by_role('button', name='Approve and activate', exact=True)
+        expect(approve).to_be_disabled()
+        reason = review.locator('.rc-lp-foot .why-unavailable')
+        expect(reason).to_be_visible()
+        expect(reason).to_have_text(words)
+        expect(approve).to_have_accessible_description(words)
+        again = review.get_by_role('button', name='Check again', exact=True)
+        if blocker == 'RULE_INTRODUCES_CONFLICT':
+            expect(again).to_have_count(0)
+        else:
+            with page.expect_request(lambda r: r.method == 'POST' and r.url.endswith('/api/commands')
+                                     and r.post_data_json['kind'] == 'job.create') as asked:
+                again.click()
+            assert asked.value.post_data_json['payload']['workspace_id'] == workspace['id']
     finally:
         context.close()
 
