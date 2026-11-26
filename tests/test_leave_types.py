@@ -9,7 +9,7 @@ from sqlalchemy.engine import make_url
 
 from apps.api import models as m
 from apps.api.db import make_engine, transaction
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 from packages.domain.leave_types import matching_type
 from packages.domain.validation import evaluate
 from scripts.manage import alembic_config, migrate
@@ -68,7 +68,7 @@ def test_catalogue_permissions_for_every_role(h, role):
     else:
         row = selected(h)
         h.configure('leave_types', value(row, active=False), row['id'], row['revision'], role=role, status=403)
-    h.get(role, '/api/catalogues', status=403 if role in ('staff', 'operator') else 200)
+    h.get(role, '/api/catalogues', status=200 if role in PERMISSIONS['catalogue.read'] else 403)
 
 
 def test_crud_archive_order_history_and_checked_undo(h):
@@ -257,6 +257,8 @@ def test_postgres_catalogue_reference_archive_and_undo(pg):
 
 
 def legacy_mapping(url, monkeypatch):
+    from .migration_support import add_historical_admin
+
     command.upgrade(alembic_config(url), '0060_quota_line_contract')
     engine = make_engine(url)
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -290,6 +292,7 @@ def legacy_mapping(url, monkeypatch):
             db.execute(tables['availability'].insert(), dict(base, **interval, id=str(uuid.uuid4()), department_id=department,
                 person_id=person, kind='approved_leave' if label == 'Annual leave' else 'actual_absence', leave_type=label,
                 recorded_by=actor, request_id=request_id if label == 'Annual leave' else None, retracted=label == 'SICK'))
+        add_historical_admin(db, department)
         before = {name: [dict(r) for r in db.execute(sa.select(table).order_by(table.c.id)).mappings()] for name, table in tables.items()}
     engine.dispose()
     from packages.domain import leave_types

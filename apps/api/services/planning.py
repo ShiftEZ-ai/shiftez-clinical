@@ -595,9 +595,23 @@ def assignment_validation_scope(data, before, previous):
     for key in ('starts_on', 'ends_on', 'rule_adjustments', 'target_overrides'):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
-    old_components = (previous.get('input_manifest') or {}).get('components') or {}
-    if not all(old_components.get(k) == data['input_manifest']['components'][k]
-               for k in ('mandatory_inputs', 'objective_inputs', 'toolchain')):
+    prior_manifest = previous.get('input_manifest') or {}
+    # Saved checks keep only aggregate hashes. Bind the full before sources to the saved token.
+    before_manifest = before.get('input_manifest') or prior_manifest
+    current_manifest = data['input_manifest']
+    old_components = prior_manifest.get('components') or {}
+    before_sources = before_manifest.get('sources')
+    current_sources = current_manifest.get('sources')
+    if (before_manifest.get('token') != prior_manifest.get('token')
+            or (before_manifest.get('token') and not before_sources)
+            or (current_manifest.get('token') and not current_sources)):
+        return None
+    capacity_source = 'place_capacity:own_duties'
+    before_capacity = (before_sources or {}).get(capacity_source, {}).get('hash')
+    current_capacity = (current_sources or {}).get(capacity_source, {}).get('hash')
+    if (before_capacity != current_capacity
+            or any(old_components.get(key) != current_manifest['components'][key]
+                   for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
     if assignment_check_scope(data, before) is None:
         return None
@@ -2191,6 +2205,10 @@ def put_back(db, actor, workspace, snapshot, current):
 def undo(db, actor, command):
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+        draft(db, actor, command.target_id, command.expected_revision)
     change = db.scalar(latest_change(workspace, m.ChangeSet))
     require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
     current = workspace_content(db, workspace)
@@ -2201,10 +2219,13 @@ def undo(db, actor, command):
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
         receipt_column, raw_revision, current_revision = job_reconciliation_columns()
-        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
-                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
-                current_revision == change.resulting_content_revision)):
+        jobs = select(m.Job, receipt_column, raw_revision).options(
+            defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+            m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+            current_revision == change.resulting_content_revision).order_by(m.Job.id)
+        if lock_jobs:
+            jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+        for job, receipt, revision in db.execute(jobs):
             result = job_result_with_reconciliation(job, {'reconciliation': receipt,
                                                           'applied_content_revision': revision})
             if result['applied_content_revision'] == change.resulting_content_revision:
@@ -2278,6 +2299,10 @@ def redo(db, actor, command):
     whole rota check, and is itself an edit: audited, and undoable again."""
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+        draft(db, actor, command.target_id, command.expected_revision)
     step = db.scalar(latest_change(workspace, m.ChangeSet))
     require(step is not None and step.before_snapshot.get('_undo_of') and step.actor_id == actor.identity_id, 'NO_REDO',
             'Nothing to redo: Redo follows your own Undo, until the rota changes again', 409)
@@ -2288,9 +2313,12 @@ def redo(db, actor, command):
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
     receipt_column, _, _ = job_reconciliation_columns()
     revision = workspace.content_revision + int(content_changed)
-    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
-            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+    jobs = select(m.Job, receipt_column).options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+        m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+        m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded').order_by(m.Job.id)
+    if lock_jobs:
+        jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+    for job, receipt in db.execute(jobs):
         receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
         retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
