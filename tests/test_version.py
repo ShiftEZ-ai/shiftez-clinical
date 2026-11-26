@@ -27,6 +27,8 @@ def test_release_tag_reads_the_target_commit(tmp_path):
         ).strip()
 
     git("init", "--quiet", "--template=")
+    git("commit", "--quiet", "--allow-empty", "-m", "no version file")
+    no_version = git("rev-parse", "HEAD")
     version_file = tmp_path / "apps/api/version.py"
     version_file.parent.mkdir(parents=True)
     version_file.write_text('__version__ = "0.0.0"\n', encoding="utf-8")
@@ -52,3 +54,8 @@ def test_release_tag_reads_the_target_commit(tmp_path):
     assert invalid_tag.returncode != 0 and "expected a tag" in invalid_tag.stderr
     missing_commit = check(f"v{__version__}", "missing")
     assert missing_commit.returncode != 0 and "target commit" in missing_commit.stderr
+    missing_file = check(f"v{__version__}", no_version)
+    assert missing_file.returncode != 0 and "single literal app version" in missing_file.stderr
+    for help_flag in ("-h", "--help"):
+        assert check(help_flag, current).returncode != 0
+        assert check(f"v{__version__}", help_flag).returncode != 0

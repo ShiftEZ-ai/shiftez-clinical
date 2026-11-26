@@ -205,7 +205,14 @@ def test_a_reply_the_page_cannot_patch_claims_no_result_and_a_cancelled_check_ke
         # latest revision is unchecked, so Submit stays held, saying the same.
         cancel = page.locator('.app-footer').get_by_role('button', name=re.compile(r'^Cancel: '))
         expect(cancel).to_be_visible(timeout=20000)
-        cancel.click()
+        queued = [job['id'] for job in checks_open(h, w)]
+        # The page draws "Not checked" before its job.cancel answers: the job list is read after that reply, not before.
+        with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.method == 'POST'
+                                  and (r.request.post_data_json or {}).get('kind') == 'job.cancel',
+                                  timeout=20000) as stopped:
+            cancel.click()
+        assert stopped.value.ok, stopped.value.status
+        assert stopped.value.request.post_data_json['target_id'] in queued, (stopped.value.request.post_data_json, queued)
         expect(cancel).to_have_count(0, timeout=20000)
         held_as_footer_says(page, 'Not checked', press=True)
         expect(page.locator('.app-footer')).not_to_contain_text(QUEUED)

@@ -53,8 +53,8 @@ def ids(text):
     return [pattern_id for _, pattern_id in privacy_check.findings(text)]
 
 
-def run(*args, cwd=ROOT):
-    return subprocess.run([sys.executable, "-I", str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True,
+def run(*args, cwd=ROOT, script=SCRIPT):
+    return subprocess.run([sys.executable, "-I", str(script), *args], cwd=cwd, capture_output=True, text=True,
                           timeout=120)
 
 
@@ -110,15 +110,86 @@ def test_text_mode_reports_location_and_id_never_the_value(tmp_path):
                 assert part not in result.stdout + result.stderr
 
 
-def test_event_mode_reads_title_and_body(tmp_path):
+@pytest.fixture
+def run_event(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
     event = tmp_path / "event.json"
-    event.write_text(json.dumps({"pull_request": {"title": "Fix " + PLANTED["ipv4"], "body": None}}), encoding="utf-8")
-    result = run("--event", str(event))
+
+    def check(payload, *, script=SCRIPT):
+        event.write_text(json.dumps({"repository": {"default_branch": "main"}, **payload}), encoding="utf-8")
+        return run("--event", str(event), cwd=tmp_path, script=script)
+
+    return check
+
+
+def test_event_mode_reads_title_and_body(run_event):
+    allowed = json.loads((ROOT / ".github/privacy-pr-openers.json").read_text(encoding="utf-8"))
+    user = {"login": allowed[0], "type": "Bot"}
+    result = run_event({"pull_request": {"title": "Fix " + PLANTED["ipv4"], "body": None, "user": user}})
     assert (result.returncode, result.stdout) == (1, "pull_request.title:1: ipv4\n")
-    event.write_text(json.dumps({"pull_request": {"title": "Fix it", "body": "line\r\n" + PLANTED["private-tld"]}}))
-    assert run("--event", str(event)).stdout == "pull_request.body:2: private-tld\n"
-    event.write_text(json.dumps({"merge_group": {}}), encoding="utf-8")
-    assert run("--event", str(event)).returncode == 0
+    result = run_event({"pull_request": {"title": "Fix it", "body": "line\r\n" + PLANTED["private-tld"], "user": user}})
+    assert (result.returncode, result.stdout) == (1, "pull_request.body:2: private-tld\n")
+    assert run_event({"merge_group": {}}).returncode == 0
+
+
+@pytest.mark.parametrize("user", [None, "fixture-person", {}, {"type": "Bot"},
+                                  {"login": "fixture-person", "type": "User"},
+                                  {"login": "fixture-other[bot]", "type": "Bot"}])
+def test_event_mode_rejects_unapproved_openers_without_logging_identity(run_event, user):
+    pull_request = {"title": "Fix it"}
+    if user is not None:
+        pull_request["user"] = user
+    result = run_event({"pull_request": pull_request})
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1, "pull_request.user:1: unapproved-pr-opener\n", "privacy check: 1 hit(s)\n")
+
+
+def test_named_pull_request_event_requires_opener_data(run_event, monkeypatch):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    result = run_event({})
+    assert (result.returncode, result.stdout) == (1, "pull_request.user:1: unapproved-pr-opener\n")
+
+
+@pytest.fixture
+def trusted_checker(tmp_path):
+    trusted = tmp_path / ".trusted-controls"
+    script = trusted / "scripts" / SCRIPT.name
+    script.parent.mkdir(parents=True)
+    script.write_bytes(SCRIPT.read_bytes())
+    policy = trusted / ".github" / "privacy-pr-openers.json"
+    policy.parent.mkdir()
+    return script, policy
+
+
+def test_event_mode_requires_an_allowed_bot(run_event, trusted_checker):
+    script, policy = trusted_checker
+    login = "fixture-publisher[bot]"
+    policy.write_text(json.dumps([login]), encoding="utf-8")
+    user = {"login": login, "type": "Bot"}
+    assert run_event({"pull_request": {"user": user}}, script=script).returncode == 0
+    user["type"] = "User"
+    result = run_event({"pull_request": {"user": user}}, script=script)
+    assert (result.returncode, result.stdout) == (1, "pull_request.user:1: unapproved-pr-opener\n")
+
+
+@pytest.mark.parametrize("contents", [None, "{", "null", "[]", '["fixture-publisher[bot]", "fixture-person"]',
+                                      '["fixture-publisher[bot]", 1]'])
+def test_pr_event_refuses_missing_or_invalid_trusted_allowlist(
+    tmp_path, run_event, trusted_checker, monkeypatch, contents,
+):
+    script, policy = trusted_checker
+    if contents is not None:
+        policy.write_text(contents, encoding="utf-8")
+    login = "fixture-publisher[bot]"
+    candidate_policy = tmp_path / ".github" / policy.name
+    candidate_policy.parent.mkdir()
+    candidate_policy.write_text(json.dumps([login]), encoding="utf-8")
+    user = {"login": login, "type": "Bot"}
+    result = run_event({"pull_request": {"user": user}}, script=script)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1, "pull_request.user.login:1: invalid-pr-opener-allowlist\n", "privacy check: 1 hit(s)\n")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    assert run_event({"merge_group": {}}, script=script).returncode == 0
 
 
 def git(repo, *args, data=None):

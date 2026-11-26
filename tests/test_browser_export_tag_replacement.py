@@ -52,6 +52,9 @@ def test_tag_forms_keep_team_names_actions_and_real_export(browser, live_server,
         panel = view_settings(page.locator('.planner-toolbar'))
         panel.get_by_role('radiogroup', name='Density').get_by_role('radio', name=density, exact=True).click()
         close_popover(page)
+        # The rota's own check may land under a menu after the last choice: it is drawn once that menu closes. Wait for
+        # it before reading the grid it replaces.
+        settled(page)
         fonts_ready(page)
         expect(grid.locator('.pchip-tags')).to_have_count(3)
         tag_bounds(grid)
