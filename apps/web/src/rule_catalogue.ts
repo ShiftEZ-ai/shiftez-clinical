@@ -1307,11 +1307,15 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
     const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
     let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
-    const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
+    // A reader who cannot edit gets the strength as a fact (text), never a disabled menu button.
+    const chip=editable?el('button',{type:'button',class:'rc-strength',...popup('menu')}):el('span',{class:'rc-strength'});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
-      chip.textContent=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv);chip.setAttribute("aria-label",`${label}: ${what}`);chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
-    chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
+      const text=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv),name=`${label}: ${what}`;
+      if(editable){chip.textContent=text;chip.setAttribute("aria-label",name);}
+      else chip.replaceChildren(el('span',{'aria-hidden':'true'},text),el('span',{class:'sr-only'},name));
+      chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
+    if(editable)chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
