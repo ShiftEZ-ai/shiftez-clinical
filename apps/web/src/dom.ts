@@ -453,6 +453,10 @@ export const hostLegend=<T extends Element>(root:T,key:Legend):T=>{hosts.set(roo
 /** The key of the view `node` is drawn in (its nearest hosting ancestor), or null outside any keyed view. */
 export const legendAt=(node:Element):Legend|null=>{for(let n:Element|null=node;n;n=n.parentElement){const k=hosts.get(n);if(k)return k;}return null;};
 export const text = (value: unknown) => value == null ? '—' : String(value);
+/** One collator for every list's sort and value order (numbers in text compare as numbers: "Room 2" before "Room 10"). */
+export const collator = new Intl.Collator(undefined, {numeric: true});
+/** Choices by name: the order of every list of people, the same as a collection's sort by Name. */
+export const byLabel = (a: {label: string}, b: {label: string}) => collator.compare(a.label, b.label);
 /** A record's name (a place, service, rank, rule…). A person is not a record: their row's type is refused here, so
  *  names go through person_label.ts (`personName`, `fullNameOf`, `nameText`); tests/test_name_guard.py covers the paths
  *  the compiler cannot see. */

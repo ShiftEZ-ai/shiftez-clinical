@@ -33,6 +33,7 @@ import {BASELINE_SOURCES,GAPS_SHOWN,nearestGaps} from './draft_baseline.js';
 import {issueList,findingIssue} from './issue_marker.js';
 import {leadContext,leadState,leadNeed,type LeadState} from './planner_teams.js';
 import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
+import {collator,byLabel} from './dom.js';  // the one name order of every list of people
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 
 /** `ready` resolves once the deferred catalogue lists are loaded (app.ts ensureCatalogues): await it before reading them. */
@@ -94,7 +95,7 @@ export function peopleChoices(ctx:Context){
   // Searchable by code, staff number, rota names and tags too; grouped by today's rank so a whole rank can be picked at once.
   const person=new Map(all(ctx,'people').map(p=>[p.id,p]));
   return options(all(ctx,'people')).map(o=>{const p=person.get(o.value);return {...o,group:rank.get(o.value)||'No rank',hint:String(p?.short_code||''),
-    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort((a,b)=>a.group.localeCompare(b.group)||a.label.localeCompare(b.label,undefined,{numeric:true}));
+    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort((a,b)=>collator.compare(a.group,b.group)||byLabel(a,b));
 }
 function lookup(ctx:Context,kind:'people',id:string):PersonRow|undefined;
 function lookup(ctx:Context,kind:string,id:string):Row|undefined;

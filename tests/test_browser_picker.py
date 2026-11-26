@@ -3,6 +3,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 from .test_browser import browser, live_server, sign_in, navigate  # noqa: F401
+from .test_browser_accounts import users_file  # noqa: F401  (accounts on: Invite person is offered)
 
 pytestmark = pytest.mark.browser
 
@@ -283,5 +284,46 @@ def test_a_group_option_is_reached_and_chosen_by_keyboard(browser, live_server, 
         for i in range(1, 5):
             expect(picker.get_by_role("option", name=f"Fictional Resident {i}", exact=True)).to_have_attribute("aria-selected", "true")
         expect(picker.get_by_role("option", name="Fictional Consultant 1", exact=True)).to_have_attribute("aria-selected", "false")
+    finally:
+        context.close()
+
+
+def synthetic_people(h):
+    """Ten people added out of name order, one of them in lower case. None holds a rank, so they share one group."""
+    name = lambda n: f'synthetic person {n}' if n == 3 else f'Synthetic person {n}'
+    for n in (7, 10, 2, 9, 1, 4, 8, 3, 6, 5):
+        h.configure('people', {'display_name': name(n)})
+    return [name(n) for n in range(1, 11)]
+
+
+def listed(picker):
+    expect(picker).to_be_visible()
+    return [text for text in picker.locator('.picker-label').all_inner_texts() if text.lower().startswith('synthetic person')]
+
+
+def test_the_participant_picker_lists_people_by_name_whatever_order_they_were_added(browser, live_server, h):
+    """By name as a collection sorts it: 2 before 10, and a lower-case name in its place, not after the others."""
+    expected = synthetic_people(h)
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        h.workspace('Picker draft')
+        navigate(page, 'planner')
+        page.locator('#main').get_by_role('button', name='Add session', exact=True).click()
+        form = page.locator('.dock-panel')
+        form.get_by_role('button', name='Add participant', exact=True).click()
+        form.get_by_label('Participant', exact=True).last.click()
+        assert listed(page.locator('.picker')) == expected
+    finally:
+        context.close()
+
+
+def test_the_invite_profile_picker_lists_people_by_name_whatever_order_they_were_added(users_file, browser, live_server, h):
+    expected = synthetic_people(h)
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        navigate(page, 'access/people')
+        page.get_by_role('button', name='Invite person', exact=True).click()
+        page.get_by_role('dialog').get_by_label('Their staff profile', exact=True).click()
+        assert listed(page.locator('.picker')) == expected
     finally:
         context.close()
