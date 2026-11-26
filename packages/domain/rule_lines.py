@@ -21,7 +21,7 @@ from pydantic_core import to_jsonable_python
 
 from packages.contracts.rule_catalogue import _MODELS, CATALOGUE_BY_ID, NUMBER_ORDER, catalogue_entry, slot_for_number as _slot
 from packages.contracts.schemas import NEVER_OVERRIDDEN, SAFETY_STRICTNESS, PolicyDefinition, RuleLine, _canonical_tree, safety_rule
-from .conditions import INHERITED_LEVEL, OUTRANKED, absolute_values
+from .conditions import INHERITED_LEVEL, OUTRANKED, absolute_values, active_rules
 
 LEVELS = ('off', 'low', 'medium', 'high', 'critical', 'mandatory')
 # These values change how a line is applied, not the quantity it counts.  Keeping them
@@ -451,6 +451,47 @@ def safety_display_key(policy):
     return (not bool(limits), rule['kind'] if limits else '', tuple(
         (rule.get(field) is None, -(rule.get(field) or 0) if direction == 'max' else rule.get(field) or 0)
         for field, direction in limits.items()))
+
+
+def weakens_safety_rules(before, after):
+    """Every effective safety obligation must still hold at least as strictly after an own decision."""
+    from .rule_groups import _canonical_scope
+    from .supervision_levelling import spread_gap
+
+    def obligations(policies):
+        for copy in active_rules(policies):
+            definition = copy['definition']
+            rule = definition['rule']
+            kind = rule['kind']
+            if not safety_rule(definition) or definition.get('severity', 'mandatory') != 'mandatory' or copy.get('_advisory_catalogue_slot'):
+                continue
+            directions = SAFETY_STRICTNESS.get(kind, {})
+            if kind == 'spread_evenly':
+                # Both spread modes enforce the same gap bound.
+                rule = {key: value for key, value in rule.items() if key != 'mode'}
+                rule['maximum_gap'] = spread_gap(copy)
+                directions = {'maximum_gap': 'min'}
+            shape = json.dumps([copy.get('department_id'), definition.get('workspace_id'),
+                                _canonical_scope(definition['scope']),
+                                {key: value for key, value in rule.items() if key not in directions}], sort_keys=True)
+            first = str(copy.get('starts_on') or '')
+            last = str(copy.get('ends_on') or '\uffff')
+            yield shape, first, last, rule, directions
+
+    replacements = {}
+    for shape, first, last, rule, _ in obligations(after):
+        replacements.setdefault(shape, []).append((first, last, rule))
+    for shape, first, last, rule, directions in obligations(before):
+        def preserves(bounds):
+            start, end, replacement = bounds
+            return start <= first and end >= last and all(
+                rule.get(field) is None or replacement.get(field) is not None and (
+                    replacement[field] >= rule[field] if direction == 'max' else replacement[field] <= rule[field])
+                for field, direction in directions.items())
+
+        if not any(map(preserves, replacements.get(shape, ()))):
+            return True
+    return False
 
 
 def catalogue_display_policies(policies, context):

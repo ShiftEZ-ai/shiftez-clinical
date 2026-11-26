@@ -21,7 +21,7 @@ from apps.api import models as m
 from apps.api.db import make_engine, transaction
 from apps.api.schema import supported_revision
 from migrations import safety
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_NAMES
 from scripts import backup_job, manage
 from apps.api.settings import Settings
 from .migration_support import current_seed_columns
@@ -98,11 +98,16 @@ def test_insertion_order_migration_preserves_rows_guards_and_legacy_ties(session
         before, protected = snapshot(), guards()
         command.upgrade(cfg, 'head')
         command.upgrade(cfg, 'head')
-        assert snapshot() == before
+        after = snapshot()
+        assert [row.action for row in after['audit_events'] if row.id not in ids] == ['role.grant']
+        assert [row.role for row in after['role_bindings'] if row.role == INSTALLATION_ADMIN_ROLE] == [INSTALLATION_ADMIN_ROLE]
+        after['audit_events'] = [row for row in after['audit_events'] if row.id in ids]
+        after['role_bindings'] = [row for row in after['role_bindings'] if row.role != INSTALLATION_ADMIN_ROLE]
+        assert after == before
         assert all(guards().get(name) == definition for name, definition in protected.items())
         with transaction(engine, write=True) as db:
             rows = list(db.scalars(select(m.AuditEvent).order_by(m.AuditEvent.seq)))
-            assert [row.id for row in rows] == sorted(ids)
+            assert [row.id for row in rows if row.id in ids] == sorted(ids)
             last = db.scalar(select(m.RecordInsertion.seq).order_by(m.RecordInsertion.seq.desc()).limit(1))
             fresh = m.AuditEvent(department_id=seed['department_id'], actor_id=seed['identities']['admin'],
                 action='test.new', reason='New event after backfill', detail={}, correlation_id='after-migration')
@@ -933,9 +938,15 @@ def test_give_swap_upgrade_preserves_every_legacy_value_and_defaults_exchange(le
             elif name == 'swap_requests_delete_guard':
                 assert after[name][1] == sql
     manage.migrate(url)
+    from .migration_support import without_installation_admin_backfill
+
     with sqlite3.connect(path) as db:
-        for table, (columns, rows) in before.items():
-            assert db.execute(f'SELECT {columns} FROM "{table}" ORDER BY rowid').fetchall() == rows, table
+        current, column_names = {}, {}
+        for table, (columns, _) in before.items():
+            cursor = db.execute(f'SELECT {columns} FROM "{table}" ORDER BY rowid')
+            current[table] = cursor.fetchall()
+            column_names[table] = [item[0] for item in cursor.description]
+        assert without_installation_admin_backfill(current, column_names) == {table: rows for table, (_, rows) in before.items()}
         assert db.execute('SELECT version_num FROM alembic_version').fetchone() == (supported_revision(),)
 
 
@@ -1062,15 +1073,17 @@ def test_bulk_upgrade_follows_dev_head_and_preserves_assignment_source_and_exist
                                 (assignment_id,)).fetchone()
         tables = [name for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table' "
             "AND name != 'alembic_version' AND name NOT LIKE 'sqlite_%'")]
-        columns = {table: ','.join('"' + col[1] + '"' for col in db.execute(f'PRAGMA table_info("{table}")'))
-                   for table in tables}
-        before = {table: db.execute(f'SELECT {columns[table]} FROM "{table}" ORDER BY rowid').fetchall()
+        columns = {table: [col[1] for col in db.execute(f'PRAGMA table_info("{table}")')] for table in tables}
+        selection = {table: ','.join('"' + column + '"' for column in names) for table, names in columns.items()}
+        before = {table: db.execute(f'SELECT {selection[table]} FROM "{table}" ORDER BY rowid').fetchall()
                   for table in tables}
     command.upgrade(config, 'head')
     command.upgrade(config, 'head')
     with closing(sqlite3.connect(path)) as db:
-        assert {table: db.execute(f'SELECT {columns[table]} FROM "{table}" ORDER BY rowid').fetchall()
-                for table in tables} == before
+        from .migration_support import without_installation_admin_backfill
+        current = {table: db.execute(f'SELECT {selection[table]} FROM "{table}" ORDER BY rowid').fetchall()
+                   for table in tables}
+        assert without_installation_admin_backfill(current, columns) == before
         assert db.execute('SELECT kind,open_offer FROM swap_requests WHERE id=?', (row['id'],)).fetchone() == ('exchange', 0)
         assert db.execute('SELECT count(*) FROM bulk_staged').fetchone() == (0,)
         assert db.execute('SELECT DISTINCT bulk_settings FROM departments').fetchall() == [('{}',)]
@@ -1178,10 +1191,14 @@ def test_give_swap_database_guards_retain_consent_and_evidence(request, backend,
         assert saved.kind == 'give' and saved.status == 'accepted' and saved.second_assignment_id is None
 
 
-def assert_only_scoring_defaults_added(before, after, columns):
-    """Retain every original column/row and account explicitly for 0109's three additive row families."""
-    from apps.api.services.scoring_defaults import SOURCE, line_id
+def assert_only_scoring_defaults_and_installation_admin_added(before, after, columns, scoring_defaults=True):
+    """Retain every original column and row and verify the two migration backfills.
 
+    `scoring_defaults` is False when the upgrade starts after the scoring-defaults backfill: nothing else is added."""
+    from apps.api.services.scoring_defaults import SOURCE, line_id
+    from .migration_support import without_installation_admin_backfill
+
+    after = without_installation_admin_backfill(after, columns)
     assert after.keys() == before.keys()
     additions = {}
     for table, rows in before.items():
@@ -1193,7 +1210,7 @@ def assert_only_scoring_defaults_added(before, after, columns):
     assert not {table: rows for table, rows in additions.items()
                 if rows and table not in {'identities', 'policies', 'definition_history'}}
     departments = {dict(zip(columns['departments'], row))['id'] for row in before['departments']}
-    if not departments:
+    if not departments or not scoring_defaults:
         assert not any(additions.values())
         return
     [actor] = additions['identities']
@@ -1243,6 +1260,123 @@ def session_limits_database(request, tmp_path):
         admin.dispose()
 
 
+def test_installation_admin_migration_is_independent_of_runtime_code():
+    import ast
+
+    path = safety.VERSIONS / '0155_installation_admin.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
+    imports.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not {name for name in imports if name.split('.', 1)[0] in {'apps', 'packages'}}
+
+
+@pytest.mark.parametrize('populated', [False, True])
+def test_installation_admin_migration_preserves_rows_and_seeds_once(session_limits_database, populated):
+    from importlib import import_module
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import select
+
+    from .migration_support import historical_seed
+
+    url = session_limits_database
+    cfg = manage.alembic_config(url)
+    revision = '0155_installation_admin'
+    command.upgrade(cfg, '0154_request_undo_note')
+    engine = make_engine(url)
+    binding = m.RoleBinding.__table__
+    try:
+        with transaction(engine, write=True) as db:
+            if populated:
+                seed = historical_seed(db)
+                later = m.Department(organisation_id=seed['organisation_id'], name='Later test department')
+                db.add(later)
+                db.flush()
+                start = date(2026, 1, 1)
+                db.add_all([
+                    m.RoleBinding(department_id=later.id, identity_id=seed['identities']['operator'],
+                                  role='admin', starts_on=start),
+                    m.RoleBinding(department_id=seed['department_id'], identity_id=seed['identities']['coordinator'],
+                                  role='admin', starts_on=start, revoked=True, created_at=datetime(2025, 1, 1, tzinfo=timezone.utc)),
+                    m.RoleBinding(department_id=seed['department_id'], identity_id=seed['identities']['staff'],
+                                  role='admin', starts_on=start, ends_on=date(2099, 1, 1),
+                                  created_at=datetime(2025, 1, 1, tzinfo=timezone.utc)),
+                ])
+            db.flush()
+            original = list(db.execute(binding.select().order_by(binding.c.id)))
+
+        command.upgrade(cfg, revision)
+        role_check = next(c['sqltext'] for c in inspect(engine).get_check_constraints('role_bindings')
+                          if re.match(r'^\(*"?role\b', c['sqltext'].strip()))
+        assert set(re.findall(r"'([a-z_]+)'", role_check)) == {
+            'staff', 'coordinator', 'approver', 'credentialer', 'admin', 'auditor', 'programme_lead',
+            'operator', 'installation_admin',
+        }
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            import_module(f'migrations.versions.{revision}').upgrade()
+
+        with transaction(engine) as db:
+            grants = list(db.scalars(select(m.RoleBinding).where(m.RoleBinding.role == INSTALLATION_ADMIN_ROLE)))
+            audit = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.correlation_id == revision)))
+            assert list(db.execute(binding.select().where(binding.c.role != INSTALLATION_ADMIN_ROLE)
+                                   .order_by(binding.c.id))) == original
+            if populated:
+                grant, = grants
+                event, = audit
+                assert (grant.identity_id, grant.department_id) == (seed['identities']['admin'], seed['department_id'])
+                assert (event.action, event.target_id, event.actor_id) == ('role.grant', grant.id, grant.identity_id)
+                assert event.reason == 'Installation admin granted to the first administrator'
+            else:
+                assert grants == audit == []
+        if populated:
+            with pytest.raises(IntegrityError, match='(?i)check constraint'), engine.begin() as connection:
+                connection.execute(binding.insert().values(identity_id=seed['identities']['admin'],
+                    department_id=seed['department_id'], role='unknown', starts_on=date(2026, 1, 1)))
+    finally:
+        engine.dispose()
+
+
+def test_installation_admin_upgrade_waits_for_pending_admin_to_accept(session_limits_database):
+    from sqlalchemy import select
+    from .migration_support import historical_seed
+
+    url = session_limits_database
+    cfg = manage.alembic_config(url)
+    previous = '0154_request_undo_note'
+    revision = '0155_installation_admin'
+    command.upgrade(cfg, previous)
+    engine = make_engine(url)
+    try:
+        with transaction(engine, write=True) as db:
+            seed = historical_seed(db)
+            admin_id = seed['identities']['admin']
+            grant = db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == admin_id,
+                m.RoleBinding.role == 'admin')).one()
+            grant_id = grant.id
+            grant.ends_on = date(2099, 1, 1)
+        with pytest.raises(RuntimeError, match='No active permanent administrator'):
+            command.upgrade(cfg, revision)
+        with transaction(engine, write=True) as db:
+            db.get(m.RoleBinding, grant_id).ends_on = None
+            account = m.Account(identity_id=admin_id, username='pending.setup', email='pending.setup@example.test')
+            db.add(account)
+            db.flush()
+            account_id = account.id
+        with pytest.raises(RuntimeError, match='reissue-first-admin'):
+            command.upgrade(cfg, revision)
+        with transaction(engine, write=True) as db:
+            assert db.scalar(text('SELECT version_num FROM alembic_version')) == previous
+            assert not db.scalar(select(m.RoleBinding).where(m.RoleBinding.role == INSTALLATION_ADMIN_ROLE))
+            db.get(m.Account, account_id).accepted_at = m.now()
+        command.upgrade(cfg, revision)
+        with transaction(engine) as db:
+            grant = db.scalars(select(m.RoleBinding).where(m.RoleBinding.role == INSTALLATION_ADMIN_ROLE)).one()
+            assert grant.identity_id == admin_id and grant.ends_on is None
+    finally:
+        engine.dispose()
+
+
 def test_session_limits_migration_preserves_data_and_other_guards(session_limits_database):
     url = session_limits_database
     command.upgrade(manage.alembic_config(url), '0073_integration_credentials')
@@ -1269,6 +1403,8 @@ def test_session_limits_migration_preserves_data_and_other_guards(session_limits
                                        leave_reason_display='type', session_idle_minutes=idle, session_max_hours=hours))
             identity_id = add('identities', issuer='synthetic', subject='existing', display_name='Synthetic existing account',
                               disabled=False)
+            from .migration_support import add_historical_admin
+            add_historical_admin(db, departments[0], identity_id)
             add('integration_credentials', department_id=departments[0], kind='github_issues', repo='synthetic/existing',
                 token_ciphertext=b'synthetic-existing-ciphertext', token_hint='test', connected_by=identity_id,
                 connected_at=moment)
@@ -1311,7 +1447,7 @@ def test_session_limits_migration_preserves_data_and_other_guards(session_limits
             'ck_departments_session_idle', 'ck_departments_session_max'}] == other_checks
         # Current ORM reads need the complete additive schema, including the swap settings.
         manage.migrate(url)
-        assert_only_scoring_defaults_added(before, stored_data(), columns)
+        assert_only_scoring_defaults_and_installation_admin_added(before, stored_data(), columns)
         with engine.connect() as db:
             assert db.scalar(text('SELECT count(*) FROM policy_seed_lines')) == 0
         with transaction(engine) as db:
@@ -1752,6 +1888,14 @@ def test_integration_migration_preserves_existing_rows(tmp_path, previous):
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("INSERT INTO organisations (id, revision, created_at, name, timezone, week_start, input_revision, availability_revision) "
                    "VALUES ('retained', 1, '2026-10-03', 'Retained organisation', 'UTC', 6, 1, 1)")
+    from .migration_support import add_historical_admin
+    engine = make_engine('sqlite:///' + str(path))
+    try:
+        with engine.begin() as db:
+            add_historical_admin(db, 'initial-dept', 'initial-admin', organisation_id='retained')
+    finally:
+        engine.dispose()
+    with closing(sqlite3.connect(path)) as db:
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name != 'alembic_version'")]
         columns = {table: [row[1] for row in db.execute(f'PRAGMA table_info("{table}")')] for table in tables}
         # Compare every pre-upgrade column and row while permitting additive columns.
@@ -1766,7 +1910,11 @@ def test_integration_migration_preserves_existing_rows(tmp_path, previous):
     command.upgrade(cfg, 'head')
     command.upgrade(cfg, 'head')  # A repeated deploy has no additional work.
     with closing(sqlite3.connect(path)) as db:
-        assert_only_scoring_defaults_added(before, snapshot(db), columns)
+        # The department exists only from this test's seed, so the scoring defaults reach it only when the
+        # upgrade still has their backfill ahead of it.
+        pending = {r.revision for r in scripts.iterate_revisions(head, previous)}
+        assert_only_scoring_defaults_and_installation_admin_added(
+            before, snapshot(db), columns, scoring_defaults='0109_fair_share_dials' in pending)
         assert db.execute('SELECT count(*) FROM policy_seed_lines').fetchone() == (0,)
         assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [(head,)]
         assert db.execute('SELECT count(*) FROM integration_credentials').fetchone() == (0,)

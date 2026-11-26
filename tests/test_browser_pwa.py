@@ -410,6 +410,7 @@ def test_cant_make_it_offers_alerts_for_when_it_is_covered(browser, push, live_s
         context.close()
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_admin_chooses_the_icon_background_and_a_name_change_keeps_it(browser, h, live_server):
     """P7: the icon background is a branding version with a reason; saving the name later never resets it."""
     context, page = sign_in(browser, live_server, 'admin')
