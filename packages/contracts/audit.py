@@ -36,7 +36,7 @@ _KINDS = {
     'availability': ('absence or leave record', 'absence or leave records', 'people', 'blue', 'record retract restore update undo_update undo_create'),
     'availability_pattern': ('weekly availability', 'weekly availability', 'people', 'blue', 'propose decide end restore undo'),
     'wish': ('wish', 'wishes', 'people', 'blue', 'create update withdraw restore override'),
-    'request': ('request', 'requests', 'people', 'blue', 'create decide decide_many withdraw undo link_rota'),
+    'request': ('request', 'requests', 'people', 'blue', 'create edit undo_edit decide decide_many withdraw undo link_rota'),
     'swap': ('swap', 'swaps', 'people', 'pink', 'offer counteroffer accept confirm reject withdraw prepare undo'),
     'person': ('person record', 'person records', 'people', 'blue', 'anonymise overtime workload contact.set'),
     'rotation': ('rotation', 'rotations', 'people', 'blue', 'plan copy import_reference remove restore request_change swap undo_plan'),
@@ -73,6 +73,7 @@ _KINDS = {
     'pwa': ('PWA setting', 'PWA settings', 'system', 'slate', 'provider.resume system.update'),
 }
 _VERBS = {
+    'edit': 'changed', 'undo_edit': 'undid a change in',
     'import_reference': 'imported',
     'create': 'added', 'create_many': 'added', 'bulk_create': 'added', 'update': 'changed', 'bulk_update': 'changed',
     'update_dates': 'changed the dates of', 'publish': 'published', 'approve': 'approved', 'submit': 'submitted',

@@ -697,13 +697,16 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
+        identity_id = session_identity(engine, request.cookies.get(cookie_name))
+        enforce(engine, "password-change", [identity_id or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
         def operation(db):
+            # A concurrent disable or reset can make this session unusable while the account lock is contended.
+            account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id)
+            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
         return liveness_write(engine, operation, context={"route": "auth.password_change"})
 
     @app.get("/auth/start")
