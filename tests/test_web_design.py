@@ -40,3 +40,12 @@ def test_the_phone_touch_block_covers_checkboxes_radios_and_the_legend_more():
                  ':root .dt-check-hit{display:inline-grid;width:var(--target);height:var(--target);place-items:center;vertical-align:middle;cursor:pointer}',
                  ':root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}'):
         assert rule in block, rule
+
+
+def test_a_team_box_is_never_a_size_container():
+    """A size query container has no content width (CSS Containment 3, size containment), so a team sized by its names
+    (the List's People cell, the Day bar) would shrink to empty pills (tests/test_browser_team_box.py measures them)."""
+    css = re.sub(r'/\*.*?\*/', '', ''.join(p.read_text(encoding='utf-8') for p in (SRC.parent / 'public/assets').glob('*.css')), flags=re.S)
+    found = [selector.strip() for selector, body in re.findall(r'([^{}]+)\{([^{}]*)\}', css)
+             if '.team-box' in selector and re.search(r'\bcontainer(-type)?:(?!normal)', body)]
+    assert not found, found

@@ -248,6 +248,39 @@ def test_day_list_and_session_panel_use_the_same_group(browser, live_server, h):
         context.close()
 
 
+@pytest.mark.parametrize('width', [1440, 390])
+def test_list_people_names_every_member_of_a_team(browser, live_server, h, width):
+    """List › People (a table cell; on a phone, the card's People line): a team sits among the pills on one line, sized
+    by its names. Every member's name is drawn whole inside the cell, the supervisor's first in weight 600. (As a size
+    container the team had no content width there: it drew empty pills beside the named lone person.)"""
+    from .test_browser_pairs import paired
+    names = {p['id']: p['display_name'] for p in h.get('coordinator', '/api/catalogues')['people']}
+    trainee, supervisor, other = h.seed['people']
+    w = paired(h, h.workspace('Fictional list team'))
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': width, 'height': 900})
+    try:
+        open_view(page, w, 'List')
+        cell = page.locator('#schedule-view').locator('td[data-col="people"], .dt-card-props dd').filter(has=page.locator('.team-box'))
+        expect(cell).to_have_count(1)
+        team = cell.locator('.pill-item > .team-box')
+        expect(team).to_have_count(1)
+        head = team.locator('.tm-sup .pchip.sup')
+        expect(head.locator('.pchip-name')).to_contain_text(names[supervisor])
+        assert int(head.evaluate('n=>getComputedStyle(n).fontWeight')) >= 600
+        expect(team.locator('.tm-tr .pchip-name')).to_contain_text(names[trainee])
+        expect(cell.locator('.pill-item > .pchip .pchip-name')).to_contain_text(names[other])
+        drawn = cell.locator('.pchip-name')
+        expect(drawn).to_have_count(3)
+        for n in range(3):
+            expect(drawn.nth(n)).to_be_visible()
+        boxes = cell.evaluate('''c=>{const o=c.getBoundingClientRect();return [...c.querySelectorAll('.pchip-name')].map(n=>{
+          const r=n.getBoundingClientRect();return {name:n.textContent,width:r.width,height:r.height,whole:n.scrollWidth<=n.clientWidth+1,
+            inside:r.left>=o.left-0.5&&r.right<=o.right+0.5&&r.top>=o.top-0.5&&r.bottom<=o.bottom+0.5};})}''')
+        assert all(b['width'] > 0 and b['height'] > 0 and b['whole'] and b['inside'] for b in boxes), boxes
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_phone_agenda_draws_teams_and_says_them(browser, live_server, h, scheme):
     w, _ = fixture(h)
