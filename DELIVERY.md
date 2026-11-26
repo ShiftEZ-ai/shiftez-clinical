@@ -42,9 +42,14 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff against the target base can reach, proven by hiding a
-  change on purpose. Merge groups and pushes to `main` or a release branch run the full unit and browser suites.
+  change on purpose. The protected affected-unit pilot verifies a qualifying unit fixture change and its node coverage
+  without the static or browser jobs. Merge groups and release-branch pushes run the full unit and browser suites.
+  A queue push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
+  full test coverage and protected CI controls. A push without that proof runs both suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
-  reports. If the nightly capacity check defers the suites, the gate records the deferral.
+  reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
+  with their original run identity, and links to that run for the shard reports. If the nightly capacity check
+  defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
   guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow
