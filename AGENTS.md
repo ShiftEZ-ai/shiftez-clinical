@@ -5,7 +5,7 @@
 - Board (private): https://github.com/orgs/ShiftEZ-ai/projects/2 · Project brief: the board's README
 - Release plan: https://github.com/ShiftEZ-ai/shiftez-clinical/milestones (the milestones are the plan; never copy
   them here)
-- Leads (thread titles): "ShiftEZ Master", "ShiftEZ Delivery", "ShiftEZ Design"
+- Leads (thread titles): "ShiftEZ Master", "ShiftEZ Delivery", "ShiftEZ QA", "ShiftEZ Design"
 - UI project: yes · environments: ci, dev, staging, production (each described in DELIVERY.md § Environments)
 - Other repos: none
 - Links: DELIVERY.md (how code ships) · DESIGN.md (look and feel) · the portfolio engineering standard and the

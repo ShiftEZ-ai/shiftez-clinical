@@ -521,7 +521,7 @@ def notification_reaches(db, note):
     roles = current_roles(db, identity.id, source.department_id)
     if not roles:
         return False
-    if source.payload.get('workspace_id'):
+    if source.payload.get('workspace_id') and source.kind != 'generation_finished':
         workspace = db.get(m.Workspace, source.payload['workspace_id'])
         if workspace:
             from .workspace_access import access_record
