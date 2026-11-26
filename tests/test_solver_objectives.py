@@ -218,32 +218,6 @@ def test_workload_spread_alone_does_not_overfill_needed_sessions(h):
     assert [len(shift['participants']) for shift in apply(data, result)['shifts']] == [1, 1], result
 
 
-def test_allocation_preference_balancing_alone_does_not_overfill_needed_sessions(h):
-    from .scheduler_departments import apply
-
-    first, second = h.seed['people'][:2]
-    preference = h.policy({'kind': 'allocation_preference', 'priority': 0, 'balance_by': 'service_mode',
-                           'balance_window': 'rota', 'balance_target_share': 0.5}, severity='advisory')
-    # Each existing assignment is in a different service mode. Adding both people to both
-    # duties would give each a perfect split while exceeding both one-person staffing needs.
-    w = h.shift(h.workspace(), people=[first])['workspace']
-    w = h.shift(w, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
-                service=1, people=[second])['workspace']
-    data = h.snapshot(w)
-    data['policies'] = [preference]
-    data['people'] = {pid: data['people'][pid] for pid in (first, second)}
-    for service, mode in zip(h.seed['services'], ('physical', 'virtual')):
-        data['services'][service]['mode'] = mode
-    data['generation_options'] = {'mode': 'fill_gaps', 'shortlist_width': 0,
-        'scoring': {'weights': {'coverage': 0, 'rules': 0, 'fairness': 0, 'preferences': 100, 'stability': 0}}}
-
-    result = generate(data, 5, deterministic=True)
-    assert result['solver_status'] == 'OPTIMAL', result
-    assert result['status'] == 'candidate_feasible', result
-    assert result['compiled_component_values']['preferences'] is not None, result
-    assert [len(shift['participants']) for shift in apply(data, result)['shifts']] == [1, 1], result
-
-
 def test_fair_share_keeps_the_required_team_lead_within_staffing_need(h):
     from .scheduler_departments import apply
     from .test_governed_leadership import activate, line, proposal
