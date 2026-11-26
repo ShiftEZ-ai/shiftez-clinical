@@ -312,8 +312,9 @@ def test_random_small_instances_preserve_the_required_only_optimum(h, monkeypatc
             shift['service_ids'] = [h.seed['services'][index % 2]]
             shifts.append(shift)
         data.update(shifts=shifts, focus_ids=[shift['id'] for shift in shifts])
-        for location in data['locations'].values():
+        for ident, location in data['locations'].items():
             location['capacity'] = len(shifts)
+            data['place_capacity']['limits'][ident] = len(shifts)
         frozen = copy.deepcopy(data)
         captured = []
         ready = generate(data, 5, diagnostic_proposal=diagnostic,
@@ -451,8 +452,9 @@ def test_grouped_lead_gap_does_not_raise_coverage_mismatch(h):
     third.update(id=first['id'] + '-third', start='2026-10-06T11:00:00+03:00', end='2026-10-06T15:00:00+03:00')
     data['shifts'] = [first, second, third]
     data['focus_ids'] = [shift['id'] for shift in data['shifts']]
-    for location in data['locations'].values():
+    for ident, location in data['locations'].items():
         location['capacity'] = len(data['shifts'])
+        data['place_capacity']['limits'][ident] = len(data['shifts'])
     result = generate(data, 5, deterministic=True, diagnostic_proposal=True)
     lead_gaps = [row for row in result['validation']['findings'] if row['code'] == 'LEAD_GAP']
     assert lead_gaps and any(len(row['detail']['affected_shift_ids']) > 1 for row in lead_gaps), result

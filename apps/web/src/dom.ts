@@ -453,6 +453,10 @@ export const hostLegend=<T extends Element>(root:T,key:Legend):T=>{hosts.set(roo
 /** The key of the view `node` is drawn in (its nearest hosting ancestor), or null outside any keyed view. */
 export const legendAt=(node:Element):Legend|null=>{for(let n:Element|null=node;n;n=n.parentElement){const k=hosts.get(n);if(k)return k;}return null;};
 export const text = (value: unknown) => value == null ? '—' : String(value);
+/** One collator for every list's sort and value order (numbers in text compare as numbers: "Room 2" before "Room 10"). */
+export const collator = new Intl.Collator(undefined, {numeric: true});
+/** Choices by name: the order of every list of people, the same as a collection's sort by Name. */
+export const byLabel = (a: {label: string}, b: {label: string}) => collator.compare(a.label, b.label);
 /** A record's name (a place, service, rank, rule…). A person is not a record: their row's type is refused here, so
  *  names go through person_label.ts (`personName`, `fullNameOf`, `nameText`); tests/test_name_guard.py covers the paths
  *  the compiler cannot see. */
@@ -1953,8 +1957,11 @@ export function select(label: string, choices: Choice[], value = '', required = 
   if(required&&!value&&!choices.some(c=>c.value===''))input.append(el('option',{value:'',disabled:true,hidden:true,selected:true},'Choose…'));
   const groups=new Map<string,HTMLElement>();
   for(const c of choices){
-    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{})},c.label);
-    if(!c.group){input.append(option);continue;}
+    // A group with a configured place (a person's rank) is carried on the option, never a section: one flat list.
+    const placed=c.group&&c.groupOrder!==undefined;
+    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{}),
+      ...(placed?{'data-group':c.group!,'data-group-order':String(c.groupOrder)}:{})},c.label);
+    if(!c.group||placed){input.append(option);continue;}
     if(!groups.has(c.group)){const g=el('optgroup',{label:c.group});groups.set(c.group,g);input.append(g);}
     groups.get(c.group)!.append(option);
   }
@@ -2000,6 +2007,9 @@ export function check(label: string, checked=false, hint=''): Field {
 }
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
+  /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a
+   *  single choice lists such rows flat in their own order with the group beside each; a multiple choice sections
+   *  them in this order (picker.ts). */groupOrder?:number;
   /** Chip colour in a multiple-choice field, by kind (`.rp`): person, group (rank, programme…), place (clinic, duty
    *  type), all (grey, the default), or a tag's duty-<hue>. */tone?:string;
   /** An icon before the label (a relative value's clock). */glyph?:IconName;
@@ -2450,7 +2460,7 @@ export type RoleName=typeof ROLE_NAMES[number];
 export const CAPABILITY={
   STAFF:'ui.staff',COORDINATOR:'ui.coordinator',APPROVER:'ui.approver',CREDENTIALER:'ui.credentialer',
   ADMIN:'ui.admin',AUDITOR:'ui.auditor',PROGRAMME_LEAD:'ui.programme_lead',OPERATOR:'ui.operator',
-  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',
+  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',ACCESS_INSTALLATION_ADMIN:'access.installation_admin',
   SYSTEM_OPERATIONS:'system.operations',AUDIT_READ:'audit.read',FEEDBACK_READ_ALL:'feedback.read_all',CATALOGUE_READ:'catalogue.read',
   RULES_PAGE:'ui.rules',RULES_READ:'rules.read',
 } as const satisfies Record<string,Capability>;

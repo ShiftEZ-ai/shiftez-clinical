@@ -6,6 +6,7 @@ from sqlalchemy import MetaData, select
 
 from apps.api.db import make_engine
 from scripts.manage import alembic_config
+from .migration_support import add_historical_admin
 
 
 def test_empty_reminder_upgrade_keeps_content_and_receipts(tmp_path):
@@ -24,6 +25,7 @@ def test_empty_reminder_upgrade_keeps_content_and_receipts(tmp_path):
             name='Synthetic', generation_defaults={}))
         db.execute(before.tables['identities'].insert().values(**common, id='reader', issuer='synthetic',
             subject='reader', display_name='Synthetic reader', disabled=False))
+        add_historical_admin(db, 'dept', 'reader')
         db.execute(before.tables['department_content'].insert().values(**common, id='notice', department_id='dept',
             name='Synthetic notice', kind='announcement', description='Keep evidence', url='', active=True,
             starts_on=date(2020, 1, 1), audience={'everyone': True}, importance='must_acknowledge',

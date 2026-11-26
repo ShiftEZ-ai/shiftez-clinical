@@ -1,8 +1,8 @@
 name: CI
 permissions:
   contents: read
-# Portfolio budget: 480 concurrent jobs total, with up to 6 merge groups building.
-# Delivery's admission lock enforces the budget and gives the owner first priority.
+# Measured budget (22 Nov audit: 177 jobs running at peak with 100 more queued): Delivery's admission lock keeps
+# Unit and Browser jobs in flight at or below 155 and gives the owner first priority.
 # Manual pushes are rare and only from the owner account.
 concurrency:
   group: ci-${{ github.head_ref || github.run_id }}
@@ -43,6 +43,9 @@ jobs:
       run: python3 -I .trusted-controls/.github/scripts/nightly_budget.py
   checks:
     name: Checks
+    permissions:
+      actions: read
+      contents: read
     needs: nightly-budget
     if: >-
       always() && !cancelled() && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
@@ -52,6 +55,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
+      queue_run: ${{ steps.queue.outputs.run }}
       quota_scope: ${{ steps.affected-scope.outputs.scope }}
       artifact_attempt: ${{ github.run_attempt }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
@@ -185,6 +189,15 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
+    - name: Verify whether this main push can use merge-group reports
+      id: queue
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if test -f "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/queue_reuse.py"; then
+          python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/queue_reuse.py" .run/reports/shard-plan.json
+        fi
     - name: README must remain empty, including the first root run
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/tests/test_readme_empty.py"
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -358,6 +371,7 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
+      && needs.checks.outputs.queue_run == ''
       && needs.checks.outputs.quota_scope == ''
     strategy:
       fail-fast: false
@@ -385,6 +399,7 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
+      && needs.checks.outputs.queue_run == ''
       && needs.checks.outputs.quota_scope == ''
     strategy:
       fail-fast: false
@@ -448,12 +463,18 @@ jobs:
             raise SystemExit("CI producer inventory changed")
         budget = needs.pop("nightly-budget")
         results = {job: row["result"] for job, row in needs.items()}
+        checks = needs["checks"].get("outputs", {})
+        queue_run = checks.get("queue_run", "")
+        scope = checks.get("quota_scope", "")
+        if queue_run and scope:
+            raise SystemExit("Queue reuse and affected unit scope are mutually exclusive")
 
         if os.environ["GITHUB_EVENT_NAME"] == "schedule":
             if budget["result"] != "success":
                 raise SystemExit("Nightly capacity check did not succeed")
             admitted = budget.get("outputs", {}).get("admitted")
-            if admitted == "false" and all(result == "skipped" for result in results.values()):
+            if (admitted == "false" and not (queue_run or scope)
+                    and all(result == "skipped" for result in results.values())):
                 message = "Nightly suites deferred by the capacity check. See Nightly capacity for the recorded reason."
                 print(message)
                 with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
@@ -466,8 +487,6 @@ jobs:
         elif budget["result"] != "success":
             raise SystemExit("Nightly capacity check failed or was cancelled")
 
-        checks = needs["checks"].get("outputs", {})
-        scope = checks.get("quota_scope", "")
         if scope:
             expected = {"checks": "success", "static": "skipped", "unit": "skipped", "browser": "skipped"}
             if (os.environ["GITHUB_EVENT_NAME"] != "pull_request" or scope != "quota-unit-expectation"
@@ -478,7 +497,11 @@ jobs:
                 print("run_affected_unit=true", file=output)
             raise SystemExit(0)
 
-        if any(result != "success" for result in results.values()):
+        if queue_run:
+            if (os.environ["GITHUB_EVENT_NAME"] != "push" or os.getenv("GITHUB_REF") != "refs/heads/main"
+                    or results != {"checks": "success", "static": "success", "unit": "skipped", "browser": "skipped"}):
+                raise SystemExit("Queue reuse does not match the push or producer results")
+        elif any(result != "success" for result in results.values()):
             raise SystemExit(f"Every selected CI producer must succeed: {results}")
         with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env:
             print("NEEDS_JSON=" + json.dumps(needs), file=env)
@@ -567,22 +590,31 @@ jobs:
       with:
         name: ci-plan-${{ needs.checks.outputs.artifact_attempt }}
         path: .candidate-evidence/plan
+    - name: Verify the Checks plan seal
+      if: steps.producers.outputs.run_verdict == 'true'
+      run: python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
+    - name: Verify reused merge-group reports
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run != ''
+      env:
+        GH_TOKEN: ${{ github.token }}
+        QUEUE_RUN: ${{ needs.checks.outputs.queue_run }}
+      run: python3 -I .trusted-verdict/.github/scripts/queue_reuse.py .candidate-evidence/plan/shard-plan.json --require-run "$QUEUE_RUN" --reports .run/ratchet
     - name: Detect trusted report selection
       id: reports
-      if: steps.producers.outputs.run_verdict == 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run == ''
       run: |
         if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
           echo 'mixed_attempts=true' >> "$GITHUB_OUTPUT"
         fi
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-      if: steps.producers.outputs.run_verdict == 'true' && steps.reports.outputs.mixed_attempts == 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run == '' && steps.reports.outputs.mixed_attempts == 'true'
       with:
         pattern: ci-test-*
         path: .candidate-evidence/test-results
         merge-multiple: false
     # shortcut: transitional until the first run after merge; remove in the next CI window
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-      if: steps.producers.outputs.run_verdict == 'true' && steps.reports.outputs.mixed_attempts != 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run == '' && steps.reports.outputs.mixed_attempts != 'true'
       with:
         pattern: ci-test-${{ github.run_attempt }}-*
         path: .candidate-evidence/test-results
@@ -597,7 +629,7 @@ jobs:
         python -I -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/policy-yaml" -r requirements/policy.lock
         printf 'POLICY_YAML_PATH=%s\n' "$RUNNER_TEMP/policy-yaml" >> "$GITHUB_ENV"
     - name: Trusted source/node/canary/allowance verdict
-      if: steps.producers.outputs.run_verdict == 'true'
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run == ''
       env:
         GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
         CANDIDATE_SHA: ${{ needs.checks.outputs.candidate_sha }}
@@ -605,13 +637,21 @@ jobs:
         UNIT_COUNT: ${{ needs.checks.outputs.unit_count }}
         BROWSER_COUNT: ${{ needs.checks.outputs.browser_count }}
       run: |
-        python3 -I -c 'import hashlib,json,os,pathlib; plan=json.loads(pathlib.Path(".candidate-evidence/plan/shard-plan.json").read_bytes()); seal=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(",",":")).encode()).hexdigest(); assert seal==json.loads(os.environ["NEEDS_JSON"])["checks"]["outputs"]["plan_sha256"], "Plan seal differs from Checks"; print("Plan",seal,"tree="+plan["tree"])'
         if test -f .trusted-verdict/.github/scripts/latest_reports.py; then
           python3 -I .trusted-verdict/.github/scripts/latest_reports.py .candidate-evidence/test-results --plan .candidate-evidence/plan/shard-plan.json
         fi
         python3 -I .trusted-verdict/.github/scripts/trusted_verdict.py --plan .candidate-evidence/plan/shard-plan.json --reports .candidate-evidence/test-results --output .run/ratchet
+    - name: Record protected merge-group proof after the trusted verdict
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'merge_group'
+      env:
+        PLAN_ATTEMPT: ${{ needs.checks.outputs.artifact_attempt }}
+      run: |
+        if test -f .trusted-verdict/.github/scripts/queue_reuse.py; then
+          python3 -I .trusted-verdict/.github/scripts/queue_reuse.py .candidate-evidence/plan/shard-plan.json --record-attempt "$PLAN_ATTEMPT" --reports .run/ratchet
+        fi
     - name: Keep raw measurement or qualification evidence
       if: always() && steps.producers.outputs.run_verdict == 'true'
+      id: qualification
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: known-failures-candidate-${{ github.run_attempt }}
@@ -619,6 +659,11 @@ jobs:
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 7
+    - name: Identify the merge-group gate artifact
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'merge_group'
+      env:
+        QUALIFICATION_ARTIFACT_ID: ${{ steps.qualification.outputs.artifact-id }}
+      run: printf 'Queue qualification artifact id %s\n' "$QUALIFICATION_ARTIFACT_ID"
   static:
     name: Static checks
     needs: checks

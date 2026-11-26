@@ -45,6 +45,8 @@ class Node:
 @pytest.fixture
 def tracked(monkeypatch,tmp_path):
     monkeypatch.setenv("PW_API_LOG_DIR",str(tmp_path))
+    monkeypatch.delenv("PW_TRACE_MODE", raising=False)
+    monkeypatch.delenv("PW_SCREENSHOT_DIR", raising=False)
     context=Context()
     node=Node()
     browser=Traced(SimpleNamespace(new_context=lambda **kwargs:context),None,"synthetic-test",node)
@@ -104,7 +106,7 @@ def test_successful_context_close_discards_pending_requests(tracked):
 def test_fixture_close_keeps_traces_only_for_failed_test_reports(tracked,phase,failed):
     browser,raw,node,folder=tracked
     stops=[]
-    browser.folder=folder/"traces"
+    browser.trace_folder=folder/"traces"
     raw.tracing.stop=lambda **kwargs:stops.append(kwargs)
     context=browser.new_context()
     context.start("POST","http://localhost/api/commands")
@@ -138,7 +140,7 @@ def test_test_failure_captures_context_left_open_without_trace_folder(tracked):
 def test_artifact_error_preserves_failure_and_trace_capture(tracked,monkeypatch,tmp_path,capsys):
     browser,raw,node,folder=tracked
     stops=[]
-    browser.folder=tmp_path/"traces"
+    browser.trace_folder=tmp_path/"traces"
     raw.tracing.stop=lambda **kwargs:stops.append(kwargs)
     context=browser.new_context()
     context.start("POST","http://localhost/api/commands")

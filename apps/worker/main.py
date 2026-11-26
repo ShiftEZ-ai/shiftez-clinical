@@ -10,11 +10,12 @@ from datetime import timedelta
 import logging
 import time
 import threading
+from types import SimpleNamespace
 from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
-from sqlalchemy import delete, func, literal, or_, select, text, tuple_, update
+from sqlalchemy import delete, event, func, literal, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,6 +32,7 @@ from apps.api.schema import require_current_schema
 from apps.api.serialization import job_progress_record
 from apps.api.snapshots import currency_hint, fingerprint
 from apps.api.version import build
+from apps.api.errors import Problem
 from apps.api.services.generation_resume import (clear_generation_resume, prune_generation_resume, resume_current,
                                                  resume_expired, has_generation_checkpoint, generation_resume_available, may_run)
 from apps.api.services.generation_scope import require_generation_sessions_in_scope
@@ -67,6 +69,27 @@ def _preserve_generation_stage(previous, progress):
     if previous_index is not None and current_index is not None and current_index < previous_index:
         return {**progress, 'stage': previous_stage}
     return progress
+
+
+# The only kinds the interactive lane claims: short reads a planner waits on while a long main-loop job runs.
+INTERACTIVE_KINDS = frozenset({'fill_options', 'planner_preview'})
+
+
+class InteractiveWriteRefused(Problem):
+    def __init__(self):
+        super().__init__(500, 'INTERACTIVE_WRITE_REFUSED', 'An interactive job may record only its own result')
+
+
+def _refuse_rota_writes(db, *, preview_savepoint=False):
+    """An interactive-lane session may write only job rows; planner_preview's savepoint is always rolled back."""
+    @event.listens_for(db, 'before_flush')
+    def refuse(session, _context, _instances):
+        # Only planner_tools.preview's own savepoint, which it always rolls back, may flush rota rows.
+        if preview_savepoint and session.info.get('_planner_preview') and session.in_nested_transaction():
+            return
+        rows = (*session.new, *session.deleted, *(row for row in session.dirty if session.is_modified(row)))
+        if any(not isinstance(row, m.Job) for row in rows):
+            raise InteractiveWriteRefused()
 
 
 def _release_job_memory(claim=None):
@@ -595,8 +618,8 @@ def oldest_queued_job(engine):
                 if job else {'job_id': None, 'queued_seconds': 0})
 
 
-def job_available(db, *, recovering_worker=None):
-    enabled = enabled_jobs()
+def job_available(db, *, recovering_worker=None, kinds=None):
+    enabled = enabled_jobs() if kinds is None else enabled_jobs() & m.Job.kind.in_(kinds)
     lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     if recovering_worker is not None:
         lost = or_(lost, m.Job.worker_id == recovering_worker)
@@ -604,22 +627,26 @@ def job_available(db, *, recovering_worker=None):
         (m.Job.status == 'running') & lost)).limit(1)) is not None
 
 
-def claim_pending(engine, *, recovering_worker=None):
+def claim_pending(engine, *, recovering_worker=None, kinds=None):
     with transaction(engine) as db:
-        if not job_available(db, recovering_worker=recovering_worker):
+        if not job_available(db, recovering_worker=recovering_worker, kinds=kinds):
             return None
-    return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker))
+    return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker, kinds=kinds))
 
 
-def claim_job(db, *, recovering_worker=None):
+def claim_job(db, *, recovering_worker=None, kinds=None):
+    """Claim under the writer lock, so concurrent claimers (lanes or workers) never take the same job."""
     require_current_schema(db)
     enabled = enabled_jobs()
+    # The heavy-kind check below stays department-wide; only the lane's own candidates are narrowed.
+    wanted = enabled if kinds is None else enabled & m.Job.kind.in_(kinds)
     # Bounded lease recovery after worker death; no lost running job remains forever.
     lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     if recovering_worker is not None:
         lost = or_(lost, m.Job.worker_id == recovering_worker)
-    expired = list(db.scalars(select(m.Job).where(enabled, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
-        .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)))
+    expired = list(db.scalars(select(m.Job).where(wanted, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
+        .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)
+        .with_for_update(skip_locked=True).execution_options(populate_existing=True)))
     for old in expired:
         if old.kind == 'planner_preview':
             from apps.api.services import planner_tools
@@ -689,14 +716,15 @@ def claim_job(db, *, recovering_worker=None):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
         queue_generation_outcome(db, old)
-    queued = select(m.Job).where(enabled, m.Job.status == "queued")
+    queued = select(m.Job).where(wanted, m.Job.status == "queued")
     # shortcut: one solve at a time for the pilot server; add bounded slots when measured demand requires them.
     heavy = ["generation", "feasibility", "catalogue_proof", "swap_audience", "merge_preview", "merge_apply", "fill_options"]
     if db.scalar(select(m.Job.id).where(enabled, m.Job.status == "running", m.Job.kind.in_(heavy)).limit(1)):
         queued = queued.where(m.Job.kind.not_in(heavy))
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
-    job = db.scalar(queued.order_by(m.Job.created_at).limit(1))
+    job = db.scalar(queued.order_by(m.Job.created_at, m.Job.id).limit(1)
+                    .with_for_update(skip_locked=True).execution_options(populate_existing=True))
     if job is None:
         return None
     if job.kind == 'generation' and not resume_current(db, job):
@@ -723,9 +751,16 @@ def claim_job(db, *, recovering_worker=None):
             live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
         return None
     lease_started = time.monotonic()
-    job.status, job.started_at = "running", m.now()
-    job.heartbeat_at = job.started_at
-    job.worker_id = WORKER_ID
+    started_at = m.now()
+    attempt = db.scalar(update(m.Job).where(
+        m.Job.id == job.id, m.Job.status == 'queued', m.Job.attempts == job.attempts,
+        m.Job.worker_id.is_not_distinct_from(job.worker_id),
+        m.Job.started_at.is_not_distinct_from(job.started_at),
+        m.Job.heartbeat_at.is_not_distinct_from(job.heartbeat_at),
+    ).values(status='running', started_at=started_at, heartbeat_at=started_at, worker_id=WORKER_ID,
+             attempts=m.Job.attempts + 1).returning(m.Job.attempts).execution_options(synchronize_session='fetch'))
+    if attempt is None:
+        return None
     # Deferred generation first freezes its rota on the worker.  Expose that
     # phase immediately so the client does not label a long snapshot as a
     # stalled solver.
@@ -736,7 +771,6 @@ def claim_job(db, *, recovering_worker=None):
                         [('events', []), ('solution', None), ('improvements_found', 0), ('precheck_issues', []),
                          ('best_score', None)]}
                        if job.kind == 'generation' else {})}
-    job.attempts += 1
     job.revision += 1
     if job.kind == 'generation' and not generation_resume_available(db, job, days=resume_days(db), error=None):
         clear_generation_resume(db, job_id=job.id)
@@ -745,7 +779,7 @@ def claim_job(db, *, recovering_worker=None):
         # preparation begins; the persisted row remains the source of truth.
         live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
     return {"id": job.id, "kind": job.kind, "input": job.input_snapshot, "input_fingerprint": job.input_fingerprint,
-            "attempt": job.attempts,
+            "attempt": attempt,
             "department_id": job.department_id, "requested_by": job.requested_by, "lease_started": lease_started,
             "resume_state": job.resume_state, 'resume_checkpoint': job.resume_checkpoint,
             "search_control": job.search_control, "progress": job.progress}
@@ -783,12 +817,22 @@ def stage_feasibility_result(db, claim, result):
     db.execute(insert(table).from_select(['job_id', 'attempt', 'payload'], lease).on_conflict_do_nothing())
 
 
-def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None):
+def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None,
+               record_merge_refusal=False):
     require_current_schema(db)
+    if not error and claim.get('kind') in {'validation', 'merge_apply'}:
+        workspace_id = db.scalar(select(m.Job.workspace_id).where(m.Job.id == claim['id']))
+        workspace_ids = [workspace_id]
+        if claim['kind'] == 'merge_apply':
+            workspace_ids.append(claim['input']['source_id'])
+        # These paths update workspace rows, so lock them before the job.
+        db.execute(select(m.Workspace.id).where(m.Workspace.id.in_(workspace_ids))
+                   .order_by(m.Workspace.id).with_for_update(key_share=True))
     # Feasibility completion needs current authority and lease state, not the frozen department graph.
     # Other kinds load their retained evidence lazily when their stale/proposal guards require it.
-    job = db.get(m.Job, claim["id"], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
-    if not job or job.status != "running" or job.attempts != claim["attempt"]:
+    job = db.get(m.Job, claim["id"], with_for_update=True, populate_existing=True,
+                 options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
+    if not job or job.status != "running" or job.attempts != claim["attempt"] or job.worker_id != WORKER_ID:
         return False
     if job.kind == 'feasibility' and result is not None and not error:
         raise ValueError('Feasibility proof must be staged before completion')
@@ -854,17 +898,26 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
             if job.input_snapshot.get('validation_basis') == 'current':
                 job.input_fingerprint = result['fingerprint']
     if job.kind in {'merge_preview', 'merge_apply'} and not error:
+        from apps.api.errors import Problem
         from .workspace_merge import execute
         from apps.api.services.workspace_access import audit_envelope
         from apps.api.services.audit_log import event_action, subject_detail
         from packages.contracts.schemas import Command
-        command = Command.model_validate(claim['input']['command'])
-        result = execute(db, claim, result, replay=True)
-        db.flush()
-        db.add(audit_envelope(db, command, result, m.AuditEvent(department_id=job.department_id, actor_id=job.requested_by,
-            action=event_action(command.kind, result), target_id=job.workspace_id,
-            reason=command.payload['reason'], detail={**subject_detail(db, command.kind, result), 'job_id': job.id,
-                'input_changes': list(db.info.get('_input_changes', {}).values())}, correlation_id=job.id)))
+        try:
+            with db.begin_nested():
+                command = Command.model_validate(claim['input']['command'])
+                result = execute(db, claim, result, replay=True)
+                db.flush()
+                db.add(audit_envelope(db, command, result, m.AuditEvent(
+                    department_id=job.department_id, actor_id=job.requested_by,
+                    action=event_action(command.kind, result), target_id=job.workspace_id,
+                    reason=command.payload['reason'], detail={**subject_detail(db, command.kind, result), 'job_id': job.id,
+                        'input_changes': list(db.info.get('_input_changes', {}).values())}, correlation_id=job.id)))
+        except Problem as rejected:
+            if not record_merge_refusal:
+                raise
+            # Roll back the merge and retain the job lock for the failed receipt.
+            result, error = None, rejected.code
     if job.kind == "swap_audience":
         from apps.api.services.swaps import store_audience
         result = store_audience(db, job.input_snapshot, result, error)
@@ -927,10 +980,10 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
 
 def lease_job(db, job_id):
     # Include metadata for before_update; only legacy rows without it need a one-time raw backfill.
-    return db.get(m.Job, job_id, options=[load_only(
+    return db.get(m.Job, job_id, with_for_update=True, populate_existing=True, options=[load_only(
         m.Job.kind, m.Job.status, m.Job.attempts, m.Job.requested_by, m.Job.department_id,
         m.Job.workspace_id, m.Job.input_fingerprint, m.Job.progress, m.Job.heartbeat_at,
-        m.Job.revision, m.Job.search_control, m.Job.read_metadata)])
+        m.Job.revision, m.Job.search_control, m.Job.read_metadata, m.Job.worker_id)])
 
 
 def elapsed_progress(progress, since_report):
@@ -940,7 +993,7 @@ def elapsed_progress(progress, since_report):
 
 def heartbeat_job(db, claim, progress):
     job = lease_job(db, claim["id"])
-    if not job or job.status != "running" or job.attempts != claim["attempt"]:
+    if not job or job.status != "running" or job.attempts != claim["attempt"] or job.worker_id != WORKER_ID:
         return False
     identity = db.get(m.Identity, job.requested_by)
     if identity.disabled or not may_run(db, identity, job):
@@ -976,15 +1029,16 @@ RESUME_CHECKPOINT_FIELDS = frozenset({'hint', 'has_solution', 'result', 'checkpo
                                       'search_elapsed_seconds', 'diagnostic_proposal', 'strict_conflict'})
 
 
-def checkpoint_job(db, claim, state, *, prepared=None):
+def checkpoint_job(db, claim, state, *, prepared=None, clear_terminal=True):
     """Commit only the current authorised attempt's private prepared model and best hint."""
-    job = db.get(m.Job, claim['id'], with_for_update=True, options=[load_only(
+    job = db.get(m.Job, claim['id'], with_for_update=True, populate_existing=True, options=[load_only(
         m.Job.status, m.Job.attempts, m.Job.requested_by, m.Job.department_id, m.Job.kind, m.Job.resume_checkpoint,
-        m.Job.workspace_id, m.Job.input_fingerprint, m.Job.created_at, m.Job.completed_at, m.Job.search_control)])
-    if not job or job.attempts != claim['attempt']:
+        m.Job.workspace_id, m.Job.input_fingerprint, m.Job.created_at, m.Job.completed_at, m.Job.search_control,
+        m.Job.worker_id)])
+    if not job or job.attempts != claim['attempt'] or job.worker_id != WORKER_ID:
         return False
     if job.status != 'running':
-        if job.status in {'cancelled', 'failed'}:
+        if clear_terminal and job.status in {'cancelled', 'failed'}:
             clear_generation_resume(db, job_id=job.id)
         return False
     if validated_proposal(state.get('result'), job.input_fingerprint):
@@ -1242,10 +1296,11 @@ def prepare_deferred_generation(engine, claim, settings):
     prior = claim['input']
     deferred = prior.get('_deferred_generation')
     from apps.api.errors import require
-    from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
+    from apps.api.services.jobs import (catalogue_proof_identity, generation_request_from_snapshot,
+                                        record_supersessions, require_solver_compatible)
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
-    from apps.api.services.planning_groups import guard_frozen_generation, guard_generation
+    from apps.api.services.planning_groups import guard_generation
     from apps.api.snapshots import domain_snapshot, draft_policy_hint
     from packages.contracts import schemas as s
     from packages.domain.generation_scope import has_population
@@ -1266,14 +1321,27 @@ def prepare_deferred_generation(engine, claim, settings):
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
+        requested = generation_request_from_snapshot(workspace, prior)
+        value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
+        retained_population = prior.get('planning_population')
+
+        def accept_frozen_scope(scope):
+            require(scope.get('generation_role_bindings') == prior.get('generation_role_bindings'),
+                    'STALE_INPUTS', 'Scheduling population roles changed; start a fresh run', 409)
+            if prior.get('_generation_authority_pending'):
+                job.input_snapshot = claim['input'] = {k: v for k, v in prior.items()
+                                                       if k != '_generation_authority_pending'}
+                clear_generation_resume(db, workspace_id=workspace.id, keep_job_id=job.id)
+                record_supersessions(db, job)
+
         if not deferred:
-            guard_frozen_generation(db, actor, workspace, prior)
-            if not (prior.get('baseline') and 'policies' in prior):
-                return
             organisation = db.get(m.Organisation, department.organisation_id)
             hint = (prior.get('input_manifest') or {}).get('dirty_hint') or {}
-            if hint.get('input_revision') == organisation.input_revision and all(
-                    hint.get(key) == value for key, value in draft_policy_hint(workspace).items()):
+            if not (prior.get('baseline') and 'policies' in prior) or (
+                    hint.get('input_revision') == organisation.input_revision and all(
+                        hint.get(key) == value for key, value in draft_policy_hint(workspace).items())):
+                accept_frozen_scope(guard_generation(db, actor, workspace, None, value,
+                                                     retained_population=retained_population))
                 return
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
@@ -1286,22 +1354,16 @@ def prepare_deferred_generation(engine, claim, settings):
         snapshot = domain_snapshot(db, workspace,
                                    wish_debt_cap=options.scoring.wish_debt_cap,
                                    lead_balance=options.scoring.lead_balance)
+        if claim['input'].get('generation_scope_source'):
+            snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
+        scope = guard_generation(db, actor, workspace, snapshot, value, require_population=not deferred,
+                                 retained_population=retained_population)
         if not deferred:
             if snapshot['policies'] == prior['policies']:
+                accept_frozen_scope(scope)
                 return
             require(snapshot['baseline']['id'] == baseline.id, 'STALE_INPUTS',
                     'The draft baseline changed; start a fresh run', 409)
-        requested = (prior.get('generation_request') or {}) if deferred else prior.get('_generation_request') or {
-            'workspace_id': workspace.id, 'kind': 'generation',
-            'session_ids': prior.get('generation_session_ids') or [],
-            'generation_scope': prior.get('generation_scope'),
-            'planning_group_version_id': prior.get('planning_group_version_id'),
-            'lookahead': prior.get('lookahead'),
-        }
-        value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
-        if claim['input'].get('generation_scope_source'):
-            snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
-        guard_generation(db, actor, workspace, snapshot, value)
         focus = set(snapshot.get('focus_ids', []))
         require_generation_sessions_in_scope(value.session_ids, sessions=(
             (row['id'], row['cancelled']) for row in snapshot.get('shifts', []) if row['id'] in focus))
@@ -1355,7 +1417,8 @@ def prepare_deferred_generation(engine, claim, settings):
             baseline, snapshot, job=job, requester_id=job.requested_by)
         job.input_snapshot = snapshot
         job.input_fingerprint = snapshot['fingerprint']
-        from apps.api.services.jobs import record_supersessions
+        if prior.get('_generation_authority_pending'):
+            clear_generation_resume(db, workspace_id=workspace.id, keep_job_id=job.id)
         record_supersessions(db, job)
         claim['input'] = snapshot
         claim['input_fingerprint'] = snapshot['fingerprint']
@@ -1396,17 +1459,27 @@ def housekeeping(engine, settings):
     return departments
 
 
-def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False):
+def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False, kinds=None,
+                recovered=None):
+    """One pass of the main loop, or with `kinds` one claim of the interactive lane (no maintenance).
+
+    `recovered` is called once this pass's claim has committed, before the claimed job runs."""
     settings = settings or engine.get_execution_options().get("rota_write_settings") or Settings.from_env()
     pass_engine = engine
-    queued = oldest_queued_job(engine)
-    claim_first = queued['job_id'] is not None and queued['queued_seconds'] >= settings.worker_claim_max_defer_seconds
+    interactive = kinds is not None
+    lane = 'interactive' if interactive else 'main'
+    queued = {'job_id': None} if interactive else oldest_queued_job(engine)
+    claim_first = interactive or (queued['job_id'] is not None
+                                  and queued['queued_seconds'] >= settings.worker_claim_max_defer_seconds)
     departments = set() if claim_first else housekeeping(engine, settings)
     claim_engine = engine.execution_options(rota_defer_busy_writer=False) if claim_first else engine
-    claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None)
+    claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None, kinds=kinds)
+    if recovered is not None:
+        recovered()
     # Recover a crash after final validation before TTL pruning can release its private checkpoint.
     try:
-        prune_generation_state(engine, settings=settings)
+        if not interactive:
+            prune_generation_state(engine, settings=settings)
     except DatabaseWriteDeferred:
         if not claim:
             raise
@@ -1419,7 +1492,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         result, error, error_detail = None, None, None
         started = time.monotonic()
         _memory_probe('before_job', claim)
-        log.info("job_started", extra={"job_id": claim["id"], "kind": claim["kind"], "attempt": claim["attempt"]})
+        log.info("job_started", extra={"job_id": claim["id"], "kind": claim["kind"], "attempt": claim["attempt"],
+                                       "lane": lane})
         stopped, finished = threading.Event(), threading.Event()
         progress = dict(claim.get('progress') or {"stage": "checking", "elapsed_seconds": 0})
         deferred_generation = claim['kind'] == 'generation' and claim['input'].get('_deferred_generation')
@@ -1472,6 +1546,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 progress_reported_at = time.monotonic()
                 if claim['kind'] == 'generation':
                     update = _preserve_generation_stage(progress, update)
+                    if deferred_generation:
+                        update = {**update, 'phase_timings': {**(update.get('phase_timings') or {}),
+                                  'request_preparation_seconds': preparation_elapsed}}
                     events = [{**event, 'seq': sequence_offset + event['seq']} for event in update.get('events', [])]
                     if events and needs_resync:
                         events[0] = {**events[0], 'adds': [], 'removes': [], 'truncated': True}
@@ -1540,12 +1617,12 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         def renew(db, snapshot):
             with progress_lock:
                 current_progress = elapsed_progress(progress, time.monotonic() - progress_reported_at)
-            job = lease_job(db, claim['id'])
             alive = heartbeat_job(db, claim, current_progress)
             if alive and snapshot is not None:
                 state, prepared = snapshot
                 alive = checkpoint_job(db, claim, state, prepared=prepared)
-            return time.monotonic(), alive, dict(job.search_control or {}) if alive else {}
+            controls = db.scalar(select(m.Job.search_control).where(m.Job.id == claim['id'])) if alive else None
+            return time.monotonic(), alive, dict(controls or {})
         def maintain_lease():
             nonlocal lease_deadline
             while not finished.wait(min(heartbeat_seconds, max(0, lease_deadline - time.monotonic()))):
@@ -1578,6 +1655,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                                                "error_code": type(exc).__name__})
         monitor = threading.Thread(target=maintain_lease, daemon=True)
         monitor.start()
+        solver_started = solver_finished = None
         try:
             if error is not None:
                 pass  # A preparation refusal must reach the job receipt without running the solver.
@@ -1604,12 +1682,17 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 diagnostic = {"diagnostic_proposal": True} if claim["input"].get("diagnostic_proposal") else {}
                 diagnostic_continuation = (run_options.get('on_conflict', 'report') == 'continue_flagged'
                                            or bool(claim["input"].get("diagnostic_proposal")))
+                solver_started = time.monotonic()
                 result = (scheduler(claim["input"], progress=report, cancelled=stopped.is_set,
                                     **({'workers': solver_workers, 'resume_state': claim.get('resume_state'),
                                         'checkpoint': checkpoint, 'search_control': search_control,
                                         '_diagnostic_continuation': diagnostic_continuation,
                                         '_candidate_evidence': candidate_evidence} if native_cp_sat else {}), **diagnostic)
                           if scheduler else generate(claim["input"], cancelled=stopped.is_set))
+                solver_finished = time.monotonic()
+                if deferred_generation:
+                    result['phase_timings'] = {**(result.get('phase_timings') or {}),
+                                               'request_preparation_seconds': preparation_elapsed}
                 continuation = claim['input'].get('continuation')
                 if isinstance(result, dict) and isinstance(continuation, dict):
                     previous_seconds = continuation.get('previous_search_seconds', 0)
@@ -1649,6 +1732,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                                'line': origin.tb_lineno} if origin is not None else None})
                         result.update(generation_fix_lists_fallback(claim['input'], result))
             elif claim['kind'] == 'feasibility':
+                if interactive:
+                    # The proof row is written outside the guarded finish transaction.
+                    raise InteractiveWriteRefused()
                 from packages.domain.feasibility import check
                 result = check(claim['input'], progress=report, cancelled=stopped.is_set)
             elif claim['kind'] == 'planner_preview':
@@ -1663,6 +1749,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     actor = planner_actor_for(db, claim)
                     workspace = db.get(m.Workspace, claim['input']['workspace']['id'])
                     command = s.Command.model_validate(claim['input']['planner_command'])
+                    if interactive:
+                        _refuse_rota_writes(db, preview_savepoint=True)
                     require(workspace is not None and workspace.status == 'draft' and workspace.archived_at is None,
                             'STALE_INPUTS', 'The rota changed before its impact preview started', 409)
                     require(planner_tools.source_fingerprint(db, actor, workspace, command)
@@ -1688,6 +1776,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                           if engine.dialect.name == 'postgresql' else engine)
                 with transaction(reader) as db:
                     allow_long_idle(db, 30)
+                    if interactive:
+                        _refuse_rota_writes(db)
                     actor = planner_actor_for(db, claim)
                     workspace = db.get(m.Workspace, value.workspace_id)
                     require(workspace is not None and workspace.status == 'draft' and workspace.archived_at is None,
@@ -1755,14 +1845,15 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     claim['check_stamp'] = (since, preparation_stamp(db, workspace),
                                             selection and (selection['start'], selection['end']))
         except Exception as exc:
-            error = error or (getattr(exc, 'code', type(exc).__name__)
-                              if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
-                              else type(exc).__name__)
+            coded_failure = (isinstance(exc, InteractiveWriteRefused)
+                             or claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview',
+                                                  'fill_options', 'merge_preview', 'merge_apply'})
+            error = error or (getattr(exc, 'code', type(exc).__name__) if coded_failure else type(exc).__name__)
             # Code metadata only: messages, locals and formatted tracebacks can carry rota data.
             origin = exc.__traceback__
             while origin.tb_next is not None:
                 origin = origin.tb_next
-            log.warning("job_failed", extra={"job_id": claim["id"], "kind": claim["kind"], "error_code": error,
+            log.warning("job_failed", extra={"job_id": claim["id"], "kind": claim["kind"], "error_code": error, "lane": lane,
                 "exception_type": type(exc).__name__, "error_location": {
                     "module": origin.tb_frame.f_globals.get('__name__'),
                     "function": origin.tb_frame.f_code.co_name, "line": origin.tb_lineno}})
@@ -1770,25 +1861,40 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             finished.set()
             monitor.join()
         computed = time.monotonic()
-        log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"],
-            "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2)})
+        generation_timings = {}
+        if claim['kind'] == 'generation':
+            solve_start = solver_started if solver_started is not None else computed
+            solve_end = solver_finished if solver_finished is not None else computed
+            generation_timings = {
+                'request_preparation_seconds': preparation_elapsed,
+                'worker_setup_seconds': max(0, solve_start - started - preparation_elapsed),
+                'solver_wall_seconds': solve_end - solve_start,
+                'result_preparation_seconds': computed - solve_end,
+            }
+        log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane,
+            "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2),
+            **generation_timings})
         feasibility_projection = None
         staged_result = False
 
         def finish(db):
+            if interactive:
+                # A kind that would store rota or check data is refused; only its failed receipt is written.
+                _refuse_rota_writes(db)
+                try:
+                    with db.begin_nested():
+                        return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
+                except InteractiveWriteRefused as refused:
+                    log.warning('interactive_write_refused', extra={'job_id': claim['id'], 'kind': claim['kind'],
+                                                                    'lane': lane})
+                    return finish_job(db, claim, None, refused.code, progress=progress)
             if feasibility_projection is not None:
                 return finish_job(db, claim, None, error, progress=progress,
                                   feasibility_projection=feasibility_projection)
-            if pending_checkpoint is not None:
-                checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation)
             if claim['kind'] in {'merge_preview', 'merge_apply'} and not error:
-                from apps.api.errors import Problem
-                try:
-                    with db.begin_nested():
-                        return finish_job(db, claim, result, None, progress=progress)
-                except Problem as rejected:
-                    # Roll back the entire merge before committing its failed-job receipt.
-                    return finish_job(db, claim, None, rejected.code, progress=progress)
+                return finish_job(db, claim, result, None, progress=progress, record_merge_refusal=True)
+            if pending_checkpoint is not None:
+                checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation, clear_terminal=False)
             return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
         try:
             if claim['kind'] == 'feasibility' and result is not None and not error:
@@ -1804,7 +1910,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                     context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "stage_result"})
                         staged_result = True
                     if not retry_write(engine, finish, deadline=lease_deadline,
-                                       context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish"}):
+                                       context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish",
+                                                "lane": lane}):
                         return True  # Cancellation or a newer attempt owns the job now.
                     break
                 except DatabaseWriteTimeout:
@@ -1813,11 +1920,13 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                         time.sleep(min(delay, remaining))
                         delay = min(delay * 2, JOB_HEARTBEAT_SECONDS)
             else:
-                log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"]})
+                log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane})
                 return True  # Leave lease recovery to claim_job; do not overwrite another attempt.
+            completed = time.monotonic()
             log.log(logging.WARNING if error else logging.INFO, "job_finished",
                     extra={"job_id": claim["id"], "kind": claim["kind"], "status": "failed" if error else "succeeded",
-                           "error_code": error, "duration_ms": round((time.monotonic() - started) * 1000, 2)})
+                           "error_code": error, "lane": lane, "duration_ms": round((completed - started) * 1000, 2),
+                           **({'result_persistence_seconds': completed - computed} if generation_timings else {})})
         finally:
             # Release both Python graphs and native CP-SAT arenas on success, failure, cancellation, or write timeout.
             probe_claim = {'id': claim.get('id')}
@@ -1831,6 +1940,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             # All closures now see only the probe identity after durable finish.
             claim = probe_claim
             _release_job_memory(probe_claim)
+    if interactive:
+        return bool(claim)
     if claim_first:
         # Maintenance cannot consume the newly claimed job's lease before its heartbeat starts.
         departments |= housekeeping(pass_engine, settings)
@@ -1863,6 +1974,22 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
     # Projection warming is maintenance, not a claimed job. Callers use this
     # result to assert that cancellation left no runnable work.
     return bool(departments or claim)
+
+
+def interactive_loop(engine, settings, stopped, wake):
+    """One interactive job at a time beside the main loop, so a candidate check never waits behind a rota check."""
+    while not stopped.is_set():
+        try:
+            worked = process_one(engine, settings=settings, kinds=INTERACTIVE_KINDS)
+        except (DatabaseWriteDeferred, DatabaseWriteTimeout, SQLAlchemyError) as exc:
+            log.warning('interactive_pass_deferred', extra={'lane': 'interactive', 'error_code': type(exc).__name__})
+            worked = False
+        except Exception as exc:  # the main loop still claims these kinds; this lane only adds capacity
+            log.warning('interactive_pass_failed', extra={'lane': 'interactive', 'error_code': type(exc).__name__})
+            worked = False
+        if not worked:
+            wake.wait(settings.worker_poll_seconds)
+            wake.clear()
 
 
 def process_push_one(engine, settings, *, record_worker_heartbeat=True):
@@ -1969,18 +2096,33 @@ def main():
     extraction = threading.Thread(target=run_loop, args=(engine, settings, stopped),
                                   name='score-check-worker', daemon=True)
     notification_stopped = threading.Event()
-    job_wake = threading.Event()
+    job_wake = wakes = threading.Event()
+    interactive = None
+    if not args.once and not args.push_only:
+        lane_wake = threading.Event()
+        wakes = SimpleNamespace(set=lambda: (job_wake.set(), lane_wake.set()))
+        interactive = threading.Thread(target=interactive_loop, args=(engine, settings, stopped, lane_wake),
+                                       name='interactive-lane', daemon=True)
     notification_thread = None
     if (not args.once and getattr(getattr(engine, 'dialect', None), 'name', None) == 'postgresql'):
         notification_thread = threading.Thread(target=notification_loop,
-                                                args=(engine, settings, notification_stopped, job_wake),
+                                                args=(engine, settings, notification_stopped, wakes),
                                                 kwargs={'dispatch': not args.push_only},
                                                 name='notification-dispatcher', daemon=True)
         notification_thread.start()
     if not args.once and not args.push_only:
         extraction.start()
+    recover_owned = True
+
+    def recovered():
+        # Start-up recovery treats every running job of this WORKER_ID as lost, so it must have committed before
+        # the lane claims anything, and must not run again (a later deferred pass) once the lane may be running.
+        nonlocal recover_owned
+        recover_owned = False
+        if interactive is not None and interactive.ident is None:
+            interactive.start()
+
     try:
-        recover_owned = True
         delay = settings.worker_poll_seconds
         while True:
             _touch_alive_file()
@@ -1989,7 +2131,8 @@ def main():
                 if args.push_only:
                     worked = process_push_one(engine, settings, record_worker_heartbeat=False)
                 else:
-                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned)
+                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned,
+                                         recovered=recovered)
                 recover_owned = False
             except DatabaseWriteDeferred:
                 queued = {'job_id': None, 'queued_seconds': 0}
@@ -2038,6 +2181,8 @@ def main():
         stopped.set()
         if extraction.ident is not None:
             extraction.join(timeout=1)
+        if interactive is not None and interactive.ident is not None:
+            interactive.join(timeout=1)
 
 
 if __name__ == "__main__":

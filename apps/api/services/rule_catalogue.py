@@ -1710,7 +1710,6 @@ def propose(db, actor, command):
     current = catalogue_version(db, actor, value.catalogue_id, "active")
     current_definition = seeded_rows(db, [record(current)])[0]['definition'] if current else {}
     current_rule = current_definition.get('rule', {})
-    baseline = value.expected_line_ids if value.expected_line_ids is not None else [line.id for line in value.lines]
     inherited = omitted_update_fields(value, {
         **current_rule, 'balance_between_people': current_definition.get('balance_between_people', True),
     }) if current else {}
@@ -1733,6 +1732,7 @@ def propose(db, actor, command):
             == (value.expected_policy_id, value.expected_revision), "STALE_REVISION",
             "This rule changed since you opened it; reload and try again", 409)
     seeds = seed_line_ids(db, [current.id] if current else [])
+    baseline = value.expected_line_ids if value.expected_line_ids is not None else [line.id for line in value.lines]
     require(seeds <= set(baseline), 'STALE_REVISION',
             'This rule changed since you opened it; reload and try again', 409)
     previous = {line["id"]: line for line in (current_rule.get("lines") or [])}
@@ -1787,8 +1787,7 @@ def propose(db, actor, command):
                                                     "exception_allowed": bool(current and current.definition.get("exception_allowed")
                                                                               and not s.safety_rule(current.definition))})
     definition = validated.model_dump(mode="json", exclude={"rule": {"lines"}})
-    # Keep the saved representation when lines were omitted, including sparse historical lines.
-    definition["rule"]["lines"] = inherited["lines"] if "lines" in inherited else [
+    definition["rule"]["lines"] = [
         _proposal_line(line, was) for line, was in zip(validated.rule.lines, body["lines"])]
     _, reference_rows = condition_reference_rows(db, Line(conditions=[s.Conditions.model_validate(line[side])
         for line in definition['rule']['lines'] for side in ('who', 'where') if line.get(side)]))

@@ -471,7 +471,7 @@ class TwoObservationGateTests(unittest.TestCase):
         binding, = (step for step in verdict_steps if step.get("env", {}).get("TRUSTED_SHA") == planned_sha)
         reader = next(step for step in verdict_steps if "trusted_verdict.py --plan" in step.get("run", ""))
         self.assertEqual(binding["working-directory"], ".trusted-verdict")
-        self.assertEqual(binding["if"], reader["if"])
+        self.assertEqual(reader["if"], binding["if"] + " && needs.checks.outputs.queue_run == ''")
         self.assertLess(verdict_steps.index(binding), verdict_steps.index(reader))
         event = self.folder / "schedule.json"
         event.write_text("{}")
