@@ -1,7 +1,8 @@
 # Delivery
 
-Follows engineering standard v1.22. Owned by the Delivery Lead. Engineering rules are in AGENTS.md and the design
-contract is in DESIGN.md.
+Follows engineering standard v1.22. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
+frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
 ## Branching and merging
 - One trunk, `main`, with temporary release branches. The repository rulesets and workflows protect `main` and
@@ -134,7 +135,7 @@ contract is in DESIGN.md.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
-- Before every final tag (not an `-rc.N`), sweep the whole product: every page for every role (`ROLE_NAMES`),
+- Before every final release tag, the QA Lead sweeps every page for every role (`ROLE_NAMES`),
   desktop 1440 and phone 390, light and dark, the states in § Test policy and the critical journeys, looking at the
   screenshots. Fix the real blockers it finds first.
 - Engine/compiler, validator, greedy, score and fairness version constants are bumped once per release, in release

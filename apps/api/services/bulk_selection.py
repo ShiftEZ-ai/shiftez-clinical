@@ -33,7 +33,7 @@ MODELS = {**CATALOGUES, "eligibilities": m.Eligibility, "grants": m.CapabilityGr
           "identities": m.Identity, "inbox": m.Notification, "outbox": m.Outbox,
           "imports": m.ImportBatch, "history": m.AuditEvent, "feedback": m.FeedbackReport,
           "closures": m.LocationClosure, "issues": m.Workspace}
-PRIVATE = ("private_reason", "password_hash", "rows", "screenshot", "screenshot_media_type", "payload")
+PRIVATE = ("private_reason", "private_undo_note", "password_hash", "rows", "screenshot", "screenshot_media_type", "payload")
 # Cache only page identities, never personal record values or ORM objects. Writes always resolve live.
 _ROWS_CACHE = WeakKeyDictionary()
 _ROWS_CACHE_LOCK = RLock()

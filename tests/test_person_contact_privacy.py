@@ -1,4 +1,6 @@
 """Contact projections share one role boundary without rewriting historical evidence."""
+import csv
+import io
 import json
 
 import pytest
@@ -9,7 +11,7 @@ from apps.api.auth import CATALOGUE_READ_ROLES, effective_roles
 from apps.api.db import transaction
 from apps.api.serialization import record
 from apps.api.services.people import CONTACT_FIELDS
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 from .governance_support import identity
 
 CONTACT = {'work_email': 'private@example.test', 'work_phone': '+966 11 555 0199',
@@ -24,40 +26,75 @@ def test_person_contact_visibility_across_readers(pg, role):
     person = h.configure('people', {'display_name': 'Synthetic contact', 'staff_number': 'PRIVATE-EMP', **CONTACT},
                          person['id'], person['revision'])['record']
     other = h.configure('people', {'display_name': 'Synthetic other contact', **CONTACT})['record']
-    identity(h, 'contact_' + role, [role], person['id'])
-    allowed = True
-    configured = h.get('contact_' + role, '/api/contact-types')['contact_types']
+    reader = 'contact_' + role
+    identity(h, reader, [role], person['id'])
+    configured = h.get(reader, '/api/contact-types')['contact_types']
     roles = effective_roles({role})
+
     def expected_for(person_id):
-        visible = [typ for typ in configured if person_id == person['id'] or
-                   typ['visibility']['mode'] == 'everyone' or
+        if person_id == person['id']:
+            return CONTACT
+        visible = [typ for typ in configured if typ['visibility']['mode'] == 'everyone' or
                    typ['visibility']['mode'] == 'roles' and roles.intersection(typ['visibility']['roles']) or
                    typ['visibility']['mode'] == 'self_and_admins' and 'admin' in roles]
         return {typ['legacy_field']: CONTACT[typ['legacy_field']] for typ in visible}
-    directory = h.get('contact_' + role, '/api/directory')['people']
-    entry = next(row for row in directory if row['id'] == person['id'])
-    assert bool(CONTACT_FIELDS & entry.keys()) == allowed
-    assert {c['legacy_field']: c['value'] for c in entry['contacts']} == expected_for(person['id'])
-    other_entry = next(row for row in directory if row['id'] == other['id'])
-    assert {c['legacy_field']: c['value'] for c in other_entry['contacts']} == expected_for(other['id'])
+
+    directory = h.get(reader, '/api/directory')['people']
+    for person_id in (person['id'], other['id']):
+        entry = next(row for row in directory if row['id'] == person_id)
+        expected = expected_for(person_id)
+        assert {field: entry[field] for field in CONTACT_FIELDS & entry.keys()} == expected
+        assert {c['legacy_field']: c['value'] for c in entry['contacts']} == expected
     if role in CATALOGUE_READ_ROLES:
-        catalogue = h.get('contact_' + role, '/api/catalogues?include=people')['people']
+        catalogue = h.get(reader, '/api/catalogues?include=people')['people']
         current = next(row for row in catalogue if row['id'] == person['id'])
-        history = h.get('contact_' + role, f"/api/catalogues/people/{person['id']}/history")['versions']
+        history = h.get(reader, f"/api/catalogues/people/{person['id']}/history")['versions']
         assert history and all(set(row['snapshot']) <= set(current) for row in history)
         assert all(not CONTACT_FIELDS.intersection(row['snapshot']) for row in history)
         assert ('staff_number' in history[0]['snapshot']) == (role in {'admin', 'coordinator'})
     else:
-        h.get('contact_' + role, f"/api/catalogues/people/{person['id']}/history", status=403)
-    pub = h.publish(h.shift(h.workspace(), people=[person['id']])['workspace'])['publication_id']
-    response = h.client('contact_' + role).get('/api/schedule/sessions?start=2026-10-01&end=2026-11-01')
-    if response.status_code == 200 and person['id'] in response.json()['people']:
-        assert ('pager' in response.json()['people'][person['id']]) == allowed
-    for suffix in (f'/api/publications/{pub}', f'/api/reports/{pub}?format=assignments',
-                   f'/api/reports/{pub}?format=print', f'/api/reports/{pub}?format=ics&person_id={person["id"]}'):
-        response = h.client('contact_' + role).get(suffix)
-        assert response.status_code in {200, 403, 404}
+        h.get(reader, f"/api/catalogues/people/{person['id']}/history", status=403)
+
+    workspace = h.shift(h.workspace(), people=[person['id']])['workspace']
+    duty, = h.detail(workspace)['shifts']
+    pub = h.publish(workspace)['publication_id']
+    client = h.client(reader)
+    can_read_schedule = bool(roles & {'staff', *PERMISSIONS['schedule.read_team']})
+    response = client.get('/api/schedule/sessions?start=2026-10-01&end=2026-11-01')
+    assert response.status_code == (200 if can_read_schedule else 403)
+    assert not any(value in response.text for field, value in CONTACT.items()
+                   if field != 'pager' or not can_read_schedule)
+    if can_read_schedule:
+        data = response.json()
+        shift = next(row for row in data['shifts'] if row['id'] == duty['id'])
+        assert [p['person_id'] for p in shift['participants']] == [person['id']]
+        entry = data['people'][person['id']]
+        assert {field: entry[field] for field in CONTACT_FIELDS & entry.keys()} == {'pager': CONTACT['pager']}
+        assert 'contacts' not in entry
+
+    can_read_publication = bool(roles & {'staff', *PERMISSIONS['publications.read_team']})
+    publication_status = 200 if can_read_publication else 403
+    response = client.get(f'/api/publications/{pub}')
+    assert response.status_code == publication_status
+    assert not any(value in response.text for value in CONTACT.values())
+    if can_read_publication:
+        data = response.json()
+        assert data['publication']['id'] == pub
+        shift = next(row for row in data['snapshot']['shifts'] if row['id'] == duty['id'])
+        assert [p['person_id'] for p in shift['participants']] == [person['id']]
+
+    reports = {}
+    for query in ('assignments', 'print', f'ics&person_id={person["id"]}'):
+        response = client.get(f'/api/reports/{pub}?format={query}')
+        assert response.status_code == publication_status, query
         assert not any(value in response.text for value in CONTACT.values())
+        reports[query.split('&', 1)[0]] = response.text
+    if can_read_publication:
+        row, = csv.DictReader(io.StringIO(reports['assignments']))
+        assert (row['publication_id'], row['shift_id'], row['person']) == (pub, duty['id'], person['display_name'])
+        assert f"{person['display_name']} (" in reports['print']
+        calendar = reports['ics'].replace('\r\n ', '')
+        assert f"\r\nUID:{pub}-{duty['id']}-{person['id']}" in calendar
 
 
 @pytest.mark.postgres
