@@ -18,7 +18,6 @@ from apps.api.identity_store import IdentityStoreError, store_for
 from apps.api.serialization import record
 from .access import organisation_identities, require_role_change, require_sign_in
 from .common import expected, history
-from .events import invalidate_audience_inputs
 
 LINK_HOURS = {"invite": 72, "reset": 24}
 LOCAL_ISSUER = "local-development"
@@ -174,7 +173,6 @@ def invite(db, actor, value, settings):
         db.add(binding)
         history(db, actor, "access", binding, value.reason)
     link = issue_link(db, actor, identity.id, "invite", settings)
-    invalidate_audience_inputs(db, actor)
     pending_options = {"pending_for": owner} if (owner := db.info.get("staff_onboarding")) else {}
     written(lambda: users.create(value.username, value.display_name, value.email, **pending_options))
     return {"record": record(identity, exclude=("password_hash",)), "account": record(account), "link": link}

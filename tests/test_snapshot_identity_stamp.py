@@ -2,13 +2,16 @@
 from datetime import date
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from apps.api import models as m, snapshots
 from apps.api.db import transaction
+from tests.governance_support import identity
 from tests.test_accounts import PASSWORD, accepted, sign_in, with_users_file
 from tests.test_bulk import people_change, preview
+from tests.test_events import event, event_type
 from tests.test_fix_list_performance import backend
+from tests.test_snapshot_non_input_stamp import input_state
 
 
 def all_stamps(h):
@@ -25,6 +28,54 @@ def extra_organisations(h):
         department = m.Department(id=m.uid(), organisation_id=other.id, name='Other synthetic department')
         db.add_all([person, department])
     return other.id, untouched.id, person.id, department.id
+
+
+def blocking_audience_events(h, other_department):
+    meeting = event(h, event_type(h, blocks_duties=True))
+    with transaction(h.app.state.engine, write=True) as db:
+        source = db.get(m.Event, meeting['id'])
+        typ = m.EventType(department_id=other_department, name='Synthetic audience event type',
+                          starts_on=date(2020, 1, 1), blocks_duties=True)
+        db.add(typ)
+        db.flush()
+        db.add(m.Event(department_id=other_department, event_type_id=typ.id,
+                       heading='Synthetic audience event', start=source.start, end=source.end,
+                       occurrence_data=source.occurrence_data))
+
+
+@pytest.mark.parametrize('writer', ['flush', 'statement'])
+def test_extra_role_without_blocking_events_keeps_checked_draft_off_home(backend, writer):
+    h = backend
+    workspace = h.workspace('Checked empty draft')
+    h.lifecycle(workspace, 'validate')
+    before = all_stamps(h)
+    inputs_before = input_state(h, workspace)
+    if writer == 'flush':
+        identity(h, 'linked-role-account', ['staff', 'coordinator'], h.seed['people'][0])
+    else:
+        with transaction(h.app.state.engine, write=True) as db:
+            db.execute(insert(m.RoleBinding), [{
+                'department_id': h.seed['department_id'], 'identity_id': h.seed['identities']['staff'],
+                'role': 'coordinator', 'starts_on': date(2020, 1, 1),
+            }])
+    assert all_stamps(h) == before
+    assert input_state(h, workspace) == inputs_before
+    assert not [item for item in h.get('coordinator', '/api/home')['attention']
+                if item.get('rota_id') == workspace['id']]
+
+
+def test_extra_role_that_changes_blocking_attendance_advances_draft_inputs(backend):
+    h = backend
+    event(h, event_type(h, blocks_duties=True), audience={'roles': ['coordinator']})
+    workspace = h.shift(h.workspace())['workspace']
+    before_fingerprint, before_hint = input_state(h, workspace)
+
+    h.command('admin', 'role.grant', {'identity_id': h.seed['identities']['staff'],
+        'role': 'coordinator', 'starts_on': '2026-10-01', 'reason': 'Synthetic additional role'})
+
+    fingerprint, hint = input_state(h, workspace)
+    assert fingerprint != before_fingerprint
+    assert hint['availability_revision'] == before_hint['availability_revision'] + 1
 
 
 def test_identity_exclusions_are_exactly_the_metadata_not_read_by_protected_facts():
@@ -55,7 +106,8 @@ def test_sign_in_password_and_preferences_do_not_stamp_any_organisation(backend,
 @pytest.mark.parametrize('action', ['link', 'unlink', 'relink', 'disable', 'enable', 'unlinked_disable', 'unlinked_enable'])
 def test_identity_changes_stamp_only_old_and_new_person_organisations(backend, action):
     h = backend
-    other_id, untouched_id, other_person, _ = extra_organisations(h)
+    other_id, untouched_id, other_person, other_department = extra_organisations(h)
+    blocking_audience_events(h, other_department)
     target_id = h.seed['identities']['staff']
     if action == 'link' or action.startswith('unlinked_'):
         with transaction(h.app.state.engine, write=True) as db:
@@ -101,6 +153,7 @@ def test_identity_changes_stamp_only_old_and_new_person_organisations(backend, a
 def test_role_binding_writers_stamp_the_binding_scope_once(backend, action):
     h = backend
     other_id, untouched_id, _, other_department = extra_organisations(h)
+    blocking_audience_events(h, other_department)
     with transaction(h.app.state.engine, write=True) as db:
         identity = m.Identity(id=m.uid(), issuer='local-development', subject='role-stamp-' + m.uid(),
                               display_name='Synthetic role target')

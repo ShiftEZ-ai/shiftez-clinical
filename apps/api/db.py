@@ -288,6 +288,20 @@ def _unread_status_change(session, row, changed):
     return True
 
 
+def _event_audience_input_organisations(session, organisation_ids):
+    if not organisation_ids:
+        return organisation_ids
+    from . import models as m
+    from .services.events import has_blocking_audience_inputs
+
+    # Historical fixtures can load role rows from a schema predating events.
+    inspector = inspect(session.connection())
+    if not all(inspector.has_table(cls.__tablename__) for cls in (m.Event, m.EventOccurrence)):
+        return organisation_ids
+    return {ident for ident in organisation_ids if has_blocking_audience_inputs(session,
+        select(m.Department.id).where(m.Department.organisation_id == ident))}
+
+
 @event.listens_for(Session, 'before_flush')
 def stamp_snapshot_inputs(session, _flush_context, _instances):
     """Every registry mutation stamps unless all changed attributes are excluded."""
@@ -295,7 +309,7 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
     from .snapshots import snapshot_input_specs
     from sqlalchemy.orm.attributes import NO_VALUE
     specs = {cls: (category, exclusions) for _name, cls, category, _scope, _shape, exclusions in snapshot_input_specs()}
-    general, availability, related = set(), set(), {}
+    general, availability, audience, related = set(), set(), set(), {}
     for row in (*session.new, *session.dirty, *session.deleted):
         if isinstance(row, (m.Department, m.Organisation, m.RoleBinding, m.SelfApprovalPermission)):
             session.info.get('_request_parents', {}).clear()
@@ -323,7 +337,11 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         ids = _snapshot_input_organisation_ids(session, row, related)
         if ids is None:
             ids = _unresolved_snapshot_input(session, row, related)
-        (availability if category == 'availability' else general).update(ids)
+        if isinstance(row, (m.Identity, m.RoleBinding)):
+            audience.update(ids)
+        else:
+            (availability if category == 'availability' else general).update(ids)
+    availability.update(_event_audience_input_organisations(session, audience))
     if general:
         bump_snapshot_input_revisions(session, general)
     if availability:
@@ -343,7 +361,7 @@ def stamp_snapshot_input_statement(execution):
     from sqlalchemy.sql.elements import BindParameter
     statement, session = execution.statement, execution.session
     table = getattr(statement, 'table', None)
-    from .models import Department, Organisation, RoleBinding, SelfApprovalPermission
+    from .models import Department, Identity, Organisation, RoleBinding, SelfApprovalPermission
     if table is not None and getattr(table, 'name', None) in (
             Department.__tablename__, Organisation.__tablename__, RoleBinding.__tablename__,
             SelfApprovalPermission.__tablename__):
@@ -468,6 +486,8 @@ def stamp_snapshot_input_statement(execution):
                 if inspect(row).persistent:
                     # ORM evaluation of explicit bind parameters can also retain a stale value.
                     session.expire(row, updated_columns.get(id(row)) or None)
+        if cls in (Identity, RoleBinding):
+            ids = _event_audience_input_organisations(session, ids)
         if ids:
             bump_snapshot_input_revisions(session, ids, availability=category == 'availability')
         return result
