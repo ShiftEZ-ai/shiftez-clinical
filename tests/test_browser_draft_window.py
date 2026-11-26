@@ -301,7 +301,10 @@ def test_a_failed_whole_read_says_so_and_leaves_the_week_usable(browser, live_se
         expect(page.locator('.wk-panel')).to_have_count(0)
         assert whole_count(reads, window_rota) == 1, reads
         reads.clear()
-        navigate(page, f"schedule/week/2026-10-11?edit={window_rota['id']}")
+        grid = page.locator('#schedule-view').element_handle()
+        page.get_by_role('button', name='Next week', exact=True).click()
+        page.wait_for_function('g => !g.isConnected', arg=grid)
+        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
         assert_window_reads(reads, window_rota, '2026-10-11', '2026-10-18')
         page.unroute(pattern)
         page.locator(CHIP).first.click()
@@ -313,15 +316,27 @@ def test_a_failed_whole_read_says_so_and_leaves_the_week_usable(browser, live_se
 def test_name_cards_omit_rota_totals_on_a_window_and_show_them_once_whole(browser, live_server, window_rota, open_card):
     with opened_window(browser, live_server, window_rota) as (page, reads):
         chip = page.locator(CHIP).first
-        getattr(chip, open_card)()
+
+        def show_card():
+            if open_card == 'focus':
+                page.keyboard.press('Tab')
+                chip.focus()
+                expect(chip).to_be_focused()
+            else:
+                page.locator('.planner-toolbar').hover()
+                chip.hover()
+
+        show_card()
         card = page.locator('.hovercard')
         expect(card).to_be_visible()
         expect(card).not_to_contain_text(re.compile(r'\d+ h this (week|rota)|No earlier duty|Rested \d+ h|Off \d+ days before'))
         assert whole_count(reads, window_rota) == 0, reads
         chip.click()
-        expect(page.locator('.wk-panel')).to_be_visible()
-        page.keyboard.press('Escape')
-        getattr(page.locator(CHIP).first, open_card)()
+        panel = page.locator('.wk-panel')
+        expect(panel).to_be_visible()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        expect(panel).to_have_count(0)
+        show_card()
         expect(card).to_contain_text('4 h this week · 8 h this rota')
         expect(card).to_contain_text('No earlier duty')
         assert whole_count(reads, window_rota) == 1, reads
@@ -362,7 +377,8 @@ def test_undo_reads_the_window_again_without_a_whole_read(browser, live_server, 
         reads.clear()
         page.get_by_role('button', name='Undo last edit', exact=True).click()
         expect(page.locator('.toast', has_text='Undone.')).to_be_visible()
-        expect(page.get_by_role('button', name='Redo', exact=True)).to_be_visible()
+        # The toast offers Redo too: the planner's own control is the one asserted.
+        expect(page.locator('.planner-bar').get_by_role('button', name='Redo', exact=True)).to_be_visible()
         page.wait_for_function('g => !g.isConnected', arg=grid)
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
         expect(page.locator(CHIP)).to_have_count(before)

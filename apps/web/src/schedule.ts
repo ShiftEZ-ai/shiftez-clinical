@@ -338,6 +338,7 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
         ...boxed.map(x=>teamView(x.t,{density:'row',presentational:true,key,nameOf:id=>people.has(id)?hooks.name(people.get(id)):'Named supervisor',fullName:id=>fullNameOf(people.get(id))||'Named supervisor',rankOf:rank,problem:x.problem,layout:teamLayout()})),
         issues?(()=>{const g=issueGlyph('error',issues);g.classList.add('sd-issue');return key.mark(g,'issue',issueGlyph('error'),'Must fix: breaks a rule or double-booked',2);})():null,
         open?key.mark(badge('+'+open,'warn'),'open',badge('+1','warn'),'Open places',3):gap<0&&!told?badge('Needs role','warn'):null,change?key.mark(badge(change,'info'),'diff',badge('Changed','info'),'Differs from published',3):null);
+      if(layer==='draft')bar.dataset.session=s.id;
       // The bar is its layer (fill or dashed), its colour (Colour by, colourRule), and the TL, pairs and closed it says.
       const hue=colours.seen(s,bar);bar.classList.add('duty-'+hue);
       key.mark(bar,'l:'+layer,el('span',{class:`sd-bar key ${layer==='draft'?'draft':''} duty-${hue}`,'aria-hidden':'true'}),layer==='draft'?'Draft':'Published',0);

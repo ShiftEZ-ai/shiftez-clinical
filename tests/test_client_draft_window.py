@@ -120,7 +120,8 @@ def test_only_a_whole_draft_that_already_includes_a_live_change_can_ignore_it(cl
 REPLAY_IO = r"""
 const handlers=new Map(),messages=[],calls=[],CSS={escape:s=>s};
 class Element {
-  constructor(){this.localName='button';this.attrs={'data-assignment':'a'};this.dataset={};this.isConnected=true;}
+  constructor(){this.localName='button';this.attrs={'data-assignment':'a'};this.dataset={};this.isConnected=true;this.classes=[];
+    this.classList={contains:c=>this.classes.includes(c)};}
   closest(s){
     if(s===WINDOW_ONLY)return this.windowOnly?this:null;
     if(s==='.pchip-more')return this.chipMenu?this:null;
@@ -136,9 +137,9 @@ class Element {
 class MouseEvent {constructor(type,options={}){this.type=type;Object.assign(this,options);}
   preventDefault(){this.prevented=true;}stopImmediatePropagation(){this.stopped=true;}}
 class KeyboardEvent extends MouseEvent {}
-const original=new Element(),view={addEventListener:(t,f)=>handlers.set(t,f),contains:()=>true};
+const original=new Element(),view={addEventListener:(t,f)=>handlers.set(t,f),contains:()=>true,querySelectorAll:()=>[original]};
 let current=new Element(),pending,answer,loads=0;
-const document={querySelector:()=>({querySelector:()=>current})},afterWired=(_,f)=>f(),
+const document={querySelector:()=>({querySelector:()=>current,querySelectorAll:()=>current?[current]:[]})},afterWired=(_,f)=>f(),
   focusSpot=()=>({key:'add',nth:0}),sameKey=()=>current?[current]:[],notify=(...v)=>messages.push(v);
 function load(pressed,replay){loads++;pending=new Promise(r=>{answer=r;}).then(()=>{replay();return true;});return pending;}
 function send(type,options={}){const e=type==='keydown'?new KeyboardEvent(type,options):new MouseEvent(type,options);
@@ -213,6 +214,19 @@ console.log(JSON.stringify({loads,calls,messages}));""")
     assert got == {'loads': 1, 'calls': ['focus', 'click'], 'messages': []}
 
 
+def test_a_press_is_replayed_on_the_same_kind_of_control_among_those_naming_its_session(client_modules):
+    # One session draws its open place (a gap) and an assignment chip, both naming it: the gap pressed is the gap replayed.
+    got = node(replay_code(client_modules) + r"""
+const control=(classes,attrs,name)=>{const n=new Element();n.classes=classes;n.attrs=attrs;n.focus=()=>calls.push(name+' focus');
+  n.dispatchEvent=e=>calls.push(name+' '+e.type);return n;};
+original.classes=['gap'];original.attrs={'data-shift':'s','data-open':'fill'};
+view.querySelectorAll=()=>[control(['pchip'],{'data-shift':'s'},'old chip'),original];
+const chip=control(['pchip'],{'data-shift':'s'},'chip'),gap=control(['gap'],{'data-shift':'s','data-open':'fill'},'gap');
+document.querySelector=()=>({querySelectorAll:()=>[chip,gap]});
+send('click');answer();await pending;console.log(JSON.stringify({loads,calls,messages}));""")
+    assert got == {'loads': 1, 'calls': ['gap focus', 'gap click'], 'messages': []}
+
+
 @pytest.mark.parametrize('modifier', ['ctrlKey', 'metaKey', 'shiftKey'])
 def test_a_deferred_click_keeps_the_modifier_that_selects_instead_of_opening(client_modules, modifier):
     got = node(replay_code(client_modules) + r"""
@@ -226,7 +240,8 @@ answer();await pending;console.log(JSON.stringify({loads,replayed}));""")
 
 
 LOAD_IO = r"""
-const w={id:'w'},WHOLE_LOADING='Loading the whole rota…',wholeSeen=new Set(),panel={
+const w={id:'w',content_revision:1},schedSubPage=()=>'';let planDay='2026-10-04',schedView='week',plannerMemo={id:'w'},latestRender=Promise.resolve();
+const WHOLE_LOADING='Loading the whole rota…',wholeSeen=new Set(),panel={
   setAttribute(key){if(key==='aria-busy')this.busy=true;},removeAttribute(key){if(key==='aria-busy')this.busy=false;},busy:false},announced=[],errors=[],toasts=[];
 let renderSerial=1,loadingWhole=false,workspaceId='w',view='schedule',reads=0,redraws=0,replays=0,released=0,busied=0,opened=null,chip=null;
 const mySerial=renderSerial;
@@ -260,6 +275,22 @@ console.log(JSON.stringify({ok,reads,redraws,replays,released,busied,busy:panel.
                    'errors': ['action failure'] if outcome == 'action_failed' else [],
                    'toasts': [['Couldn’t load the whole rota.', 'error']] if outcome == 'failed' else [],
                    'seen': outcome == 'kept'}
+
+
+@pytest.mark.parametrize(('change', 'expected'), [
+    ('', {'ok': True, 'replays': 1, 'toasts': []}),
+    ('day', {'ok': True, 'replays': 0, 'toasts': []}),
+    ('layout', {'ok': True, 'replays': 0, 'toasts': []}),
+    ('content', {'ok': True, 'replays': 0, 'toasts': [['The rota changed while it loaded · press again.', 'info']]}),
+    ('window', {'ok': False, 'replays': 0, 'toasts': []}),
+])
+def test_a_press_is_never_replayed_on_another_period_or_on_sessions_changed_while_it_loaded(client_modules, change, expected):
+    got = node(load_code(client_modules) + f"const change={json.dumps(change)};" + r"""
+let rota=null;const held=()=>rota;
+async function wholeRota(){reads++;rota={workspace:{...w,content_revision:change==='content'?2:1}};
+  if(change==='day')planDay='2026-10-11';if(change==='layout')schedView='day';if(change==='window')plannerMemo={id:'w',window:{}};}
+const ok=await loadWhole(null,()=>{replays++;});console.log(JSON.stringify({ok,replays,toasts}));""")
+    assert got == expected
 
 
 @pytest.mark.parametrize(('mode', 'available', 'expected'), [
@@ -296,7 +327,7 @@ for(const s of rota)s.type_snapshot={name:'Duty'};
 @pytest.mark.parametrize('source', ['window', 'held', 'drawn'])
 def test_top_bar_actions_receive_whole_data_from_the_drawn_or_held_copy_or_one_read(client_modules, source):
     compiled = (client_modules / 'app.js').read_text(encoding='utf-8')
-    with_draft = cut(compiled, r'\n    (const withDraft = .*?;)\n')
+    with_draft = cut(compiled, r'\n    (const pressAgain = .*?\n    \};)\n') + cut(compiled, r'\n    (const withDraft = .*?;)\n')
     got = node(f"const source={json.dumps(source)};" + r"""
 let reads=0;const w={id:'w'},full={workspace:{revision:4},shifts:['whole']},
   whole=source==='drawn'?full:null,windowDraft=source==='window',readDraft=async()=>{reads++;return full;},
@@ -305,3 +336,28 @@ async function loadWhole(_,act){await readDraft();return act();}
 """ + with_draft + r"""
 const used=await withDraft(d=>({revision:d.workspace.revision,shifts:d.shifts}))();console.log(JSON.stringify({reads,used}));""")
     assert got == {'reads': int(source == 'window'), 'used': {'revision': 4, 'shifts': ['whole']}}
+
+
+@pytest.mark.parametrize('again', [False, True])
+def test_a_top_bar_action_on_the_window_is_pressed_again_on_the_bar_drawn_whole(client_modules, again):
+    compiled = (client_modules / 'app.js').read_text(encoding='utf-8')
+    with_draft = cut(compiled, r'\n    (const pressAgain = .*?\n    \};)\n') + cut(compiled, r'\n    (const withDraft = .*?;)\n')
+    got = node(f"const again={json.dumps(again)};" + r"""
+const ran=[],w={id:'w'},full={workspace:{revision:4},shifts:[]},whole=null,windowDraft=true,held=()=>full,reportError=e=>{throw e;},
+  document={querySelector:s=>again&&s==='.planner-bar button'?{click:()=>ran.push('pressed again')}:null},notify=message=>ran.push(message);
+async function loadWhole(_,act){return act();}
+""" + with_draft + r"""
+await withDraft(()=>ran.push('ran'),'.planner-bar button')();console.log(JSON.stringify(ran));""")
+    assert got == (['pressed again'] if again else ['This action is no longer available.'])
+
+
+@pytest.mark.parametrize(('held', 'updated', 'revision'), [(None, 5, 5), (None, None, 3), (7, 5, 7)])
+def test_an_undo_on_a_window_names_the_revision_from_its_own_save_receipt(client_modules, held, updated, revision):
+    source = (client_modules / 'app.js').read_text(encoding='utf-8')
+    draft_on_screen = cut(source, r'\n(const draftOnScreen = .*?;)\n')
+    got = node(f"const heldRevision={json.dumps(held)},updated={json.dumps(updated)};" + r"""
+const workspaceId='w',scheduleCache={drafts:new Map(heldRevision?[['w',{workspace:{id:'w',revision:heldRevision}}]]:[])},
+  plannerMemo={id:'w',window:{workspace:{id:'w',revision:updated??3}}},knownRevision=()=>8,
+  rotaMeta=async()=>{throw new Error('no read expected');};
+""" + draft_on_screen + "\nconsole.log(JSON.stringify((await draftOnScreen()).revision));")
+    assert got == revision

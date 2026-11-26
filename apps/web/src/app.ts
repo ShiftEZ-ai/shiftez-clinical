@@ -245,6 +245,8 @@ const phoneBannerOff=new Set<string>();
 const scheduleCache={drafts:new Map<string,WorkspaceData>(),windows:new Map<string,Promise<unknown>>(),source:null as {id:string;read:Promise<PublicData>}|null};
 let draftReadIn='';
 let replaceMisses=0,routePerson='';
+/** Draft saves that dropped the windows held: a window read across one is not kept (its reply may predate the save). */
+let windowCuts=0;
 const forgetSchedule=()=>{plannerMemo=null;scheduleCache.drafts.clear();scheduleCache.windows.clear();scheduleCache.source=null;scheduleEpoch++;};
 // A draft stays on its window until a feature needs the whole rota. A rota in review still loads the
 // whole detail when it opens. Windows are kept separately from whole drafts in the cache.
@@ -295,9 +297,12 @@ function takeAhead(id:string){const a=ahead;if(!a||a.id!==id||a.epoch!==schedule
  *  (select) or drag on a session, a person, a cell or a menu in `view` reads the whole rota first (`load`); the page is
  *  drawn whole and the same action runs again on it, once however many presses came meanwhile. A drag cannot be replayed
  *  (the pointer has gone): it says to drag again. Paging, "+N more" and hovering stay on the window. `at`: where `view`
- *  is found again on the page drawn whole; `uses`: its controls that need the whole rota. */
-const WHOLE_USE='[data-session],[data-shift],[data-assignment],[data-rk],.ag-add,.rk-pin-btn,.wk-more,.wk-check-hit',WINDOW_ONLY='.pchip.more,.sg-more,[data-limit]';
+ *  is found again on the page drawn whole; `uses`: its controls that need the whole rota. WINDOW_ONLY: controls inside
+ *  those that need only the window (a heading's resize grip changes the view, not the rota). */
+const WHOLE_USE='[data-session],[data-shift],[data-assignment],[data-rk],.ag-add,.rk-pin-btn,.wk-more,.wk-check-hit',WINDOW_ONLY='.pchip.more,.sg-more,[data-limit],.dt-resize';
 const WHOLE_LOADING='Loading the whole rota…';
+/** The class names that tell apart the controls one session draws (planner_week.ts), for finding a press again. */
+const WHOLE_KINDS=['pchip','gap','role-gap','empty','closed','others','sd-greychip','wk-lock','wk-check'];
 /** Said when the control pressed on the window is gone from the rota drawn whole (someone's edit meanwhile). */
 const WHOLE_GONE:Record<string,string>={'data-assignment':'This duty is no longer in the rota.','data-session':'This session is no longer in the rota.',
   'data-shift':'This session is no longer in the rota.'};
@@ -314,7 +319,12 @@ function onWholeUse(view:HTMLElement,at:string,uses:string,load:(pressed:HTMLBut
     // label replaces its text.
     const target=hit.matches('.wk-check-hit')?hit.querySelector<HTMLElement>('.wk-check')||hit:hit;
     const attr=['data-assignment','data-shift','data-session','data-rk'].find(a=>target.hasAttribute(a)),spot=attr?null:focusSpot(view,target);
-    const refind=(root:HTMLElement)=>attr?root.querySelector<HTMLElement>(`${target.localName}[${attr}="${CSS.escape(target.getAttribute(attr)!)}"]`)
+    // One session draws several controls naming it (its open place, a role's gap, an assignment, its tick, lock…): the
+    // press is found again as the same kind of control among those, at the same place.
+    const kind=(n:Element)=>[n.getAttribute('data-open'),n.getAttribute('data-person'),...WHOLE_KINDS.filter(c=>n.classList.contains(c))].join('|');
+    const same=(root:HTMLElement)=>[...root.querySelectorAll<HTMLElement>(`${target.localName}[${attr}="${CSS.escape(target.getAttribute(attr!)||'')}"]`)].filter(n=>kind(n)===kind(target));
+    const nth=attr?same(view).indexOf(target):-1;
+    const refind=(root:HTMLElement)=>attr?nth>=0?same(root)[nth]||null:null
       :spot&&spot.nth>=0?sameKey(root,spot.key)[spot.nth]||null:null;
     const pressed=t!.closest('button'),chipMenu=!!t!.closest('.pchip-more');
     // A control of its own inside the item (a chip's ⋯) is replayed on that control, found again by its place and name.
@@ -359,15 +369,16 @@ async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[
   const id=meta.workspace.id,range=`start=${days[0]}&end=${addDays(days.at(-1)!,1)}`;
   // Findings (items) and coverage are paged side by side: read on while either has more, by the page size (a page can
   // hold coverage and no findings).
-  const pages=async(part:'shifts'|'validation')=>{const items:Row[]=[],coverage:Row[]=[];
+  const pages=async(part:'shifts'|'validation')=>{const items:Row[]=[],coverage:Row[]=[];let wishes:WorkspaceData['wishes']=[];
     for(let offset=0;;){const p=await get<WorkspacePartPage>(`/api/workspaces/${encodeURIComponent(id)}/parts?part=${part}&${range}&offset=${offset}`);
       if(p.revision!==meta.workspace.revision)return null;items.push(...p.items as Row[]);coverage.push(...(p.coverage||[]) as Row[]);
-      if(!p.has_more&&!p.coverage_has_more||!p.limit)return {items,coverage};offset+=p.limit;}};
+      if(part==='shifts'&&!offset)wishes=(p.wishes||[]) as WorkspaceData['wishes'];
+      if(!p.has_more&&!p.coverage_has_more||!p.limit)return {items,coverage,wishes};offset+=p.limit;}};
   const [shifts,checks]=await Promise.all([pages('shifts'),pages('validation')]);
   if(!shifts||!checks)return null;
   // The window's open places and filled counts (coverOf) come from its coverage rows, as the whole rota's do.
   const validation=meta.workspace.validation?{...meta.workspace.validation,findings:checks.items,coverage:checks.coverage}:meta.workspace.validation;
-  return {...(meta as unknown as WorkspaceData),shifts:shifts.items as PlannerSession[],workspace:{...meta.workspace,validation},partial:true};
+  return {...(meta as unknown as WorkspaceData),shifts:shifts.items as PlannerSession[],wishes:shifts.wishes,workspace:{...meta.workspace,validation},partial:true};
 }
 // A draft edit, forward or Undo, keeps what this visit read except the draft itself (see patchDraft): the Schedule
 // redraws reading only the draft. `inPlace`: every save since the last refresh was patched so (refreshOnce).
@@ -420,7 +431,11 @@ function patchDraft(r:Row,kind:string):boolean{
   const patched=applyEditDelta(held,r);
   if(patched)scheduleCache.drafts.set(id,patched);else scheduleCache.drafts.delete(id);
   if(row&&plannerMemo){const list=plannerMemo.page.workspaces;list[list.indexOf(row)]={...row,...r.workspace,health:r.health??row.health};}
+  // Advance the drawn window only from this page's save receipt, not from a background read of a newer rota.
+  if(plannerMemo?.window?.workspace.id===id){const window=plannerMemo.window;
+    plannerMemo.window={...window,workspace:{...window.workspace,revision:r.workspace.revision}};}
   for(const path of [...scheduleCache.windows.keys()])if(path.includes(id))scheduleCache.windows.delete(path);
+  windowCuts++;
   if(kind.startsWith('job.'))lastJobs=null;
   if(plannerMemo&&!workspaceListOffset&&!plannerMemo.page.has_more){const b=scheduleBadge(plannerMemo.page.workspaces);if(b)navBadges.schedule=b;else delete navBadges.schedule;applyNavBadges();}
   if(kind!=='generation.apply'&&lastJobs?.jobs?.jobs?.some((j:Row)=>j.status==='applied'))lastJobs=null;  // an undone auto-schedule is no longer applied
@@ -1733,7 +1748,10 @@ function keepFocus(old:Element,swap:()=>void){
 const staleShown=(kept:HTMLElement)=>kept.querySelector<HTMLElement>('.config-pane')||kept;
 /** `live`: a background refresh's redraw (a live update); it gives way to someone who began using the page while it read
  *  (at the swap, below), as refreshOnce does before it starts. */
-async function renderPage(live=false){
+/** The newest render: a first use on a window (loadWhole) waits for it, so a redraw asked meanwhile never drops the press. */
+let latestRender:Promise<void>=Promise.resolve();
+function renderPage(live=false){return latestRender=drawPage(live);}
+async function drawPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
@@ -2480,40 +2498,59 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   let draftData:WorkspaceData|null=!workspaceId?null:selectedData||(earlyId===workspaceId?await earlyData:undefined)||(warm(workspaceId)||!needDraft)&&cached||null;
   // An amendment opens on its change's week (change_diff, in the whole detail only): it is read whole.
   const pre=workspaceId?takeAhead(workspaceId):null;
-  let meta=workspaceId&&!draftData&&needDraft&&windowFirst(workspaceId)?await (pre?.meta||rotaMeta(workspaceId)).catch(e=>{throw rotaFailed(e);}):null;
+  // A draft's window read this visit (compact detail and parts, per range) is reused by a redraw; a save or refresh forgets it.
+  const windowKey=(id:string)=>{const days=periodNow(planDay||today,ws).days;return `rota-window:${id}:${days[0]}:${days.at(-1)}`;};
+  const keptWindow=memo&&workspaceId?scheduleCache.windows.get(windowKey(workspaceId)) as Promise<{meta:Awaited<ReturnType<typeof rotaMeta>>;data:WorkspaceData}>|undefined:undefined;
+  const keptAt=keptWindow?windowKey(workspaceId):'';
+  let meta=workspaceId&&!draftData&&needDraft&&windowFirst(workspaceId)?await (keptWindow?.then(k=>k.meta)||pre?.meta||rotaMeta(workspaceId)).catch(e=>{throw rotaFailed(e);}):null;
   if(meta?.workspace.base_publication_id)meta=null;
   // A whole read from another surface can already be held.
   if(meta&&scheduleCache.drafts.has(meta.workspace.id)){draftData=scheduleCache.drafts.get(meta.workspace.id)!;wholeSeen.add(meta.workspace.id);meta=null;}
   if(workspaceId&&!draftData&&needDraft&&!meta)draftData=await readDraft(workspaceId);
   // Year and Month without a loaded draft use the draft's row from the rota list (name, dates, status, health summary).
-  // The compact detail (meta) stands in only until the rota is read: it has no review_snapshot nor validation_current,
+  // The compact detail (meta) stands in only until the rota is read: it has no review_snapshot,
   // so the rota's facts are always the read rota's once there is one (below, after the window).
   let w=draftData?.workspace||meta?.workspace||(workspaceId?work.find(r=>r.id===workspaceId)||null:null);
   // Whole-rota work never runs on the window: it reads the whole rota first (once: then it is held).
   const held=(id:string)=>{const d=scheduleCache.drafts.get(id);return d&&!d.partial?d:null;};
-  const withDraft=(f:(d:WorkspaceData)=>unknown)=>()=>windowDraft?loadWhole(null,()=>f(held(w!.id)!)):
+  // `again`: the control, found on the page drawn whole, that is pressed again there (as Auto-schedule is); else `f` runs.
+  const pressAgain=(again:string|undefined,f:()=>unknown)=>()=>{
+    if(!again)return f();
+    const button=document.querySelector<HTMLElement>(again);
+    if(button)button.click();else notify('This action is no longer available.','info');};
+  const withDraft=(f:(d:WorkspaceData)=>unknown,again?:string)=>()=>windowDraft?loadWhole(null,pressAgain(again,()=>f(held(w!.id)!))):
     Promise.resolve(whole||held(w!.id)||readDraft(w!.id)).then(f).catch(reportError);
   // First use reads and redraws once. The pressed button uses the shared busy state, and a failure keeps the window. `replay`: the press that
   // asked, run again on the page drawn whole (onWholeUse). A name card still open when the whole rota lands is shown
   // again on its chip drawn whole, with its rota hours and rest; focus stays where it was.
   let loadingWhole=false;
-  const loadWhole=async(pressed:HTMLButtonElement|null=null,replay?:()=>unknown):Promise<boolean>=>{const id=w!.id,panel=document.querySelector('#schedule-view');
+  const loadWhole=async(pressed:HTMLButtonElement|null=null,replay?:()=>unknown):Promise<boolean>=>{const id=w!.id,panel=document.querySelector('#schedule-view'),
+    day=planDay,layout=schedView,content=w!.content_revision;
     if(loadingWhole)return false;loadingWhole=true;
+    const here=()=>workspaceId===id&&view==='schedule'&&!schedSubPage();
     const release=pressed?busy(pressed,WHOLE_LOADING):null;
     panel?.setAttribute('data-whole-loading','');if(!pressed)panel?.setAttribute('aria-busy','true');say(WHOLE_LOADING);
     try{const kept=held(id);if(kept)wholeSeen.add(id);await (kept||wholeRota(id,true));
-      if(workspaceId!==id||view!=='schedule'||mySerial!==renderSerial)return false;
+      if(!here())return false;
+      // A refresh meanwhile (a check landing, a live change) forgot that read: read it once more at the new epoch.
+      if(!held(id))await wholeRota(id,true);
+      if(!here())return false;
       const open=openCardTarget(),card=open?.matches('#schedule-view [data-assignment]')?open.dataset.assignment:undefined,focused=!!card&&open===document.activeElement;
       const nextSerial=renderSerial+1;
       await redraw();
-      if(workspaceId!==id||view!=='schedule'||renderSerial!==nextSerial||!held(id))return false;
+      // A redraw asked meanwhile (a check settling, a live update) draws last: the press waits for the newest one.
+      for(let s=renderSerial;s!==nextSerial;){await latestRender;if(s===renderSerial)break;s=renderSerial;}
+      if(!here()||!held(id)||plannerMemo?.id!==id||plannerMemo.window)return false;
       const chip=card?document.querySelector<HTMLElement>(`#schedule-view [data-assignment="${CSS.escape(card)}"]`):null;
       if(chip&&focused&&document.activeElement!==chip)chip.focus({preventScroll:true});
       if(chip&&(focused||chip.matches(':hover')))showHoverOn(chip);
       say('Ready to edit');
-      try{await replay?.();}catch(e){reportError(e);}
+      // The press was for the period on screen then and the sessions as read: never run on another period, nor on
+      // sessions someone changed meanwhile (said, so it is pressed again knowingly).
+      if(replay&&planDay===day&&schedView===layout){if(held(id)!.workspace.content_revision!==content)notify('The rota changed while it loaded · press again.','info');
+        else try{await replay();}catch(e){reportError(e);}}
       return true;}
-    catch(e){if(mySerial===renderSerial&&!sessionChanged(e))notify(couldntLoad('the whole rota'),'error',undefined,e);return false;}
+    catch(e){if(here()&&!sessionChanged(e))notify(couldntLoad('the whole rota'),'error',undefined,e);return false;}
     finally{loadingWhole=false;panel?.removeAttribute('data-whole-loading');if(!pressed)panel?.removeAttribute('aria-busy');void release?.();}};
   // Runs `f` on the page drawn whole: now, or once loadWhole has drawn it.
   const onWhole=(f:()=>unknown)=>()=>windowDraft?loadWhole(null,f):f();
@@ -2532,16 +2569,19 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const anchor=planDay||today,amends=!!changedWeek&&!!w?.base_publication_id;
   if(w&&jumpToDraft&&!planDayFromRoute&&(amends||!(anchor>=w.starts_on&&anchor<w.ends_on)))planDay=amends?changedWeek:String(w.starts_on);
   jumpToDraft=false;planDayFromRoute=false;if(!planDay)planDay=today;
-  if(meta){draftData=await readWindow(meta,periodNow(planDay,ws).days).catch(e=>{throw rotaFailed(e);})||await readDraft(meta.workspace.id);
+  if(meta){const key=windowKey(meta.workspace.id),reuse=keptWindow&&keptAt===key?await keptWindow.then(k=>k.data):null,epoch=scheduleEpoch,cuts=windowCuts;
+    draftData=reuse||await readWindow(meta,periodNow(planDay,ws).days).catch(e=>{throw rotaFailed(e);})||await readDraft(meta.workspace.id);
+    if(!reuse&&partial(draftData)&&epoch===scheduleEpoch&&cuts===windowCuts){if(scheduleCache.windows.size>=24)scheduleCache.windows.delete(scheduleCache.windows.keys().next().value!);
+      scheduleCache.windows.set(key,Promise.resolve({meta,data:draftData}));}
     if(!partial(draftData))w=draftData.workspace;}  // read whole instead (it changed meanwhile): its own facts, not meta's
   const whole=draftData&&!partial(draftData)?draftData:null;
   // D59: the window on screen, the whole rota on its way. Every write control is held where it stands (never queued).
   const windowDraft=partial(draftData)&&w!.status==='draft',reading=partial(draftData)&&!windowDraft,hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
   let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
-  // A window's freshness is its compact detail's (health.fresh: the stored check against the current inputs).
+  // A window's freshness is the whole read's (validation_current), which its compact detail carries.
   const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),
-    fresh=!!draftData&&(partial(draftData)?draftData.health?.fresh===true:w!.validation_current===true);
+    fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
   // The server says a check job exists (a provisional check): join it, so the status shown is that job's own. A window
   // is checked too: a check needs the rota's revision and inputs (runCheck), never its sessions.
@@ -2680,8 +2720,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // button). aria-disabled keeps its focus and tip; pressing it says why, with the setting for an admin.
     else if(sandbox&&draft&&permits(CAPABILITY.COORDINATOR)){const why=mergeBlocked();
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
-    else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
-    else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
+    else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog,`.planner-bar button[aria-label="${CSS.escape(step)}"]`),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
+    else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog,'.planner-bar button[aria-label="Publish…"]'),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
     // One predicate for Reopen: the note below shows exactly when the button does not.
     const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
     if(mayReopen)workflow.append(outdated
@@ -2704,7 +2744,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // QA cycle 3 (maintenance): one source. The Fix list held for the rota as it is now (the panel's, the page's, an edit's delta)
     // is the footer's too; the rota list's summary only until one is held.
     const fixSum=heldFixSummary(w.id,draftData)||fixSummaryOf(draftData?.health?.summary||work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
-    const resolveNow=(d:WorkspaceData)=>{const first=resolveQueue(d)[0];if(!first){notify('No problems to resolve one by one.','info');return;}startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(first.shift);renderPage();};
+    const resolveNow=(d:WorkspaceData)=>{const first=resolveQueue(d)[0];if(!first){notify('No problems to resolve one by one.','info');return;}startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(first.shift);void redraw();};
     // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
     const missingBaseline=draft&&!w.baseline;
     auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
@@ -2813,7 +2853,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(list.length){tools=iconButton('Schedule tools','dots',()=>popover(tools!,(panel,close)=>{panel.append(el('div',{class:'menu-list sched-tools',role:'menu','aria-label':'Schedule tools'},...publishedTools((label,glyph,run)=>menuItem(label,glyph,()=>{close();return run();})),...archivable((label,glyph,run)=>menuItem(label,glyph,()=>{close();return run();}))));},{label:'Schedule tools',placement:'below-end',key:'schedule-tools'}),{class:'bare','aria-haspopup':'menu'});
       queueMicrotask(()=>adoptPopover('schedule-tools',tools!));}
   }
-  const planning=w?planningOf(whole,fixCache.get(w.id)?.list):null;  // a window: the Fix list's, when held
+  const planning=w?planningOf(whole||draftData,fixCache.get(w.id)?.list):null;  // a window: its compact detail's
   const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
   // A load that finishes after you have moved on must not take over the new page's top bar.
   if(mySerial!==renderSerial)return;
@@ -2909,8 +2949,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Resolve these (SI-16): their open places and blocking problems one by one, as Resolve does for the whole rota.
     const toResolve=resolveQueue(data,selected);
     sel.show({count:selected.size,noun:['session','sessions'],detail:[closed?`${closed} closed`:'',locked?`${locked} locked`:'',away?`${away} in other weeks`:''].filter(Boolean).join(' · ')||undefined,
-      clear:()=>{selected.clear();renderPage();},actions:[
-      ...(toResolve.length?[{label:'Resolve these',icon:'target' as IconName,run:()=>{startResolve(data.workspace.id,selected);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(toResolve[0].shift);renderPage();},tip:plural(toResolve.length,'step')}]:[]),
+      clear:()=>{selected.clear();void redraw();},actions:[
+      ...(toResolve.length?[{label:'Resolve these',icon:'target' as IconName,run:()=>{startResolve(data.workspace.id,selected);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(toResolve[0].shift);void redraw();},tip:plural(toResolve.length,'step')}]:[]),
       ...(picked.some(s=>!s.cancelled)?[{label:'Close sessions',icon:'close' as IconName,run:bulkRun('cancel'),...heldAct(onlyRotaCoordinator('close'),'Kept on the rota, marked closed')}]:[]),
       ...(picked.some(s=>s.cancelled)?[{label:'Reopen',icon:'play' as IconName,run:bulkRun('reopen'),...heldAct(onlyRotaCoordinator('close'))}]:[]),
       {label:'Copy',icon:'copy',run:()=>copySelected(data),tip:'Copy to other days or weeks'},
@@ -4023,6 +4063,8 @@ setIssueNav({
   go:i=>{if(!i.shift)return;
     if(document.querySelector(`#main [data-rk*='"shift":"${CSS.escape(i.shift)}"']`)){markShift(i.shift);return;}
     const s=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId)?.shifts.find(x=>x.id===i.shift):undefined;
+    // A window holds only the days in view: the rota is read whole and opens on the session's day (routeShift).
+    if(!s&&plannerMemo?.window&&plannerMemo.id===workspaceId&&view==='schedule'&&!schedSubPage()){routeShift=i.shift;void redraw();return;}
     if(!s){markShift(i.shift);return;}  // says it is not shown with this view, search or filters
     toCalendar(s);routeShift=i.shift;void redraw();},
   canFix:xs=>xs.some(i=>!!i.key)&&view==='schedule'&&!schedSubPage()&&planOnDesk()&&(scheduleCache.drafts.get(workspaceId)?.workspace||(plannerRota?.id===workspaceId?plannerRota:null))?.status==='draft',  // the rota drawn, whole or its window first

@@ -327,6 +327,7 @@ class WorkspaceCompactDetail(Schema):
     can_redo: bool
     swap_id: ID | None
     approvals: list[dict[str, Any]]
+    planning_context: dict[str, Any] | None = None
 
 
 class WorkspacePartQuery(Schema):
@@ -361,6 +362,7 @@ class WorkspacePartPage(Schema):
     coverage: list[dict[str, Any]]
     coverage_total: int
     coverage_has_more: bool
+    wishes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DraftEditScope(Schema):

@@ -90,6 +90,11 @@ def test_a_right_click_menu_stays_on_its_session_when_a_refresh_redraws_the_sche
         open_rota(page, w['id'])
         chip = page.locator(DRAFT_CHIP).first
         expect(chip).to_be_visible()
+        # A draft opens on its window: its first menu reads it whole; the refresh below then reads the whole rota again.
+        chip.click(button='right')
+        expect(page.get_by_role('menu')).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(page.get_by_role('menu')).to_have_count(0)
         held = []
         draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
         page.route(draft, lambda route: held.append(route))

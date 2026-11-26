@@ -596,3 +596,12 @@ def test_postgres_concurrent_designation_keeps_one_department_rota(pg):
         results = list(pool.map(designate, workspaces))
     assert sorted(r.status_code for r in results) == [200, 409]
     assert next(r for r in results if r.status_code == 409).json()['error']['code'] == 'ROTA_ALREADY_DESIGNATED'
+
+
+def test_compact_detail_of_an_integrated_rota_carries_its_grouped_review_and_planning_context(h):
+    workspace, _, _ = integrated(h, people=[h.seed['people'][1]])
+    path = f"/api/workspaces/{workspace['id']}"
+    full, compact = h.get('coordinator', path), h.get('coordinator', path + '?view=compact')
+    # Group scope and Submit authority show on the first paint of the window, from the whole read's one owner.
+    assert full['planning_context'] and compact['planning_context'] == full['planning_context']
+    assert compact['review_items'] == full['review_items']
