@@ -445,7 +445,7 @@ def scale_harness(tmp_path_factory, database_template, request):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Each phase's report on the test item (rep_setup, rep_call): with PW_TRACE_DIR, browser traces are kept only on failure."""
+    """Keep each phase's report on the test item for failure diagnostics."""
     report = yield
     setattr(item, "rep_" + report.when, report)
     return report
