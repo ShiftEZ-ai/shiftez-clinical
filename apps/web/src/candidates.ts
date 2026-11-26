@@ -41,7 +41,8 @@ export async function askCandidates(body:Row,deps:AskDeps,o:{onPage:(rows:Row)=>
   return {...last.result,provisional_page:false};
 }
 
-export const assignFingerprint=(candidate:Row,result:Row)=>String(candidate.source_fingerprint||result.source_fingerprint||'');
+export const assignFingerprint=(candidate:Row,result:Row)=>String(candidate.assignment_stamp||candidate.source_fingerprint||
+  result.assignment_stamp||result.source_fingerprint||'');
 
 export function fillOptions(body:Row,o:{onPage?:(rows:Row)=>void;stopped?:()=>boolean;held?:(release:()=>void)=>void}={}):Promise<Reply>{
   return <Promise<Reply>>askCandidates(body,{post:b=>probeWorkers().then(up=>request<Row>('/api/planner/fill-options'+(up?'?async_options=true':''),{method:'POST',body:JSON.stringify(b)})),

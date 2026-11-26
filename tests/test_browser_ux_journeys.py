@@ -85,7 +85,10 @@ def test_a_reviewer_sees_draft_duties_a_leave_request_breaks_before_approving(br
         impact = page.locator('#main .request-impact.has-impact')
         expect(impact).to_contain_text('1 duty in Next rota (not yet published)')
         page.locator('#main').get_by_role('button', name='Approve', exact=True).click()
-        expect(page.get_by_role('dialog')).to_contain_text('1 duty in Next rota (not yet published)')
+        dialog = page.get_by_role('dialog', name='Approve leave')
+        expect(dialog).to_contain_text('1 duty in Next rota (not yet published)')
+        expect(dialog).to_contain_text('each overlapping duty shows as a conflict to replace')
+        expect(dialog).not_to_contain_text('arranges cover')
     finally:
         context.close()
 
