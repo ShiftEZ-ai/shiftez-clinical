@@ -352,6 +352,37 @@ def test_empty_department_shows_one_published_only_empty_state(browser, live_ser
         context.close()
 
 
+@pytest.mark.parametrize('select_empty', [False, True], ids=['default', 'selected-empty'])
+def test_fairness_reaches_the_next_published_rota(browser, live_server, h, select_empty):
+    goal(h, metric='duties', period='rota')
+    for name, month in [('Later published rota', '2027-04'), ('Next published rota', '2027-03')]:
+        rota = h.workspace(name, month + '-01', month + '-08')
+        rota = h.shift(rota, start=month + '-02T08:00:00+03:00', end=month + '-02T12:00:00+03:00')['workspace']
+        publication = h.publish(rota)['publication_id']
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        navigate(page, 'insights/fairness')
+        period = page.get_by_label('Period', exact=True)
+        if select_empty:
+            period.select_option('next_3_months')
+            score = section(page, 'score')
+            goals = section(page, 'goals')
+            expect(score).to_contain_text('No published rota in this period.')
+            expect(goals).to_contain_text('No published rota in this period.')
+            expect(goals.locator('.fx-goal')).to_have_count(0)
+            expect(period).to_have_value('next_3_months')
+            expect(page.get_by_role('button', name='Next month', exact=True)).to_be_visible()
+            score.get_by_role('button', name='Show upcoming published rota', exact=True).press('Enter')
+
+        expect(period).to_have_value('custom')
+        expect(section(page, 'goals').locator('.fx-goal').first).to_be_visible()
+        section(page, 'score').get_by_role('button', name='Next published rota', exact=True).click()
+        expect(page).to_have_url(re.compile(r'[?&]source=' + re.escape(publication)))
+        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('role,width,scheme', [('coordinator', 1440, 'light'), ('staff', 390, 'dark')])
 def test_checked_draft_and_modern_fair_share_appear_only_after_publication(browser, live_server, h, role, width, scheme):
     from .test_browser_rule_catalogue import catalogue_rule, line

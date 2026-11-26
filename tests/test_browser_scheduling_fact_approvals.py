@@ -62,7 +62,7 @@ def test_coordinator_proposes_approver_approves_from_needs_you_then_undo(browser
         expect(need).to_contain_text(SUMMARY)
         expect(need).to_contain_text('proposed by Coordinator · Demo')
         shot(review, 'needs-you', width)
-        need.get_by_role('button', name='Review', exact=True).click()
+        need.get_by_role('button', name='Review, Person fact to approve,').click()
         side = review.get_by_role('region', name='Personal workload')
         expect(side).to_contain_text(SUMMARY)
         expect(side).to_contain_text('proposed by Coordinator · Demo')

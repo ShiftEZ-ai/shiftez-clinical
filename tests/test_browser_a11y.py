@@ -405,6 +405,146 @@ def test_targets_min_24px_or_spaced(browser, live_server, h):
         context.close()
 
 
+PHONE = {'width': 390, 'height': 844}
+TARGET_CORNERS = [(-21, -21), (21, -21), (21, 21), (-21, 21)]
+
+
+def tap_corner(target, painted, offset):
+    target.scroll_into_view_if_needed()
+    hit, ink = target.bounding_box(), painted.bounding_box()
+    assert hit and ink
+    point = {'x': hit['width'] / 2 + offset[0], 'y': hit['height'] / 2 + offset[1]}
+    x, y = hit['x'] + point['x'], hit['y'] + point['y']
+    assert not (ink['x'] <= x < ink['x'] + ink['width'] and ink['y'] <= y < ink['y'] + ink['height'])
+    target.tap(position=point)
+
+
+def test_phone_labelled_checkbox_is_a_native_44px_target(browser, live_server):
+    from .test_browser import new_context, open_app
+
+    context = new_context(browser, PHONE, has_touch=True)
+    try:
+        page = open_app(context, live_server)
+        form = page.locator('.login-form')
+        form.get_by_label('Username or email').fill('staff')
+        form.get_by_role('button', name='Continue', exact=True).click()
+        password = form.get_by_label('Password', exact=True)
+        checkbox = form.get_by_role('checkbox', name='Remember me', exact=True)
+        expect(password).to_be_focused()
+        page.keyboard.press('Tab')
+        expect(checkbox).to_be_focused()
+        page.keyboard.press('Space')
+        expect(checkbox).to_be_checked()
+        label = checkbox.locator('..')
+        bounds = label.bounding_box()
+        assert bounds and min(bounds['width'], bounds['height']) >= 44, bounds
+        for index, corner in enumerate(TARGET_CORNERS):
+            tap_corner(label, checkbox, corner)
+            expect(checkbox).to_be_checked(checked=bool(index % 2))
+            expect(form.get_by_role('button', name='Sign in', exact=True)).to_be_visible()
+            expect(password).to_have_value('')
+    finally:
+        context.close()
+
+
+def test_phone_collection_row_target_and_separate_select_all_menu(browser, live_server, h):
+    from .test_browser import set_layout, whole_list
+    from .test_browser_requests import day, leave
+
+    for offset in (3, 4):
+        leave(h, on=day(offset))
+    context, page = sign_in(browser, live_server, 'approver', PHONE, has_touch=True)
+    try:
+        navigate(page, 'requests')
+        whole_list(page)
+        set_layout(page, 'Table')
+        table = page.locator('#main .dt-table')
+        boxes = table.locator('tbody td.dt-check .bulk-check')
+        row, neighbour = boxes.nth(0), boxes.nth(1)
+        expect(neighbour).to_be_visible()
+        target = row.locator('..')
+        target.scroll_into_view_if_needed()
+        hit, ink = target.bounding_box(), row.bounding_box()
+        assert hit and min(hit['width'], hit['height']) >= 44, hit
+        assert ink and max(ink['width'], ink['height']) <= 24, ink
+        for index, corner in enumerate(TARGET_CORNERS):
+            tap_corner(target, row, corner)
+            expect(row).to_be_checked(checked=not bool(index % 2))
+            expect(neighbour).not_to_be_checked()
+            expect(page.locator('.dock-panel:visible')).to_have_count(0)
+        row.focus()
+        page.keyboard.press('Space')
+        expect(row).to_be_checked()
+        expect(neighbour).not_to_be_checked()
+        page.keyboard.press('Space')
+        expect(row).not_to_be_checked()
+
+        head = table.locator('.dt-check-head')
+        checkbox = head.get_by_role('checkbox')
+        menu = head.get_by_role('button', name='Selection options', exact=True)
+        head.scroll_into_view_if_needed()
+        check_box, menu_box = checkbox.bounding_box(), menu.bounding_box()
+        assert check_box and min(check_box['width'], check_box['height']) >= 24, check_box
+        assert menu_box and min(menu_box['width'], menu_box['height']) >= 24, menu_box
+        assert check_box['x'] + check_box['width'] <= menu_box['x'], (check_box, menu_box)
+        page.touchscreen.tap(check_box['x'] + check_box['width'] - 1, check_box['y'] + check_box['height'] / 2)
+        expect(checkbox).to_be_checked()
+        expect(row).to_be_checked()
+        expect(neighbour).to_be_checked()
+        options = page.get_by_role('menu', name='Selection options', exact=True)
+        expect(options).not_to_be_visible()
+        page.touchscreen.tap(menu_box['x'] + 1, menu_box['y'] + menu_box['height'] / 2)
+        expect(options).to_be_visible()
+        expect(checkbox).to_be_checked()
+        expect(row).to_be_checked()
+        expect(neighbour).to_be_checked()
+    finally:
+        context.close()
+
+
+def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, live_server, h):
+    from .test_browser_team_box import open_view
+
+    w = h.workspace('Legend touch targets')
+    for day in range(4, 8):
+        duty = h.configure('assignment_types', {'name': f'Fictional duty {day} with a long title',
+                                                'starts_on': '2020-01-01', 'definition': {}})['record']['id']
+        w = h.shift(w, f'2026-10-0{day}T08:00:00+03:00', f'2026-10-0{day}T12:00:00+03:00',
+                    people=[], typ=duty)['workspace']
+    context, page = sign_in(browser, live_server, 'coordinator', PHONE, has_touch=True)
+    try:
+        open_view(page, w, 'Week', 'Grid')
+        legend = page.locator('#schedule-view .view-legend:visible')
+        more = legend.locator('.lg-more .pill-more')
+        expect(more).to_be_visible()
+        mark = more.locator('.lg-more-mark')
+        hit = more.bounding_box()
+        assert hit and min(hit['width'], hit['height']) >= 44, hit
+        assert more.evaluate('button => button.scrollWidth <= button.clientWidth + 1')
+        assert legend.evaluate("""key => {
+          const bounds = key.getBoundingClientRect();
+          const items = [...key.children].filter(item => !item.hidden).map(item => item.getBoundingClientRect());
+          return bounds.height >= 44 && key.scrollWidth <= key.clientWidth + 1
+            && items.every(item => item.top < items[0].bottom && item.bottom > items[0].top)
+            && items.slice(1).every((item, index) => item.left >= items[index].right);
+        }""")
+        panel = page.get_by_role('dialog', name=f"All {legend.get_attribute('aria-label')}", exact=True)
+        for corner in TARGET_CORNERS:
+            tap_corner(more, mark, corner)
+            expect(panel).to_be_visible()
+            page.keyboard.press('Escape')
+            expect(panel).not_to_be_visible()
+        more.focus()
+        for key in ('Enter', 'Space'):
+            page.keyboard.press(key)
+            expect(panel).to_be_visible()
+            page.keyboard.press('Escape')
+            expect(panel).not_to_be_visible()
+            expect(more).to_be_focused()
+    finally:
+        context.close()
+
+
 def test_disabled_primary_is_distinguishable_dark(browser, live_server, h):
     """LIVE-12: a disabled primary button (Rules › Propose with nothing to propose) keeps its disabled look under the pointer."""
     context, page = sign_in(browser, live_server, 'coordinator')

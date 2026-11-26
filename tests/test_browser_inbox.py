@@ -46,6 +46,28 @@ def test_each_kind_reads_the_same_on_its_card_and_in_the_kind_filter(browser, li
         context.close()
 
 
+def test_a_finished_run_opens_its_auto_schedule_panel_from_the_inbox(browser, live_server, h):
+    from apps.api.db import retry_write
+    from apps.worker.main import claim_job, dispatch_batch, finish_job
+
+    w = h.shift(h.workspace('Schedule result'), people=[])['workspace']
+    job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'},
+                    revision=w['revision'])['job']
+    engine = h.app.state.engine
+    claim = retry_write(engine, claim_job)
+    assert claim['id'] == job['id']
+    assert retry_write(engine, lambda db: finish_job(db, claim, None, 'TEST_FAILURE'))
+    retry_write(engine, dispatch_batch)
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'inbox')
+        page.locator('.note-main').filter(has_text='Auto-schedule could not finish').click()
+        expect(page.locator('#auto-panel')).to_be_visible()
+        expect(page.locator('#auto-panel')).to_contain_text('Schedule result')
+    finally:
+        context.close()
+
+
 def test_the_saved_view_button_names_the_view_shown(browser, live_server, h):
     notify_all(h, h.get('coordinator', '/api/me')['identity_id'])
     context, page = sign_in(browser, live_server, 'coordinator')
