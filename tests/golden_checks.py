@@ -216,24 +216,41 @@ def check_interaction(data, ids, spec):
 def check_allocation_cover(data, ids, spec):
     from packages.domain.score import schedule_score
 
+    def preference_score(rota):
+        validation = evaluate(rota)
+        assert validation['valid'], validation
+        return schedule_score(rota, validation)['components']['preferences']['value']
+
     expected = spec['expect']
+    original_score = preference_score(data)
     overfilled = copy.deepcopy(data)
+    preferred_counts = {}
     for duty in expected['staffing']:
-        place(overfilled, ids[duty], [ids['p0'], ids['p1']])
-    original_score = schedule_score(data, evaluate(data))['components']['preferences']['value']
-    overfilled_score = schedule_score(overfilled, evaluate(overfilled))['components']['preferences']['value']
+        sid = ids[duty]
+        people = [ids['p0'], ids['p1']]
+        place(overfilled, sid, people)
+        trial = copy.deepcopy(data)
+        place(trial, sid, people)
+        if preference_score(trial) > original_score:
+            preferred_counts[sid] = len(shift(trial, sid)['participants'])
+    overfilled_score = preference_score(overfilled)
     assert (overfilled_score > original_score) == expected['pressure']['overfilled_preference_score_is_higher']
 
     supervision = expected['staffing_with_supervision']
     # Let the solver move the supervisor while the trainee's required pairing stays fixed.
     rebalance = {**data, 'generation_options': {**data['generation_options'], 'mode': 'rebalance'}}
     seeds = expected['seed_robustness']['seeds']
+    bound = set()
     for seed in seeds:
         result = solve(data, seed)
         assert result['solver_status'] == 'OPTIMAL', result
         draft = feasible(data, result)
         for duty, people in expected['staffing'].items():
-            assert [p['person_id'] for p in shift(draft, ids[duty])['participants']] == [ids[p] for p in people]
+            sid = ids[duty]
+            assigned = [p['person_id'] for p in shift(draft, sid)['participants']]
+            assert assigned == [ids[p] for p in people]
+            if len(assigned) < preferred_counts.get(sid, 0):
+                bound.add(sid)
         draft = feasible(rebalance, solve(rebalance, seed))
         for duty, people in expected['staffing'].items():
             assert len(shift(draft, ids[duty])['participants']) == len(people)
@@ -242,7 +259,7 @@ def check_allocation_cover(data, ids, spec):
         assert supervised.keys() == {trainee, supervisor}
         assert supervised[trainee]['supervisor_person_id'] == supervisor
     return {'assertions': {'staffing', 'pressure', 'seed_robustness', 'staffing_with_supervision'},
-            'bindings': {'balance': len(expected['staffing'])}}
+            'bindings': {'balance': len(bound)}}
 
 
 def check_scenario(data, ids, spec):
