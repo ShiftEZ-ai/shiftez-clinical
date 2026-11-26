@@ -48,11 +48,15 @@ def test_fill_panel_assign_runs_once_under_writer_then_worker_checks_and_undo_re
         full_draft_reads.append(workspace_id)
         return own_shifts(db, workspace_id)
 
+    payload = {key: shift[key] for key in ShiftInput.model_fields}
+    payload.update(workspace_id=w['id'], shift_id=shift['id'],
+                   participants=[{**result['slot'], 'person_id': candidate['person_id']}])
     with monkeypatch.context() as patch:
         patch.setattr(planning, 'save_shift', counted)
         patch.setattr(snapshots, '_snapshot_context', acquire_context)
         patch.setattr(snapshots, 'workspace_shifts', read_draft)
-        saved = edit(h, w, shift, [{**result['slot'], 'person_id': candidate['person_id']}], expected_fingerprint=stamp)
+        # Count the save itself. The command harness follows compact replies with its own detail read.
+        saved = post(h, 'shift.update', payload, revision=w['revision'], expected_fingerprint=stamp)
     assert calls == [(True, True)]
     assert context_reads == [w['id']]
     assert full_draft_reads == []
