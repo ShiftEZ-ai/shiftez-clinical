@@ -708,7 +708,7 @@ def require_context_receipts(db, actor, pending, decisions, *, source_records=No
             for p, _ in pending), 'RULE_CHECK_REQUIRED', RULE_CHECK_REQUIRED_MESSAGE, 409)
         return context['evidence']
     policies = [p for p, _ in pending]
-    from .rule_effects import CHECK_RECEIPT, affected_workspaces, check_result, checked_effect, receipt_current
+    from .rule_effects import CHECK_RECEIPT, affected_workspaces, check_result, checked_effect, no_new_problems, receipt_current
     source_hashes = {p.id: snapshot_hash(source_records[p.id] if source_records is not None else record(p)) for p in policies}
     checked_hashes = {p.id: snapshot_hash(checked_records[p.id] if checked_records is not None else {**record(p), 'status': 'active'})
                       for p in policies}
@@ -777,9 +777,9 @@ def require_context_receipts(db, actor, pending, decisions, *, source_records=No
                 'RULE_CHECK_FAILED', 'Resolve the configuration or check failure before activation', 409)
         require(not (compare_problems and result.get('comparison_complete') is not True
                      and any(s.safety_rule(p.definition) for p in policies)), 'RULE_CHECK_UNRESOLVED',
-                'Safety rules require a complete effect check; uncertainty cannot be acknowledged', 409)
-        no_new = (result.get('comparison_complete') is True and result.get('no_new_problems') is True
-                  and result.get('new_or_worse_findings') == [])
+                'Safety rules require a complete effect check; uncertainty cannot be acknowledged',
+                409, {'workspace_id': workspace.id, 'check_job_id': job.id})
+        no_new = no_new_problems(result)
         resolved = no_new if compare_problems else result.get('full_feasibility_established')
         findings = result.get('new_or_worse_findings') or []
         observed = list(finding_observations({'findings': findings}))
@@ -796,10 +796,13 @@ def require_context_receipts(db, actor, pending, decisions, *, source_records=No
                       **({'severity': 'advisory'} if advisory else {})}
         effect = checked_effect(result)
         known_effect = effect['status'] == 'ready'
-        require((acknowledged or (known_effect and resolved) if line_review else resolved or all(d.acknowledge_unresolved for d in decisions)),
-                'RULE_CHECK_UNRESOLVED', ('Wait for a complete effect check before approving this line' if line_review else
-                                         'Review and acknowledge the unresolved rota findings before activation'),
-                409, unresolved)
+        if line_review:
+            require(acknowledged or (known_effect and resolved), 'RULE_CHECK_UNRESOLVED',
+                    'Acknowledge the added or worsened rota problems before approving this line' if known_effect else
+                    'Wait for a complete effect check before approving this line', 409, unresolved)
+        else:
+            require(resolved or all(d.acknowledge_unresolved for d in decisions), 'RULE_CHECK_UNRESOLVED',
+                    'Review and acknowledge the unresolved rota findings before activation', 409, unresolved)
         if compare_problems:
             count = result.get('unchanged_existing_count', 0)
             added = len(result.get('new_or_worse_findings', []))

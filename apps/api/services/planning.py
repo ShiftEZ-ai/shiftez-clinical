@@ -766,7 +766,8 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                        previous_validation, result, scope=locals().get('delta_scope'),
                        current_fingerprint=current_fingerprint,
                        current_input_revision=current_organisation.get('input_revision'),
-                       current_availability_revision=current_organisation.get('availability_revision'))
+                       current_availability_revision=current_organisation.get('availability_revision'),
+                       bounded=not generation_apply)
     workspace_record = record(workspace, exclude=("validation",))
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
@@ -806,13 +807,12 @@ def health(workspace, *, validation=None, summary=None):
 
 
 def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_validation, validation, *, scope=None,
-               current_fingerprint='', current_input_revision=None, current_availability_revision=None):
+               current_fingerprint='', current_input_revision=None, current_availability_revision=None, bounded=True):
     """Build the bounded patch consumed by the planner after a draft edit.
 
-    The command already has both sides of D65's scoped check.  Project only
-    changed sessions, affected findings and their coverage; a broad operation
-    deliberately returns ``None`` so the caller can use the authoritative full
-    read.  This keeps the reply proportional to the edit rather than the rota.
+    Project changed sessions, affected findings and their coverage. A broad
+    edit normally falls back to a full read. Applying a reviewed run includes
+    the patch in the command reply so the grid can update from it.
     """
     from packages.domain.coverage import coverage_rows
     from .issues import issue_key
@@ -875,7 +875,9 @@ def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_vali
     coverage = [row for row in coverage_rows(validation or {})
                 if row.get('shift_id') in touched_shifts]
     limits = s.EDIT_DELTA_LIMITS
-    if (len(shifts) > limits['shifts'] or len(removed) > limits['shifts']
+    # Apply already returns the changed sessions. Include their check data even for a large run.
+    # Live changes validate against DraftEditDelta and fall back to a read above those limits.
+    if bounded and (len(shifts) > limits['shifts'] or len(removed) > limits['shifts']
             or len(touched_shifts) > limits['coverage'] or len(touched_people) > limits['coverage']
             or len(findings) > limits['findings'] or len(coverage) > limits['coverage']):
         return None
@@ -933,8 +935,9 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         from packages.domain.conditions import active_rules
         # Use the same draft snapshot as every other write path so live safety
         # overlay inputs cannot be bypassed by the bounded placement check.
-        # Placement evidence reads the facts. A zero-limit trial binds its own manifest.
-        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False, include_manifest=False)
+        # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
+        data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
+                               include_objectives=False, include_manifest=False)
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1880,9 +1883,13 @@ def save_shift(db, actor, command, update=False):
     if update:
         require(existing is not None and existing.workspace_id == workspace.id, "NOT_FOUND", "Session not found", 404)
     prior = next((row for row in before['shifts'] if existing and row['id'] == existing.id), {})
+    previous = {p['person_id']: p for p in prior.get('participants', [])}
+    for participant in value.participants:
+        supervisor_id = previous.get(participant.person_id, {}).get('supervisor_person_id')
+        if supervisor_id is not None and 'supervisor_person_id' not in participant.model_fields_set:
+            participant.supervisor_person_id = supervisor_id
     proposed = {**prior, 'id': existing.id if existing else None,
                 **value.model_dump(mode='json', include=set(s.ShiftInput.model_fields))}
-    previous = {p['person_id']: p for p in prior.get('participants', [])}
     for participant, parsed in zip(proposed['participants'], value.participants):
         if 'fixed' not in parsed.model_fields_set:
             participant['fixed'] = previous.get(parsed.person_id, {}).get('fixed', False)
@@ -2564,14 +2571,29 @@ def validation_stamp(db, workspace):
     """Bind this request's repeatable read to its short writer, never to a cached check.
 
     Scheduling/configuration and published-context writers bump the organisation's input
-    revisions; local edits bump the workspace revision. A changed stamp is resolved from
+    revisions; local edits bump the workspace revision. A first baseline capture moves no
+    counter, so the baseline hint is part of the stamp. A changed stamp is resolved from
     canonical inputs outside the lock before any result can be stored.
     """
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
-    return (organisation.revision, organisation.input_revision, organisation.availability_revision,
-            department.revision, department.catalogue_revision, workspace.revision,
-            workspace.content_revision, workspace.status, workspace.archived_at)
+    # Callers drop the last four (workspace) fields to share sources across a draft's own edits.
+    return (snapshots._baseline_hint(db, workspace), organisation.revision, organisation.input_revision,
+            organisation.availability_revision, department.revision, department.catalogue_revision,
+            workspace.revision, workspace.content_revision, workspace.status, workspace.archived_at)
+
+
+def read_stamp(db, workspace, data, since):
+    """The validation stamp of a read, with the instant before it started and the window it projected events over."""
+    selection = data['input_manifest']['selection']
+    return since, validation_stamp(db, workspace), (selection['start'], selection['end'])
+
+
+def read_stamp_holds(db, workspace, stamp):
+    """True under the writer when nothing a read stamped has moved, the clock-dependent occurrences included."""
+    since, recorded, window = stamp
+    return (validation_stamp(db, workspace) == recorded
+            and snapshots.occurrences_unchanged_since(db, workspace, since, window))
 
 
 def _publication_approval(db, workspace, fp):
@@ -2782,7 +2804,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
-                                    effective_until=effective_until,
+                                    effective_until=effective_until, calendar_lineage=True,
                                     snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)

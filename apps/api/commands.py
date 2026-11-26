@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError, OperationalError
 from packages.contracts import schemas as s
 from . import models as m
-from .auth import authenticate, require_permission, require_role
+from .auth import authenticate, person_access, require_permission, require_role
 from .db import DatabaseWriteTimeout, retry_write, transaction
 from . import live
 from .schema import require_current_schema
@@ -156,7 +156,7 @@ def command_roles(command):
         return ["coordinator", "approver", "programme_lead"]
     if kind in {"policy.create", "policy.group", "rule.migrate_to_catalogue", "rule.acknowledge", "rule.unacknowledge"}:
         return ["admin", "coordinator"]
-    if kind == "request.create":
+    if kind in {"request.create", "request.edit", "request.undo_edit"}:
         return ["staff", "coordinator"]
     if kind in {"notification.ack", "notification.ack_all", "notification.unack", "notification.acknowledge", "session.logout", "session.revoke"} or kind.startswith("table_view.") or kind.startswith("calendar_feed."):
         return ALL_ROLES
@@ -520,6 +520,8 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.note_command(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
+    if kind in {"request.edit", "request.undo_edit"}:
+        return availability.edit_request(db, actor, command)
     if kind == "request.decide":
         return availability.decide_request(db, actor, command)
     if kind == "request.decide_many":
@@ -724,6 +726,11 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
         availability.lead_protects(db, actor, item["kind"], item["person_id"], item["start"], item["end"])
     if kind in {"request.decide", "request.decide_many", "request.undo"}:
         _authorize_request_results(db, actor, [(kind, result)])
+    if kind in {"request.edit", "request.undo_edit"}:
+        row = scoped(db, m.RequestRecord, result['record']['id'], actor)
+        person_access(db, actor, row.person_id)
+        availability.require_request_person(actor, row.person_id)
+        require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can read this change', 403)
     if kind.startswith("trainee_note."):
         from .services.training import note_access
         note_access(db, actor, result["record"]["person_id"])
@@ -778,6 +785,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if kind == "feedback.export_github" and db is not None:
         from .services import feedback
         return feedback.redact_export_result(db, actor, result, settings)
+    if kind in {'request.edit', 'request.undo_edit'}:
+        return {key: value for key, value in result.items() if key != '_request_edit_previous'}
     return {key: value for key, value in result.items() if key != 'path'} if kind == 'calendar_feed.create' else result
 
 
@@ -792,7 +801,7 @@ def idempotency_hash_input(command):
     return canonical
 
 
-def _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, assignment_reply=False):
+def _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, assignment_reply=False, invite_guard=None):
     require(idempotency_key is not None and 16 <= len(idempotency_key) <= 128
             and idempotency_key.isascii() and idempotency_key.isprintable(),
             "IDEMPOTENCY_KEY_REQUIRED", "Every write requires a 16–128 character Idempotency-Key", 428)
@@ -846,6 +855,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
                 if command.kind != 'workspace.publish':
+                    since = m.now()
                     if command.kind == 'workspace.submit':
                         checked, data = planning.review_gate_check(db, workspace, reuse=True)
                     else:
@@ -857,11 +867,13 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     context = (actor.identity_id, actor.department_id, workspace.content_revision,
                                workspace.status, workspace.archived_at, data['fingerprint'])
                     workspace_check = (context, checked, data, input_changes.watermark(db, actor.department_id),
-                                       planning.validation_stamp(db, workspace))
+                                       planning.read_stamp(db, workspace, data, since))
                     checked_decisions = (workspace.validation or {}).get('review_item_decisions')
 
     generation_plan = None
-    if command.kind == 'generation.apply':
+    feasibility_preparation = None
+    feasibility = command.kind == 'job.create' and command.payload.get('kind') == 'feasibility'
+    if command.kind == 'generation.apply' or feasibility:
         reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
                   if engine.dialect.name == 'postgresql' else engine)
         with transaction(reader) as db:
@@ -871,8 +883,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             actor = authenticate(db, token, csrf, write=True, settings=settings)
             require_role(actor, *command_roles(command))
             if not existing_receipt(db, actor):
-                from .services.generation_reconciliation import prepare
-                generation_plan = prepare(db, actor, command)
+                if feasibility:
+                    planner_tools.assert_precondition(db, actor, command)
+                    feasibility_preparation = jobs.prepare_feasibility(db, actor, command, settings)
+                else:
+                    from .services.generation_reconciliation import prepare
+                    generation_plan = prepare(db, actor, command)
 
     activation_preparation = None
     if command.kind in {'policy.activate', 'policy.activate_many'}:
@@ -1040,11 +1056,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
+        if assignment_reply and command.kind == 'shift.update':
+            # The edit writes draft assignments, leaving the shared catalogue inputs intact.
+            db.info['_assignment_reply_inputs'] = {}
         if planning_plan is not None:
             planning_preparation.bind(db, planning_plan, replay=True)
         db.info['_track_input_changes'] = True
         if generation_plan is not None:
             db.info['_generation_plan'] = generation_plan
+        if feasibility_preparation is not None:
+            db.info['_feasibility_preparation'] = feasibility_preparation
         if activation_preparation is not None:
             db.info['_activation_preparation'] = activation_preparation
             db.info['_activation_timing'] = True
@@ -1058,6 +1079,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if command.kind.startswith(('score_import.', 'score_check.', 'ai_provider.')):
             from .services.score_check import require_enabled
             require_enabled(db, actor.department_id)
+        if invite_guard is not None:
+            if existing_invite := invite_guard(db, actor):
+                return existing_invite
         existing = existing_receipt(db, actor)
         if existing:
             return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
@@ -1071,7 +1095,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         if workspace_check is not None:
             require_workspace_command(db, actor, command)
             workspace = scoped(db, m.Workspace, command.target_id, actor)
-            if planning.validation_stamp(db, workspace) != workspace_check[4]:
+            if not planning.read_stamp_holds(db, workspace, workspace_check[4]):
                 raise CheckInputsChanged()
             # This request acquired canonical inputs under REPEATABLE READ. Every input
             # revision is still identical under the writer; never rebuild history here.
@@ -1117,9 +1141,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             fresh_activation = True
         # A calendar URL is a bearer credential shown once, like invitation/reset links. Keep the committed
         # outcome for retries without storing its secret in receipt evidence or returning it on recovery.
+        outcome = receipt_result(command.kind, result)
+        if previous := db.info.pop('_request_edit_previous', None):
+            outcome = {**outcome, '_request_edit_previous': previous}
         db.add(m.CommandReceipt(id=receipt_id, department_id=actor.department_id, actor_id=actor.identity_id,
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
-                                payload_hash=payload_hash, result=receipt_result(command.kind, result)))
+                                payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
         reason = str(command.payload.get("reason", command.kind))[:500]
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':
@@ -1171,7 +1198,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
-            if command.kind == 'rule.propose':
+            if (command.kind in {'account.invite', 'rule.propose'}
+                    or command.kind == 'availability.record' and result['record'].get('self_approved')):
                 target_id = result['record']['id']
             elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
                 target_id = made.get('id')
@@ -1255,6 +1283,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                         return receipt_result(existing.command_kind, existing.result, db=db, actor=actor, settings=settings)
                     require_workspace_command(db, actor, command)
                     workspace = scoped(db, m.Workspace, command.target_id, actor)
+                    since = m.now()
                     current_data = planning.domain_snapshot(db, workspace,
                                                             current_mandatory=command.kind == 'workspace.submit')
                     check_context(db, actor, workspace, current_data, revisions_changed=True)
@@ -1263,7 +1292,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     if command.kind == 'workspace.validate':
                         command = command.model_copy(update={'expected_revision': workspace.revision})
                     workspace_check = (*workspace_check[:2], current_data, workspace_check[3],
-                                       planning.validation_stamp(db, workspace))
+                                       planning.read_stamp(db, workspace, current_data, since))
     except IntegrityError:
         # Two identical requests can both pass the pre-write receipt read.  The
         # unique (actor, key) constraint makes the loser roll back; recover the
@@ -1289,7 +1318,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     return result
 
 
-def execute(engine, settings, token, csrf, idempotency_key, command, correlation_id):
+def execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, *, invite_guard=None):
     actor = None
     try:
         # Refuse obvious forbidden roles before queuing for the department writer.
@@ -1319,7 +1348,8 @@ def execute(engine, settings, token, csrf, idempotency_key, command, correlation
                 if getattr(error.orig, 'sqlstate', None) == '55P03':
                     raise Problem(409, 'CHECK_IN_PROGRESS', 'This rota is already being checked; its result will refresh here') from error
                 raise
-        return _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id, assignment_reply=assignment_reply)
+        return _execute(engine, settings, token, csrf, idempotency_key, command, correlation_id,
+                        assignment_reply=assignment_reply, invite_guard=invite_guard)
     except Problem as error:
         if error.code == 'STALE_REVISION' and command.kind.startswith(('shift.', 'workspace.', 'generation.')):
             submitted = command.model_dump(mode='json')

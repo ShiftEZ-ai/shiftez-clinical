@@ -112,7 +112,9 @@ def test_single_logic_compatibility_and_one_undo(database, decision):
                and r["decided_by"] is None and r["decision_reason"] is None for r in undone["records"])
     with transaction(h.app.state.engine) as db:
         absences = list(db.scalars(select(m.Availability).where(m.Availability.request_id.in_([r["id"] for r in rows]))))
-        assert len(absences) == (1 if decision == "approve" else 0)
+        expected = {rows[0]["id"]: "approved_leave", rows[1]["id"]: "protected_time"} if decision == "approve" else {}
+        assert len(absences) == len(expected)
+        assert {row.request_id: row.kind for row in absences} == expected
         assert all(a.retracted for a in absences)
         assert db.get(m.RequestRecord, single["id"]).status == single["status"]
     before = state(h)

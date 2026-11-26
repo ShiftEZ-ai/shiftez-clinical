@@ -188,9 +188,34 @@
       "reason": "Renamed to test_leave_and_full_away_rotation_prorate_commitment_to_zero[away], which keeps all three assertions for zero quota, zero working days and no below-minimum finding."
     },
     {
+      "node": "tests/test_general_requests.py::test_nonleave_approval_does_not_invent_absence_or_publish[case-adjkkoepaclilcgmlngliojpfggpcpbmedmoaoeicdloonlkfoohhfgldebdbbof]",
+      "owner": "maintainer",
+      "reason": "The meeting case moved to test_approved_meeting_opens_cover_in_a_reloaded_draft. It still checks approval status, request kind and no publication, and verifies that the protected time opens cover."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_main_push_verdict[case-blfdhmbhhjgghooddcjhfddnoakgnddjkjohlmhmabgmcpkckjjidpjabblhhfba]",
+      "owner": "maintainer",
+      "reason": "The revert restores two observations on main pushes and removes the one-replica verdict behavior. Fix-forward is #1264."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_main_push_verdict[case-efhpicfjlmfipdpcakmjmammeifilocmeceieomhadkmijjpaandcklppfilhkin]",
+      "owner": "maintainer",
+      "reason": "The revert restores two observations on main pushes and removes the one-replica verdict behavior. Fix-forward is #1264."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_main_push_verdict[case-feoafjboapgnafbnmaobdejhnacjdaehepgmggmgohgkdopndopedngjcodehoec]",
+      "owner": "maintainer",
+      "reason": "The revert restores two observations on main pushes and removes the one-replica verdict behavior. Fix-forward is #1264."
+    },
+    {
+      "node": "tests/test_known_failures.py::test_main_push_verdict[case-liakgakfgmhoohbahbcnodbgnblnjcbndjefiopcpcbencaicjhgaonidninelbi]",
+      "owner": "maintainer",
+      "reason": "The revert restores two observations on main pushes and removes the one-replica verdict behavior. Fix-forward is #1264."
     },
     {
       "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",

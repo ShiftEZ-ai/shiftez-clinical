@@ -72,9 +72,9 @@ def test_mixed_availability_inverse_keeps_receipt_and_external_revision_guards(r
     assert state(h, original["id"]) == before
 
 
-def approved_request(h, aggregate=False):
+def approved_request(h, aggregate=False, *, kind="leave"):
     identity(h, "request_inverse_decider", ["coordinator", "approver"])
-    row = h.command("staff", "request.create", {"person_id": h.seed["people"][0], "kind": "leave",
+    row = h.command("staff", "request.create", {"person_id": h.seed["people"][0], "kind": kind,
         "start": "2026-11-01T00:00:00+03:00", "end": "2026-11-02T00:00:00+03:00",
         "private_reason": "Synthetic receipt-bound approval"})["record"]
     payload = {"reason": REASON, "decision": "approve"}
@@ -90,6 +90,21 @@ def approved_request(h, aggregate=False):
     item = {"item_kind": "request.undo", "payload": {"batch_id": reply["receipt_id"]} if aggregate else {},
             **({} if aggregate else {"target_id": row["id"], "expected_revision": row["revision"]})}
     return row, absence, item
+
+
+@pytest.mark.postgres
+def test_redo_of_meeting_approval_restores_the_same_protected_time(pg):
+    h = pg
+    meeting, protected, item = approved_request(h, aggregate=True, kind="meeting")
+    before = state(h, protected["id"])
+    assert before["kind"] == "protected_time" and not before["retracted"]
+    undone = h.command("request_inverse_decider", "bulk.apply", {"items": [item], "reason": REASON})
+    assert state(h, protected["id"])["retracted"]
+    h.command("request_inverse_decider", **undone["undo"])
+    assert state(h, protected["id"]) == before
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.RequestRecord, meeting["id"]).status == "approved"
+        assert list(db.scalars(select(m.Availability.id).where(m.Availability.request_id == meeting["id"]))) == [protected["id"]]
 
 
 @pytest.mark.parametrize("database", DATABASES)

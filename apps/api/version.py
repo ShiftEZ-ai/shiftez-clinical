@@ -1,7 +1,7 @@
-"""Single source of truth for the application version (SemVer). Release tags are v<this>."""
+"""Application release number shared by the API, web client and Python package."""
 import os
 
-__version__ = "0.1.0-rc.1"
+__version__ = "0.1.1"
 
 
 def build():

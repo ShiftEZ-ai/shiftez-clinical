@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -152,10 +152,6 @@ class BodyLimitMiddleware:
                 return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
             return await receive()
         return await self.app(scope, replay, send)
-
-
-# Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
-INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
 
 
 def _chain_shutdown_signal(sig, frame, previous, loop):
@@ -373,9 +369,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                  'correlation_id': request.state.correlation_id}, status_code=400)
         request.state.error_code = "SCHEMA_INVALID"
         # Field path, message and type only; never the input value or context (they can carry private or secret text).
-        errors = [{"field": ".".join(str(x) for x in e["loc"])[:200], "code": e["type"],
-                   "message": safe_message(e["msg"]) if e["type"] in INPUT_ECHOING or "error" in (e.get("ctx") or {}) else e["msg"][:300]}
-                  for e in exc.errors()[:50]]
+        errors = validation_issues(exc.errors())
         return JSONResponse({"error": {"code": "SCHEMA_INVALID", "message": "Review the highlighted fields", "details": errors}, "correlation_id": request.state.correlation_id}, status_code=422)
 
     @app.exception_handler(ValueError)
@@ -703,13 +697,16 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
+        identity_id = session_identity(engine, request.cookies.get(cookie_name))
+        enforce(engine, "password-change", [identity_id or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
         def operation(db):
+            # A concurrent disable or reset can make this session unusable while the account lock is contended.
+            account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id)
+            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
         return liveness_write(engine, operation, context={"route": "auth.password_change"})
 
     @app.get("/auth/start")
@@ -1748,9 +1745,34 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/catalogue/preview")
     def catalogue_preview(command: s.Command, request: Request):
-        from .services.catalogue_preview import prepare_preview, evaluate_preview
-        prepared = retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command))
-        return evaluate_preview(prepared)
+        from .services.catalogue_preview import StaleBeforeCapture, build_preview, capture_before, prepare_preview, evaluate_preview
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+
+        def capture_and_trial(*, skip_contact_snapshots):
+            with transaction(reader) as db:
+                if not postgres:
+                    db.execute(text('BEGIN'))
+                db.info['_request_parents'] = {}
+                before = capture_before(db, actor_for(request, db, write=True), command,
+                                        skip_contact_snapshots=skip_contact_snapshots)
+            return retry_write(engine, lambda db: prepare_preview(db, actor_for(request, db, write=True), command, before))
+
+        def prepare():
+            prepared = capture_and_trial(skip_contact_snapshots=True)
+            if prepared is None:
+                # The contact trial changed a scheduling input. Capture its baseline after releasing the writer.
+                prepared = capture_and_trial(skip_contact_snapshots=False)
+            return prepared
+
+        try:
+            prepared = prepare()
+        except StaleBeforeCapture:
+            if command.expected_fingerprint:
+                raise
+            log.info("catalogue_preview_recapture", extra={"correlation_id": request.state.correlation_id})
+            prepared = prepare()
+        return evaluate_preview(build_preview(engine, prepared))
 
     @app.get("/api/catalogues/{kind}/{object_id}/history")
     def catalogue_history(kind: str, object_id: str, request: Request):
@@ -1920,7 +1942,13 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post("/api/planner/why", response_model=s.WhyResult, response_model_exclude_unset=True)
     def planner_why(value: s.WhyInput, request: Request):
         from .services.staffing import prepare_why, why
-        with transaction(engine) as db:
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+        with transaction(reader) as db:
+            if not postgres:
+                db.execute(text('BEGIN'))
+            # Authentication and input capture can share the department row from this read view.
+            db.info['_request_parents'] = {}
             actor = actor_for(request, db)
             source, options = prepare_why(db, actor, value)
         result = why(source, options, value)
@@ -1944,6 +1972,16 @@ def create_app(settings: Settings | None = None, engine=None):
         def operation(db):
             actor = actor_for(request, db, write=True)
             return disclose_leave(db, actor, planner_tools.preview(db, actor, command))
+        if engine.dialect.name == 'postgresql':
+            # The trial rolls back its writes. One snapshot keeps admission and both
+            # views consistent without acquiring the instance-wide writer.
+            trial = engine.execution_options(isolation_level='REPEATABLE READ')
+            try:
+                return JSONResponse(retry_write(trial, operation, serialize=False))
+            except OperationalError as exc:
+                if getattr(exc.orig, 'sqlstate', None) in {'40001', '40P01'}:
+                    raise DatabaseWriteTimeout() from None
+                raise
         return JSONResponse(retry_write(engine, operation))
 
     @app.get("/api/workspaces/{workspace_id}/compare")
@@ -3555,7 +3593,7 @@ def create_app(settings: Settings | None = None, engine=None):
     def job_detail(job_id: str, request: Request, full: bool = False):
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            from .services.job_reads import current_source_digest, generation_currency, metadata, result_stale
+            from .services.job_reads import current_source_digest, full_job_result, generation_currency, metadata, result_stale
             from .services.jobs import superseded_flag
             from .serialization import effective_input_fingerprint, job_detail_result, job_result_projection
             from .serialization import job_result_with_reconciliation
@@ -3580,7 +3618,7 @@ def create_app(settings: Settings | None = None, engine=None):
             projection = None if full else (job.result_summary if job.read_metadata is not None
                                              else job_result_projection(job.kind, job.result))
             # Apply the current read projection to summaries retained by older workers too.
-            result = job.result if full else job_detail_result(job.kind, (projection or {}).get('result'))
+            result = full_job_result(db, job) if full else job_detail_result(job.kind, (projection or {}).get('result'))
             result = job_result_with_reconciliation(job, result)
             include_events = job.kind == 'generation' and job.status == 'running'
             if include_events:
@@ -4088,6 +4126,14 @@ def create_app(settings: Settings | None = None, engine=None):
         return StreamingResponse(rows(), media_type="text/csv; charset=utf-8", headers={
             "Content-Disposition": f'attachment; filename="{filename}"', **({"X-Export-Truncated": str(cap)} if total > cap else {})})
 
+    def limit_command_request(token, *, account=False):
+        subject = session_identity(engine, token)
+        enforce(engine, "commands", [subject], settings.rate_commands_per_minute, 60,
+                "Too many changes in a short time; wait a minute and try again")
+        if account:
+            enforce(engine, "account-commands", [subject], 60, 3600,
+                    "Too many account changes in a short time; try again later")
+
     @app.post("/api/commands")
     async def command_endpoint(command: s.Command, request: Request):
         require(command.kind not in {'score_import.upload', 'score_import.add_files', 'score_check.upload'},
@@ -4098,11 +4144,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
         def handle():
             log.info("command_handler_started", extra={**fields, "threadpool_wait_ms": round((time.monotonic() - queued) * 1000, 2)})
-            enforce(engine, "commands", [session_identity(engine, request.cookies.get(cookie_name))], settings.rate_commands_per_minute, 60,
-                    "Too many changes in a short time; wait a minute and try again")
-            if command.kind.startswith("account."):
-                enforce(engine, "account-commands", [session_identity(engine, request.cookies.get(cookie_name))], 60, 3600,
-                        "Too many account changes in a short time; try again later")
+            limit_command_request(request.cookies.get(cookie_name), account=command.kind.startswith("account."))
             return execute(engine, settings, request.cookies.get(cookie_name), request.headers.get("x-csrf-token"),
                            request.headers.get("idempotency-key"), command, request.state.correlation_id)
 
@@ -4135,6 +4177,25 @@ def create_app(settings: Settings | None = None, engine=None):
                 return departments.preview(db, actor, command, settings)
             return redact_reply(db, actor, bulk.preview(db, actor, command, settings))
         return retry_write(engine, preview)
+
+    @app.post("/api/account-onboarding/preview")
+    def account_onboarding_preview(value: s.AccountOnboarding, request: Request):
+        """Review a department's staff selection without issuing invitations."""
+        from .services import account_onboarding
+        bulk_read_limit(request)
+        with transaction(engine) as db:
+            return account_onboarding.preview(db, actor_for(request, db, write=True), value, settings)
+
+    @app.post("/api/account-onboarding/apply")
+    def account_onboarding_apply(value: s.AccountOnboardingApply, request: Request):
+        """Apply a reviewed selection and download only the invitations issued by this request."""
+        from .services import account_onboarding
+        token, csrf = request.cookies.get(cookie_name), request.headers.get("x-csrf-token")
+        limit_command_request(token, account=True)
+        result = account_onboarding.apply(engine, settings, token, csrf, value, request.state.correlation_id)
+        request.state.session_authenticated = True
+        return JSONResponse(result, headers={"Cache-Control": "private, no-store",
+                                             "Content-Disposition": 'attachment; filename="staff-invitations.json"'})
 
     @app.post("/api/bulk/resolve")
     def bulk_resolve(value: s.BulkSelection, request: Request):

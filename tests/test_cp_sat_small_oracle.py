@@ -5,7 +5,7 @@ not the solver's candidate preparation or constraint helpers.
 """
 import copy
 from datetime import datetime
-from itertools import product
+from itertools import combinations, product
 from random import Random
 
 from packages.domain.cp_sat import generate
@@ -133,3 +133,60 @@ def test_small_fm_clinic_and_ucc_rule_combinations_match_exhaustive_oracle(h):
     assigned_ucc = next(row['participant']['person_id'] for row in result['additions']
                         if row['shift_id'] == preferred['shifts'][2]['id'])
     assert int(assigned_ucc == people[2]) == max(int(choice[2] == people[2]) for choice in valid)
+
+
+def test_small_staffing_combinations_match_exhaustive_oracle(h):
+    from .scheduler_departments import apply
+    from .test_governed_leadership import activate, line, proposal
+
+    lead, *trainees = people = h.seed['people']
+    for person in trainees:
+        h.command('coordinator', 'membership.create', {'person_id': person,
+            'category_id': h.seed['trainee_category'], 'starts_on': '2020-01-01'})
+    typ = h.configure('assignment_types', {'name': 'Staffing oracle', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 2}], 'supervision': {
+            'trainee_category_ids': [h.seed['trainee_category']], 'capability_id': h.seed['supervisor_capability'],
+            'trainees_per_supervisor': 2, 'require_pairing': True}}})['record']['id']
+    scope = {'assignment_type_id': typ}
+    limit = h.policy({'kind': 'supervision_limit', 'mode': 'capacity', 'maximum': 2},
+                     {**scope, 'person_id': lead})['id']
+    ceiling = h.policy({'kind': 'maximum_participants', 'maximum': 3}, scope)['id']
+    activate(h, proposal(h, [line(typ, [lead])]))
+    w = h.shift(h.workspace(), people=[lead])['workspace']
+    w = h.shift(w, typ=typ, people=[], start='2026-10-04T13:00:00+03:00',
+                end='2026-10-04T17:00:00+03:00')['workspace']
+    baseline = h.snapshot(w)
+
+    for ceiling_count, capacity, valid_count in [(2, 2, 2), (3, 1, 2), (3, 2, 3), (3, 0, 0)]:
+        data = copy.deepcopy(baseline)
+        for policy in data['policies']:
+            if policy['id'] in {limit, ceiling}:
+                policy['definition']['rule']['maximum'] = capacity if policy['id'] == limit else ceiling_count
+        fixed, duty = data['shifts']
+        template = fixed['participants'][0]
+        valid = set()
+        for count in range(len(people) + 1):
+            for occupants in combinations(people, count):
+                learners = [person for person in occupants if person in trainees]
+                for leader, pairings in product((None, *occupants), product((None, lead), repeat=len(learners))):
+                    paired = dict(zip(learners, pairings))
+                    expected = (2 <= count <= ceiling_count and leader == lead and len(learners) <= capacity
+                                and all(pairings))
+                    participants = [{**template, 'id': f'oracle-staffing-{index}', 'shift_id': duty['id'],
+                        'person_id': person, 'start': duty['start'], 'end': duty['end'], 'fixed': False,
+                        'participation': 'trainee' if person in trainees else 'supervisor',
+                        'team_lead': person == leader, 'supervisor_person_id': paired.get(person)}
+                        for index, person in enumerate(occupants)]
+                    witness = {**data, 'shifts': [fixed, {**duty, 'participants': participants}]}
+                    assert evaluate(witness)['valid'] == expected, (ceiling_count, capacity, occupants, leader, pairings)
+                    if expected:
+                        valid.add(frozenset(occupants))
+        assert len(valid) == valid_count
+        result = generate(data, 5, feasibility_only=True)
+        assert result['status'] == ('candidate_feasible' if valid else 'requirements_conflict'), result
+        if valid:
+            assert result['validation']['valid'], result
+            scheduled = apply(data, result)['shifts'][1]['participants']
+            assert frozenset(row['person_id'] for row in scheduled) in valid
+            assert [row['person_id'] for row in scheduled if row['team_lead']] == [lead]
+            assert all(row['supervisor_person_id'] == lead for row in scheduled if row['person_id'] in trainees)

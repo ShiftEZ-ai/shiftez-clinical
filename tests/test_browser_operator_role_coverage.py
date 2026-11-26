@@ -316,7 +316,10 @@ def test_approver_decides_request_without_automatic_cover_or_publication(browser
         save_dialog(page.get_by_role('dialog'), 'Approve')
         saved = next(r for r in h.get('approver', '/api/requests')['requests'] if r['id'] == request['id'])
         assert saved['status'] == 'approved'
-        assert h.get('staff', '/api/availability')['availability'] == []
+        protected, = h.get('staff', '/api/availability')['availability']
+        assert protected['kind'] == 'protected_time' and protected['request_id'] == request['id']
+        assert all(protected[key] == request[key] for key in ('person_id', 'start', 'end'))
+        assert protected['counts_as_unavailable'] and not protected['retracted']
         assert h.get('staff', '/api/publications')['publications'] == []
         reload_view(page,'requests')
         expect(page.get_by_role('button', name='Approve', exact=True)).to_have_count(0)

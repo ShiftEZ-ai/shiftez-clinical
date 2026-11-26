@@ -1,6 +1,8 @@
 """DL-045: every failed read says it in one way, dom.ts readFailed()/couldntLoad(): "Couldn’t load <its name>." with the
 server's message and Retry, or the timeout's "Didn’t load in 1:00.". No screen writes its own read-error words."""
+import json
 import re
+import subprocess
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / 'apps/web/src'
@@ -50,3 +52,18 @@ def test_the_guard_sees_the_variants():
         assert WORDS.search(line), line
     for line in ("readFailed('the score review',e,load)", "couldntLoad('the inbox',e)", "'Still loading'"):
         assert not WORDS.search(line), line
+
+
+def test_the_words_show_a_server_sentence_never_a_bare_status(client_modules):
+    """A server's problem detail or the client's connection words follow "Couldn’t load"; a bare status phrase, a code
+    or one word is dropped (DESIGN.md › Interaction contract)."""
+    source = (f"import assert from 'node:assert/strict';const d=await import({json.dumps((client_modules / 'dom.js').as_uri())});"
+              """const w=m=>d.couldntLoad('the rotas',new Error(m));
+for(const m of ['Service unavailable','Service Unavailable.','Bad gateway','Internal Server Error','Gateway Timeout',
+  'unavailable','SCORE_ISOLATION_UNAVAILABLE','Down',''])assert.equal(w(m),'Couldn’t load the rotas.',m);
+for(const m of ['The server is busy.','Connection lost. The server could not be reached.',
+  'The service had a problem. Try again in a moment.'])assert.equal(w(m),'Couldn’t load the rotas. '+m,m);
+assert.equal(d.couldntLoad('the rotas'),'Couldn’t load the rotas.');
+assert.equal(d.couldntLoad('the rotas','Service unavailable'),'Couldn’t load the rotas.');""")
+    done = subprocess.run(['node', '--input-type=module', '-e', source], capture_output=True, text=True, timeout=15)
+    assert done.returncode == 0, done.stderr

@@ -493,7 +493,7 @@ function changeForm(run:BulkRun){
       const spread=type==='f'?nowValues(run,key):[];now.hidden=!spread.length;
       now.replaceChildren(el('span',{class:'muted'},'Now'),...spread.map(([v,n])=>el('span',{class:'now-chip'},v,el('span',{class:'sr-only'},': '),el('b',{},String(n)))));
       if(type==='a'){const a=spec.actions[key];how.replaceChildren();
-        const inputs=Object.entries(a.fields||{}).map(([k,f])=>[k,widget(run.collection,k,f,'set',!f.required)] as const);
+        const inputs=Object.entries(a.fields||{}).map(([k,f])=>[k,widget(run.collection,k,f,'set',!f.required,a.kind)] as const);
         value.replaceChildren(...inputs.map(([,w])=>w.node),...(inputs.length?[]:[el('span',{class:'muted'},a.kind.endsWith('.withdraw')?"Each record is withdrawn: it won't apply. Published rotas keep it.":a.destructive?'Each record ends; Apply asks to confirm.':'No settings needed.')]));
         read=async()=>{const payload:Record<string,unknown>={};for(const [k,w] of inputs){const v=await w.read();if(v!==undefined)payload[k]=v;}return {item_kind:a.kind,payload};};return;}
       const f=spec.fields[key],ways=(f.how||['set']).filter(h=>h!=='clear'||!f.required);
@@ -533,7 +533,7 @@ function changeForm(run:BulkRun){
 const conditionKeysFor=(key:string)=>CONDITION_FIELD_DEFINITIONS.filter(d=>d.key!=='roles'&&(key==='where')===d.session).map(d=>d.key as string);
 /** A field's standard shared input for one way of changing it ("Move by days" is a number of days). */
 /** `optional` (an action's input it may leave out): left empty, it is not sent. */
-function widget(collection:string,key:string,f:FieldSpec,how:string,optional=false):{node:HTMLElement;read:()=>Promise<unknown>}{
+function widget(collection:string,key:string,f:FieldSpec,how:string,optional=false,action?:string):{node:HTMLElement;read:()=>Promise<unknown>}{
   const label=f.label||humane(key),type=f.schema?.type||f.schema?.anyOf?.find((x:any)=>x.type!=='null')?.type,format=f.schema?.format||f.schema?.anyOf?.find((x:any)=>x.format)?.format;
   if(how==='clear')return {node:el('span',{class:'muted'},'Left empty'),read:async()=>null};
   const refs=JSON.stringify(f.schema||{});
@@ -550,7 +550,12 @@ function widget(collection:string,key:string,f:FieldSpec,how:string,optional=fal
   if(how==='move_by'){const d=field('Days','number','7',{required:true,step:1});d.input.setAttribute('aria-label',label+': move by days');return {node:d.input,read:async()=>Number(d.input.value)};}
   if(f.kind==='multi'){const whole=f.schema?.items?.type==='integer',m=multiPick(label,choicesOf(collection,key,f),[],undefined,'Choose…',!whole);
     return {node:m.wrap,read:async()=>{const v=m.values();if(!v.length){if(optional)return undefined;throw new Error(`Choose ${label.toLowerCase()}.`);}return whole?v.map(Number):v;}};}
-  if(f.kind==='date'&&format==='date-time'){const input=el('input',{'aria-label':label,required:!optional}) as HTMLInputElement,node=dateTimeInput(input,label);return {node,read:async()=>!input.value&&optional?undefined:instant(input.value)};}
+  if(f.kind==='date'&&format==='date-time'){
+    const availability=collection==='availability'||action==='availability.record'||action==='availability.update';
+    const allDay=availability&&(key==='start'||key==='end')?key:undefined;
+    const input=el('input',{'aria-label':label,required:!optional}) as HTMLInputElement,node=dateTimeInput(input,label,{allDay});
+    return {node,read:async()=>!input.value&&optional?undefined:instant(input.value)};
+  }
   if(f.kind==='date'){const input=el('input',{'aria-label':label,required:!optional,placeholder:optional?label+' (optional)':label}) as HTMLInputElement,node=dateInput(input);if(LAST_DAY.has(key))lastDayIncluded(input);return {node,read:async()=>{if(!input.value){if(optional)return undefined;throw new Error(`Choose ${label.toLowerCase()}.`);}return input.value;}};}
   if(type==='boolean'){const options=[{value:'true',label:'Yes'},{value:'false',label:'No'}];
     const s=select(label,optional?[{value:'',label:'Not set'},...options]:options,optional?'':String(f.schema?.default??true),!optional);

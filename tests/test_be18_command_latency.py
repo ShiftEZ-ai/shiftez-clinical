@@ -254,7 +254,8 @@ def test_invalid_stored_evidence_forces_complete_review_check(h, monkeypatch, in
         elif invalid == 'score':
             check.pop('score')
         else:
-            db.get(m.Location, h.seed['locations'][0]).capacity += 1
+            # The captured ceiling still binds when capacity rises. Lower it to change the checked inputs.
+            db.get(m.Location, h.seed['locations'][0]).capacity -= 1
         row.validation = check
     calls, original = [], planning.evaluate
     def counted(*args, **kwargs):

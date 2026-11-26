@@ -211,7 +211,8 @@ def test_cancel_edit_guard_preserves_form_and_hidden_roster_then_edit_stales_his
 
 def test_a_superseded_run_offers_no_apply_and_its_refusal_leads_to_the_latest_run(browser, live_server, h, waiting_proposal):
     """R3-N: a newer run of the same sessions replaces the older one. An Apply already open when it lands is refused
-    (RUN_SUPERSEDED), writes nothing and says so once with the way to the latest run; Recent runs marks the older run
+    (RUN_SUPERSEDED), writes nothing and says so once, in the dialog where Apply was, with the way to the latest run (the
+    press is never just a closed dialog); Recent runs marks the older run
     with the shared badge and its Review offers no Apply, only that next step."""
     w, older = waiting_proposal
     words = 'A newer run replaced this one. Review the latest run.'
@@ -235,11 +236,13 @@ def test_a_superseded_run_offers_no_apply_and_its_refusal_leads_to_the_latest_ru
             apply.click()
         assert refused.value.status == 409 and refused.value.json()['error']['code'] == 'RUN_SUPERSEDED'
         assert h.snapshot(w) == before
+        said = dialog.get_by_role('status').filter(has_text='Replaced by a newer run')
+        expect(said).to_contain_text(words)
+        expect(dialog.get_by_role('button', name=re.compile(r'^Apply'))).to_have_count(0)
+        expect(page.locator('.toast').filter(has_text=words)).to_have_count(0)  # said once, in the dialog
+        expect(page.locator('.toast.error')).to_have_count(0)  # and not again as a failure
+        said.get_by_role('button', name='Review latest run', exact=True).click()
         expect(dialog).to_have_count(0)
-        toast = page.locator('.toast').filter(has_text=words)
-        expect(toast).to_have_count(1)
-        expect(page.locator('.toast.error')).to_have_count(0)  # said once, not again as a failure
-        toast.get_by_role('button', name='Review latest run', exact=True).click()
         expect(panel.get_by_role('region', name='Review')).to_be_visible()
         # Recent runs: the older run is marked replaced (shared badge); its Review says so, offers no Apply, leads on.
         runs = panel.locator('.run-list > li')

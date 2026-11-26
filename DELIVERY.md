@@ -1,41 +1,48 @@
 # Delivery
 
-Follows engineering standard v1.2. Owned by the Delivery Lead; changed only through a reviewed PR. Engineering rules are in AGENTS.md, the design
-contract in DESIGN.md.
+Follows engineering standard v1.22. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
+frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
 ## Branching and merging
-- One trunk, `main`. No other long-lived branch and no staging branch. Nobody pushes to, force-updates, resets or
-  deletes `main`; its rules live in the repository ruleset and the workflow files.
+- One trunk, `main`, with temporary release branches. The repository rulesets and workflows protect `main` and
+  the release branches. Changes to either land through pull requests.
 - A change lands only as a pull request through the merge queue with auto-merge, once its required check is green on
   the exact head; the queue's run on the combined tree squash-merges it. No human approval click, no merge train or
   batch gate. There are no admission caps, drain flags or per-PR holds, except the one fair-share admission rule and
   release holds, and no bypasses.
-- Every change is cut on the current `main` tip, fetched first. Follow-up commits on an open pull request end with a
-  merge of that tip; if `main` moves before the push, the Delivery Lead merges it in rather than re-cutting.
+- Fetch the target branch before cutting a change. Follow-up commits on an open pull request end with a merge
+  of the current target tip.
 - One pull request per piece of work: its fixes, tests and docs stay on the same branch. Draft until the piece is
   done, then ready once. Batch findings that share a root cause; do not hold an independent fix for a whole audit.
   Every revision keeps working. About 500 changed lines is a review heuristic, not a limit. An unfinished feature
   may sit behind an existing admin feature flag, off by default, when the off state is safe.
 - Every pull request names its issue as AGENTS.md § Must-follow coding rules says.
-- Review: risk paths get one independent full-diff review at the exact head (AGENTS.md § Risk paths); everything else
-  lands on green checks. Changes flagged `changes what the checks run on` are read before they are queued. There is
-  no code-owner review and no lead approval line: a pull request merges on its green checks (and its verdict, on a
-  risk path) through auto-merge.
-- A risk-path verdict binds to one exact head. A risk-path pull request enters the merge queue only when its live head
-  equals the head its verdict names, checked at enqueue time by the one enqueue gate. A new head, or a review that
-  sends the change back, holds the pull request: auto-merge off and out of the queue, until a verdict, or a recorded
-  merge-only proof, names the new head. Auto-merge is never left armed across a push.
 - Every pull request has one owner until it is merged or closed. The owner watches its run and fixes any failure or
   conflict. A pull request dropped from the queue is fixed at its root cause and queued again; never retry an
   unchanged deterministic failure. A cancelled or skipped check is not a pass.
 - Issues and pull requests are used normally and are public. Outside issues are answered by role, never with private
   facts. Outside pull requests are closed with: "Thank you. We close outside pull requests: the licence is
   proprietary and there is no contributor agreement."
-- Bulk-closing issues goes by content, never by title prefix, and an independent reviewer spot-checks a sample.
+- Check a sample by content before bulk-closing issues.
+
+## Review
+- [Critical changes](AGENTS.md#critical-changes-one-independent-review-before-landing) get one independent full-diff
+  review. Record the verdict on the pull request against its exact head before arming auto-merge. Tests verify
+  fixes for review findings. A later critical change requires a new verdict. For other pushes, record the new
+  head and the diff covered by the existing verdict before arming again.
+- All other changes use auto-merge on green required CI, with no independent review or lead sign-off. Required CI and
+  branch protection apply to every change.
+
+## Release branches
+- Cut `release/vX.Y.Z` from a release-candidate tag whose commit includes the release-branch workflow. First land
+  each fix on `main`, then cherry-pick it through a pull request targeting the release branch. Write a fix directly
+  against the release branch only when `main` has moved too far for a cherry-pick. Cut later candidate and final
+  tags from the release branch.
 
 ## Checks
-- A pull request runs static checks plus the tests its diff can reach, proven by hiding a change on purpose.
-  Merge groups and pushes to the default branch run static checks and the full unit and browser suites.
+- A pull request runs static checks plus the tests its diff against the target base can reach, proven by hiding a
+  change on purpose. Merge groups and pushes to `main` or a release branch run the full unit and browser suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
   reports. If the nightly capacity check defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
@@ -47,20 +54,16 @@ contract in DESIGN.md.
   `pull_request_target` on untrusted code. Workflows from forks get no secrets and need approval to run.
 - One fast privacy check of secrets, names and hosts runs as a pre-push hook and as a required check. Issue and
   pull-request text gets the same screen before posting. A failed check means nothing is sent; never work around it.
-- The checks decide what merges, so an ordinary pull request cannot weaken them. Files that run or judge the checks
-  (workflows, `ci/`, `.github/scripts/`, known-failures and quarantine files, test-runner configuration and plugin
-  registration, build and compiler configuration, package scripts) are pipeline gates: every change to them gets one
-  independent full-diff review.
-- The policy guard and the trusted verdict always run from `main`'s copy, so a change to a check or its reader lands
-  before any data or ruleset change that depends on it.
+- The policy guard and trusted verdict run from `main`'s copy. They read policy data from the event's target base
+  for pull requests and merge groups, and from the previous commit on a branch push. A newly created release
+  branch uses its starting commit, and reader changes land before the policy or ruleset changes they support.
 - Dependency pins, lock files and the product modules the checks rely on are allowed and get the label
-  `changes what the checks run on`. The label asks for attention; it is not a permission.
+  `changes what the checks run on` for visibility.
 - The required check counts collected tests at the base and the head. Each disappearing test is declared in the
   removal ledger at node level; an undeclared disappearance fails, a declared one shows as `collect=+a/-b`.
 - Planted canary tests prove in every run that the reporter reports outcomes honestly.
 - Migrations are checked append-only against the target branch (`migrations/safety.py`, `tests/test_data_safety.py`).
 - `python scripts/generate_contracts.py` must leave no diff.
-- Passing checks do not prove honest tests: the review of flagged changes is the control.
 - Delivery tooling retries every GitHub read and fetch on a transport error, a 5xx or an HTTP 499 with back-off (15 s,
   30 s, 60 s, 60 s, about 3 min, longer than the measured 30-90 s bursts on the GitHub edge), and on a rate limit
   (60 s, 120 s, ...). A write retries only when it is idempotent (a fast-forward push of one fixed commit, disabling
@@ -71,8 +74,9 @@ contract in DESIGN.md.
 
 ## Test policy
 - No retries to get green, no skipped or quietly removed tests. Fix causes; never re-run an unchanged failure.
-  Known exception, not policy: the trusted runner re-runs failed test nodes once in the same job on pull-request and
-  merge-queue runs (`.github/scripts/trusted_ci.py`); issue #885 removes it.
+  Until issue #885 removes the exception, the trusted runner re-runs eligible failed nodes once in the same job on
+  pull requests, merge groups and pushes to the default branch (`.github/scripts/trusted_ci.py`).
+  On default-branch pushes, a failure followed by a pass is recorded as unstable.
 - A failing test is repaired by restoring what it asserts. Never weaken, skip, delete, quarantine or
   re-parameterise away a failing assertion.
 - A replaced test keeps every assertion, or says for each retired one which design decision made it untrue.
@@ -80,7 +84,7 @@ contract in DESIGN.md.
   flakiness is quarantined, never a product defect. Quarantined tests are listed in `tests/quarantine.json`, which an
   ordinary pull request never edits; a pull request that fixes a quarantined test appends its node id to
   `tests/quarantine-retired.json`, which is append-only, so the quarantine only shrinks. Only baseline rows are retired
-  that way; an unstable row is retired by a reviewed quarantine change. New failures block.
+  that way. Retire an unstable row by changing the quarantine registry. New failures block.
 - A timing or performance test is never re-run blind: read its recent merge-group history first. If it failed in 3
   or more of the last 10 groups, or misses its budget at its best measurement, it is a real miss: route it to its
   owner and keep it listed.
@@ -103,8 +107,8 @@ contract in DESIGN.md.
   `CHROMIUM_EXECUTABLE`). Full suites are the hosted runners' job.
 - Local runs on a shared machine also follow that machine's private rules (worker cap, time bound, no browser
   tests), kept in the private project brief.
-- Reviews read the code and run only short targeted tests (the new test and a fail-before run, each under 2
-  minutes); full suites are the hosted runners' job.
+- Critical-change reviews read the code and run short targeted tests, including a fail-before run, each under two
+  minutes. Full suites run on hosted runners.
 - Wait for states (`expect`, `wait_for`), never fixed times; `tests/test_timing_guard.py` rejects new
   `wait_for_timeout`/`sleep` calls. Browser tests use `sign_in` unless the sign-in form is under test, and create
   data through `h.command(...)` unless the creating UI is under test. To diagnose, set `PW_TRACE_DIR` (a failed test
@@ -125,13 +129,13 @@ contract in DESIGN.md.
 
 ## Releases
 - Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
-- Build once: a release tag promotes the exact tested image. The published build contains public code only.
-- A release carries exactly a tree already accepted on `main`, reruns the full checks with no allowance for failed or
-  skipped tests, and is then tagged.
+- Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
+- Before tagging, qualify the exact release tree with the full checks and require zero failed or skipped tests.
+- Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
-- Before every final tag (not an `-rc.N`), sweep the whole product: every page for every role (`ROLE_NAMES`),
+- Before every final release tag, the QA Lead sweeps every page for every role (`ROLE_NAMES`),
   desktop 1440 and phone 390, light and dark, the states in § Test policy and the critical journeys, looking at the
   screenshots. Fix the real blockers it finds first.
 - Engine/compiler, validator, greedy, score and fairness version constants are bumped once per release, in release
@@ -141,12 +145,16 @@ contract in DESIGN.md.
   open blocker that ships in a candidate by ruling is added by hand.
 - The GitHub Release is published from the tag with the release notes above and links back to its milestone; the
   milestone then gets its Release line and is closed.
-- Final review verdicts and release evidence are cited by sha256 and are append-only: a correction goes in a dated
-  section at the end, and a change after approval is disclosed the same day.
+- Release evidence is cited by sha256 and is append-only. Add a dated correction and disclose any change after
+  approval the same day.
 
 ## Deploys
-- A hosted job builds the image and publishes it by digest. No workflow connects to a host, no host is a runner and
-  no host holds a credential for the repository. Nothing in the repository names or reveals where the product runs.
+- A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
+  No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
+  Nothing in the repository names or reveals where the product runs.
+- Main images published to the public package carry a provenance attestation signed by `image.yml` on
+  `refs/heads/main`. The dev slot verifies it offline and pins the signer workflow and ref. Staging and production
+  images do not carry this attestation yet.
 - The operator machine pushes the image to each server over a private network by exact digest; the server verifies
   it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
   facts live outside this repository.
@@ -154,11 +162,11 @@ contract in DESIGN.md.
   gate that accepts only green main digests and records each deploy.
 - staging: only tagged release candidates, promoted by digest by hand.
 - production: only with the owner's yes, after he has tested the candidate on staging.
-- **Gated releases:** a release path that runs through a checking gate (such as the dev relay gate) is reviewed once
+- **Gated releases:** a release gate (such as the dev relay gate) gets one independent review
   and gets one Portfolio Lead GO; after that, every change that passes the gate releases automatically, with an audit
   row. A new kind of change needs a new GO. Production keeps the owner's yes for every deploy.
-- For a release candidate, staging runs the `main`-built image digest of the tagged commit; production takes exactly
-  the digest staging ran, never a tag rebuild. Both digests are recorded side by side.
+- Staging runs the scanned image digest built for the candidate tag. Production takes exactly the digest staging
+  qualified for the same commit. Record the staged and promoted digests.
 - **Production approval:** the owner approves production deployments only. Delivery puts a "Deploy vX.Y.Z to
   production" item in Waiting on owner on the board, with the test report; the owner's yes is the approval and
   nothing else is.
@@ -172,14 +180,19 @@ contract in DESIGN.md.
 - What only the owner decides is listed once, in AGENTS.md § Who decides; an ordinary release approval never covers
   a destructive data operation.
 
+## Deviations
+
+- **One artifact per commit.** Main builds a second image for the public package with Buildx provenance disabled.
+  The private build's embedded provenance contains non-public build metadata. Review on 2026-12-23.
+
 ## Hotfixes
-- A hotfix is its own board item. It is cut from the deployed tag, tested, deployed with the owner's yes like any
-  production deploy, then merged forward into `main`.
+- A hotfix is its own board item. Use the release-branch flow for the patch release, test the new candidate on
+  staging, and get the owner's yes before deploying to production.
 
 ## Security
 - Dependabot, code scanning and secret scanning alerts belong to the Delivery Lead. An alert raised by a pull request
   is that pull request owner's to resolve before merge.
-- Code-scanning dismissals: one independent review verdict on the reason, then the dismissal, with the reason
+- Code-scanning dismissals: record one independent review verdict on the reason, then dismiss with the reason
   recorded on the alert. The project's GitHub App performs the dismissal once it holds security-events write; until
   then it is done under the owner's login on the Portfolio Lead's recorded line.
 - The privacy check's inputs are pinned by digest: one changes only through a coordinated pin move by the Delivery
@@ -189,8 +202,11 @@ contract in DESIGN.md.
   yes.
 - Every free GitHub security feature is on and stays on; nothing paid is enabled without the owner's yes.
 - Secrets never enter the repository, its variables or its environments.
-- Release images are public. The image build scans every built image's layers for secrets and private values with the
-  same deny inputs as the privacy check, and fails before publishing on any hit (issue 1222).
+- Before publication, the public main image and every version-tag image go through the privacy scan. The scan
+  checks the config and all added layers. It verifies pinned base layer digests and hashes from installed wheel RECORDs. A finding in
+  package-manager metadata is allowed when its line is byte-identical to a line at the same path in the verified
+  base layers. The exception table binds historical wheel bytecode findings to a path, class and SHA-256.
+  New public builds disable wheel bytecode generation. Any other finding blocks the public push.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates

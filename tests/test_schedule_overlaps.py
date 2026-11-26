@@ -244,6 +244,10 @@ def database_refuses_overlapping_rotas_in_force(h, error):
         ("UPDATE publications SET effective_until = :d WHERE id = :id", {"d": date(2026, 10, 4), "id": pid}),   # empty range
         ("UPDATE publications SET snapshot = '{}' WHERE id = :id", {"id": pid}),                               # still immutable
     ]
+    with transaction(engine) as db:
+        assert db.get(m.Publication, pid).calendar_lineage is True
+    with pytest.raises(error, match="immutable publication"), transaction(engine, write=True) as db:
+        db.execute(text("UPDATE publications SET calendar_lineage = NULL WHERE id = :id"), {"id": pid})
     for sql, values in statements:
         with pytest.raises(error), transaction(engine, write=True) as db:
             db.execute(text(sql), values)
@@ -306,7 +310,9 @@ def test_migration_keeps_existing_publications_and_guards_new_ones(tmp_path):
     try:
         with transaction(engine) as db:
             after = [tuple(r) for r in db.execute(text("SELECT * FROM publications ORDER BY id"))]
-            assert [r[:len(before[0])] for r in after] == before and all(r[-1] is None for r in after)
+            assert [r[:len(before[0])] for r in after] == before
+            added = list(db.execute(text("SELECT effective_until, calendar_lineage FROM publications ORDER BY id")))
+            assert added == [(None, None)] * len(before)
             assert db.scalar(text("SELECT count(*) FROM workspaces WHERE replaces_publication_id IS NOT NULL")) == 0
         with pytest.raises(IntegrityError), transaction(engine, write=True) as db:
             db.execute(text("UPDATE publications SET current = 1 WHERE id = 'p1'"))  # two rotas in force in October

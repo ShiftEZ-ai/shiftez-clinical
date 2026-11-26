@@ -12,12 +12,14 @@ export type Relation={line_id:string;line_no:number;overrides:boolean;both_apply
   /** The stricter value that applies to this line when both lines remain active. */
   effective_numbers?:Record<string,number|null>;
   /** maintenance: with `fix: match_settings`, the broader line's effective settings this line may take (copied as they are). */default_settings?:Record<string,unknown>};
-/** One draft whose dates overlap the line: what the change does to its checks. `status` and `started_at` come from the
+/** One draft whose dates overlap the line: what problems the change adds or clears. `status` and `started_at` come from the
  *  check job (elapsed time only, never an estimate). */
 export type Effect={workspace_id:string;name:string;status?:string;clears?:number;adds?:number;effect?:'clears'|'adds'|'no_change';
   job_id?:string|null;started_at?:string|null;created_at?:string|null;revision?:number;
-  /** maintenance: the server's plain words for this draft, whether its effect is uncertain (needs an acknowledgement) and
-   *  whether it blocks activation outright (a proven new contradiction). */summary?:string|null;requires_acknowledgement?:boolean;activation_blocker?:boolean};
+  /** The number of problems in the approval comparison, which also checks staffing and candidate availability. */
+  new_or_worse_count?:number;summary?:string|null;requires_acknowledgement?:boolean;
+  /** Why activation is refused after a finished check (rule_effects review), or null. */
+  activation_blocker?:'RULE_INTRODUCES_CONFLICT'|'RULE_CHECK_FAILED'|'RULE_CHECK_UNRESOLVED'|null};
 /** The rule check (POST /api/rules/catalogue/{id}/check): `relations` by edited line id. */
 export type Checked={relations?:Record<string,Relation>};
 export const relationOf=(c:Checked|null|undefined,lineId:string):Relation|null=>c?.relations?.[lineId]??null;
@@ -102,19 +104,26 @@ export const summaryCheckWords=(s?:{checking?:boolean;check_status?:string|null;
 export const CHECK_NOT_STARTED="Check hasn't started";
 /** A draft's effect in words with its badge tone; null while it is still being checked (the caller shows elapsed time). */
 export function effectWords(x:Effect):{text:string;tone:'ok'|'warn'|'err'|'neutral'}|null{
+  // A later check can fail without clearing an already proven conflict.
+  if(x.activation_blocker==='RULE_INTRODUCES_CONFLICT')return {text:'Makes this rota impossible',tone:'err'};
   if(effectRunning(x))return null;
-  const n=(v:number|undefined,word:string)=>`${word} ${v||0} check${v===1?'':'s'}`;
   if(x.status==='failed')return {text:'Check failed',tone:'err'};
   if(x.status==='not_checked')return {text:'Not checked',tone:'neutral'};
   if(x.status==='unresolved')return {text:'Check incomplete',tone:'warn'};
   // A stopped check established nothing (never "No change").
   if(x.status==='cancelled')return {text:'Check stopped',tone:'warn'};
-  if(x.adds)return {text:n(x.adds,'Adds'),tone:'err'};
-  if(x.clears)return {text:n(x.clears,'Clears'),tone:'ok'};
+  // A finished check that still refuses activation says why, never "No change" beside a disabled Approve.
+  if(x.activation_blocker==='RULE_CHECK_FAILED')return {text:'Check failed',tone:'err'};
+  if(x.activation_blocker)return {text:'Check incomplete',tone:'warn'};
+  const adds=x.new_or_worse_count||x.adds;
+  if(adds)return {text:`Adds ${adds} problem${adds===1?'':'s'}`,tone:'err'};
+  if(x.clears)return {text:`Clears ${x.clears} problem${x.clears===1?'':'s'}`,tone:'ok'};
   return {text:'No change',tone:'neutral'};
 }
 /** Activation may go once every overlapping draft's effect is known (D6: failed or unfinished checks never authorize it). */
 export const effectReady=(rows:Effect[])=>rows.every(x=>!x.status||x.status==='ready');
+/** A draft whose check can be run again: not finished, or finished and still refused (a proven conflict stays until the rule changes). */
+export const effectRecheckable=(x:Effect)=>x.activation_blocker!=='RULE_INTRODUCES_CONFLICT'&&(x.status!=='ready'||!!x.activation_blocker);
 
 /** The relation as one sentence around its link ("line 4"): `lead` + link + `tail`, its tone and its one fix.
  *  `subject`: who this line names ("Marta Turner"); `broader`: the broader line in words ("Internship ≥ 1"); `strength`: the
@@ -196,8 +205,8 @@ export const forgetActiveChoices=()=>{active=null;};
 // ---- The approver's decision (B5) ----
 /** A proposal's relation and effect, only for drafts whose dates overlap its changed lines (rule_effects.review). */
 export type Review={policy_id:string;relations:Record<string,Relation>;effect:Effect[];ready:boolean;
-  /** maintenance: a decision may be made now (nothing queued or running, no hard blocker); an uncertain effect needs the
-   *  approver's explicit acknowledgement and reason. */can_decide?:boolean;requires_acknowledgement?:boolean;
+  /** A decision may be made when no check is running and there is no hard blocker. Added problems or an uncertain
+   *  effect need the approver's explicit acknowledgement and reason. */can_decide?:boolean;requires_acknowledgement?:boolean;
   /** Why no check was needed (maintenance: lines only of people who left before them), said instead of an empty effect. */summary?:string|null};
 export const proposalReview=(policyId:string)=>get<Review>(`/api/policies/${encodeURIComponent(policyId)}/review`);
 /** Starts the effect check of one overlapping draft (the existing feasibility job, this rule's change only). */
@@ -213,8 +222,8 @@ export const approveAndActivate=(policyId:string,revision:number,reason:string|n
  *  (a check's finding counts are another unit than the footer's causes, so none stand in). A provisional check
  *  (scope command_changes) with its job listed says that job's words (`provisional`); with none listed it is "Waiting to
  *  check" until the rota's job list is read (`partial`, `jobsRead`); read with no live check job in it, nothing proves a
- *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, or its take-over
- *  failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
+ *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, cancelled, or its
+ *  take-over failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
  *  `whole`: the whole rota is read (a window keeps its counts). */
 export type FooterCheck='stalled'|'checking'|'provisional'|'not-checked'|'counts'|'waiting'|'checked'|'stale'|'check-now'|'needs-check';
 export function footerCheck(s:{stalled:boolean;checking:boolean;provisional:boolean;checked:boolean;counts:boolean;

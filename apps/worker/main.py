@@ -15,7 +15,7 @@ from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
-from sqlalchemy import delete, event, select, func, or_, update, text
+from sqlalchemy import delete, event, func, literal, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -156,6 +156,15 @@ def describe(db, event, publication, identity, *, wishes=None, rota_label=None):
         return "Rule proposal or decision", "Open Rules to review the current version."
     if event.kind == "bulk_review":
         return "Bulk changes need an independent reviewer", "Open Bulk editor to review the pending changes."
+    if event.kind == "generation_finished":
+        title = {
+            'complete': 'Auto-schedule result ready',
+            'partial': 'Auto-schedule finished with gaps',
+            'needs_more_time': 'Auto-schedule needs more time',
+            'infeasible': 'Auto-schedule found conflicting requirements',
+            'failed': 'Auto-schedule could not finish',
+        }[event.payload['outcome']]
+        return title, 'Open Auto-schedule to review the run.'
     if event.kind == "feedback":
         status = event.payload["status"]
         message = f"Your report {event.payload['feedback_id']} is {status.replace('_', ' ')}"
@@ -323,6 +332,20 @@ def recipients_of(db, event, publication, roles, identities=None):
                 or aware(row.expires_at) <= m.now()):
             return set()
         return reviewers(db, row)
+    if event.kind == "generation_finished":
+        from apps.api.services.workspace_access import access_record
+        job = db.get(m.Job, event.payload['job_id'], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
+        if (job is None or job.kind != 'generation' or job.department_id != event.department_id
+                or job.workspace_id != event.payload['workspace_id'] or 'coordinator' not in roles.get(job.requested_by, ())):
+            return set()
+        identity = db.get(m.Identity, job.requested_by)
+        workspace = db.get(m.Workspace, job.workspace_id)
+        if identity is None or identity.disabled or workspace is None:
+            return set()
+        access = access_record(db, workspace)
+        if (access['visibility'] == 'private' or access['purpose'] == 'sandbox') and workspace.created_by != identity.id:
+            return set()
+        return {identity.id}
     if event.kind == "feedback":
         identity_id = event.payload.get("reporter_identity_id")
         identity = db.get(m.Identity, identity_id) if identity_id in roles else None
@@ -491,6 +514,16 @@ def planner_actor_for(db, claim):
                  current_roles(db, identity.id, department.id), identity.person_id, 'worker')
 
 
+def queue_generation_outcome(db, job):
+    if job.kind != 'generation' or job.status not in {'succeeded', 'failed'} or job.error_code == 'ACCESS_REVOKED':
+        return
+    from apps.api.serialization import job_outcome
+    outcome = job_outcome(job.status, job.result)
+    if outcome != 'cancelled':
+        db.add(m.Outbox(department_id=job.department_id, kind='generation_finished', event_key=f'generation-finished:{job.id}',
+                        payload={'job_id': job.id, 'workspace_id': job.workspace_id, 'outcome': outcome}))
+
+
 def resume_days(db, claim=None):
     if claim and 'resume_days' in claim:
         return claim['resume_days']
@@ -645,6 +678,7 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
             if not generation_resume_available(db, old, days=resume_days(db), error=old.error_code):
                 clear_generation_resume(db, job_id=old.id)
             old.revision += 1
+            queue_generation_outcome(db, old)
             continue
         controls = old.search_control or {}
         has_hint = checkpoint.get('has_solution', bool(checkpoint.get('hint')))
@@ -680,6 +714,7 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
             elif old.result and has_generation_checkpoint(old):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
+        queue_generation_outcome(db, old)
     queued = select(m.Job).where(wanted, m.Job.status == "queued")
     # shortcut: one solve at a time for the pilot server; add bounded slots when measured demand requires them.
     heavy = ["generation", "feasibility", "catalogue_proof", "swap_audience", "merge_preview", "merge_apply", "fill_options"]
@@ -696,6 +731,7 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
         if not generation_resume_available(db, job, days=resume_days(db), error=job.error_code):
             clear_generation_resume(db, job_id=job.id)
         job.revision += 1
+        queue_generation_outcome(db, job)
         return None
     identity = db.get(m.Identity, job.requested_by)
     if identity.disabled or not may_run(db, identity, job):
@@ -751,30 +787,42 @@ def check_inputs_unchanged(db, workspace, stamp):
     """
     if stamp is None or stamp[2] is None:
         return False
-    from datetime import datetime
-    from apps.api.services import events
-    from apps.api.snapshots import currency_match, preparation_stamp, snapshot_department_ids
+    from apps.api.snapshots import currency_match, occurrences_unchanged_since, preparation_stamp
     since, recorded, window = stamp
-    current = preparation_stamp(db, workspace)
-    if not currency_match(current, recorded):
+    if not currency_match(preparation_stamp(db, workspace), recorded):
         return False
-    organisation_id = db.get(m.Department, workspace.department_id).organisation_id
     # The snapshot widens its window to block-quota periods; its manifest recorded the window it read.
     # Always compare: the hint drops the local date after the window ends, yet an overnight occurrence still counts.
-    lo, hi = (datetime.fromisoformat(value) for value in window)
-    # Projections drop occurrences only as the clock passes their end: equal sets hold at every instant between.
-    department_ids = snapshot_department_ids(db, organisation_id)
-    return ({row.id for row in events.blocking_occurrences(db, department_ids, lo, hi, now=since)}
-            == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
+    return occurrences_unchanged_since(db, workspace, since, window)
 
 
-def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
+def stage_feasibility_result(db, claim, result):
+    """Write the proof on its own row so cancellation can still change the job."""
+    require_current_schema(db)
+    table = m.JobFeasibilityResult.__table__
+    insert = postgres_insert if db.bind.dialect.name == 'postgresql' else sqlite_insert
+    lease = select(m.Job.id, m.Job.attempts, literal(result, table.c.payload.type)).where(
+        m.Job.id == claim['id'], m.Job.kind == 'feasibility', m.Job.status == 'running',
+        m.Job.attempts == claim['attempt'], m.Job.worker_id == WORKER_ID,
+        m.Job.input_fingerprint == claim['input_fingerprint'],
+    )
+    db.execute(insert(table).from_select(['job_id', 'attempt', 'payload'], lease).on_conflict_do_nothing())
+
+
+def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None):
     require_current_schema(db)
     # Feasibility completion needs current authority and lease state, not the frozen department graph.
     # Other kinds load their retained evidence lazily when their stale/proposal guards require it.
     job = db.get(m.Job, claim["id"], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
     if not job or job.status != "running" or job.attempts != claim["attempt"]:
         return False
+    if job.kind == 'feasibility' and result is not None and not error:
+        raise ValueError('Feasibility proof must be staged before completion')
+    if feasibility_projection is not None:
+        payload = m.JobFeasibilityResult
+        if job.input_fingerprint != claim['input_fingerprint'] or not db.scalar(select(
+                select(payload.job_id).where(payload.job_id == job.id, payload.attempt == job.attempts).exists())):
+            return False
     if job.kind == 'generation' and validated_proposal(result, job.input_fingerprint):
         job.result = result
     identity = db.get(m.Identity, job.requested_by)
@@ -871,7 +919,12 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
             error, result, job.status = rejected.code, None, 'failed'
     if error_detail is not None and error:
         result = {'status': 'refused', 'error': error_detail}
-    job.result, job.error_code = result, error
+    if feasibility_projection is not None and not error:
+        metadata, job.result_summary = feasibility_projection
+        job.read_metadata = {**(job.read_metadata or metadata), 'result': metadata['result']}
+    else:
+        job.result = result
+    job.error_code = error
     search_spent(job, result)
     search_spent(job, progress)
     if job.kind == 'generation':
@@ -887,6 +940,7 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None):
         progress = _preserve_generation_stage(job.progress, progress)
     job.progress = job_progress_record(progress if progress is not None else job.progress)
     job.revision += 1
+    queue_generation_outcome(db, job)
     live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
     if job.kind == 'swap_audience':
         live.signal(db, job.department_id, scope="swaps")
@@ -1182,13 +1236,27 @@ def fill_supersessions(engine, *, settings=None):
     return count
 
 
+def prune_abandoned_feasibility_results(db, limit):
+    # An expired attempt or a terminal refusal can never publish its staged payload.
+    payload = m.JobFeasibilityResult.__table__
+    key = (payload.c.job_id, payload.c.attempt)
+    jobs = m.Job.__table__
+    abandoned = select(*key).join(jobs, jobs.c.id == payload.c.job_id).where(
+        or_(payload.c.attempt < jobs.c.attempts, jobs.c.status.in_(('cancelled', 'failed')))
+    ).order_by(*key).limit(limit)
+    db.execute(delete(payload).where(tuple_(*key).in_(abandoned)))
+
+
 def prune_generation_state(engine, *, settings=None):
     """Release only disposable preparation/hints; job inputs, proposals and audit remain."""
     if time.monotonic() - _generation_pruned.get(engine, -3600.0) < 600:
         return 0
     settings = settings or engine.get_execution_options().get('rota_write_settings') or Settings.from_env()
-    count = retry_write(engine, lambda db: prune_generation_resume(
-        db, days=settings.generation_resume_days, limit=settings.worker_batch_size), serialize=False)
+    def prune(db):
+        prune_abandoned_feasibility_results(db, settings.worker_batch_size)
+        return prune_generation_resume(db, days=settings.generation_resume_days, limit=settings.worker_batch_size)
+
+    count = retry_write(engine, prune, serialize=False)
     _generation_pruned[engine] = time.monotonic()
     return count
 
@@ -1745,6 +1813,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         computed = time.monotonic()
         log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane,
             "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2)})
+        feasibility_projection = None
+        staged_result = False
+
         def finish(db):
             if interactive:
                 # A kind that would store rota or check data is refused; only its failed receipt is written.
@@ -1756,6 +1827,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     log.warning('interactive_write_refused', extra={'job_id': claim['id'], 'kind': claim['kind'],
                                                                     'lane': lane})
                     return finish_job(db, claim, None, refused.code, progress=progress)
+            if feasibility_projection is not None:
+                return finish_job(db, claim, None, error, progress=progress,
+                                  feasibility_projection=feasibility_projection)
             if pending_checkpoint is not None:
                 checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation)
             if claim['kind'] in {'merge_preview', 'merge_apply'} and not error:
@@ -1768,9 +1842,18 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     return finish_job(db, claim, None, rejected.code, progress=progress)
             return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
         try:
+            if claim['kind'] == 'feasibility' and result is not None and not error:
+                from apps.api.serialization import job_read_metadata, job_result_projection
+                feasibility_projection = (job_read_metadata(claim['input'], result),
+                                          job_result_projection('feasibility', result))
             delay = .1
             while time.monotonic() < lease_deadline:
                 try:
+                    if feasibility_projection is not None and not staged_result:
+                        retry_write(engine, lambda db: stage_feasibility_result(db, claim, result),
+                                    deadline=lease_deadline, serialize=False,
+                                    context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "stage_result"})
+                        staged_result = True
                     if not retry_write(engine, finish, deadline=lease_deadline,
                                        context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish",
                                                 "lane": lane}):
@@ -1796,6 +1879,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             pending_checkpoint = None
             encoded_preparation = None
             candidate_evidence = None
+            feasibility_projection = None
             # Resume preparation can retain the same solver graph as the input.
             # All closures now see only the probe identity after durable finish.
             claim = probe_claim

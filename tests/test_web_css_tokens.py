@@ -136,3 +136,23 @@ def test_pressed_weekdays_and_property_grips_meet_3_to_1_in_both_themes():
             if ratio < 3:
                 low[f'{theme} {token}'] = round(ratio, 2)
     assert not low, low
+
+
+def test_month_days_outside_the_range_read_at_4_5_to_1_in_both_themes():
+    """WCAG 2.2 SC 1.4.3: a Month's days of the last or next month are told apart by their grey, their month word and
+    their empty cells, never faded with opacity; their day number and month word take a token that keeps 4.5:1 on that
+    grey (--sub) in light and in both dark blocks."""
+    faded = [s for s, b in re.findall(r'([^{}]*\.mo-out[^{}]*)\{([^{}]*)\}', CSS) if 'opacity' in b]
+    assert not faded, faded
+    number = re.search(r'\.wk-day\.mo-out \.wk-day-top strong[^{]*\{color:var\((--[\w-]+)\)', CSS).group(1)
+    word = re.search(r'\.wk-day-top>span:not\(\.wk-cov\)\{color:var\((--[\w-]+)\)', CSS).group(1)
+    blocks = {'light': block(':root,.export-sheet'), 'dark': block(':root[data-theme=dark]'),
+              'system dark': block('@media (prefers-color-scheme:dark){:root:not([data-theme=light])')}
+    low = {}
+    for theme, text in blocks.items():
+        values = dict(re.findall(r'(--[\w-]+):(#[0-9A-Fa-f]{6})\b', text))
+        for token in {number, word}:
+            ratio = _contrast(values[token], values['--sub'])
+            if ratio < 4.5:
+                low[f'{theme} {token} on --sub'] = round(ratio, 2)
+    assert not low, low

@@ -1,0 +1,229 @@
+{
+  "id": "A-ORDERED-COVER-01",
+  "revision": 1,
+  "title": "Weekly cover selection with a named trigger",
+  "intent": "Weekly cover selection with a named trigger",
+  "pressure": "An unavailable first-tier person cannot be replaced by the lower tier for a triggering duty in the same week.",
+  "covers": {
+    "kind.minimum_cover.selection_order": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.minimum_cover.selection_period": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.minimum_cover.when_person_ids": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-ORDERED-COVER-01 staff rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "A-ORDERED-COVER-01 primary clinic", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "A-ORDERED-COVER-01 room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "A-ORDERED-COVER-01 primary room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 10}, "reason": "Synthetic scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "الرملي باجن", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p0_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p0_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "نيلوفر كيذشقيثه", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p1_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p1_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p2", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "الجبلي سنبلة", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p2_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p2_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p2", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "A-ORDERED-COVER-01", "starts_on": "2027-01-01", "ends_on": "2027-01-12"}},
+    {"key": "duty_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "A-ORDERED-COVER-01 duty_type duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 2}]}}, "reason": "Synthetic scenario"}},
+    {"key": "strict", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-ORDERED-COVER-01 strict", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "minimum_cover", "minimum": 1, "selection_order": [{"match": "all", "conditions": [{"field": "person_ids", "op": "any", "values": ["$p0"]}]}, {"match": "all", "conditions": [{"field": "person_ids", "op": "any", "values": ["$p1"]}]}], "selection_period": "week", "when_person_ids": ["$p2"]}, "scope": {"assignment_type_id": "$duty_type"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "strict_active", "role": "approver", "kind": "policy.activate", "target": "$strict", "revision": "$strict.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "bait", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-ORDERED-COVER-01 bait", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "allocation_preference", "priority": 9}, "scope": {"person_ids": ["$p2"]}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "bait_active", "role": "approver", "kind": "policy.activate", "target": "$bait", "revision": "$bait.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "p0_leave", "role": "coordinator", "kind": "availability.record",
+     "payload": {"person_id": "$p0", "kind": "recorded_leave", "start": "2027-01-04T00:00:00+03:00", "end": "2027-01-05T00:00:00+03:00", "private_reason": "Synthetic leave"}},
+    {"key": "duty", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
+    {"key": "peer", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}}
+  ],
+  "expect": {
+    "binding_rules": [
+      "strict"
+    ],
+    "boundary": {
+      "assignments": {
+        "duty": [
+          "$p1"
+        ],
+        "peer": [
+          "$p0",
+          "$p2"
+        ]
+      }
+    },
+    "validator": {
+      "assignments": {
+        "duty": [
+          "$p1",
+          "$p2"
+        ],
+        "peer": [
+          "$p0",
+          "$p2"
+        ]
+      },
+      "finding": {
+        "code": "SCOPED_COVERAGE_GAP",
+        "shift_id": "$duty",
+        "person_id": null,
+        "detail": {
+          "required": 1,
+          "available": 0
+        }
+      }
+    },
+    "counterfactual": {
+      "code": "SCOPED_COVERAGE_GAP",
+      "shift_id": "$duty",
+      "person_id": null,
+      "detail": {
+        "required": 1,
+        "available": 0
+      }
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    },
+    "safety": {
+      "contrasts": [
+        {
+          "assignments": {
+            "duty": [
+              "$p1"
+            ]
+          }
+        },
+        {
+          "rule": {
+            "selection_period": "duty"
+          }
+        },
+        {
+          "rule": {
+            "selection_order": [
+              {
+                "match": "all",
+                "conditions": [
+                  {
+                    "field": "person_ids",
+                    "op": "any",
+                    "values": [
+                      "$p1"
+                    ]
+                  }
+                ]
+              },
+              {
+                "match": "all",
+                "conditions": [
+                  {
+                    "field": "person_ids",
+                    "op": "any",
+                    "values": [
+                      "$p0"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "assignments": {
+            "peer": [
+              "$p1",
+              "$p2"
+            ]
+          }
+        },
+        {
+          "rule": {
+            "when_person_ids": []
+          },
+          "from_boundary": true,
+          "finding": {
+            "code": "SCOPED_COVERAGE_GAP",
+            "shift_id": "$duty",
+            "person_id": null,
+            "detail": {
+              "required": 1,
+              "available": 0
+            }
+          }
+        }
+      ],
+      "narrower": {
+        "scope": {
+          "person_id": "$p1"
+        },
+        "rule": {
+          "selection_period": "duty"
+        }
+      },
+      "required_in_candidate": {
+        "duty": [
+          "$p1"
+        ],
+        "peer": [
+          "$p0",
+          "$p2"
+        ]
+      }
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 100,
+          "stability": 1
+        }
+      }
+    }
+  }
+}

@@ -1944,6 +1944,9 @@ class AuditPage(Schema):
 
 
 class PersonInput(Schema):
+    """On update, send the required display name and any fields to change. Omitted fields keep their stored
+    values. Explicit empty or null values clear fields that allow them. A new deactivation with no date starts today."""
+
     display_name: Name = Field(json_schema_extra={"bulk": True})
     given_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     family_name: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
@@ -4280,6 +4283,10 @@ class LeaveInput(InstantInterval):
     kind: Literal['leave', 'clinic_change', 'meeting', 'administrative'] = 'leave'
 
 
+class RequestEditUndo(Schema):
+    receipt_id: ID
+
+
 class OvertimeAvailabilityInput(Schema):
     person_id: ID
     kind: Literal['overtime_availability'] = 'overtime_availability'
@@ -5724,8 +5731,10 @@ class CatalogueUpdating(Schema):
 
 
 class RuleProposalInput(Decision):
-    """A new version of a catalogue rule (its first, or replacing the active policy ID and revision the editor read):
-    on or off, its settings and every line. Ordered overrides need no acknowledgement."""
+    """Propose the first version of a catalogue rule or amend the active policy ID and revision the editor read.
+    An amendment keeps omitted rule fields. The catalogue version also follows department authoring rules.
+    Sending settings or lines replaces the whole field, including with an empty object or list.
+    Ordered overrides need no acknowledgement."""
     legacy_lead_conversion: LegacyLeadConversion | None = None
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 1
@@ -6546,6 +6555,28 @@ class AccountInvite(Schema):
     person_id: ID | None = None
     roles: list[RoleName] = Field(default_factory=list, max_length=8)
     reason: Reason
+
+
+AccountOnboardingFingerprint = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+
+
+# rows: one request's ceiling; wave: the most people the admin screen sends in one batch.
+ACCOUNT_ONBOARDING_LIMITS = {"rows": 200, "wave": 25}
+
+
+class AccountOnboardingRow(Schema):
+    person_id: ID
+    username: Username
+    email: Email
+
+
+class AccountOnboarding(Schema):
+    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=ACCOUNT_ONBOARDING_LIMITS["rows"])
+    reason: Reason
+
+
+class AccountOnboardingApply(AccountOnboarding):
+    expected_fingerprint: AccountOnboardingFingerprint
 
 
 SESSION_IDLE_MINUTES_MIN = 5
@@ -8238,6 +8269,7 @@ PWA_NOTIFICATION_EVENTS = [
     {'id': 'announcement', 'label': 'Announcement', 'audience': audience_definition('announcement').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'event', 'label': 'Calendar event', 'audience': audience_definition('event').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'feedback', 'label': 'Feedback updated', 'audience': audience_definition('feedback').description, 'roles': list(ROLE_NAMES), 'required': False},
+    {'id': 'generation_finished', 'label': 'Auto-schedule finished', 'audience': audience_definition('generation_finished').description, 'roles': ['coordinator'], 'required': False, 'default_push': 'off'},
     {'id': 'credential_impact', 'label': 'Eligibility review needed', 'audience': audience_definition('credential_impact').description, 'roles': ['staff', 'coordinator', 'approver', 'credentialer'], 'required': False},
     {'id': 'bulk_review', 'label': 'Bulk review needed', 'audience': audience_definition('bulk_review').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'self_approval', 'label': 'Self-approval used', 'audience': audience_definition('self_approval').description, 'roles': ['coordinator', 'approver', 'auditor'], 'required': False},
@@ -8345,7 +8377,7 @@ class PwaDeliverySettings(Schema):
 class NotificationPolicy(Schema):
     push_enabled: bool = False
     lock_screen_detail: PwaDetail = 'generic'
-    event_defaults: dict[str, PwaEventChannels] = Field(default_factory=dict, max_length=len(PWA_EVENT_IDS))
+    event_defaults: dict[str, PwaEventChannels] = Field(default_factory=dict, max_length=len(PWA_EVENT_IDS), validate_default=True)
     retry: PwaRetrySettings = Field(default_factory=PwaRetrySettings)
     delivery: PwaDeliverySettings = Field(default_factory=PwaDeliverySettings)
     generic_message: Literal['You have a rota update. Open the app to see it.'] = 'You have a rota update. Open the app to see it.'
@@ -8359,6 +8391,10 @@ class NotificationPolicy(Schema):
         for event in PWA_NOTIFICATION_EVENTS:
             if event['required'] and event['id'] in value and value[event['id']].push == 'off':
                 raise ValueError('Required alerts cannot be disabled; device consent remains necessary')
+            if 'default_push' in event:
+                channels = value.get(event['id'], PwaEventChannels())
+                if channels.push == 'inherit':
+                    value[event['id']] = channels.model_copy(update={'push': event['default_push']})
         return value
 
 

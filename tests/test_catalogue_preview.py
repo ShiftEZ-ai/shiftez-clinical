@@ -1,6 +1,7 @@
 """Exact content/revision/authority-bound impact. A preview must leave no writes."""
 import copy
 import uuid
+from datetime import date
 import pytest
 from sqlalchemy import func, select
 from apps.api import models as m
@@ -47,6 +48,51 @@ def test_preview_uses_proposed_capacity_but_rolls_back_everything(h):
     assert saved['record']['capacity']==1
     assert h.detail(w)['workspace']['revision']==w['revision']
     assert not h.lifecycle(w,'validate')['validation']['valid']
+
+
+def rank_cover_fixture(h):
+    person, unaffected = h.seed['people'][:2]
+    with transaction(h.app.state.engine, write=True) as db:
+        rank = db.scalar(select(m.Membership).where(m.Membership.person_id == person))
+        rank.starts_on = date(2026, 10, 4)
+        ident, revision = rank.id, rank.revision
+    duties = {}
+    for kind, start, end, day in [('published', '2026-10-04', '2026-10-11', '2026-10-06'),
+                                  ('draft', '2026-10-11', '2026-10-18', '2026-10-12')]:
+        rota = h.workspace(f'Synthetic {kind} cover', start, end)
+        rota = h.shift(rota, f'{day}T08:00:00+03:00', f'{day}T12:00:00+03:00', people=[person])['workspace']
+        rota = h.shift(rota, f'{day}T13:00:00+03:00', f'{day}T17:00:00+03:00', people=[unaffected])['workspace']
+        duties[kind] = next(shift['id'] for shift in h.detail(rota)['shifts']
+                            if any(item['person_id'] == person for item in shift['participants']))
+        if kind == 'published':
+            h.publish(rota)
+    return ident, revision, duties
+
+
+@pytest.mark.parametrize('action', ['end', 'withdraw'])
+def test_rank_cover_preview_lists_only_newly_invalid_duties_and_rolls_back(h, action):
+    ident, revision, duties = rank_cover_fixture(h)
+    payload = {'reason': 'Review a synthetic rank change'}
+    if action == 'end':
+        payload['ends_on'] = '2026-10-05'
+    cmd = {'kind': 'membership.' + action, 'target_id': ident, 'expected_revision': revision, 'payload': payload}
+    before = state(h)
+    result = preview(h, cmd, role='coordinator')
+    assert not result['partial'] and not result['committed']
+    for kind, duty in duties.items():
+        impact = result['rank_cover'][f'{kind}_impact']
+        assert impact['count'] == 1
+        assert [row['shift_id'] for row in impact['sessions']] == [duty]
+    assert state(h) == before
+    with transaction(h.app.state.engine) as db:
+        rank = db.get(m.Membership, ident)
+        assert rank.revision == revision and not rank.withdrawn and rank.ends_on is None
+
+    preview(h, cmd, role='staff', status=403)
+    changed = {**cmd, 'payload': {**payload, 'reason': 'A different reason'}}
+    assert apply(h, changed, result['source_fingerprint'], 409)['error']['code'] == 'STALE_PREVIEW'
+    saved = apply(h, cmd, result['source_fingerprint'])['record']
+    assert saved['ends_on'] == payload.get('ends_on') and saved['withdrawn'] == (action == 'withdraw')
 
 
 def test_pattern_preview_does_not_revalidate_or_rewrite_existing_duties(h, monkeypatch):
@@ -151,10 +197,12 @@ def test_fresh_type_change_shows_operational_and_explicit_refresh_consequences(h
     t=next(t for t in h.get('admin','/api/catalogues')['assignment_types'] if t['id']==h.seed['type'])
     definition=copy.deepcopy(t['definition']);definition['requirements'][0]['minimum']=3
     cmd={'kind':'catalogue.update','target_id':t['id'],'expected_revision':t['revision'],
-        'payload':{'catalogue':'assignment_types','value':{'name':t['name'],'starts_on':t['starts_on'],'definition':definition},'reason':'New staffing level'}}
+        'payload':{'catalogue':'assignment_types','value':{'name':t['name'],'description':t['description'],'starts_on':t['starts_on'],'definition':definition},'reason':'New staffing level'}}
     p=preview(h,cmd);impact=p['impacts'][0]
     assert 'COVERAGE_GAP' in {f['code'] for f in impact['introduced']}
-    assert 'TYPE_VERSION_CHANGED' in {f['code'] for f in impact['saved_draft_validation']['findings']}
+    findings = impact['saved_draft_validation']['findings']
+    assert any(f['code'] == 'COVERAGE_GAP' and f['detail']['required'] == 3 for f in findings)
+    assert 'TYPE_VERSION_CHANGED' not in {f['code'] for f in findings}
     assert h.detail(w)['workspace']['revision']==w['revision']
 
 

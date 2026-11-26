@@ -6,19 +6,17 @@
 import {BRANDING_DEFAULTS as defaults,type BrandingPublic} from './generated.js';
 
 export const BRANDING_DEFAULTS={...defaults,emblem_url:new URL(defaults.emblem_url,import.meta.url).pathname,
-  wordmark_url:new URL(defaults.wordmark_url,import.meta.url).pathname};
+  wordmark_url:defaults.wordmark_url?new URL(defaults.wordmark_url,import.meta.url).pathname:''};
 
 // The bundled assets' pixel sizes (apps/web/public/assets/brand), reserving their space before they load.
-const SIZES:Record<string,[number,number]>={[BRANDING_DEFAULTS.emblem_url]:[160,160],[BRANDING_DEFAULTS.wordmark_url]:[342,116]};
+const SIZES:Record<string,[number,number]>={[BRANDING_DEFAULTS.emblem_url]:[160,160]};
 let current:BrandingPublic={...BRANDING_DEFAULTS,revision:0};
 let titleStem='';
 
 /** The branding now shown. */
 export const brand=():Readonly<BrandingPublic>=>current;
-/** Width and height for an image's attributes (its aspect ratio before it loads); unknown sizes leave the browser's. */
-export const brandSize=(url:string)=>SIZES[url];
 /** A logo the server supplied, not the bundled one: drawn exactly as supplied (no circular crop). */
-export const suppliedLogo=(url:string)=>url!==BRANDING_DEFAULTS.emblem_url&&url!==BRANDING_DEFAULTS.wordmark_url;
+const suppliedLogo=(url:string)=>url!==BRANDING_DEFAULTS.emblem_url&&url!==BRANDING_DEFAULTS.wordmark_url;
 
 /** Only this site's own paths are used as logos (CSP img-src 'self'): never another origin or a data/script URL. */
 const ownPath=(v:unknown):v is string=>typeof v==='string'&&/^\/(?!\/)[^\\\s]*$/.test(v);
@@ -38,7 +36,7 @@ export function documentTitle(stem:string){titleStem=stem;document.title=stem?`$
 
 /** Loads a logo before it is shown; one that fails keeps the logo already shown. */
 async function loaded(url:string){
-  if(SIZES[url])return true;
+  if(!url||SIZES[url])return true;
   const img=new Image();img.src=url;
   try{await img.decode();SIZES[url]=[img.naturalWidth,img.naturalHeight];return true;}catch{return false;}
 }
@@ -46,12 +44,25 @@ function paintImage(img:HTMLImageElement,url:string,alt:string){
   img.src=url;img.alt=alt;img.classList.toggle('brand-supplied',suppliedLogo(url));
   const size=SIZES[url];if(size){img.width=size[0];img.height=size[1];}
 }
+export function brandImage(cls:string,url:string,alt:string){
+  const img=document.createElement('img');
+  img.className=cls;img.decoding='async';
+  paintImage(img,url,alt);
+  return img;
+}
+export function paintWordmark(row:HTMLElement){
+  const img=row.querySelector<HTMLImageElement>('img.brand-wordmark');
+  const {wordmark_url:url,wordmark_alt:alt}=current;
+  if(!url)img?.remove();
+  else if(img)paintImage(img,url,alt);
+  else row.prepend(brandImage('brand-wordmark',url,alt));
+}
 function paint(){
   for(const img of document.querySelectorAll<HTMLImageElement>('img.brand-emblem'))paintImage(img,current.emblem_url,current.emblem_alt);
   // The browser tab's icon is the same emblem (SW3-C-11): a static file, never a server read per page load.
   // The import is also used by the small Node word/branding checks, whose DOM only exposes querySelectorAll.
   document.querySelector?.<HTMLLinkElement>('link[rel=icon]')?.setAttribute('href',current.emblem_url);
-  for(const img of document.querySelectorAll<HTMLImageElement>('img.brand-wordmark'))paintImage(img,current.wordmark_url,current.wordmark_alt);
+  for(const row of document.querySelectorAll<HTMLElement>('.login-brand'))paintWordmark(row);
   for(const n of document.querySelectorAll('[data-brand-name]'))n.textContent=current.app_name;
   for(const n of document.querySelectorAll('[data-brand-short]'))n.textContent=current.short_name;
   for(const n of document.querySelectorAll('[data-brand-home]'))n.setAttribute('aria-label','Home · '+current.app_name);

@@ -592,6 +592,10 @@ LIVE_DRIFT_KEYS = frozenset({*LIVE_OVERLAY_KEYS, "people", "exceptions", "schedu
 
 def _drift_group_hash(payload, source):
     """Hash only refreshable baseline inputs; live person data is never a refresh conflict."""
+    return snapshot_hash(_drift_group(payload, source))
+
+
+def _drift_group(payload, source):
     value = {key: item for key, item in group_payload(payload, source).items() if key not in LIVE_DRIFT_KEYS}
     for key in LIVE_VALIDITY_SOURCES:
         if key in value:
@@ -601,7 +605,7 @@ def _drift_group_hash(payload, source):
     if source in DEPARTMENT_SETTING_FIELDS:
         value["departments"] = {ident: frozen_department_settings(payload, ident, [source])
                                 for ident in payload.get("departments", {})}
-    return snapshot_hash(value)
+    return value
 
 
 def _source_revisions(payload, included):
@@ -660,7 +664,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     organisation = db.get(m.Organisation, department.organisation_id)
     if (current is None or current.get("organisation", {}).get("input_revision") != organisation.input_revision
             or current.get("organisation", {}).get("availability_revision") != organisation.availability_revision
-            or not {"policies", "exceptions"} <= set(current)):
+            or not {"policies", "exceptions", "types", "locations"} <= set(current)):
         current = _live_safety_snapshot(db, workspace)
     result = dict(frozen)
     for key in LIVE_OPERATIONAL_KEYS:
@@ -768,8 +772,18 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
             for ident, row in (result.get(key) or {}).items():
                 after = ({**row, **{field: live[ident].get(field, row.get(field)) for field in LIVE_VALIDITY_FIELDS}}
                          if ident in live else {**row, "active": False})
-                overlaid[ident] = after
                 before = captured.get(ident)
+                # Referenced rows may already come from live. Read the previous
+                # limits from the verified capture before comparing them.
+                if key == "locations" and ident in live:
+                    after["capacity"] = min((before or row)["capacity"], live[ident]["capacity"])
+                if key == "types" and before is not None and ident in live:
+                    fields = ("requirements", "supervision")
+                    captured_safety = {field: before["definition"].get(field) for field in fields}
+                    live_safety = {field: live[ident]["definition"].get(field) for field in fields}
+                    if captured_safety != live_safety:
+                        after["draft_safety"] = {"captured": captured_safety, "live": live_safety}
+                overlaid[ident] = after
                 if (before and before.get("department_id") == workspace.department_id
                         and any(before.get(field) != after.get(field) for field in LIVE_VALIDITY_FIELDS)):
                     validity_changes.append({"catalogue": key, "record_id": ident, "name": before.get("name", ident),
@@ -926,12 +940,17 @@ def latest(db, workspace_id, *, include_payload=True):
     return db.scalar(query.order_by(*_latest_ordering()).limit(1))
 
 
+def ranked_baseline_keys(query):
+    """Rank candidate baseline identities without reading their payloads."""
+    B = m.WorkspaceBaseline
+    return query.with_only_columns(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
+        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')).subquery()
+
+
 def latest_many(db, workspace_ids):
     """Read only the latest baseline identity and hash for each workspace."""
     B = m.WorkspaceBaseline
-    ranked = select(B.id, B.workspace_id, B.payload_hash, func.row_number().over(
-        partition_by=B.workspace_id, order_by=_latest_ordering()).label('position')
-    ).where(B.workspace_id.in_(workspace_ids)).subquery()
+    ranked = ranked_baseline_keys(select(B.id).where(B.workspace_id.in_(workspace_ids)))
     rows = db.execute(select(ranked.c.id, ranked.c.workspace_id, ranked.c.payload_hash).where(ranked.c.position == 1))
     return {row.workspace_id: row for row in rows}
 
@@ -1018,15 +1037,19 @@ def baseline_rows(db):
     return db.info.setdefault('_baseline_rows', {})
 
 
+def verified_baseline_keys(db):
+    baseline_rows(db)
+    return db.info.setdefault('_verified_baseline_keys', set())
+
+
 def verify_in_transaction(db, row):
     """Return a verified payload for read-only use by this transaction."""
     if row is None:
         return None
     if object_session(row) is not db or not db.in_transaction() or row in db.dirty:
         return verify(row)
-    baseline_rows(db)
+    keys = verified_baseline_keys(db)
     cache = db.info.setdefault('_verified_baselines', OrderedDict())
-    keys = db.info.setdefault('_verified_baseline_keys', set())
     key = row.id, row.payload_hash
     if key not in cache:
         cache[key] = json_value(row.canonical_payload) if key in keys else verify(row)
@@ -1184,8 +1207,31 @@ def _diff(row, workspace, current):
         if status != "unchanged":
             changes.append({"source": source, "status": status, "snapshot_hash": before,
                             "department_hash": department, "draft_hash": local,
-                            "safety": source == "rules" and bool(base.get("policies") or current.get("policies"))})
+                            "safety": source == "rules" and bool(base.get("policies") or current.get("policies")),
+                            "mandatory": source == "rules" and _changes_mandatory_rule(base, current, draft)})
     return base, draft, changes
+
+
+def _changes_mandatory_rule(*payloads):
+    """Whether the rules group's change touches a mandatory or safety rule, or anything but rules; it labels the
+    conflict only (the refresh decision is unchanged). Unsure counts as mandatory, so it is never understated."""
+    groups = [_drift_group(payload, "rules") for payload in payloads]
+    if any({k: v for k, v in group.items() if k != "policies"} != {k: v for k, v in groups[0].items() if k != "policies"}
+           for group in groups):
+        return True
+    rows = [{policy.get("id"): policy for policy in group.get("policies") or []} for group in groups]
+    changed = {ident for by_id in rows for ident in by_id if any(other.get(ident) != by_id[ident] for other in rows)}
+
+    def binds(policy):
+        definition = policy.get("definition") or {}
+        rule = definition.get("rule") or {}
+        if s.safety_rule(definition):
+            return True
+        if rule.get("kind") == "catalogue":  # a catalogue rule's strength is per number; unset inherits, so counts
+            return any(number.get("level", "mandatory") in ("mandatory", None)
+                       for line in rule.get("lines") or [] for number in (line.get("numbers") or {}).values())
+        return definition.get("severity") != "advisory"
+    return any(binds(by_id[ident]) for ident in changed for by_id in rows if ident in by_id)
 
 
 def refresh_preview(db, actor, command):

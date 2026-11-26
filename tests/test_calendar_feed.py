@@ -15,9 +15,10 @@ from apps.api.db import transaction
 from apps.api.auth import digest
 from apps.api.snapshots import snapshot_hash
 from packages.contracts.schemas import Command
-from sqlalchemy import select
+from sqlalchemy import event, select, text
+from sqlalchemy.exc import DBAPIError
 from .conftest import TEST_PASSWORD
-from packages.domain.reports import METRIC_VERSION, calendar_feed
+from packages.domain.reports import METRIC_VERSION, calendar_feed, publication_duty_ids
 from packages.domain.time import aware
 
 
@@ -188,6 +189,86 @@ def test_amendment_keeps_unchanged_duty_uid_and_changes_etag(h, subscription):
     assert client.get(path, headers={'If-None-Match': changed.headers['etag']}).status_code == 304
 
 
+def move_duty(h, amendment, *, offset=None, location=None):
+    copied, = h.detail(amendment)['shifts']
+    payload = {key: copied[key] for key in ('assignment_type_id', 'location_id', 'service_ids',
+                                            'start', 'end', 'attributes')}
+    if offset is not None:
+        for key in ('start', 'end'):
+            payload[key] = (aware(copied[key]) + offset).isoformat()
+    if location is not None:
+        payload['location_id'] = location
+    payload.update(workspace_id=amendment['id'], shift_id=copied['id'], participants=[{
+        'person_id': copied['participants'][0]['person_id'], 'start': payload['start'], 'end': payload['end'],
+    }])
+    return h.command('coordinator', 'shift.update', payload, revision=amendment['revision'])['workspace']
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('move', ['time', 'location'])
+def test_amendment_keeps_duty_uid_when_a_published_duty_moves(h, subscription, move):
+    client, path, original, _ = subscription
+    first = client.get(path)
+    before, = events(first)
+    amendment = h.workspace('Moved duty', base=original['publication_id'])
+    if move == 'time':
+        edited = move_duty(h, amendment, offset=timedelta(hours=1))
+        changed_field = 'DTSTART'
+    else:
+        edited = move_duty(h, amendment, location=h.seed['locations'][1])
+        changed_field = 'LOCATION'
+
+    published = h.publish(edited)
+    refreshed = client.get(path, headers={'If-None-Match': first.headers['etag']})
+    assert refreshed.status_code == 200 and refreshed.headers['etag'] != first.headers['etag']
+    moved, = events(refreshed)
+    assert moved['UID'] == before['UID']
+    assert moved[changed_field] != before[changed_field]
+    assert moved['SEQUENCE'] == str(published['sequence'])
+
+    h.publish(h.workspace('Unchanged duty after the move', base=published['publication_id']))
+    latest, = events(client.get(path))
+    assert latest['UID'] == before['UID']
+    assert latest[changed_field] == moved[changed_field]
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_legacy_feed_keeps_already_issued_uid_through_rollout_and_a_new_move(h):
+    person = h.get('staff', '/api/me')['person_id']
+    path = h.command('staff', 'calendar_feed.create', {})['path']
+
+    def legacy_insert(mapper, connection, publication):
+        publication.calendar_lineage = None
+
+    event.listen(m.Publication, 'before_insert', legacy_insert)
+    try:
+        original = h.publish(h.shift(h.workspace(), people=[person])['workspace'])
+        old = h.workspace('Legacy move', base=original['publication_id'])
+        old = h.publish(move_duty(h, old, offset=timedelta(hours=1)))
+    finally:
+        event.remove(m.Publication, 'before_insert', legacy_insert)
+
+    def legacy_events(result):
+        with transaction(h.app.state.engine) as db:
+            row = db.get(m.Publication, result['publication_id'])
+            assert row.calendar_lineage is None
+            return events(calendar_feed([(row.snapshot, row.sequence, row.created_at)], person, 'My duties'))
+
+    original_event, = legacy_events(original)
+    issued, = legacy_events(old)
+    assert original_event['UID'] != issued['UID']
+    with TestClient(h.app, base_url=h.settings.public_origin) as client:
+        assert events(client.get(path)) == [issued]
+        amendment = h.workspace('Move after rollout', base=old['publication_id'])
+        h.publish(move_duty(h, amendment, offset=timedelta(hours=1)))
+        current, = events(client.get(path))
+    assert current['UID'] == issued['UID']
+    assert current['DTSTART'] != issued['DTSTART']
+
+    with pytest.raises(DBAPIError, match='immutable publication'), transaction(h.app.state.engine, write=True) as db:
+        db.execute(text('UPDATE publications SET calendar_lineage = true WHERE id = :id'), {'id': old['publication_id']})
+
+
 @pytest.mark.parametrize('metric_before', [None, 'scheduled-v1', METRIC_VERSION])
 def test_copied_duplicate_session_keys_keep_uid_per_personal_reservation(h, subscription, metric_before):
     _, _, publication, _ = subscription
@@ -213,10 +294,41 @@ def test_copied_duplicate_session_keys_keep_uid_per_personal_reservation(h, subs
     issued = '2026-10-03T06:00:00Z'
     before = events(calendar_feed([(snapshot, 1, issued)], me, 'My duties'))
     after = events(calendar_feed([(copied, 2, issued)], me, 'My duties'))
+
+    def reservations(rows):
+        return {(row['UID'], row['DTSTART'], row['DTEND']) for row in rows}
+
     assert len(before) == len(after) == 2
     assert len({event['UID'] for event in before}) == 2
-    assert {(event['UID'], event['DTSTART'], event['DTEND']) for event in after} == {
-        (event['UID'], event['DTSTART'], event['DTEND']) for event in before}
+    assert reservations(after) == reservations(before)
+    original_ids = {shift['participants'][0]['start']: shift['id'] for shift in snapshot['shifts']}
+    for shift in copied['shifts']:
+        shift['lineage_id'] = original_ids[shift['participants'][0]['start']]
+    copied['_calendar_duty_ids'] = publication_duty_ids(
+        [(snapshot['shifts'], False, None), (copied['shifts'], True, None)], me)
+    tracked = events(calendar_feed([(copied, 2, issued)], me, 'My duties'))
+    assert len(tracked) == 2 and reservations(tracked) == reservations(before)
+
+
+def test_amendment_uses_distinct_uids_for_a_moved_duty_and_a_new_duty_in_its_old_slot(h, subscription):
+    _, _, publication, _ = subscription
+    person = h.get('staff', '/api/me')['person_id']
+    snapshot = h.get('coordinator', '/api/publications/' + publication['publication_id'])['snapshot']
+    original, = snapshot['shifts']
+    moved = {**original, 'id': 'moved-duty', 'lineage_id': original['id'], 'location_id': 'another-place'}
+    new = {**original, 'id': 'new-duty', 'lineage_id': None}
+
+    history = [([original], True, None)]
+    before = publication_duty_ids(history, person)
+    independent = publication_duty_ids([([new], True, None)], person)
+    history.append(([moved, new], True, None))
+    current = publication_duty_ids(history, person)
+    assert current['moved-duty'] == before[original['id']]
+    assert current['new-duty'] != current['moved-duty']
+    assert independent['new-duty'] == current['new-duty']
+    assert publication_duty_ids([*history, ([new], True, None)], person) == {
+        'new-duty': current['new-duty'],
+    }
 
 
 def test_presence_time_edit_updates_the_existing_event(h, subscription):
@@ -263,6 +375,96 @@ def test_replace_from_date_preserves_earlier_duty_uid_and_invalidates_etag(h, su
     earlier, later_again = events(client.get(path))
     assert earlier['UID'] == old['UID'] and earlier['SEQUENCE'] == str(amended['sequence'])
     assert later_again == later
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_replacement_reusing_a_moved_dutys_slot_keeps_both_identities(h):
+    person = h.get('staff', '/api/me')['person_id']
+    path = h.command('staff', 'calendar_feed.create', {})['path']
+    replacement_start, replacement_end = '2026-10-06', '2026-10-11'
+    slot = {'start': '2026-10-06T08:00:00+03:00', 'end': '2026-10-06T12:00:00+03:00'}
+    original = h.publish(h.shift(h.workspace(), people=[person], **slot)['workspace'])
+    with TestClient(h.app, base_url=h.settings.public_origin) as client:
+        first, = events(client.get(path))
+        amendment = h.workspace('Move into the retained range', base=original['publication_id'])
+        amended = h.publish(move_duty(h, amendment, offset=timedelta(days=-2)))
+        moved, = events(client.get(path))
+        assert moved['UID'] == first['UID'] and moved['DTSTART'] < first['DTSTART']
+
+        replacement = h.command('coordinator', 'workspace.create', {
+            'name': 'Reuse the old slot', 'starts_on': replacement_start, 'ends_on': replacement_end,
+            'replaces_publication_id': amended['publication_id'],
+        })['workspace']
+        replacement = h.publish(h.shift(replacement, people=[person], **slot)['workspace'])
+        earlier, later = events(client.get(path))
+        assert earlier == moved
+        assert later['DTSTART'] == first['DTSTART'] and later['UID'] != earlier['UID']
+
+        retained = h.workspace('Amend the retained duty', base=amended['publication_id'])
+        retained = h.publish(move_duty(h, retained, offset=timedelta(hours=1)))
+        new = h.workspace('Amend the replacement duty', start=replacement_start, end=replacement_end,
+                          base=replacement['publication_id'])
+        h.publish(move_duty(h, new, offset=timedelta(hours=1)))
+        after = events(client.get(path))
+        assert [duty['UID'] for duty in after] == [earlier['UID'], later['UID']]
+        assert all(new_duty['DTSTART'] != old['DTSTART'] for new_duty, old in zip(after, (earlier, later)))
+
+        removal = h.workspace('Remove the retained duty', base=retained['publication_id'])
+        copied, = h.detail(removal)['shifts']
+        removed = h.command('coordinator', 'shift.action', {'workspace_id': removal['id'],
+            'shift_ids': [copied['id']], 'action': 'remove', 'reason': 'Remove the retained duty'},
+            revision=removal['revision'])['workspace']
+        other = next(ident for ident in h.seed['people'] if ident != person)
+        h.publish(h.shift(removed, people=[other])['workspace'])
+        assert events(client.get(path)) == [after[1]]
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_replacement_keeps_the_surviving_reservation_uid_in_a_shared_slot(h):
+    person = h.get('staff', '/api/me')['person_id']
+    path = h.command('staff', 'calendar_feed.create', {})['path']
+    first_day, last_day = '2026-10-06', '2026-10-11'
+    start, middle, end = ('2026-10-06T08:00:00+03:00', '2026-10-06T10:00:00+03:00',
+                          '2026-10-06T12:00:00+03:00')
+
+    def historical_bounds(mapper, connection, publication):
+        # Older publications could store a reservation shorter than its session.
+        publication.snapshot = {**publication.snapshot, 'shifts': [
+            {**shift, 'start': start, 'end': end} for shift in publication.snapshot['shifts']
+        ]}
+
+    def publish_historical(draft):
+        event.listen(m.Publication, 'before_insert', historical_bounds)
+        try:
+            return h.publish(draft)
+        finally:
+            event.remove(m.Publication, 'before_insert', historical_bounds)
+
+    original = h.shift(h.workspace(), start, middle, people=[person])['workspace']
+    original = publish_historical(h.shift(original, middle, end, people=[person])['workspace'])
+
+    with TestClient(h.app, base_url=h.settings.public_origin) as client:
+        removed, kept = events(client.get(path))
+        assert removed['DTEND'] == kept['DTSTART'] and removed['UID'] != kept['UID']
+        replacement = h.command('coordinator', 'workspace.create', {
+            'name': 'Keep the later reservation', 'starts_on': first_day, 'ends_on': last_day,
+            'replaces_publication_id': original['publication_id'],
+        })['workspace']
+        published = publish_historical(h.shift(replacement, middle, end, people=[person])['workspace'])
+        current, = events(client.get(path))
+        assert current['UID'] == kept['UID']
+        assert (current['DTSTART'], current['DTEND']) == (kept['DTSTART'], kept['DTEND'])
+
+        amendment = h.workspace('Amend retained reservation', start=first_day, end=last_day,
+                                base=published['publication_id'])
+        copied, = h.detail(amendment)['shifts']
+        payload = {key: copied[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'attributes')}
+        payload.update(workspace_id=amendment['id'], shift_id=copied['id'], start=middle, end=end,
+                       participants=[{'person_id': person, 'start': middle, 'end': end}])
+        edited = h.command('coordinator', 'shift.update', payload, revision=amendment['revision'])['workspace']
+        h.publish(edited)
+        amended, = events(client.get(path))
+        assert amended['UID'] == kept['UID']
 
 
 def test_new_publication_changes_etag(h, subscription):

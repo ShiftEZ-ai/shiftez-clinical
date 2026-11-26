@@ -11,6 +11,37 @@ from packages.contracts import schemas as s
 from tests.governance_support import identity
 
 
+def test_partial_people_update_preserves_omissions_and_undo_restores_preimage(pg):
+    before = pg.configure('people', {
+        'display_name': 'Synthetic person', 'active': False, 'inactive_from': '2026-10-01',
+        'title': 'Synthetic title', 'staff_number': 'T42', 'directory_order': 37,
+        'work_phone': '555018811', 'work_extension': '4321', 'pager': '551122',
+        'short_code': 'P42', 'tags': ['Synthetic tag'],
+    })['record']
+    value = {'display_name': 'Updated synthetic person', 'title': '', 'inactive_from': None, 'tags': []}
+    payload = {'catalogue': 'people', 'value': value, 'reason': 'Edit synthetic person'}
+    command = {'kind': 'catalogue.update', 'target_id': before['id'],
+               'expected_revision': before['revision'], 'payload': payload}
+    original = {key: before[key] for key in s.PersonInput.model_fields}
+    wanted = {**original, **value}
+    preview = pg.client('admin').post('/api/catalogue/preview', json=command)
+    assert preview.status_code == 200, preview.text
+    trial = preview.json()
+    outcome = pg.command('admin', command['kind'], payload, before['id'], before['revision'],
+                         expected_fingerprint=trial['source_fingerprint'])
+    after = outcome['record']
+    assert {key: after[key] for key in wanted} == wanted
+    assert {key: trial['proposed'][key] for key in wanted} == wanted
+    assert outcome['previous_value'] == original
+    undone = pg.configure('people', outcome['previous_value'], after['id'], after['revision'])['record']
+    assert {key: undone[key] for key in original} == original
+    with transaction(pg.app.state.engine) as db:
+        history = db.query(m.DefinitionHistory).filter_by(kind='people', object_id=before['id']).order_by(
+            m.DefinitionHistory.object_revision).all()
+        assert [{key: row.snapshot[key] for key in original} for row in history] == [original, wanted, original]
+        assert db.query(m.AuditEvent).filter_by(action='catalogue.update', target_id=before['id']).count() == 2
+
+
 @pytest.mark.parametrize('role', s.ROLE_NAMES)
 def test_new_department_person_returns_empty_records_for_authorized_roles(h, role):
     if role not in h.seed['identities']:

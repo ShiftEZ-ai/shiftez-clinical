@@ -726,6 +726,21 @@ def working_branches(default):
     return {default} if default == "main" else {default, "main", "preview"}
 
 
+def release_branch(branch):
+    return re.fullmatch(r"release/v[0-9]+\.[0-9]+\.[0-9]+", branch) is not None
+
+
+def working_branch(branch, default):
+    return branch in working_branches(default) or release_branch(branch)
+
+
+def push_base(data, branch, candidate):
+    before = commit(data["before"])
+    if release_branch(branch) and data.get("created") is True and before == "0" * 40:
+        return candidate
+    return before
+
+
 def event():
     data = decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     repo = data["repository"]
@@ -733,6 +748,34 @@ def event():
         raise ValueError("Unexpected repository or default branch")
     default_branch(data)
     return data
+
+
+def require_ancestor(ancestor, descendant, message):
+    try:
+        git("merge-base", "--is-ancestor", ancestor, descendant)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        raise ValueError(message) from None
+
+
+def pr_test_base(data, candidate):
+    pr = data["pull_request"]
+    event_base = commit(pr["base"]["sha"])
+    if os.getenv("TRUSTED_BOOTSTRAP") == "true":
+        return event_base
+    head = commit(pr["head"]["sha"])
+    if candidate != commit(os.environ["GITHUB_SHA"]):
+        raise ValueError("PR candidate must match the event merge commit")
+    parents = git("rev-list", "--parents", "-n", "1", candidate).decode().split()
+    if len(parents) != 3 or parents[0] != candidate or parents[2] != head:
+        raise ValueError("PR candidate must have two parents with the event head second")
+    base = commit(parents[1])
+    require_ancestor(event_base, base, "PR merge base does not contain the event base")
+    # The full-history checkouts fetch every target branch into refs/remotes/origin.
+    target = "refs/remotes/origin/" + pr["base"]["ref"]
+    require_ancestor(base, target, "PR merge base is not on the target branch")
+    return base
 
 
 def fetch(ref, expected=None, *, allow_missing=False):
@@ -780,12 +823,11 @@ def bootstrap(data, kind, base):
 def guard():
     data = event()
     default = default_branch(data)
-    targets = working_branches(default) - {"preview"}
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
         pr = data["pull_request"]
         branch = pr["base"]["ref"]
-        if branch not in targets:
+        if branch == "preview" or not working_branch(branch, default):
             print("Policy is not required for this PR target")
             return
         if pr["base"]["repo"]["id"] != REPOSITORY or type(data["number"]) is not int or data["number"] < 1:
@@ -800,9 +842,9 @@ def guard():
             raise ValueError("Preview is never promoted into dev")
     elif kind == "merge_group":
         group = data["merge_group"]
-        if group["base_ref"] not in {"refs/heads/" + name for name in targets}:
-            raise ValueError("Unexpected queue target")
         branch = group["base_ref"].removeprefix("refs/heads/")
+        if (group["base_ref"] == branch or branch == "preview" or not working_branch(branch, default)):
+            raise ValueError("Unexpected queue target")
         base, head = commit(group["base_sha"]), commit(group["head_sha"])
         fetch(base, base)
         candidate_sha = fetch(head, head)
@@ -819,7 +861,7 @@ def guard():
             workflow_privacy.check(read_file(candidate, path).decode("utf-8"))
     migration_floor(migrations(base), migrations(candidate))
     initial = bootstrap(data, kind, base)
-    if branch != default:  # the release branch main, only while the default is dev
+    if branch == "main" and default == "dev":
         dev_tip = fetch("refs/heads/" + default)
         source = accepted_dev_commit(candidate, dev_tip)
         if candidate != tree(head):
@@ -844,7 +886,7 @@ def guard():
         changed = [p.decode("utf-8") for p in paths(git(
             "diff", "--name-only", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", comparison, "--"))]
         source = commit(git("rev-parse", "HEAD").decode().strip())
-        inventory = control_inventory(source)
+        inventory = control_inventory(base if release_branch(branch) else source)
         unresolved = []
         if (any(path.startswith((".github/workflows/", ".github/actions/")) for path in changed)
                 or inventory["helpers"].intersection(changed)):
@@ -876,7 +918,7 @@ def guard():
         report = findings_report(branch, base, head, candidate, rows, source, candidate_sha, unresolved)
         if not initial and any(row["path"] == KNOWN for row in report["tier1"]):
             raise ValueError("Known-failures changes must only remove existing entries")
-        preview = fetch("refs/heads/preview", allow_missing=True)
+        preview = fetch("refs/heads/preview", allow_missing=True) if branch == default else None
         if preview is not None:
             preview_merges = set(git("rev-list", "--first-parent", "--merges", preview, "--not", base).splitlines())
             incoming = set(git("rev-list", head, "--not", base).splitlines())
@@ -906,7 +948,8 @@ def ci_context():
     default = default_branch(data)
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
-        branch, base = data["pull_request"]["base"]["ref"], commit(data["pull_request"]["base"]["sha"])
+        branch = data["pull_request"]["base"]["ref"]
+        base = pr_test_base(data, git("rev-parse", "HEAD").decode().strip())
     elif kind == "merge_group":
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
@@ -914,16 +957,16 @@ def ci_context():
         branch, base = default, commit(git("rev-parse", "HEAD").decode().strip())
     else:
         branch, base = os.environ["GITHUB_REF"].removeprefix("refs/heads/"), commit(git("rev-parse", "HEAD").decode().strip())
-    if branch not in working_branches(default):
+    if not working_branch(branch, default):
         raise ValueError("CI supports only the working branches")
-    census_base = commit(data["before"]) if kind=="push" else base
+    census_base = push_base(data, branch, base) if kind == "push" else base
     release = branch == "main" and default != "main"
     if release:
         base = accepted_dev_commit(tree("HEAD"), fetch("refs/heads/" + default))
     elif branch == "preview":
         base = fetch("refs/heads/" + default)
     elif kind == "push":
-        base = commit(data["before"])
+        base = census_base
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write("census_base_sha=" + census_base + "\nbase_sha=" + base + "\nrelease=" + str(release).lower() + "\n")
 

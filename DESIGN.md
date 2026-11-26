@@ -1,6 +1,6 @@
 # Design
 
-Owned by the Design Lead; changed only through a reviewed PR. Engineering rules are in AGENTS.md, delivery rules in DELIVERY.md.
+The Design Lead owns this file, and edits land through a PR on green CI without review under the review policy in AGENTS.md. Engineering rules are in AGENTS.md, delivery rules in DELIVERY.md.
 Mockup names and numbers are illustrative only; nothing from them is seeded into the application.
 
 ## Visual contract
@@ -152,11 +152,11 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
   keyboard way, no pointer equivalent yet) and the native × of search fields.
 - Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
-  options, menu rows, tabs, search fields, pickers, link buttons, the skip link). Pills and chips that act as buttons,
+  options, menu rows, tabs, search fields, pickers, link buttons, the skip link). A checkbox or radio keeps its 24 px box; its target is its whole label row (at least 44 px tall), or, with no visible label (row selection), the centred invisible 44 px `::after`. Pills and chips that act as buttons,
   issue markers, and the one-line footer keep their look and take a centred invisible 44 px `::after` as their target. A person's name in running
   text is exempt (SC 2.5.8 Inline). `tests/test_browser_icon_alignment.py` measures every visible target at 390.
   The phone footer row is 44 px (the target height); items keep their size (≤ 26 px, one line), and the bottom
-  safe-area inset sits below that row, never inside it.
+  safe-area inset sits below that row, never inside it. A view's key line on a phone is 44 px tall in the same way (still one line), so its "+N" is a full target and is never clipped.
 - Nothing overflows: long or unbreakable words wrap (`overflow-wrap` on `body`); a chip, a badge or a one-line label
   that must stay on one line ends in an ellipsis (`.chip-text`, `.truncate`, `.clamp-2` for two lines) with its full
   wording in the shared hover tip while it is cut, never a screen's own title (so no content is lost: WCAG 2.2 SC 1.4.12
@@ -397,8 +397,8 @@ and a desktop window narrowed below it gets the same rule at once.
 - Ctrl/⌘ K opens the command menu from anywhere (each typed word matches a word start, in any order); `?` lists
   keyboard shortcuts.
 - A failed refresh (server error or offline) never presents saved data as current: a page showing data keeps its header,
-  toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message) with Retry inside it (app.ts
-  `showStale`); a page that showed nothing says only "This page didn't load", Retry inside the message. In a tab still
+  toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message when it is a sentence for people, its problem detail, never a bare status phrase such as "Service unavailable") with Retry inside it (app.ts
+  `showStale`); a page that showed nothing shows `readFailed()` (above): "Couldn’t load <page>." with the same server-message rule and Retry inside it, plus Report this problem on a 5xx or lost connection. In a tab still
   running an older bundle than the pulse's `build`, that failure reloads once onto the new one ("Updated to the latest
   version"), or, with anything unsaved open, offers "Reload to update" instead and keeps the update bar. An
   error message, an error notice or an uncaught error there (a bug or server fault) takes the same one step
@@ -633,7 +633,7 @@ and a desktop window narrowed below it gets the same rule at once.
   Must-fix person row's ⋯, never for safety kinds) opens the line panel prefilled from the binding line; by default it
   is a rota-scoped adjustment with a required justification, applied to the draft at once and reviewed with the rota; "Change the department rule…" is the secondary, propose → approve → activate path. An approver
   decides a proposed line in the same panel: says + relation, the proposer's reason, Effect, then Decline… and one
-  "Approve and activate" that waits while the effect is checking. + New line opens the new
+  "Approve and activate" that waits while the effect is checking, saying why in words just before it. + New line opens the new
   line in the panel (through the unsaved-changes guard) with no numbers yet, so nothing is typed into the line that was
   open; it is only a draft in the panel (never in the rule's check) until it has a number: Keep change says "Add a
   minimum, maximum or target" until then, and closing drops it without a question. "This line says" follows every edit before Keep change: effective numbers (inherited ones too), their

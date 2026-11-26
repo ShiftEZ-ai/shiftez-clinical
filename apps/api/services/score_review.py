@@ -5,22 +5,33 @@ from apps.api.snapshots import domain_snapshot
 from packages.contracts import schemas as s
 from packages.domain.score import score_review_lines, schedule_score
 from packages.domain.validation import evaluate
+from packages.domain.input_manifest import digest
 from .common import scoped
+from .read_projections import cached, CANONICAL_AUDIENCE
 from .rota_summary import reusable_check
 
 
 def read(db, actor, workspace_id):
     require_role(actor, *s.PERMISSIONS['schedule.read_team'])
     workspace = scoped(db, m.Workspace, workspace_id, actor)
-    data = domain_snapshot(db, workspace, current_generation_defaults=workspace.status == 'published')
+    # Review checks currency using the fingerprint alone. Source evidence belongs to retained checks.
+    data = domain_snapshot(db, workspace, current_generation_defaults=workspace.status == 'published',
+                           include_manifest_sources=False)
     options = data.get('generation_options')
     if reusable_check(workspace.validation, data['fingerprint'], options):
         validation = workspace.validation
-        scored = validation['score']
+        result = score_review_lines(data, validation, options, validation['score'])
     else:
-        validation = evaluate(data, explain_findings=False)
-        scored = schedule_score(data, validation, options)
-    result = score_review_lines(data, validation, options, scored)
+        def build(_workspace_id):
+            validation = evaluate(data, explain_findings=False)
+            scored = schedule_score(data, validation, options)
+            return score_review_lines(data, validation, options, scored)
+
+        # The validation fingerprint omits labels that appear in the review.
+        inputs = {key: value for key, value in data.items() if key not in ('input_manifest', '_person_rows')}
+        stamp = digest([inputs, getattr(data, 'read_quality', None)])
+        result = cached(db, [workspace.id], 'score_review', {workspace.id: stamp}, build,
+                        audience=CANONICAL_AUDIENCE)[workspace.id]
     return s.ScoreReview(
         workspace_id=workspace.id,
         workspace_revision=workspace.revision,

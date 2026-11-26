@@ -1,16 +1,23 @@
-"""Small exact-impact oracles and deterministic work guards; no host timing or scale fixture."""
+"""Exact-impact oracles and deterministic work guards for catalogue previews."""
 from copy import deepcopy
+from datetime import datetime, timezone
+import hashlib
 import json
-import re
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, func, select, text
 
+from apps.api import models as m, snapshots
+from apps.api.auth import Actor
+from apps.api.db import transaction
 from apps.api.services import catalogue_preview as preview_service
 from apps.api.serialization import json_value
-from packages.domain import finding_causes
-from packages.domain.validation import evaluate
+from packages.contracts.schemas import Command
 from packages.domain.finding_identity import finding_index
+from packages.domain import finding_causes
+from packages.domain.validation import check_contracts, evaluate
+from .clock_support import freeze_clock
+from .test_backend_reads_scale import read_department
 from .test_catalogue_preview import preview, state
 from .test_contact_preview_perf import change, person
 from .test_finding_causes import cause_data, cause_snapshot, quota, type_definition, uid
@@ -99,9 +106,6 @@ def test_comparisons_preserve_explained_contract_and_bound_explanation_work(caus
                       'comparison_checks': 2, 'explained_checks': full_checks}))
 
 
-DEPARTMENT_ROW = re.compile(r'FROM departments\s+WHERE departments\.id = ')
-
-
 @pytest.mark.parametrize('published', [False, True])
 @pytest.mark.parametrize('operation', ['create', 'archive'])
 def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation):
@@ -116,13 +120,33 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
                {'kind': 'catalogue.create', 'payload': {'catalogue': 'people', 'value': {
                    'display_name': 'Fictional new person', 'tags': ['New clinical tag']}, 'reason': 'Preview only'}})
     real_inputs, real_snapshot = preview_service.snapshot_inputs, preview_service.domain_snapshot
-    phase_inputs, reads, reading, captures = [], {'shared': [], 'fresh': []}, [], []
+    phase_inputs, reads, reading, captures = [], {'shared': [], 'fresh': [], 'trial': []}, [], []
+    capture_phases = []
+    catalogue_reads = {'shared': 0, 'fresh': 0}
+    project_catalogue = snapshots._snapshot_inputs
+    projecting_catalogue = False
 
     def sql_read(conn, cursor, statement, parameters, context, executemany):
         if reading and statement.lstrip().upper().startswith('SELECT'):
             reads[reading[-1]].append(statement)
+            if projecting_catalogue:
+                catalogue_reads[reading[-1]] += 1
+
+    def project(db, org):
+        nonlocal projecting_catalogue
+        projecting_catalogue = True
+        try:
+            return project_catalogue(db, org)
+        finally:
+            projecting_catalogue = False
+
+    replay_connections = []
 
     def inputs(db, org):
+        if phase_inputs and db.get_bind().dialect.name == 'sqlite':
+            connection = db.connection()
+            event.listen(connection, 'before_cursor_execute', sql_read)
+            replay_connections.append(connection)
         reading.append('shared')
         try:
             result = real_inputs(db, org)
@@ -131,7 +155,25 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
         phase_inputs.append(result)
         return result
 
+    capture_sources = preview_service.capture_catalogue_sources
+
+    def capture(db, *args, **kwargs):
+        assert db.connection().info.get('rota_write') and db.in_nested_transaction()
+        reading.append('trial')
+        try:
+            return capture_sources(db, *args, **kwargs)
+        finally:
+            reading.pop()
+
     def snapshot(db, workspace, **kwargs):
+        under_writer = bool(db.connection().info.get('rota_write'))
+        capture_phases.append((under_writer, db.in_nested_transaction()))
+        if not under_writer:
+            if db.get_bind().dialect.name == 'postgresql':
+                assert db.scalar(text('SHOW transaction_read_only')) == 'on'
+                assert db.scalar(text('SHOW transaction_isolation')) == 'repeatable read'
+            else:
+                assert db.connection().connection.driver_connection.in_transaction
         shared_before = deepcopy(kwargs['shared_inputs'])
         reading.append('shared')
         try:
@@ -140,7 +182,8 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
             reading.pop()
         reading.append('fresh')
         try:
-            fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items() if k != 'shared_inputs'})
+            fresh = real_snapshot(db, workspace, **{k: v for k, v in kwargs.items()
+                                                     if k not in {'shared_inputs', '_event_currency'}})
         finally:
             reading.pop()
         assert result == fresh and kwargs['shared_inputs'] == shared_before
@@ -155,13 +198,17 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
         return result
 
     monkeypatch.setattr(preview_service, 'snapshot_inputs', inputs)
+    monkeypatch.setattr(preview_service, 'capture_catalogue_sources', capture)
     monkeypatch.setattr(preview_service, 'domain_snapshot', snapshot)
     monkeypatch.setattr(preview_service, 'evaluate_preview', compare)
+    monkeypatch.setattr(snapshots, '_snapshot_inputs', project)
     event.listen(h.app.state.engine, 'before_cursor_execute', sql_read)
     try:
         result = preview(h, command)
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', sql_read)
+        for connection in replay_connections:
+            event.remove(connection, 'before_cursor_execute', sql_read)
     assert len(phase_inputs) == 2 and phase_inputs[0] is not phase_inputs[1]
     if operation == 'archive':
         assert phase_inputs[0]['people'][row['id']]['active'] is True
@@ -174,13 +221,131 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
         assert phase_inputs[0]['tags'] != phase_inputs[1]['tags']
     assert phase_inputs[1]['organisation']['input_revision'] == phase_inputs[0]['organisation']['input_revision'] + 1
     assert len(captures) == (5 if published else 6)
+    assert capture_phases == [(False, False)] * len(captures)
     assert result['workspace_count'] == len(result['impacts']) == 2
     assert state(h) == unchanged and person(h) == row
-    # Each catalogue table is scanned once per phase, independently of the workspace count.
+    # Read the actual people table once before and once within the trial. The
+    # second shared projection scans the captured people, with no live fallback.
     scans = {mode: sum('FROM people' in sql for sql in statements) for mode, statements in reads.items()}
-    assert scans == {'shared': 2, 'fresh': len(captures)}
-    # Department rows retained by the request serve both paths alike, so compare the catalogue reads only.
-    catalogue = {mode: [sql for sql in statements if not DEPARTMENT_ROW.search(sql)] for mode, statements in reads.items()}
-    assert len(catalogue['shared']) < len(catalogue['fresh'])
+    assert scans == {'shared': 2, 'fresh': len(captures), 'trial': 1}
+    # The fresh oracle uses the same sessions after the real snapshots, so its
+    # baseline and other session-local reads are already warm. Count catalogue projection work.
+    assert catalogue_reads['shared'] < catalogue_reads['fresh']
     print(json.dumps({'operation': operation, 'published': published, 'people_scans': scans,
+                      'catalogue_selects': catalogue_reads,
                       'selects': {mode: len(statements) for mode, statements in reads.items()}}))
+
+
+# The default fixture keeps the original SQLite node ids; this runs the same assertions on PostgreSQL.
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('operation', ['create', 'archive'])
+def test_phase_batched_inputs_match_fresh_snapshots_on_postgresql(h, monkeypatch, published, operation):
+    test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation)
+
+
+def spread_department(h):
+    """The standard department with its duty rows spread across forty forward rotas."""
+    engine = h.app.state.engine
+    source = read_department(h)
+    with transaction(engine, write=True) as db:
+        first = db.get(m.Workspace, source['id'])
+        workspaces = [m.Workspace(department_id=first.department_id, name=f'Impact rota {i:02}',
+            starts_on=first.starts_on, ends_on=first.ends_on, created_by=first.created_by,
+            last_edited_by=first.last_edited_by) for i in range(39)]
+        db.add_all(workspaces)
+        db.flush()
+        workspaces.append(first)
+        shifts = list(db.scalars(select(m.Shift).where(m.Shift.workspace_id == first.id).order_by(m.Shift.start, m.Shift.id)))
+        for index, shift in enumerate(shifts):
+            shift.workspace_id = workspaces[index % len(workspaces)].id
+        people = db.scalar(select(func.count()).select_from(m.Membership)
+                           .where(m.Membership.department_id == first.department_id))
+        rules = db.scalar(select(func.count()).select_from(m.Policy).where(m.Policy.department_id == first.department_id))
+        assert (people, len(shifts), rules, len(workspaces)) == (163, 768, 1004, 40)
+        return first.id
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypatch, backend):
+    from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, capture_issued_sources, catalogue_source_reader
+
+    freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
+    h = scale_harness(backend)
+    first = spread_department(h)
+    engine = h.app.state.engine
+    identity = h.seed['identities']['admin']
+    actor = Actor(identity, h.seed['department_id'], h.seed['organisation_id'], 'Synthetic operator',
+                  frozenset({'admin', 'coordinator'}), None, 'synthetic')
+    programme = h.configure('programmes', {'name': 'Scale programme', 'starts_on': '2020-01-01'})['record']
+    other = h.configure('programmes', {'name': 'Other programme', 'starts_on': '2020-01-01'})['record']
+    tag = h.configure('tags', {'name': 'Scale audience', 'labels': ['people']})['record']
+    old_person, new_person = h.seed['people'][:2]
+    membership = h.configure('programme_memberships', {'programme_id': other['id'], 'person_id': old_person,
+        'starts_on': '2027-01-01', 'ends_on': '2027-03-01'})['record']
+    with transaction(engine, write=True) as db:
+        focus = db.get(m.Workspace, first)
+        retired = m.Workspace(department_id=actor.department_id, name='Replaced rota', status='superseded',
+            starts_on=focus.starts_on, ends_on=focus.ends_on, created_by=identity, last_edited_by=identity,
+            validation={'wishes': []})
+        db.add(retired)
+        db.flush()
+        db.add(m.Publication(department_id=actor.department_id, workspace_id=retired.id, current=False,
+            sequence=1, starts_on=retired.starts_on, ends_on=retired.ends_on, published_by=identity,
+            snapshot={}, validation={'contracts': check_contracts()}, fingerprint='0' * 64))
+        db.add(m.StaffWish(department_id=actor.department_id, person_id=old_person, kind='prefer_on',
+            first_day=focus.starts_on, last_day=focus.starts_on, points=1, created_by=identity,
+            repeat={'weekdays': [focus.starts_on.weekday()], 'starts_on': focus.starts_on.isoformat()}))
+        # A legacy Apply receipt derives the population from its predicate and current links.
+        db.add(m.Job(workspace_id=first, department_id=actor.department_id, requested_by=identity,
+            kind='generation', status='applied', input_fingerprint='0' * 64, input_snapshot={},
+            read_metadata={'input_snapshot': {'generation_scope': {'conditions': {'match': 'all', 'conditions': [
+                {'field': 'person_ids', 'op': 'any', 'values': [tag['id']]}]}}}, 'result': {}}))
+
+    cases = {
+        'create': Command(kind='catalogue.create', payload={'catalogue': 'people',
+            'value': {'display_name': 'Scale trial person', 'tags': ['Scale audience']}, 'reason': 'Preview creation'}),
+        'move': Command(kind='catalogue.update', target_id=membership['id'], expected_revision=membership['revision'],
+            payload={'catalogue': 'programme_memberships', 'reason': 'Preview dated change', 'value': {
+                'programme_id': programme['id'], 'person_id': new_person, 'starts_on': '2026-10-16', 'ends_on': '2026-11-01'}}),
+        'link': Command(kind='catalogue.update', target_id=tag['id'], expected_revision=tag['revision'],
+            payload={'catalogue': 'tags', 'reason': 'Preview audience change', 'value': {'name': tag['name'], 'labels': ['people']},
+                     'members': {'add': [{'kind': 'people', 'id': old_person}]}}),
+    }
+
+    def snapshot_bytes(db, w, shared, *, operational):
+        db.flush()
+        snapshot = snapshots._domain_snapshot(db, w, operational=operational, shared_inputs=shared,
+            mandatory_rules=operational)
+        encoded = json.dumps((snapshot, getattr(snapshot, 'read_quality', None)),
+                             sort_keys=True, separators=(',', ':')).encode()
+        return hashlib.sha256(encoded).hexdigest(), snapshot.get('applied_planning_population'), len(snapshot['wishes'])
+
+    for case, command in cases.items():
+        with transaction(engine, write=True) as db:
+            revision = db.get(m.Organisation, actor.organisation_id).input_revision
+            workspaces = preview_service.candidates(db, actor)
+            assert len(workspaces) == 40
+            trial = db.begin_nested()
+            try:
+                issued = capture_issued_sources(db, actor.organisation_id, workspaces)
+                preview_service.write_catalogue(db, actor, command, update=case != 'create', preview_only=True)
+                captured = capture_catalogue_sources(db, actor.organisation_id, workspaces,
+                                                     captured_at=m.now(), issued_sources=issued, before_baselines={})
+                proposed = snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
+                assert proposed['organisation']['input_revision'] > revision
+                expected = {(w.id, operational): snapshot_bytes(db, w, proposed, operational=operational)
+                            for w in workspaces for operational in (True, False)}
+            finally:
+                trial.rollback()
+            assert db.get(m.Organisation, actor.organisation_id).input_revision == revision
+        with catalogue_source_reader(engine, captured, actor) as (db, _):
+            detached_org = db.get(m.Organisation, actor.organisation_id)
+            shared = snapshots.snapshot_inputs(db, detached_org)
+            assert shared['organisation']['input_revision'] == proposed['organisation']['input_revision']
+            for (ident, operational), value in expected.items():
+                assert snapshot_bytes(db, db.get(m.Workspace, ident), shared, operational=operational) == value, case
+        if case == 'link':
+            assert old_person in expected[first, True][1]
+        # A superseded publication must not masquerade as an unissued settled rota and close these wish days.
+        assert expected[first, True][2] > 0

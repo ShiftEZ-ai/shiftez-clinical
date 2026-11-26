@@ -4,7 +4,7 @@ import pytest
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.worker.main import process_one
-from packages.contracts.schemas import JobResult
+from packages.contracts.schemas import EDIT_DELTA_LIMITS, JobResult
 from .test_template_scheduler_audit import lead_proposal
 
 
@@ -19,6 +19,36 @@ def assert_receipt(h, job_id, workspace_id, expected):
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Job, job_id).result['applied'] == expected
     return detail['result']
+
+
+def test_repeated_generation_apply_leaves_draft_and_receipt_unchanged(h, monkeypatch):
+    w = h.shift(h.workspace(), people=[])['workspace']
+    job = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'},
+                    revision=w['revision'])['job']
+    assert process_one(h.app.state.engine)
+    payload = {'workspace_id': w['id'], 'job_id': job['id'], 'reason': 'Apply reviewed placements'}
+    # Exercise the reply path that exceeds the ordinary edit patch limits.
+    monkeypatch.setitem(EDIT_DELTA_LIMITS, 'shifts', 0)
+    reply = h.command('coordinator', 'generation.apply', payload, revision=w['revision'])
+    assert reply['reconciliation']['status'] == 'applied'
+    applied = reply['workspace']
+    detail = h.detail(applied)
+    stored_job = h.get('coordinator', '/api/jobs/' + job['id'])['job']
+    assert stored_job['status'] == 'applied' and stored_job['result']['applied']['added_count'] > 0
+    assert reply['job']['id'] == stored_job['id']
+    assert reply['job']['status'] == stored_job['status']
+    assert reply['job']['revision'] == stored_job['revision']
+    assert reply['job']['result']['applied'] == stored_job['result']['applied']
+    assert reply['delta']['base_revision'] == w['revision']
+    assert reply['delta']['revision'] == applied['revision']
+    assert reply['delta']['shifts'] == reply['shifts'] and reply['shifts']
+    assert reply['delta']['coverage']['items']
+
+    for revision, code in ((w['revision'], 'STALE_REVISION'), (applied['revision'], 'JOB_STATE')):
+        refused = h.command('coordinator', 'generation.apply', payload, revision=revision, status=409)
+        assert refused['error']['code'] == code
+        assert h.detail(applied) == detail
+        assert h.get('coordinator', '/api/jobs/' + job['id'])['job'] == stored_job
 
 
 @pytest.mark.parametrize('harness_name', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
