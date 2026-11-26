@@ -131,6 +131,7 @@ import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
 import {menu,menuSource,opens} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {overflowMore,type MoreNoun} from './dom.js';  // the one "+N" (DESIGN D8)
 import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} from './draft_baseline.js';
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
@@ -520,14 +521,15 @@ const ctx=():Context=>({get me(){return me!;},get catalogues(){return catalogues
   fill:(id,s,person)=>openFill(id,s,undefined,person)});
 /** A draft session's fill panel on the Schedule (for an issue, or with its search set to one person's name). */
 function openFill(id:string,s:Row,issue?:FillIssue,q?:string){workspaceId=id;draftNone=false;queueFill(id,String(s.id),undefined,issue,q);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}
-const choices=(items:Row[])=>items.map(r=>({value:r.id,label:labelOf(r)}));
+// People are listed by name; other records keep the order the server gives them (ranks and leave types have their own).
+const choices=(items:Row[],people=false)=>{const list=items.map(r=>({value:r.id,label:labelOf(r)}));return people?list.sort(byLabel):list;};
 // What the bulk screens read from the app (bulk.ts): condition fields, a field's choices, record names, roles.
 // The catalogue a field picks from is its contract `ref`; a field named <thing>_id picks from <things> when it has none.
 const refOf=(key:string,ref?:string)=>ref||[key.replace(/_ids?$/,'s'),key.replace(/y_ids?$/,'ies'),key.replace(/_ids?$/,'')].find(k=>catalogues[k]);
 setBulkContext({
   conditionFields:keys=>[...ruleConditionFields(ctx()).filter(f=>keys.includes(f.key)&&!isTyped(f.key)),...typedFields(keys)],
   choices:(f,key,collection)=>{if(key==='weekdays')return weekdayOptions();if(key==='tags')return [...new Set(rows(collection).flatMap(r=>(r.tags||[]) as string[]))].sort().map(t=>({value:t,label:t}));
-    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false)):undefined;},
+    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false),kind==='people'):undefined;},
   permits:(...roles)=>permits(...roles),
   stagedCount:()=>Number((me as Row|null)?.bulk_staged_count||0),
   reviewCount:()=>Number((me as Row|null)?.bulk_review_count||0),identity:()=>me?.identity_id||'',
@@ -3381,8 +3383,8 @@ function printSheet(){
       try{
         const data=await read(selected.id,selected.current);if(!data||!body.isConnected||pub.input.value!==selected.id)return;
         // Names and allowed filters belong to this published version, including people and clinics since renamed or retired.
-        const people=choices(Object.values(data.snapshot.people)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
-        const clinics=choices(Object.values(data.snapshot.services)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
+        const people=choices(Object.values(data.snapshot.people),true);
+        const clinics=choices(Object.values(data.snapshot.services)).sort(byLabel);
         // S-23: the label is "Clinics"; what no tick means is said once beside it, not in the label.
         if(full&&clinics.length){service=multi('Clinics',clinics);service.wrap.append(el('small',{class:'hint'},'None ticked prints every clinic.'));}
         if(full&&people.length){person=select('Print person',people,'',false,'All people');person.wrap.classList.add('span-2');}
@@ -3889,7 +3891,7 @@ function scoreCheckHooks(){
   return {step,query:routeQuery,zone:zone(),canEdit:permits(CAPABILITY.COORDINATOR),canRead:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR),canAddMissing:may('score_check.add_missing'),
     go:(to:ScoreStep,q:Record<string,string>)=>navigate(routeHash('schedule',['benchmark',to],q).slice(1)),leave:()=>navigate('schedule'),
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
-    choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
+    choices:(kind:string)=>choices(rows(kinds[kind]||'people'),(kinds[kind]||'people')==='people'),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
     submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
@@ -6777,7 +6779,7 @@ async function exportsPage(target:HTMLElement){
     // Not awaited: the page is shown, and every other download works, while the people load (I-13). A row from a page
     // since replaced is detached, so a late answer changes nothing; a changed session is the shell's to handle.
     if(full&&pending)void publicationCache(pub.id,pub.current).data
-      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{})).sort((a,b)=>a.label.localeCompare(b.label)))))
+      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{}),true))))
       .catch(e=>{if(!sessionChanged(e))pending.replaceWith(calendar(null,true));});
   }
   if(subscription&&full)target.append(subscription);
@@ -7605,7 +7607,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   }
   const from=field('From','date',st().from,{required:true,min:first,max:last}),to=field('To','date',st().to,{required:true,min:first,max:last});
   from.input.addEventListener('change',()=>{st().from=from.input.value;keptSetup(st());syncRun();});to.input.addEventListener('change',()=>{st().to=to.input.value;keptSetup(st());syncRun();});
-  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort((a,b)=>a.label.localeCompare(b.label));
+  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort(byLabel);
   const clinics=el('div',{class:'field'},el('label',{'aria-hidden':'true'},'Clinics'),multiPick('Clinics',services,st().clinics=st().clinics.filter(c=>services.some(x=>x.value===c)),v=>{st().clinics=v;keptSetup(st());syncRun();},'All clinics').wrap);
   const scope=select('Assign into',[{value:'period',label:'All sessions in these dates'},{value:'open',label:'Open sessions only'},{value:'selected',label:'Selected sessions only'}],st().scope);
   scope.input.addEventListener('change',()=>{st().scope=scope.input.value;keptSetup(st());syncRun();});
@@ -8594,7 +8596,7 @@ async function auditPage(target:HTMLElement){
   const read=newest((path:string)=>get(path));
   // The people list (for the Person filter) is read once per visit; reloads skip it.
   const reload=async(first=true)=>{if(first)auditOffset=0;const next=await read(`/api/audit?offset=${auditOffset}&people=false&${auditQuery()}`);if(next){data=next;draw();}};
-  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'}))];
+  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'})).sort(byLabel)];
   const exportCsv=button('Export CSV',()=>download('/api/audit.csv?'+auditQuery()),'secondary small',{'data-tip':'Download every change matching these filters'});
   // Filters go to the server, so they span all history rather than one loaded page of 100.
   const bar=collectionToolbar({label:'Audit log',
