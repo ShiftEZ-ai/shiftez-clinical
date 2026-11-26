@@ -390,6 +390,34 @@ def test_a_single_choice_of_a_person_is_one_list_by_name_with_the_rank_on_the_ro
         picker.locator('.picker-chip').filter(has_text=RANKS[0]).click()
         assert listed(picker) == [f'Synthetic person {n}' for n in ranked[RANKS[0]]]
         expect(picker.locator('.picker-group')).to_have_count(0)
+        # "One rank" is judged over the list the picker opened with: a chip or a search that leaves one rank keeps it on the row.
+        expect(picker.locator('.picker-hint').filter(has_text=RANKS[0])).to_have_count(len(ranked[RANKS[0]]))
+        combo.fill('Synthetic person 10')
+        expect(picker.get_by_role('option')).to_have_count(1)
+        expect(picker.locator('.picker-hint')).to_contain_text(RANKS[0])
+    finally:
+        context.close()
+
+
+def test_a_single_choice_of_people_of_one_rank_never_repeats_the_rank_on_the_row(browser, live_server, h):
+    """Every person in the list holds the same rank: no row says it, before or after a search."""
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'people')
+        page.evaluate("""async () => {
+          const {select} = await window.importBundle('dom.js');
+          const people = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({value: 'p' + n, label: `Fictional person ${n}`, group: 'Fictional rank A', groupOrder: 0}));
+          const field = select('Fictional person', people);
+          const host = document.createElement('section'); host.id = 'picker-fixture'; host.className = 'panel';
+          host.append(field.wrap); document.querySelector('#main').prepend(host); }""")
+        page.locator('#picker-fixture').get_by_label('Fictional person', exact=True).click()
+        picker = page.locator('.picker')
+        people = picker.get_by_role('option', name=re.compile('^Fictional person'))
+        expect(people).to_have_count(9)
+        expect(picker.locator('.picker-hint')).to_have_count(0)
+        picker.get_by_role('combobox').fill('person 4')
+        expect(people).to_have_count(1)
+        expect(picker.locator('.picker-hint')).to_have_count(0)
     finally:
         context.close()
 
