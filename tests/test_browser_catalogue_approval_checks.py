@@ -114,6 +114,11 @@ def check_and_approve_in_panel(page, h, workspace, proposal, title):
     expect(effect).to_contain_text('Waiting to check · ')
     shot(page, 'catalogue-review-controls-' + proposal['id'], full_page=False)
     expect(approve).to_be_disabled()
+    # Issue 1248: all the while the drafts are checked, the disabled Approve says why in words beside it.
+    reason = review.locator('.rc-lp-foot .why-unavailable')
+    expect(reason).to_have_text('Waits until the effect of this change is known')
+    expect(reason).to_be_visible()
+    expect(approve).to_have_accessible_description(re.compile('Waits until the effect of this change is known'))
     # A check asked for and not started is shown as waiting; approving without it is offered only once it ended incomplete.
     expect(review.get_by_label('Approve without a complete check of these drafts', exact=True)).not_to_be_visible()
     assert policy(h, proposal['id'])['status'] == 'proposed'
@@ -134,6 +139,7 @@ def check_and_approve_in_panel(page, h, workspace, proposal, title):
     # The panel reads the effect again until it is known; a known effect needs no acknowledgement.
     expect(effect).to_contain_text(words, timeout=15000)
     expect(approve).to_be_enabled()
+    expect(reason).to_have_text('')
     expect(review.get_by_label('Approve without a complete check of these drafts', exact=True)).not_to_be_visible()
     assert h.detail(workspace)['shifts'] == before
     approve.click()
@@ -164,7 +170,8 @@ def test_catalogue_approval_checks_an_overlapping_rota_before_activation(browser
         navigate(page, 'rules/duties_per_week')
         page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
         # The panel is named after the change: the one added or changed line, else the rule.
-        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone', 'off': 'Change to Duties per week'}[origin]
+        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone',
+                 'off': 'Change to Duties per week · turns the rule off'}[origin]
         check_and_approve_in_panel(page, h, workspace, proposal, title)
         page.reload()
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'rules')
@@ -197,6 +204,8 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
         expect(review.get_by_text('Adds 1 problem', exact=True)).to_be_visible()
         approve = review.get_by_role('button', name='Approve and activate', exact=True)
         expect(approve).to_be_disabled()
+        reason = review.locator('.rc-lp-foot .why-unavailable')
+        expect(reason).to_have_text('Tick the box above first')
         disclosure = review.locator('details').filter(has=page.get_by_text('View problems', exact=True))
         open_problems = disclosure.locator('summary')
         expect(open_problems).to_have_accessible_name(f"View problems for {workspace['name']}")
@@ -209,12 +218,14 @@ def test_catalogue_approval_shows_and_acknowledges_added_problems(browser, live_
         expect(acknowledgement).not_to_be_checked()
         acknowledgement.check()
         expect(approve).to_be_disabled()
+        expect(reason).to_have_text('Give a reason (3 characters or more)')
         review.get_by_label('Reason', exact=True).fill('Reviewed the rest problem')
         expect(problems).to_be_visible()
         open_problems.press('Enter')
         expect(problems).to_have_count(0)
         expect(open_problems).to_be_focused()
         expect(approve).to_be_enabled()
+        expect(reason).to_have_text('')
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/api/commands')
                                   and r.request.post_data_json['kind'] == 'policy.activate') as response:
             approve.click()
@@ -254,6 +265,9 @@ def test_catalogue_approval_says_why_a_finished_check_refuses_activation(browser
         expect(effect.get_by_text('Adds 1 problem', exact=True)).to_have_count(0)
         approve = review.get_by_role('button', name='Approve and activate', exact=True)
         expect(approve).to_be_disabled()
+        reason = review.locator('.rc-lp-foot .why-unavailable')
+        expect(reason).to_be_visible()
+        expect(reason).to_have_text(words)
         expect(approve).to_have_accessible_description(words)
         again = review.get_by_role('button', name='Check again', exact=True)
         if blocker == 'RULE_INTRODUCES_CONFLICT':

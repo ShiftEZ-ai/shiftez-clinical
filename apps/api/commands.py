@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError, OperationalError
 from packages.contracts import schemas as s
 from . import models as m
-from .auth import authenticate, require_permission, require_role
+from .auth import authenticate, person_access, require_permission, require_role
 from .db import DatabaseWriteTimeout, retry_write, transaction
 from . import live
 from .schema import require_current_schema
@@ -156,7 +156,7 @@ def command_roles(command):
         return ["coordinator", "approver", "programme_lead"]
     if kind in {"policy.create", "policy.group", "rule.migrate_to_catalogue", "rule.acknowledge", "rule.unacknowledge"}:
         return ["admin", "coordinator"]
-    if kind == "request.create":
+    if kind in {"request.create", "request.edit", "request.undo_edit"}:
         return ["staff", "coordinator"]
     if kind in {"notification.ack", "notification.ack_all", "notification.unack", "notification.acknowledge", "session.logout", "session.revoke"} or kind.startswith("table_view.") or kind.startswith("calendar_feed."):
         return ALL_ROLES
@@ -520,6 +520,8 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.note_command(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
+    if kind in {"request.edit", "request.undo_edit"}:
+        return availability.edit_request(db, actor, command)
     if kind == "request.decide":
         return availability.decide_request(db, actor, command)
     if kind == "request.decide_many":
@@ -724,6 +726,11 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
         availability.lead_protects(db, actor, item["kind"], item["person_id"], item["start"], item["end"])
     if kind in {"request.decide", "request.decide_many", "request.undo"}:
         _authorize_request_results(db, actor, [(kind, result)])
+    if kind in {"request.edit", "request.undo_edit"}:
+        row = scoped(db, m.RequestRecord, result['record']['id'], actor)
+        person_access(db, actor, row.person_id)
+        availability.require_request_person(actor, row.person_id)
+        require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can read this change', 403)
     if kind.startswith("trainee_note."):
         from .services.training import note_access
         note_access(db, actor, result["record"]["person_id"])
@@ -778,6 +785,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if kind == "feedback.export_github" and db is not None:
         from .services import feedback
         return feedback.redact_export_result(db, actor, result, settings)
+    if kind in {'request.edit', 'request.undo_edit'}:
+        return {key: value for key, value in result.items() if key != '_request_edit_previous'}
     return {key: value for key, value in result.items() if key != 'path'} if kind == 'calendar_feed.create' else result
 
 
@@ -958,21 +967,43 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 ok, expiry = github_integrations.check_repository(repo, credential_token)
                 github_check = github_integrations.RepositoryCheck(**context, ok=ok, expiry=expiry)
 
-    from .services import generation_reconciliation, planning_preparation
+    from .services import generation_reconciliation, planning_groups, planning_preparation
+    generation_queue = (command.kind == 'job.continue'
+                        or command.kind == 'job.create' and command.payload.get('kind') == 'generation')
+
+    def prepare_generation_admission():
+        evidence = {}
+        reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
+                  if engine.dialect.name == 'postgresql' else engine)
+        try:
+            with transaction(reader) as db:
+                if engine.dialect.name == 'sqlite':
+                    db.execute(text('BEGIN'))
+                require_current_schema(db)
+                actor = authenticate(db, token, csrf, write=True, settings=settings)
+                require_role(actor, *command_roles(command))
+                if not existing_receipt(db, actor):
+                    planner_tools.assert_precondition(db, actor, command)
+                    db.info['_generation_admission_capture'] = evidence
+                    handler = jobs.continue_generation if command.kind == 'job.continue' else jobs.create_job
+                    handler(db, actor, command, settings)
+        except Problem:
+            # The writer repeats cheap command checks and only reuses a current scope refusal.
+            pass
+        return evidence
+
+    generation_admission = (prepare_generation_admission() if generation_queue and
+        (command.payload.get('planning_group_version_id') or command.payload.get('generation_scope')) else {})
     planning_plan = None
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
     # Publication performs its fresh safety validation at the final writer boundary.
-    group_queue = (command.kind == 'job.create' and command.payload.get('kind') == 'generation'
-                   and bool(command.payload.get('planning_group_version_id')))
     staged = (not assignment_reply and not background_merge and command.kind != 'workspace.publish'
-              and (group_queue or command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
+              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
               and (command.payload.get('rejected_review_item_ids') or
                    any(item.get('accept') is False for item in command.payload.get('decisions', []) if isinstance(item, dict)))))
     if staged:
         reader = engine.execution_options(isolation_level='REPEATABLE READ') if engine.dialect.name == 'postgresql' else engine
-        if group_queue and engine.dialect.name == 'postgresql':
-            reader = reader.execution_options(postgresql_readonly=True)
         planning_plan = {'seed': m.uid(), 'at': m.now(), 'checks': [], 'kind': command.kind}
         from . import db as database
         preparation_settings = reader.get_execution_options().get('rota_write_settings') or settings
@@ -980,9 +1011,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         while True:
             try:
                 with transaction(reader, deadline=preparation_deadline) as db:
-                    if engine.dialect.name == 'sqlite' and group_queue:
-                        db.execute(text('BEGIN'))
-                    elif engine.dialect.name == 'sqlite':
+                    if engine.dialect.name == 'sqlite':
                         # Preparation flushes (then rolls back) writes. A deferred SQLite read cannot upgrade while another
                         # writer holds the lock (instant "database is locked" → 503), so wait for that writer within the
                         # command budget, as PostgreSQL's REPEATABLE READ preparation does.
@@ -1016,12 +1045,6 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     break
             except planning_preparation.RollbackPreparation:
                 break
-            except Problem:
-                if not group_queue:
-                    raise
-                # Make the decision again under the writer if the preliminary read refuses.
-                planning_plan = None
-                break
             except OperationalError as error:
                 if getattr(error.orig, 'sqlstate', None) in {'40001', '40P01'}:
                     # A stored background check also updates the workspace row. Reacquire all
@@ -1047,8 +1070,13 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
+        if assignment_reply and command.kind == 'shift.update':
+            # The edit writes draft assignments, leaving the shared catalogue inputs intact.
+            db.info['_assignment_reply_inputs'] = {}
         if planning_plan is not None:
             planning_preparation.bind(db, planning_plan, replay=True)
+        if generation_queue:
+            db.info['_generation_admission_replay'] = generation_admission
         db.info['_track_input_changes'] = True
         if generation_plan is not None:
             db.info['_generation_plan'] = generation_plan
@@ -1129,9 +1157,12 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             fresh_activation = True
         # A calendar URL is a bearer credential shown once, like invitation/reset links. Keep the committed
         # outcome for retries without storing its secret in receipt evidence or returning it on recovery.
+        outcome = receipt_result(command.kind, result)
+        if previous := db.info.pop('_request_edit_previous', None):
+            outcome = {**outcome, '_request_edit_previous': previous}
         db.add(m.CommandReceipt(id=receipt_id, department_id=actor.department_id, actor_id=actor.identity_id,
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
-                                payload_hash=payload_hash, result=receipt_result(command.kind, result)))
+                                payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
         reason = str(command.payload.get("reason", command.kind))[:500]
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':
@@ -1248,6 +1279,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                      context={"correlation_id": correlation_id, "command_kind": logged_command_kind(command.kind)},
                                      serialize=command.kind not in NON_SERIALIZED_COMMANDS)
                 break
+            except planning_groups.GenerationAdmissionChanged:
+                require(attempt < 2, 'STALE_INPUTS',
+                        'Scheduling inputs are changing; start auto-schedule again', 409, {'recoverable': True})
+                generation_admission = prepare_generation_admission()
             except generation_reconciliation.GenerationInputsChanged:
                 with transaction(reader) as db:
                     if engine.dialect.name == 'sqlite':

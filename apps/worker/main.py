@@ -135,6 +135,15 @@ def describe(db, event, publication, identity, *, wishes=None, rota_label=None):
         return "Rule proposal or decision", "Open Rules to review the current version."
     if event.kind == "bulk_review":
         return "Bulk changes need an independent reviewer", "Open Bulk editor to review the pending changes."
+    if event.kind == "generation_finished":
+        title = {
+            'complete': 'Auto-schedule result ready',
+            'partial': 'Auto-schedule finished with gaps',
+            'needs_more_time': 'Auto-schedule needs more time',
+            'infeasible': 'Auto-schedule found conflicting requirements',
+            'failed': 'Auto-schedule could not finish',
+        }[event.payload['outcome']]
+        return title, 'Open Auto-schedule to review the run.'
     if event.kind == "feedback":
         status = event.payload["status"]
         message = f"Your report {event.payload['feedback_id']} is {status.replace('_', ' ')}"
@@ -302,6 +311,20 @@ def recipients_of(db, event, publication, roles, identities=None):
                 or aware(row.expires_at) <= m.now()):
             return set()
         return reviewers(db, row)
+    if event.kind == "generation_finished":
+        from apps.api.services.workspace_access import access_record
+        job = db.get(m.Job, event.payload['job_id'], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
+        if (job is None or job.kind != 'generation' or job.department_id != event.department_id
+                or job.workspace_id != event.payload['workspace_id'] or 'coordinator' not in roles.get(job.requested_by, ())):
+            return set()
+        identity = db.get(m.Identity, job.requested_by)
+        workspace = db.get(m.Workspace, job.workspace_id)
+        if identity is None or identity.disabled or workspace is None:
+            return set()
+        access = access_record(db, workspace)
+        if (access['visibility'] == 'private' or access['purpose'] == 'sandbox') and workspace.created_by != identity.id:
+            return set()
+        return {identity.id}
     if event.kind == "feedback":
         identity_id = event.payload.get("reporter_identity_id")
         identity = db.get(m.Identity, identity_id) if identity_id in roles else None
@@ -470,6 +493,16 @@ def planner_actor_for(db, claim):
                  current_roles(db, identity.id, department.id), identity.person_id, 'worker')
 
 
+def queue_generation_outcome(db, job):
+    if job.kind != 'generation' or job.status not in {'succeeded', 'failed'} or job.error_code == 'ACCESS_REVOKED':
+        return
+    from apps.api.serialization import job_outcome
+    outcome = job_outcome(job.status, job.result)
+    if outcome != 'cancelled':
+        db.add(m.Outbox(department_id=job.department_id, kind='generation_finished', event_key=f'generation-finished:{job.id}',
+                        payload={'job_id': job.id, 'workspace_id': job.workspace_id, 'outcome': outcome}))
+
+
 def resume_days(db, claim=None):
     if claim and 'resume_days' in claim:
         return claim['resume_days']
@@ -620,6 +653,7 @@ def claim_job(db, *, recovering_worker=None):
             if not generation_resume_available(db, old, days=resume_days(db), error=old.error_code):
                 clear_generation_resume(db, job_id=old.id)
             old.revision += 1
+            queue_generation_outcome(db, old)
             continue
         controls = old.search_control or {}
         has_hint = checkpoint.get('has_solution', bool(checkpoint.get('hint')))
@@ -655,6 +689,7 @@ def claim_job(db, *, recovering_worker=None):
             elif old.result and has_generation_checkpoint(old):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
+        queue_generation_outcome(db, old)
     queued = select(m.Job).where(enabled, m.Job.status == "queued")
     # The serialized claim reserves one solve slot. A paused expired job keeps its stored status.
     heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
@@ -671,6 +706,7 @@ def claim_job(db, *, recovering_worker=None):
         if not generation_resume_available(db, job, days=resume_days(db), error=job.error_code):
             clear_generation_resume(db, job_id=job.id)
         job.revision += 1
+        queue_generation_outcome(db, job)
         return None
     identity = db.get(m.Identity, job.requested_by)
     if identity.disabled or not may_run(db, identity, job):
@@ -879,6 +915,7 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
         progress = _preserve_generation_stage(job.progress, progress)
     job.progress = job_progress_record(progress if progress is not None else job.progress)
     job.revision += 1
+    queue_generation_outcome(db, job)
     live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
     if job.kind == 'swap_audience':
         live.signal(db, job.department_id, scope="swaps")
@@ -1206,10 +1243,11 @@ def prepare_deferred_generation(engine, claim, settings):
     prior = claim['input']
     deferred = prior.get('_deferred_generation')
     from apps.api.errors import require
-    from apps.api.services.jobs import catalogue_proof_identity, require_solver_compatible
+    from apps.api.services.jobs import (catalogue_proof_identity, generation_request_from_snapshot,
+                                        record_supersessions, require_solver_compatible)
     from apps.api.workspace_baselines import (baseline_reference, frozen_department_settings, generation_manifest,
                                              verify, verify_generation_snapshot)
-    from apps.api.services.planning_groups import guard_frozen_generation, guard_generation
+    from apps.api.services.planning_groups import guard_generation
     from apps.api.snapshots import domain_snapshot, draft_policy_hint
     from packages.contracts import schemas as s
     from packages.domain.generation_scope import has_population
@@ -1230,14 +1268,27 @@ def prepare_deferred_generation(engine, claim, settings):
                       identity.display_name, current_roles(db, identity.id, workspace.department_id),
                       identity.person_id, 'worker')
         require(actor.permits('coordinator'), 'FORBIDDEN', 'The requester no longer has coordinator access', 403)
+        requested = generation_request_from_snapshot(workspace, prior)
+        value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
+        retained_population = prior.get('planning_population')
+
+        def accept_frozen_scope(scope):
+            require(scope.get('generation_role_bindings') == prior.get('generation_role_bindings'),
+                    'STALE_INPUTS', 'Scheduling population roles changed; start a fresh run', 409)
+            if prior.get('_generation_authority_pending'):
+                job.input_snapshot = claim['input'] = {k: v for k, v in prior.items()
+                                                       if k != '_generation_authority_pending'}
+                clear_generation_resume(db, workspace_id=workspace.id, keep_job_id=job.id)
+                record_supersessions(db, job)
+
         if not deferred:
-            guard_frozen_generation(db, actor, workspace, prior)
-            if not (prior.get('baseline') and 'policies' in prior):
-                return
             organisation = db.get(m.Organisation, department.organisation_id)
             hint = (prior.get('input_manifest') or {}).get('dirty_hint') or {}
-            if hint.get('input_revision') == organisation.input_revision and all(
-                    hint.get(key) == value for key, value in draft_policy_hint(workspace).items()):
+            if not (prior.get('baseline') and 'policies' in prior) or (
+                    hint.get('input_revision') == organisation.input_revision and all(
+                        hint.get(key) == value for key, value in draft_policy_hint(workspace).items())):
+                accept_frozen_scope(guard_generation(db, actor, workspace, None, value,
+                                                     retained_population=retained_population))
                 return
         baseline = verify_generation_snapshot(db, workspace, claim['input'])
         defaults = s.GenerationOptions.model_validate(claim['input'].get('generation_defaults') or {})
@@ -1250,22 +1301,16 @@ def prepare_deferred_generation(engine, claim, settings):
         snapshot = domain_snapshot(db, workspace,
                                    wish_debt_cap=options.scoring.wish_debt_cap,
                                    lead_balance=options.scoring.lead_balance)
+        if claim['input'].get('generation_scope_source'):
+            snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
+        scope = guard_generation(db, actor, workspace, snapshot, value, require_population=not deferred,
+                                 retained_population=retained_population)
         if not deferred:
             if snapshot['policies'] == prior['policies']:
+                accept_frozen_scope(scope)
                 return
             require(snapshot['baseline']['id'] == baseline.id, 'STALE_INPUTS',
                     'The draft baseline changed; start a fresh run', 409)
-        requested = (prior.get('generation_request') or {}) if deferred else prior.get('_generation_request') or {
-            'workspace_id': workspace.id, 'kind': 'generation',
-            'session_ids': prior.get('generation_session_ids') or [],
-            'generation_scope': prior.get('generation_scope'),
-            'planning_group_version_id': prior.get('planning_group_version_id'),
-            'lookahead': prior.get('lookahead'),
-        }
-        value = s.JobInput.model_validate({**requested, 'diagnostic_proposal': prior.get('diagnostic_proposal', False)})
-        if claim['input'].get('generation_scope_source'):
-            snapshot['generation_scope_source'] = claim['input']['generation_scope_source']
-        guard_generation(db, actor, workspace, snapshot, value)
         focus = set(snapshot.get('focus_ids', []))
         require_generation_sessions_in_scope(value.session_ids, sessions=(
             (row['id'], row['cancelled']) for row in snapshot.get('shifts', []) if row['id'] in focus))
@@ -1319,7 +1364,8 @@ def prepare_deferred_generation(engine, claim, settings):
             baseline, snapshot, job=job, requester_id=job.requested_by)
         job.input_snapshot = snapshot
         job.input_fingerprint = snapshot['fingerprint']
-        from apps.api.services.jobs import record_supersessions
+        if prior.get('_generation_authority_pending'):
+            clear_generation_resume(db, workspace_id=workspace.id, keep_job_id=job.id)
         record_supersessions(db, job)
         claim['input'] = snapshot
         claim['input_fingerprint'] = snapshot['fingerprint']
@@ -1436,6 +1482,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 progress_reported_at = time.monotonic()
                 if claim['kind'] == 'generation':
                     update = _preserve_generation_stage(progress, update)
+                    if deferred_generation:
+                        update = {**update, 'phase_timings': {**(update.get('phase_timings') or {}),
+                                  'request_preparation_seconds': preparation_elapsed}}
                     events = [{**event, 'seq': sequence_offset + event['seq']} for event in update.get('events', [])]
                     if events and needs_resync:
                         events[0] = {**events[0], 'adds': [], 'removes': [], 'truncated': True}
@@ -1542,6 +1591,7 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                                                "error_code": type(exc).__name__})
         monitor = threading.Thread(target=maintain_lease, daemon=True)
         monitor.start()
+        solver_started = solver_finished = None
         try:
             if error is not None:
                 pass  # A preparation refusal must reach the job receipt without running the solver.
@@ -1568,12 +1618,17 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 diagnostic = {"diagnostic_proposal": True} if claim["input"].get("diagnostic_proposal") else {}
                 diagnostic_continuation = (run_options.get('on_conflict', 'report') == 'continue_flagged'
                                            or bool(claim["input"].get("diagnostic_proposal")))
+                solver_started = time.monotonic()
                 result = (scheduler(claim["input"], progress=report, cancelled=stopped.is_set,
                                     **({'workers': solver_workers, 'resume_state': claim.get('resume_state'),
                                         'checkpoint': checkpoint, 'search_control': search_control,
                                         '_diagnostic_continuation': diagnostic_continuation,
                                         '_candidate_evidence': candidate_evidence} if native_cp_sat else {}), **diagnostic)
                           if scheduler else generate(claim["input"], cancelled=stopped.is_set))
+                solver_finished = time.monotonic()
+                if deferred_generation:
+                    result['phase_timings'] = {**(result.get('phase_timings') or {}),
+                                               'request_preparation_seconds': preparation_elapsed}
                 continuation = claim['input'].get('continuation')
                 if isinstance(result, dict) and isinstance(continuation, dict):
                     previous_seconds = continuation.get('previous_search_seconds', 0)
@@ -1734,8 +1789,19 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             finished.set()
             monitor.join()
         computed = time.monotonic()
+        generation_timings = {}
+        if claim['kind'] == 'generation':
+            solve_start = solver_started if solver_started is not None else computed
+            solve_end = solver_finished if solver_finished is not None else computed
+            generation_timings = {
+                'request_preparation_seconds': preparation_elapsed,
+                'worker_setup_seconds': max(0, solve_start - started - preparation_elapsed),
+                'solver_wall_seconds': solve_end - solve_start,
+                'result_preparation_seconds': computed - solve_end,
+            }
         log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"],
-            "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2)})
+            "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2),
+            **generation_timings})
         feasibility_projection = None
         staged_result = False
 
@@ -1779,9 +1845,11 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             else:
                 log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"]})
                 return True  # Leave lease recovery to claim_job; do not overwrite another attempt.
+            completed = time.monotonic()
             log.log(logging.WARNING if error else logging.INFO, "job_finished",
                     extra={"job_id": claim["id"], "kind": claim["kind"], "status": "failed" if error else "succeeded",
-                           "error_code": error, "duration_ms": round((time.monotonic() - started) * 1000, 2)})
+                           "error_code": error, "duration_ms": round((completed - started) * 1000, 2),
+                           **({'result_persistence_seconds': completed - computed} if generation_timings else {})})
         finally:
             # Release both Python graphs and native CP-SAT arenas on success, failure, cancellation, or write timeout.
             probe_claim = {'id': claim.get('id')}

@@ -73,9 +73,11 @@ def compact_reply(result):
 
 
 _RECORD_EXCLUSIONS = {
+    'publications': ('calendar_lineage',),
     'push_subscription_versions': ('endpoint_ciphertext', 'endpoint_digest', 'p256dh_ciphertext', 'auth_ciphertext'),
     'jobs': ('resume_state', 'resume_checkpoint', 'read_metadata', 'result_summary', 'worker_id', 'supersedes'),
     'rotations': ('mentor_id',),
+    'requests': ('private_undo_note',),
     'mailbox_connections': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
     'mailbox_oauth_flows': ('encrypted_refresh_token', 'encrypted_verifier', 'state_hash'),
     'integration_credentials': ('token_ciphertext',),
@@ -371,6 +373,8 @@ def job_read_metadata(snapshot, result):
     value = {'input_snapshot': {key: snapshot[key] for key in JOB_INPUT_FIELDS if key in snapshot
                                 and (snapshot[key] is not None or key in ('generation_engine', 'run_context'))},
              'result': result_value}
+    if snapshot.get('_generation_authority_pending'):
+        value['_generation_authority_pending'] = True
     if snapshot.get('_deferred_generation'):
         # The request token is an internal lease value until the worker freezes the inputs.
         value['input_fingerprint'] = None
