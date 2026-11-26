@@ -20,3 +20,16 @@ def test_a_read_with_no_answer_ends_at_the_limit_and_retry_reads_afresh(client_m
     assert got['gone'] == 'PAGE_LEFT'  # abandoned by the page, not a timeout
     assert got['retried'] is True and got['fetches'] == 4  # Retry is a new request, never the aborted one
     assert got['health'] == [] and got['now'] == 'ok'  # slow is not down
+
+
+def test_a_json_question_times_out_or_cancels_without_invalidating_other_reads(client_modules):
+    got = run(client_modules, "(n)=>n===1?'slow':n<=3?'hang':'ok'",
+              "const shared=m.get('/api/shared'),owner=new AbortController();"
+              "const question=signal=>m.request('/api/question',{method:'POST',body:'{}',question:true,signal});"
+              "const late=question().then(()=>null,e=>e.code),same=m.get('/api/shared')===shared;"
+              "const gone=question(owner.signal).then(()=>null,e=>e.code);owner.abort();"
+              "const [read,timeout,cancelled]=await Promise.all([shared,late,gone]);"
+              "const retried=await question();"
+              "console.log(JSON.stringify({same,read:!!read.workspace,timeout,cancelled,retry:!!retried.workspace,fetches:n}));")
+    assert got == {'same': True, 'read': True, 'timeout': 'READ_TIMEOUT', 'cancelled': 'PAGE_LEFT',
+                   'retry': True, 'fetches': 4}
