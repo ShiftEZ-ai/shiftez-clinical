@@ -5,6 +5,7 @@ from alembic import command
 from sqlalchemy import MetaData, select
 from apps.api.db import make_engine
 from scripts.manage import alembic_config
+from .migration_support import add_historical_admin
 
 
 def test_migration_copies_only_legacy_read_evidence_and_keeps_all_rows(tmp_path):
@@ -23,6 +24,7 @@ def test_migration_copies_only_legacy_read_evidence_and_keeps_all_rows(tmp_path)
             name='Synthetic', generation_defaults={}))
         db.execute(metadata.tables['identities'].insert().values(**common, id='reader', issuer='synthetic',
             subject='reader', display_name='Synthetic reader', disabled=False))
+        add_historical_admin(db, 'dept', 'reader')
         db.execute(metadata.tables['outbox'].insert().values(**common, id='event', department_id='dept', event_key='e',
             kind='review', payload={}, state='available_in_app', attempts=1, next_attempt_at=at))
         db.execute(metadata.tables['notifications'].insert(), [

@@ -189,7 +189,7 @@ def test_additive_migration_retains_source_rows_and_seed_is_idempotent(session_l
     from alembic import command
     from apps.api.db import make_engine
     from scripts.manage import alembic_config
-    from tests.migration_support import historical_seed
+    from tests.migration_support import historical_seed, without_installation_admin_backfill
     from migrations import safety
     path = Path('migrations/versions/0137_display_settings.py')
     assert safety.classification(path) == 'fill_only' and not safety.declaration_errors(path)
@@ -207,7 +207,7 @@ def test_additive_migration_retains_source_rows_and_seed_is_idempotent(session_l
                         for name, table in old.tables.items() if name != 'alembic_version'}
         before = snapshot()
         command.upgrade(cfg, 'head')
-        assert snapshot() == before
+        assert without_installation_admin_backfill(snapshot()) == before
         with transaction(engine, write=True) as db:
             versions = list(db.scalars(select(m.DisplaySettingsVersion)))
             assert versions

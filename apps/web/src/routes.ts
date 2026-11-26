@@ -46,7 +46,7 @@ export const PAGE_TABS:Record<string,{key:string;label:string;roles:string[];pho
     {key:'exports',label:'Exports',roles:[CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.AUDITOR]},
   ],
   access:[
-    {key:'people',label:'People & roles',roles:[CAPABILITY.ADMIN,CAPABILITY.ACCESS_SYSTEM_ROLES]},
+    {key:'people',label:'People & roles',roles:[CAPABILITY.ADMIN,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN]},
     // Deciding a proposed route (Activate, Retire) is an approval: phones keep it; access administration stays desktop.
     {key:'routes',label:'Review routes',roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR],phone:true},
     {key:'history',label:'Role history',roles:[CAPABILITY.ADMIN]},

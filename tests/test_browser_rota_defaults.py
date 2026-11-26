@@ -59,7 +59,7 @@ def test_undated_schedule_and_home_only_offer_actionable_drafts(browser, live_se
             else:
                 expect(page.locator('.home-rota')).to_have_count(0)
 
-            if role in ('credentialer', 'operator'):
+            if role in ('credentialer', 'operator', 'installation_admin'):
                 expect(page.locator('#department-nav [data-route=schedule]')).to_have_count(0)
                 page.evaluate("location.hash='schedule'")
                 expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'restricted')

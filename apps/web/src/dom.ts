@@ -2455,7 +2455,7 @@ export type RoleName=typeof ROLE_NAMES[number];
 export const CAPABILITY={
   STAFF:'ui.staff',COORDINATOR:'ui.coordinator',APPROVER:'ui.approver',CREDENTIALER:'ui.credentialer',
   ADMIN:'ui.admin',AUDITOR:'ui.auditor',PROGRAMME_LEAD:'ui.programme_lead',OPERATOR:'ui.operator',
-  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',
+  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',ACCESS_INSTALLATION_ADMIN:'access.installation_admin',
   SYSTEM_OPERATIONS:'system.operations',AUDIT_READ:'audit.read',FEEDBACK_READ_ALL:'feedback.read_all',CATALOGUE_READ:'catalogue.read',
   RULES_PAGE:'ui.rules',RULES_READ:'rules.read',
 } as const satisfies Record<string,Capability>;

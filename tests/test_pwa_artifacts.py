@@ -41,6 +41,7 @@ def test_warm_manifest_and_icons_do_not_take_the_writer(h, monkeypatch):
         assert writer_calls == []
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_branding_update_and_undo_refresh_public_artifacts(h):
     with closing(TestClient(h.app, base_url=h.settings.public_origin)) as client:
         original, apple = client.get(MANIFEST), client.get(APPLE)

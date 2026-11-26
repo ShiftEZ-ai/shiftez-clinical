@@ -791,8 +791,8 @@ function conflictRow(c:Conflict,key:Legend,both:()=>void):HTMLElement{
   return li;
 }
 /** The safety lock, said in words to a screen reader and entered in the key as drawn. */
-const lockMark=(key?:Legend)=>{const m=()=>el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety rule: can only be made stricter'},icon('lock'));
-  return key?key.mark(m(),'safety',el('span',{class:'rk-lockmark','aria-hidden':'true'},icon('lock')),'Can only be made stricter'):m();};
+const lockMark=(key?:Legend)=>{const m=()=>el('span',{class:'rk-lockmark',role:'img','aria-label':TERMS.safetyRuleProtection},icon('lock'));
+  return key?key.mark(m(),'safety',el('span',{class:'rk-lockmark','aria-hidden':'true'},icon('lock')),TERMS.safetyRuleProtection):m();};
 function ruleRow(i:Item,t:Target,redraw:()=>void,key?:Legend,marked=false):HTMLElement{
   const r=i.rule,[tone]=STATE[i.state],open=openRules.has(r.id),locked=lock?.rule===r.id,w=wordsOf(i,marked,t.kind==='rota');
   const head=el('button',{type:'button',class:'rk-row-head','aria-expanded':String(open),...(open?{'aria-controls':'rk-d-'+r.id}:{})},
@@ -859,7 +859,7 @@ function ruleMenu(i:Item,t:Target,policy:Row|undefined,redraw:()=>void):MenuEntr
   const st=String(dataNow!.workspace.status);
   const rotaWhy=!h.editable?(st!=='draft'?'Only a draft rota can be changed. Reopen it as a draft first.':'Only coordinators and admins change a draft rota.')
     :r.workspace_only?'This rule was added for this rota only; change the rule itself.'
-    :r.safety&&!r.adjusted&&(!r.adjustable||!r.number)?(r.lines.length?'Its lines’ numbers can only be made stricter, through the department rule (approval needed).':'It has no number to make stricter here; the department rule changes with approval.'):'';
+    :r.safety&&!r.adjusted&&(!r.adjustable||!r.number)?(r.lines.length?'Change these line numbers through a department rule proposal.':'It has no number to make stricter here; the department rule changes with approval.'):'';
   out.push({label:r.safety?'Make stricter for this rota':'Adjust for this rota',icon:'calendar',run:show(r.id+':rota'),disabled:!!rotaWhy,hint:rotaWhy||undefined});
   // An exception (AGENTS §3: never for a safety kind): offered when the rule and the selection allow one, else said why.
   if(!r.safety){const f=exceptionAct(r,t,policy);

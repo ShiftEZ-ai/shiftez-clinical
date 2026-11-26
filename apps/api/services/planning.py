@@ -595,9 +595,23 @@ def assignment_validation_scope(data, before, previous):
     for key in ('starts_on', 'ends_on', 'rule_adjustments', 'target_overrides'):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
-    old_components = (previous.get('input_manifest') or {}).get('components') or {}
-    if not all(old_components.get(k) == data['input_manifest']['components'][k]
-               for k in ('mandatory_inputs', 'objective_inputs', 'toolchain')):
+    prior_manifest = previous.get('input_manifest') or {}
+    # Saved checks keep only aggregate hashes. Bind the full before sources to the saved token.
+    before_manifest = before.get('input_manifest') or prior_manifest
+    current_manifest = data['input_manifest']
+    old_components = prior_manifest.get('components') or {}
+    before_sources = before_manifest.get('sources')
+    current_sources = current_manifest.get('sources')
+    if (before_manifest.get('token') != prior_manifest.get('token')
+            or (before_manifest.get('token') and not before_sources)
+            or (current_manifest.get('token') and not current_sources)):
+        return None
+    capacity_source = 'place_capacity:own_duties'
+    before_capacity = (before_sources or {}).get(capacity_source, {}).get('hash')
+    current_capacity = (current_sources or {}).get(capacity_source, {}).get('hash')
+    if (before_capacity != current_capacity
+            or any(old_components.get(key) != current_manifest['components'][key]
+                   for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
     if assignment_check_scope(data, before) is None:
         return None
