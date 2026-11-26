@@ -143,7 +143,7 @@ def test_rules_source_reads_real_catalogue_v2_and_legacy_rules(h):
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 @pytest.mark.parametrize('corruption', [
-    'missing-definition', 'scalar-number', 'binding', 'destination-kind', 'fact',
+    'missing-definition', 'scalar-number', 'line-date', 'binding', 'destination-kind', 'fact',
     'exception-id', 'exception-policy', 'exception-date', 'exception-date-format',
 ])
 def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch, corruption):
@@ -160,6 +160,11 @@ def test_captured_rules_refuse_corrupt_rows_without_breaking_live(h, monkeypatch
             if corruption == 'scalar-number':
                 definition = {**definition, 'rule': {**definition['rule'], 'lines': [line(numbers={'target': 3})]}}
                 return {**payload, 'policies': [{**policy, 'definition': definition}]}
+            if corruption == 'line-date':
+                rule = {'kind': 'catalogue', 'id': 'duties_per_week',
+                        'lines': [line(numbers={'max': {'value': 3}}, starts_on='not a date')]}
+                return {**payload, 'policies': [{**policy, 'definition': {**definition, 'rule': rule}}],
+                        'policy_seed_lines': []}
             if corruption == 'fact':
                 fact = {'id': str(uuid4()), 'department_id': policy['department_id'], 'data': {'catalogue_id': 'fair_share'}}
                 return {**payload, 'scheduling_facts': [fact]}
@@ -235,7 +240,7 @@ def historical_weekly_limit(h, *, on=True):
     return policy, inherited['id']
 
 
-def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h, monkeypatch):
+def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
     from .test_rule_catalogue_api import approve, propose
     from .test_rule_templates import activate, propose as propose_legacy
 
@@ -246,12 +251,6 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h, monke
         line(numbers={'max': {'value': 2}}),
     ], on=False)['record'])
     draft = h.workspace('Historical rules source')
-
-    def unexpected_capture_error():
-        return AssertionError('Expected this captured rule set to be readable')
-
-    # Expose the original cause if this valid capture reaches the controlled error path.
-    monkeypatch.setattr(rule_catalogue, '_captured_rules_problem', unexpected_capture_error)
     query = f'day=2030-01-01&workspace_id={draft["id"]}'
     primary = next(entry['rule'] for entry in h.get('coordinator', f'/api/rules/catalogue?{query}')['entries']
                    if entry['id'] == 'duties_per_week')

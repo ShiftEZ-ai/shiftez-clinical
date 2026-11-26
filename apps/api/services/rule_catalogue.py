@@ -886,7 +886,8 @@ def rules_source(db, actor, workspace_id, *, baseline_id=None) -> RulesCapture:
         policies = seeded_policies(policies, seeds)
         for policy in [*policies, *(fact_policy(row) for row in inputs['scheduling_facts'])]:
             definition = stored_definition(policy['definition'])
-            s.PolicyDefinition.model_validate_json(json.dumps(definition), strict=True, context={'historical': True})
+            # Use the stored-rule schema's date parsing for captured ISO strings.
+            s.PolicyDefinition.model_validate(definition, context={'historical': True})
     inputs['policy_seed_lines'] = []
     captured_at = (baseline.provenance or {}).get('captured_at')
     if captured_at is None and baseline.created_at is not None:
