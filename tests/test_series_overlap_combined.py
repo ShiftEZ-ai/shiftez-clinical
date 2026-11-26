@@ -280,6 +280,13 @@ def test_combined_preview_preserves_permissions_and_hidden_leave_wording(series_
     assert len(flags) == 2 and all(flag['label'] == 'Unavailable' for flag in flags)
     assert PRIVATE not in json.dumps(checked) and state(h) == before
     combined(h, rows, values, role='staff', status=403)
+    admin_preview = combined(h, rows, values)
+    error = h.command('admin', 'bulk.apply', bulk_payload(rows, values), status=409)['error']
+    assert error['code'] == 'SERIES_OVERLAP_ACKNOWLEDGEMENT'
+    assert error['details'] == admin_preview
+    assert all(flag['leave'] is None for item in error['details']['items']
+               for flag in item['conflicts'] if flag['code'] == 'UNAVAILABLE')
+    assert PRIVATE not in json.dumps(error)
     refused = h.command('coordinator', 'bulk.apply', bulk_payload(rows, values, checked['conflict_token']), status=409)
     assert refused['error']['code'] == 'FORBIDDEN'
     assert state(h) == before

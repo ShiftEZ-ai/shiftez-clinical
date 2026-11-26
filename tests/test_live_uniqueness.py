@@ -29,7 +29,7 @@ def job_row(seed, workspace, kind, **overrides):
 def test_seeded_upgrade_preflights_retained_rows(session_limits_database, duplicate):
     url = session_limits_database
     config = manage.alembic_config(url)
-    command.upgrade(config, '0152_feasibility_results')
+    command.upgrade(config, '0155_installation_admin')
     engine = make_engine(url)
     try:
         with transaction(engine, write=True) as db:
@@ -54,16 +54,16 @@ def test_seeded_upgrade_preflights_retained_rows(session_limits_database, duplic
                 db.execute(table.insert(), values)
                 retained = db.execute(select(table).order_by(table.c.id)).all()
         if duplicate:
-            with pytest.raises(SystemExit, match='0153_live_uniqueness.*duplicate rows') as refusal:
+            with pytest.raises(SystemExit, match='0156_live_uniqueness.*duplicate rows') as refusal:
                 manage.check_migrations(url)
             assert 'retained-test-key' not in str(refusal.value)
             with engine.connect() as db:
-                assert MigrationContext.configure(db).get_current_revision() == '0152_feasibility_results'
+                assert MigrationContext.configure(db).get_current_revision() == '0155_installation_admin'
                 assert index_name not in {index['name'] for index in inspect(db).get_indexes(table.name)}
                 assert db.execute(select(table).order_by(table.c.id)).all() == retained
             return
-        assert manage.check_migrations(url)[0] == '0153_live_uniqueness'
-        command.upgrade(config, '0153_live_uniqueness')
+        assert manage.check_migrations(url)[0] == '0156_live_uniqueness'
+        command.upgrade(config, '0156_live_uniqueness')
         with transaction(engine) as db:
             assert db.get(m.Department, seed['department_id']) is not None
     finally:

@@ -695,9 +695,14 @@
     "sha256": "f36f96e0d6fb9960113470a338877afd9317f62428acaf0613aa52865876ff98",
     "review": "Adds a nullable request Undo note without changing existing records. The note can be erased with the request's private details."
   },
-  "0153_live_uniqueness": {
+  "0155_installation_admin": {
+    "class": "destructive",
+    "sha256": "de177afa5a7c37ff51290d0d73e72f5a62422b0a511812d7410cc405fc0836a1",
+    "review": "Widens the role binding check and adds one installation administrator grant and its audit event. Requires confirmation of this revision after a verified backup. Existing rows are retained."
+  },
+  "0156_live_uniqueness": {
     "class": "additive",
-    "sha256": "f86004eb9c35d9e8958c0cc3d8460071e8d44cc2f7acfbbc3369155217ef76b3",
+    "sha256": "e42362e5d60d9bfb55d59ef82e1b221af6191b1d73a85c0714e9d8baf45b38be",
     "review": "Adds partial unique indexes for active calendar feeds and live validation and generation jobs. Read-only preflight checks retained duplicates and the migration preserves existing rows."
   }
 }

@@ -620,7 +620,8 @@ def claim_job(db, *, recovering_worker=None):
     lease_expired = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     lost = lease_expired if recovering_worker is None else or_(lease_expired, m.Job.worker_id == recovering_worker)
     expired = list(db.scalars(select(m.Job).where(enabled, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
-        .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)))
+        .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)
+        .with_for_update(skip_locked=True).execution_options(populate_existing=True)))
     for old in expired:
         if old.kind == 'planner_preview':
             from apps.api.services import planner_tools
@@ -697,7 +698,8 @@ def claim_job(db, *, recovering_worker=None):
         queued = queued.where(~heavy)
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
-    job = db.scalar(queued.order_by(m.Job.created_at).limit(1))
+    job = db.scalar(queued.order_by(m.Job.created_at, m.Job.id).limit(1)
+                    .with_for_update(skip_locked=True).execution_options(populate_existing=True))
     if job is None:
         return None
     if job.kind == 'generation' and not resume_current(db, job):
@@ -724,9 +726,16 @@ def claim_job(db, *, recovering_worker=None):
             live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
         return None
     lease_started = time.monotonic()
-    job.status, job.started_at = "running", m.now()
-    job.heartbeat_at = job.started_at
-    job.worker_id = WORKER_ID
+    started_at = m.now()
+    attempt = db.scalar(update(m.Job).where(
+        m.Job.id == job.id, m.Job.status == 'queued', m.Job.attempts == job.attempts,
+        m.Job.worker_id.is_not_distinct_from(job.worker_id),
+        m.Job.started_at.is_not_distinct_from(job.started_at),
+        m.Job.heartbeat_at.is_not_distinct_from(job.heartbeat_at),
+    ).values(status='running', started_at=started_at, heartbeat_at=started_at, worker_id=WORKER_ID,
+             attempts=m.Job.attempts + 1).returning(m.Job.attempts).execution_options(synchronize_session='fetch'))
+    if attempt is None:
+        return None
     # Deferred generation first freezes its rota on the worker.  Expose that
     # phase immediately so the client does not label a long snapshot as a
     # stalled solver.
@@ -737,7 +746,6 @@ def claim_job(db, *, recovering_worker=None):
                         [('events', []), ('solution', None), ('improvements_found', 0), ('precheck_issues', []),
                          ('best_score', None)]}
                        if job.kind == 'generation' else {})}
-    job.attempts += 1
     job.revision += 1
     if job.kind == 'generation' and not generation_resume_available(db, job, days=resume_days(db), error=None):
         clear_generation_resume(db, job_id=job.id)
@@ -746,7 +754,7 @@ def claim_job(db, *, recovering_worker=None):
         # preparation begins; the persisted row remains the source of truth.
         live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
     return {"id": job.id, "kind": job.kind, "input": job.input_snapshot, "input_fingerprint": job.input_fingerprint,
-            "attempt": job.attempts,
+            "attempt": attempt,
             "department_id": job.department_id, "requested_by": job.requested_by, "lease_started": lease_started,
             "resume_state": job.resume_state, 'resume_checkpoint': job.resume_checkpoint,
             "search_control": job.search_control, "progress": job.progress}
@@ -784,12 +792,22 @@ def stage_feasibility_result(db, claim, result):
     db.execute(insert(table).from_select(['job_id', 'attempt', 'payload'], lease).on_conflict_do_nothing())
 
 
-def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None):
+def finish_job(db, claim, result, error, *, progress=None, error_detail=None, feasibility_projection=None,
+               record_merge_refusal=False):
     require_current_schema(db)
+    if not error and claim.get('kind') in {'validation', 'merge_apply'}:
+        workspace_id = db.scalar(select(m.Job.workspace_id).where(m.Job.id == claim['id']))
+        workspace_ids = [workspace_id]
+        if claim['kind'] == 'merge_apply':
+            workspace_ids.append(claim['input']['source_id'])
+        # These paths update workspace rows, so lock them before the job.
+        db.execute(select(m.Workspace.id).where(m.Workspace.id.in_(workspace_ids))
+                   .order_by(m.Workspace.id).with_for_update(key_share=True))
     # Feasibility completion needs current authority and lease state, not the frozen department graph.
     # Other kinds load their retained evidence lazily when their stale/proposal guards require it.
-    job = db.get(m.Job, claim["id"], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
-    if not job or job.status != "running" or job.attempts != claim["attempt"]:
+    job = db.get(m.Job, claim["id"], with_for_update=True, populate_existing=True,
+                 options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
+    if not job or job.status != "running" or job.attempts != claim["attempt"] or job.worker_id != WORKER_ID:
         return False
     if job.kind == 'feasibility' and result is not None and not error:
         raise ValueError('Feasibility proof must be staged before completion')
@@ -855,17 +873,26 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
             if job.input_snapshot.get('validation_basis') == 'current':
                 job.input_fingerprint = result['fingerprint']
     if job.kind in {'merge_preview', 'merge_apply'} and not error:
+        from apps.api.errors import Problem
         from .workspace_merge import execute
         from apps.api.services.workspace_access import audit_envelope
         from apps.api.services.audit_log import event_action, subject_detail
         from packages.contracts.schemas import Command
-        command = Command.model_validate(claim['input']['command'])
-        result = execute(db, claim, result, replay=True)
-        db.flush()
-        db.add(audit_envelope(db, command, result, m.AuditEvent(department_id=job.department_id, actor_id=job.requested_by,
-            action=event_action(command.kind, result), target_id=job.workspace_id,
-            reason=command.payload['reason'], detail={**subject_detail(db, command.kind, result), 'job_id': job.id,
-                'input_changes': list(db.info.get('_input_changes', {}).values())}, correlation_id=job.id)))
+        try:
+            with db.begin_nested():
+                command = Command.model_validate(claim['input']['command'])
+                result = execute(db, claim, result, replay=True)
+                db.flush()
+                db.add(audit_envelope(db, command, result, m.AuditEvent(
+                    department_id=job.department_id, actor_id=job.requested_by,
+                    action=event_action(command.kind, result), target_id=job.workspace_id,
+                    reason=command.payload['reason'], detail={**subject_detail(db, command.kind, result), 'job_id': job.id,
+                        'input_changes': list(db.info.get('_input_changes', {}).values())}, correlation_id=job.id)))
+        except Problem as rejected:
+            if not record_merge_refusal:
+                raise
+            # Roll back the merge and retain the job lock for the failed receipt.
+            result, error = None, rejected.code
     if job.kind == "swap_audience":
         from apps.api.services.swaps import store_audience
         result = store_audience(db, job.input_snapshot, result, error)
@@ -928,10 +955,10 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
 
 def lease_job(db, job_id):
     # Include metadata for before_update; only legacy rows without it need a one-time raw backfill.
-    return db.get(m.Job, job_id, options=[load_only(
+    return db.get(m.Job, job_id, with_for_update=True, populate_existing=True, options=[load_only(
         m.Job.kind, m.Job.status, m.Job.attempts, m.Job.requested_by, m.Job.department_id,
         m.Job.workspace_id, m.Job.input_fingerprint, m.Job.progress, m.Job.heartbeat_at,
-        m.Job.revision, m.Job.search_control, m.Job.read_metadata)])
+        m.Job.revision, m.Job.search_control, m.Job.read_metadata, m.Job.worker_id)])
 
 
 def elapsed_progress(progress, since_report):
@@ -941,7 +968,7 @@ def elapsed_progress(progress, since_report):
 
 def heartbeat_job(db, claim, progress):
     job = lease_job(db, claim["id"])
-    if not job or job.status != "running" or job.attempts != claim["attempt"]:
+    if not job or job.status != "running" or job.attempts != claim["attempt"] or job.worker_id != WORKER_ID:
         return False
     identity = db.get(m.Identity, job.requested_by)
     if identity.disabled or not may_run(db, identity, job):
@@ -977,15 +1004,16 @@ RESUME_CHECKPOINT_FIELDS = frozenset({'hint', 'has_solution', 'result', 'checkpo
                                       'search_elapsed_seconds', 'diagnostic_proposal', 'strict_conflict'})
 
 
-def checkpoint_job(db, claim, state, *, prepared=None):
+def checkpoint_job(db, claim, state, *, prepared=None, clear_terminal=True):
     """Commit only the current authorised attempt's private prepared model and best hint."""
-    job = db.get(m.Job, claim['id'], with_for_update=True, options=[load_only(
+    job = db.get(m.Job, claim['id'], with_for_update=True, populate_existing=True, options=[load_only(
         m.Job.status, m.Job.attempts, m.Job.requested_by, m.Job.department_id, m.Job.kind, m.Job.resume_checkpoint,
-        m.Job.workspace_id, m.Job.input_fingerprint, m.Job.created_at, m.Job.completed_at, m.Job.search_control)])
-    if not job or job.attempts != claim['attempt']:
+        m.Job.workspace_id, m.Job.input_fingerprint, m.Job.created_at, m.Job.completed_at, m.Job.search_control,
+        m.Job.worker_id)])
+    if not job or job.attempts != claim['attempt'] or job.worker_id != WORKER_ID:
         return False
     if job.status != 'running':
-        if job.status in {'cancelled', 'failed'}:
+        if clear_terminal and job.status in {'cancelled', 'failed'}:
             clear_generation_resume(db, job_id=job.id)
         return False
     if validated_proposal(state.get('result'), job.input_fingerprint):
@@ -1553,12 +1581,12 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         def renew(db, snapshot):
             with progress_lock:
                 current_progress = elapsed_progress(progress, time.monotonic() - progress_reported_at)
-            job = lease_job(db, claim['id'])
             alive = heartbeat_job(db, claim, current_progress)
             if alive and snapshot is not None:
                 state, prepared = snapshot
                 alive = checkpoint_job(db, claim, state, prepared=prepared)
-            return time.monotonic(), alive, dict(job.search_control or {}) if alive else {}
+            controls = db.scalar(select(m.Job.search_control).where(m.Job.id == claim['id'])) if alive else None
+            return time.monotonic(), alive, dict(controls or {})
         def maintain_lease():
             nonlocal lease_deadline
             while not finished.wait(min(heartbeat_seconds, max(0, lease_deadline - time.monotonic()))):
@@ -1809,16 +1837,10 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             if feasibility_projection is not None:
                 return finish_job(db, claim, None, error, progress=progress,
                                   feasibility_projection=feasibility_projection)
-            if pending_checkpoint is not None:
-                checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation)
             if claim['kind'] in {'merge_preview', 'merge_apply'} and not error:
-                from apps.api.errors import Problem
-                try:
-                    with db.begin_nested():
-                        return finish_job(db, claim, result, None, progress=progress)
-                except Problem as rejected:
-                    # Roll back the entire merge before committing its failed-job receipt.
-                    return finish_job(db, claim, None, rejected.code, progress=progress)
+                return finish_job(db, claim, result, None, progress=progress, record_merge_refusal=True)
+            if pending_checkpoint is not None:
+                checkpoint_job(db, claim, pending_checkpoint, prepared=encoded_preparation, clear_terminal=False)
             return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
         try:
             if claim['kind'] == 'feasibility' and result is not None and not error:

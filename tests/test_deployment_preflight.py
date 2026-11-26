@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.settings import Settings, secret_from_env, MAX_SECRET_BYTES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE
 from scripts import backup, preflight
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -518,7 +519,10 @@ def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgr
                 assert login.status_code == 200
                 me = client.get("/api/me")
                 assert me.status_code == 200 and "admin" in me.json()["roles"]
+                assert INSTALLATION_ADMIN_ROLE in me.json()["roles"]
                 assert "operator" not in me.json()["roles"]
+                branding = client.get("/api/admin/branding")
+                assert branding.status_code == 200 and branding.json()["can_edit"]
             with transaction(app.state.engine) as db:
                 receipts = list(db.scalars(select(m.CommandReceipt)))
                 events = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.action == "account.resend")))

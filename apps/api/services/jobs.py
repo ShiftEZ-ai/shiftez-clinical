@@ -711,6 +711,10 @@ def apply_generation(db, actor, command):
     require(plan is not None, 'RECONCILIATION_REQUIRED', 'Prepare this proposal before entering the writer transaction', 409)
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     workspace = draft(db, actor, value.workspace_id, workspace.revision)
+    db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+    workspace = draft(db, actor, value.workspace_id, workspace.revision)
+    db.execute(select(m.Job.id).where(m.Job.id == value.job_id, m.Job.department_id == actor.department_id)
+               .with_for_update())
     job, version = load_apply_job(db, actor, value.job_id)
     require(job.workspace_id == workspace.id and job.kind == "generation" and job.status == "succeeded",
             "JOB_STATE", "Select a completed generation job for this workspace", 409)
