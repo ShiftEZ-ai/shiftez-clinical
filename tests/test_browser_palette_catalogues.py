@@ -5,7 +5,7 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
-from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, PERMISSIONS, ROLE_NAMES
 from .governance_support import identity
 from .test_browser import browser, live_server, navigate, save_dialog, sign_in  # noqa: F401
 from .test_browser_palette_sources import search
@@ -64,13 +64,14 @@ def test_record_results_obey_page_and_edit_roles(browser, live_server, h, role):
             panel.get_by_role("button", name="Cancel" if title and not is_tag else "Close panel", exact=True).click()
             expect(panel).to_have_count(0)
         # A manually pasted source ID does not grant the configuration page or its editor.
+        can_open_configuration = role in {"coordinator", "operator", INSTALLATION_ADMIN_ROLE}
         if role != "admin":
             page.goto(live_server + "/#configuration/services?open=" + clinic["id"])
-            expect(page.locator("#main")).to_contain_text("This record is not available" if role in {"coordinator", "operator"} else "Restricted page")
+            expect(page.locator("#main")).to_contain_text("This record is not available" if can_open_configuration else "Restricted page")
             expect(page.get_by_role("dialog", name="Edit service", exact=True)).to_have_count(0)
         if role not in {"admin", "coordinator"}:
             page.goto(live_server + "/#configuration/tags?open=" + tag["id"])
-            expect(page.locator("#main")).to_contain_text("This record is not available" if role == "operator" else "Restricted page")
+            expect(page.locator("#main")).to_contain_text("This record is not available" if can_open_configuration else "Restricted page")
             expect(page.get_by_role("region", name="#" + tag["name"], exact=True)).to_have_count(0)
         assert writes == []
     finally:

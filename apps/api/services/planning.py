@@ -600,9 +600,23 @@ def assignment_validation_scope(data, before, previous):
     for key in ('starts_on', 'ends_on', 'rule_adjustments', 'target_overrides'):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
-    old_components = (previous.get('input_manifest') or {}).get('components') or {}
-    if not all(old_components.get(k) == data['input_manifest']['components'][k]
-               for k in ('mandatory_inputs', 'objective_inputs', 'toolchain')):
+    prior_manifest = previous.get('input_manifest') or {}
+    # Saved checks keep only aggregate hashes. Bind the full before sources to the saved token.
+    before_manifest = before.get('input_manifest') or prior_manifest
+    current_manifest = data['input_manifest']
+    old_components = prior_manifest.get('components') or {}
+    before_sources = before_manifest.get('sources')
+    current_sources = current_manifest.get('sources')
+    if (before_manifest.get('token') != prior_manifest.get('token')
+            or (before_manifest.get('token') and not before_sources)
+            or (current_manifest.get('token') and not current_sources)):
+        return None
+    capacity_source = 'place_capacity:own_duties'
+    before_capacity = (before_sources or {}).get(capacity_source, {}).get('hash')
+    current_capacity = (current_sources or {}).get(capacity_source, {}).get('hash')
+    if (before_capacity != current_capacity
+            or any(old_components.get(key) != current_manifest['components'][key]
+                   for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
     if assignment_check_scope(data, before) is None:
         return None
@@ -2179,7 +2193,6 @@ def edit_history_head(db, workspace, before=None):
     C = m.ChangeSet
     return db.execute(latest_change(workspace, C.id, C.undone, C.actor_id,
         C.before_snapshot['_undo_of'].as_string().label('undo_of'),
-        C.before_snapshot['workspace']['revision'].as_integer().label('revision'),
         skip_single_sort=True, before=before)).first()
 
 
@@ -2187,15 +2200,19 @@ def undo_target(db, workspace, head=None):
     """An Undo step points to the original edit's pre-state, where Undo continues."""
     head = edit_history_head(db, workspace) if head is None else head
     C = m.ChangeSet
+    revision = C.before_snapshot['workspace']['revision'].as_integer()
     while head is not None and head.undo_of is not None:
-        before = db.execute(select(C.before_snapshot['workspace']['revision'].as_integer().label('revision'),
+        # Read the head revision only when the linked edit exists.
+        head_revision = select(revision).where(C.id == head.id).correlate(None).scalar_subquery()
+        before = db.execute(select(revision.label('revision'),
             C.before_snapshot['workspace']['content_revision'].as_integer().label('content_revision'),
-            C.before_snapshot['workspace']['status'].as_string().label('status'))
+            C.before_snapshot['workspace']['status'].as_string().label('status'),
+            head_revision.label('head_revision'))
             .where(C.id == head.undo_of, C.workspace_id == workspace.id)).first()
         # A reopened review can leave an acknowledgement-only Undo at the boundary.
         if (before is None or before.status not in (None, 'draft')
                 or before.revision is None or before.content_revision is None
-                or head.revision is None or before.revision >= head.revision):
+                or before.head_revision is None or before.revision >= before.head_revision):
             return None
         head = edit_history_head(db, workspace, before)
     return head.id if head is not None and not head.undone else None

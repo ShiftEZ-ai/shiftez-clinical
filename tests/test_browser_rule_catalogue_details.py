@@ -116,15 +116,41 @@ def test_undoing_a_new_version_says_the_previous_version_applies_again(browser, 
         navigate(page, 'rules/duties_per_week')
         page.locator('.rc-waiting').get_by_role('button', name='Review and approve').click()
         # B5 (f1d80dcc4): an independent approver decides in the docked panel, named after the change; no reason (maintenance).
-        panel = page.get_by_role('region', name='Change to Duties per week', exact=True)
+        panel = page.get_by_role('region', name='Change to Duties per week · turns the rule off', exact=True)
         panel.get_by_role('button', name='Approve and activate', exact=True).click()
         expect(panel).to_have_count(0)
-        # The panel's own message carries the activation's Undo (takeUndo): "Duties per week: the change is active."
-        page.locator('#toast-tray .toast', has_text='Duties per week: the change is active.').get_by_role('button', name='Undo', exact=True).click()
+        # The approval says the rule is off and offers Undo.
+        page.locator('#toast-tray .toast', has_text='Duties per week: the rule is off.').get_by_role('button', name='Undo', exact=True).click()
         expect(page.locator('#toast-tray .toast', has_text='Activation undone: the previous version applies again.')).to_be_visible()
     finally:
         context.close()
     assert entry(h, 'duties_per_week')['rule']['definition']['rule'].get('on') is not False
+
+
+def test_review_warns_before_approving_reduced_safety_protection(browser, live_server, h):
+    from .test_rule_catalogue_api import approve, line as rule_line, propose
+
+    flag(h)
+    key = 'rest_between_duties'
+    old = rule_line(numbers={'min': {'value': 11, 'level': 'mandatory'}})
+    current = approve(h, propose(h, key, [old])['record'])
+    propose(h, key, [{**old, 'numbers': {'min': {'value': 9, 'level': 'mandatory'}}}],
+            policy_id=current['id'], revision=current['revision'])
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, f'rules/{key}')
+        page.locator('.rc-waiting').get_by_role('button', name='Review and approve').click()
+        panel = page.get_by_role('region', name=re.compile(r'Change (to|a line)'))
+        warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
+        expect(panel.get_by_text(warning, exact=True)).to_be_visible()
+        activate = panel.get_by_role('button', name='Approve and activate', exact=True)
+        expect(activate).to_have_accessible_description(warning)
+        expect(activate).to_be_enabled()
+        activate.click()
+        expect(panel).to_have_count(0)
+    finally:
+        context.close()
+    assert entry(h, key)['rule']['definition']['rule']['lines'][0]['numbers']['min']['value'] == 9
 
 
 def test_rule_numbers_say_one_weekend_and_two_weekends(browser, live_server, h):

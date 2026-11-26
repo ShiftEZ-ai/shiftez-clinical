@@ -14,6 +14,7 @@ from packages.domain.validation import evaluate, finding_observations
 from packages.domain.feasibility import unchanged_input_issues
 from packages.domain.solver_rules import definition_issues, COMPILER_VERSION
 from packages.domain.rule_map import numeric_limit
+from packages.domain.rule_lines import weakens_safety_rules
 from packages.domain.rule_serialization import stored_definition
 from apps.api import models as m
 from apps.api.auth import require_catalogue_read, require_permission, require_role, person_access, current_roles
@@ -357,24 +358,23 @@ def people_data(db, actor, day, *, last=None):
     work at) for people in the department on `day`, its retained duty contexts, and that day's local bounds."""
     from packages.domain.time import local_midnight
     from packages.domain.validation import person_active_on
+    from .people import period_records
     last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
     rows = lambda cls: [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))]
-    data = DomainSnapshot({"organisation": {"timezone": zone}, "memberships": rows(m.Membership), "grants": rows(m.CapabilityGrant),
-            "programme_memberships": rows(m.ProgrammeMembership), "rotations": rows(m.Rotation), "eligibilities": rows(m.Eligibility)})
+    data = DomainSnapshot({"organisation": {"timezone": zone}, **period_records(db, department.id, day, last)})
     for name, cls in {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
                       "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
                       "services": m.Service, "locations": m.Location}.items():
         data[name] = {r["id"]: r for r in rows(cls)}
-    day_key, last_key = day.isoformat(), last.isoformat()
     first_membership = {}
     for row in data["memberships"]:
-        if row["starts_on"] < last_key and (not row.get("ends_on") or day_key < row["ends_on"]):
-            first = max(day, date.fromisoformat(row["starts_on"]))
-            pid = row["person_id"]
-            first_membership[pid] = min(first, first_membership.get(pid, first))
-    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(m.Person.id.in_(first_membership)))
+        first = max(day, date.fromisoformat(row["starts_on"]))
+        pid = row["person_id"]
+        first_membership[pid] = min(first, first_membership.get(pid, first))
+    data["people"] = {p.id: record(p) for p in db.scalars(select(m.Person).where(
+                          m.Person.organisation_id == department.organisation_id, m.Person.id.in_(first_membership)))
                       if person_active_on(p.active, p.inactive_from, first_membership[p.id])}
     data["tags"] = tag_data(db, [actor.department_id])
     from apps.api.snapshots import scheduling_inputs
@@ -489,7 +489,11 @@ def policy_reach(db, actor, day, workspace_id=None, starts_on=None, ends_on=None
     else:
         data, a, b = people_period(db, actor, starts_on, ends_on) if starts_on else people or people_data(db, actor, day)
         from .scoring_defaults import seeded_rows
-        policies = seeded_rows(db, [record(p) for p in db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id))])
+        query = select(m.Policy).where(m.Policy.department_id == actor.department_id)
+        # Bound catalogue sources can follow replacement links through retired versions.
+        if not data.get('source_bindings'):
+            query = query.where(m.Policy.status.in_(('active', 'proposed')))
+        policies = seeded_rows(db, [record(p) for p in db.scalars(query)])
         data['policies'] = [p for p in policies if not p['definition'].get('workspace_id')]
         policies = [p for p in with_tags(data)['policies'] if p['status'] in ('active', 'proposed')]
     require(a < b, 'REACH_PERIOD', 'The end date must be after the start date', 422)
@@ -833,7 +837,7 @@ def _activation_commands(command):
             for index, item in enumerate(value.items)]
 
 
-def _activation_inputs(db, actor, commands, *, enforce_independence=True):
+def _activation_inputs(db, actor, commands):
     """Read and validate activation candidates without changing lifecycle state."""
     pending, decisions = [], []
     require_role(actor, "approver")
@@ -846,9 +850,6 @@ def _activation_inputs(db, actor, commands, *, enforce_independence=True):
         policy = scoped(db, m.Policy, command.target_id, actor)
         expected(policy, command.expected_revision)
         require(policy.status == "proposed", "WORKFLOW_STATE", "Only a proposed policy can be activated", 409)
-        if enforce_independence:
-            independence.ensure(db, actor, "rule.activate", person_key(db, policy.created_by) != person_key(db, actor.identity_id),
-                                "Another authorised person must approve this policy", value.reason, policy.id)
         if previous := policy.definition.get("replaces_id"):
             old = scoped(db, m.Policy, previous, actor)
             require(old.status == "active", "WORKFLOW_STATE", "Only an active rule can be replaced", 409)
@@ -882,6 +883,34 @@ def _activation_inputs(db, actor, commands, *, enforce_independence=True):
     return pending, decisions
 
 
+def _require_independent_safety_change(weakens):
+    require(not weakens, 'SELF_APPROVAL',
+            'Another authorised person must approve a change that weakens a safety rule', 403)
+
+
+def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessors=None):
+    from .rule_effects import predecessor_rows
+    from .scoring_defaults import seeded_rows
+
+    before = (predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+              if predecessors is None else list(predecessors))
+    replaced = {old.id for old in before}
+    require(set(replaces_ids) <= replaced, 'NOT_FOUND', 'Record not found', 404)
+    if entry := policy.definition.get('calendar_entry_id'):
+        before.extend(old for old in policies_with_status(db, actor, 'active')
+                      if old.id not in replaced and old.definition.get('calendar_entry_id') == entry)
+    before = [record(old) for old in before if old.status == 'active']
+    return bool(before) and weakens_safety_rules(seeded_rows(db, before), [{**record(policy), 'status': 'active'}])
+
+
+def _activation_independence(db, actor, policy, value):
+    independent = person_key(db, policy.created_by) != person_key(db, actor.identity_id)
+    if not independent:
+        _require_independent_safety_change(activation_weakens_safety(db, actor, policy, value.replaces_ids))
+    independence.ensure(db, actor, 'rule.activate', independent,
+                        'Another authorised person must approve this policy', value.reason, policy.id)
+
+
 def _activation_stamp(db, actor):
     """Compact relational revisions, including new drafts and check receipts, bind the read to the write."""
     W, P, J = m.Workspace, m.Policy, m.Job
@@ -907,7 +936,7 @@ def prepare_activation(db, actor, command, require_checks=False):
     activation_phase_timings(db)
     stamp = _activation_stamp(db, actor)
     commands = _activation_commands(command)
-    pending, decisions = _activation_inputs(db, actor, commands, enforce_independence=False)
+    pending, decisions = _activation_inputs(db, actor, commands)
     retired_ids = {old_id for (policy, _), decision in zip(pending, decisions)
                    for old_id in (set(decision.replaces_ids) | set(policy.definition.get('merged_ids') or []) |
                                   ({policy.definition['replaces_id']} if policy.definition.get('replaces_id') else set()))}
@@ -959,10 +988,10 @@ def activate_policies(db, actor, commands, require_checks=False):
             policy = scoped(db, m.Policy, command.target_id, actor)
             expected(policy, command.expected_revision)
             require(policy.status == 'proposed', 'WORKFLOW_STATE', 'Only a proposed policy can be activated', 409)
-            independence.ensure(db, actor, 'rule.activate', person_key(db, policy.created_by) != person_key(db, actor.identity_id),
-                                'Another authorised person must approve this policy', value.reason, policy.id)
             pending.append((policy, value.reason))
             decisions.append(value)
+    for (policy, _), value in zip(pending, decisions):
+        _activation_independence(db, actor, policy, value)
     if prepared is not None:
         require([p.id for p, _ in pending] == prepared['policy_ids'], 'STALE_INPUTS',
                 'The policy proposal changed; prepare the activation again', 409)
@@ -1113,11 +1142,18 @@ def transition_approval_state(db, actor, policy, *, excluded=()):
     return max([last_revision, *(row.object_revision for row in pending)]), approved
 
 
-def transition_approval(db, actor, policy, action, reason, effects, *, excluded=()):
+def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), restoring=()):
     required = db.get(m.Department, actor.department_id).policy_retire_approvals_required
     proposers = {independence.person_key(db, policy.created_by), *excluded}
     reviewer = independence.person_key(db, actor.identity_id)
     safety = s.safety_rule(policy.definition)
+    if action == 'retire' and reviewer in proposers and safety:
+        from .scoring_defaults import seeded_rows
+
+        before = seeded_rows(db, [record(policy)])
+        after = seeded_rows(db, [{**record(old), 'status': 'active',
+                                  'active': approved_active_before_retirement(db, actor, old)} for old, _ in restoring])
+        _require_independent_safety_change(weakens_safety_rules(before, after))
     independence.ensure(db, actor, "rule.activate", reviewer not in proposers,
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,
         allow_self_approval=required == 1 and (
@@ -1192,7 +1228,8 @@ def policy_transition(db, actor, command, require_checks=False):
             restoring.append((old, last))
     require_policy_version(db, actor, *(old.definition for old, _ in restoring), retained=[old for old, _ in restoring])
     approval = transition_approval(db, actor, policy, "retire", value.reason,
-        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason})
+        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason},
+        restoring=restoring)
     if approval and not approval["complete"]:
         return {"record": record(policy), "impact": [], "restored_ids": [], "restored": [], "approval": approval}
     policy.status, policy.active = "retired", False

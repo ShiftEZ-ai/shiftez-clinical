@@ -113,8 +113,9 @@ def test_location_capacity_boundary_keeps_other_setup_checks(h, capacity, adjace
     if adjacent:
         workspace = h.shift(workspace, '2026-10-04T12:00:00+03:00', '2026-10-04T16:00:00+03:00', people=[])['workspace']
     data = h.snapshot(workspace)
-    location = data['locations'][h.seed['locations'][0]]
-    location.update(capacity=capacity, active=False)
+    location_id = h.seed['locations'][0]
+    data['place_capacity']['limits'][location_id] = capacity
+    data['locations'][location_id]['active'] = False
     findings = {finding['code'] for finding in evaluate(data)['findings']}
     assert ('RESOURCE_CAPACITY' in findings) is (capacity < 2)
     assert 'LOCATION_INACTIVE' in findings

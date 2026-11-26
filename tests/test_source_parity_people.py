@@ -12,12 +12,13 @@ from alembic.config import Config
 from pydantic import ValidationError
 
 from apps.api import models as m
-from apps.api.db import transaction
+from apps.api.db import make_engine, transaction
 from apps.api.services import feedback
 from migrations import safety
 from packages.contracts.schemas import PersonInput
 from packages.domain.people import person_aliases
 from tests.test_staff_import import apply, catalogues, import_business_state, preview
+from .migration_support import add_historical_admin
 
 
 LABEL = 'Preferred / label (test)'
@@ -151,6 +152,12 @@ def test_rota_configuration_migration_keeps_existing_person_values(tmp_path):
         db.execute("INSERT INTO people (id, revision, created_at, organisation_id, display_name, active, short_code) "
                    "VALUES ('person', 7, '2026-10-03', 'org', 'Retained display name', 1, 'OLD')")
         before = db.execute('SELECT id, revision, display_name, short_code FROM people').fetchall()
+    engine = make_engine('sqlite:///' + str(path))
+    try:
+        with engine.begin() as db:
+            add_historical_admin(db, 'dept', 'admin', organisation_id='org')
+    finally:
+        engine.dispose()
     command.upgrade(cfg, 'head')
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT id, revision, display_name, short_code FROM people').fetchall() == before

@@ -159,11 +159,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -302,11 +303,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -3010,7 +3012,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -3610,7 +3613,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -11983,11 +11987,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Approver Roles",
             "type": "array"
           }
@@ -21081,7 +21086,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -26525,7 +26531,8 @@
           "admin",
           "auditor",
           "programme_lead",
-          "operator"
+          "operator",
+          "installation_admin"
         ],
         "title": "Role",
         "type": "string"
@@ -28147,11 +28154,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -28991,7 +28999,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -29973,11 +29982,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Roles",
         "type": "array"
       },
@@ -36431,7 +36441,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
@@ -37573,11 +37584,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -37859,11 +37871,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -38210,11 +38223,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Role Names",
             "type": "array"
           },
@@ -40658,11 +40672,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -41260,11 +41275,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -42091,11 +42107,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -45841,7 +45858,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -46796,7 +46814,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -49608,7 +49627,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -54068,7 +54088,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -55053,7 +55074,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -80321,7 +80343,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },

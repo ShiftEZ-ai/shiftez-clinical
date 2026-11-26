@@ -62,7 +62,6 @@
     "kind.allocation_overtime",
     "kind.allocation_overtime.required_policy_ids",
     "kind.allocation_overtime.volunteer_required",
-    "kind.allocation_preference.balance_by",
     "kind.allocation_preference.balance_target_mode",
     "kind.allocation_preference.balance_target_share",
     "kind.allocation_preference.balance_weight",
