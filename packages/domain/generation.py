@@ -16,7 +16,7 @@ from packages.contracts.schemas import GENERATION_SCOPE_CAPABILITY
 from . import leadership
 from .generation_scope import population_allows, protects_existing, scope_receipt, selected_session_ids
 from .validation import attached_to, evaluate, finding_observations, index_person_rows, person_rows, capabilities_for, categories_for, policy_applies, scope_intervals, valid_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified, person_active_for_interval
-from .validation import coverage_boundary_inputs, effective_type_definition, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
+from .validation import coverage_boundary_inputs, draft_type_safety_key, effective_type_definition, participation_for, prepare_assignment_trials, trainee_intervals, named_people, session_matches, person_free
 from .time import aware, duration_hours, local_midnight, union_hours, overlaps
 from .conditions import active_rules, bucket_keys, counting_key, counting_views, rule_holds, scope_tree, scope_applies, scope_matches_throughout
 from .supervision_levelling import levelled_order, session_spread_policies
@@ -693,7 +693,7 @@ def pair_attached(data, shifts, added, removals, period):
     for shift in shifts:
         if shift['locked']:
             continue
-        definition = (effective_type_definition(data, shift) if shift['id'] in draft_safety
+        definition = (effective_type_definition(data, shift) if draft_safety and draft_type_safety_key(shift) in draft_safety
                       else shift['type_snapshot']['definition'])
         if not definition.get('supervision'):
             continue
@@ -1008,7 +1008,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
             break
         if shift["locked"]:
             continue
-        definition = (effective_type_definition(data, shift) if shift['id'] in draft_safety
+        definition = (effective_type_definition(data, shift) if draft_safety and draft_type_safety_key(shift) in draft_safety
                       else shift['type_snapshot']['definition'])
         # Who could take this session at all (active, qualified, not away, on leave or restricted) never changes during
         # the run: decide it once per session, not for every person at every seat.

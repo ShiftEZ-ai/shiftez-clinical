@@ -106,6 +106,12 @@ def leaks(h, roles, markers, paths=READS):
     return found
 
 
+def create_sibling_department(h):
+    name_test_administrators(h)
+    value = payload(h, name="Second department (test)", reason="A sibling department inside the seeded organisation")
+    return h.command("operator", "department.create", value, expected_fingerprint=token(h, value))["department"]
+
+
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
 def tenants(request):
     if request.param == "sqlite":
@@ -118,10 +124,7 @@ def tenants(request):
         password_hash = PASSWORDS.hash(TEST_PASSWORD)
         other = second_organisation(db, password_hash)
     h.seed["identities"].update(other["identities"])
-    name_test_administrators(h)
-    value = payload(h, name="Second department (test)", reason="A sibling department inside the seeded organisation")
-    sibling = h.command("operator", "department.create", value, expected_fingerprint=token(h, value))["department"]
-    return h, owner, other, sibling
+    return h, owner, other, create_sibling_department(h)
 
 
 def content(h, prefix, service, location, typ, person, marker):
