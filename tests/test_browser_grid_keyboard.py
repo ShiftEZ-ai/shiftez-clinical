@@ -82,7 +82,7 @@ def test_tab_enters_the_schedule_grid_at_a_cell_and_a_grip_keeps_its_focus(brows
         context.close()
 
 
-@pytest.mark.parametrize('width,head', [(390, 180), (900, 320)])
+@pytest.mark.parametrize('width,head', [(390, 180), (900, 480)])  # wide enough that the days scroll under the column
 def test_an_arrow_move_lands_beside_a_resized_people_name_column(browser, live_server, h, width, head):
     """WCAG 2.4.11 Focus Not Obscured: an arrow move to a chip that sits under the sticky name column scrolls it out
     beside the column, at the width the view resized the column to (the roving grid scrolls its target into view;
