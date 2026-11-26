@@ -16,7 +16,7 @@ from packages.domain.assignment_override import assignment_override_allowed
 from packages.domain.conditions import counting_key, counting_views
 from packages.domain.validation import evaluate, finding_observations, prepare_assignment_trials
 from .common import scoped, expected
-from .planner_tools import PLANNER_ROLES
+from .planner_tools import PLANNER_ROLES, assignment_stamp
 
 MAX_SCOPE_SHIFTS = 1000
 MAX_DIRECTORY_MATCHES = 10000
@@ -274,6 +274,7 @@ def fill_options(db, actor, value: s.FillOptionsInput, *, progress=None, cancell
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     expected(workspace, value.expected_revision)
     require(workspace.status == 'draft', 'WORKFLOW_STATE', 'Staffing options apply only to a draft', 409)
+    stamp = assignment_stamp(db, workspace, value.shift_id)
     source = domain_snapshot(db, workspace)
     from .published_changes import validation_scope
     validation_scope(db, workspace, source)
@@ -329,6 +330,7 @@ def fill_options(db, actor, value: s.FillOptionsInput, *, progress=None, cancell
     fixed_refusal = ('Only the Rota Coordinator can change fixed assignments'
                      if replaced is not None and replaced.get('fixed') and not unrestricted(db, actor, access_record(db, workspace)) else None)
     base = {'workspace_id': workspace.id, 'workspace_revision': workspace.revision, 'shift_id': shift['id'],
+            **({'assignment_stamp': stamp} if stamp else {}),
             'replace_assignment_id': value.replace_assignment_id, 'replace_refusal': fixed_refusal,
             'slot': fill_slot(shift, replaced), 'source_fingerprint': source['fingerprint'],
             'evaluated_at': m.now().isoformat(),

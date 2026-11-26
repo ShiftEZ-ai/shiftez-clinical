@@ -208,6 +208,17 @@ def test_same_rights_keep_private_sources_and_self_approval_per_reader(h, monkey
     assert len(builds) == 1
     assert private['id'] in {row['workspace_id'] for row in first.json()['source_options']}
     assert private['id'] not in {row['workspace_id'] for row in second.json()['source_options']}
+    for path in (PATH, '/api/rules-explained'):
+        separator = '&' if '?' in path else '?'
+        selected = f'{path}{separator}workspace_id={private["id"]}'
+        missing = f'{path}{separator}workspace_id=00000000-0000-4000-8000-000000000000'
+        assert clients[0].get(selected).status_code == 200
+        unknown = clients[1].get(missing)
+        denied = clients[1].get(selected, headers={'If-None-Match': first.headers['ETag']})
+        assert denied.status_code == unknown.status_code == 404
+        assert denied.json()['error'] == unknown.json()['error']
+    # Captured catalogue construction bypasses the live projection and its cache.
+    assert len(builds) == 2
     assert clients[0].get('/api/me').json()['self_approval'] == ['rule.activate']
     assert clients[1].get('/api/me').json()['self_approval'] == []
     # Grants and own-proposal eligibility are already resolved by /api/me and commands, never cached here.
@@ -228,7 +239,7 @@ def test_same_rights_keep_private_sources_and_self_approval_per_reader(h, monkey
     for client, response in zip(clients, (first, second)):
         unchanged = client.get(PATH, headers={'If-None-Match': response.headers['etag']})
         assert unchanged.status_code == 304 and unchanged.content == b''
-    assert len(builds) == 1
+    assert len(builds) == 2
 
 
 def test_write_transaction_reads_pending_changes_instead_of_the_shared_cache(h):
