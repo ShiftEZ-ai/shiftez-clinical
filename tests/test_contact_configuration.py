@@ -223,7 +223,7 @@ def test_migration_retains_all_existing_data(session_limits_database):
     from sqlalchemy import MetaData, Table
     from scripts.manage import alembic_config
     from apps.api.db import make_engine
-    from tests.migration_support import historical_seed
+    from tests.migration_support import historical_seed, without_installation_admin_backfill
     from migrations import safety
     from pathlib import Path
     cfg = alembic_config(session_limits_database)
@@ -242,7 +242,7 @@ def test_migration_retains_all_existing_data(session_limits_database):
                     for name, table in old.tables.items() if name != 'alembic_version'}
     before = snapshot()
     command.upgrade(cfg, 'head')
-    assert snapshot() == before
+    assert without_installation_admin_backfill(snapshot()) == before
     with transaction(engine) as db:
         types = list(db.scalars(select(m.ContactType)))
         assert len(types) == len(s.DEFAULT_CONTACT_TYPES)
@@ -250,7 +250,10 @@ def test_migration_retains_all_existing_data(session_limits_database):
         for row in types:
             default = next(t for t in s.DEFAULT_CONTACT_TYPES if t['legacy_field'] == row.legacy_field)
             expected = {k: value for k, value in default.items() if k not in {'id', 'visibility'}}
-            expected['visibility'] = (default['visibility'] if row.legacy_field not in {'work_extension', 'work_email'}
+            # A seeded row keeps the roles of its day; a role added later reaches only new departments.
+            seeded = [role for role in default['visibility']['roles'] if role != s.INSTALLATION_ADMIN_ROLE]
+            expected['visibility'] = ({**default['visibility'], 'roles': seeded}
+                                      if row.legacy_field not in {'work_extension', 'work_email'}
                                       else {'mode': 'roles', 'roles': ['admin', 'coordinator']})
             assert all(getattr(row, k) == value for k, value in expected.items())
     for revision, expected_class in (('0136_person_contacts', 'fill_only'),

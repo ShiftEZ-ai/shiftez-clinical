@@ -3,8 +3,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0155_leave_balance_policy'
-down_revision = '0154_request_undo_note'
+revision = '0156_leave_balance_policy'
+down_revision = '0155_installation_admin'
 branch_labels = depends_on = None
 SAFETY_CLASS = 'additive'
 

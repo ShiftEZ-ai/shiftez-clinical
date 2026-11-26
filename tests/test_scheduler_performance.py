@@ -863,6 +863,10 @@ def test_each_workload_department_validation_and_scheduler_cpu_budget(department
 
 @pytest.fixture(scope='module')
 def department_preparation_163_people(scale_harness):
+    return seed_department_preparation(scale_harness('pg'))
+
+
+def seed_department_preparation(h):
     """Persist the preparation profile's active rules and retired history in PostgreSQL."""
     from datetime import date
     from sqlalchemy import select
@@ -871,7 +875,6 @@ def department_preparation_163_people(scale_harness):
     from packages.contracts.schemas import PolicyDefinition
     from tests.test_backend_scale import scale_department
 
-    h = scale_harness('pg')
     workspace, data, _, _ = scale_department(h, assigned=False)
     people = list(data['people'])
     rules = [

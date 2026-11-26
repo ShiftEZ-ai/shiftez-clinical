@@ -353,7 +353,7 @@ def test_person_fairness_permissions_follow_existing_fairness_readers(h, role):
     own = h.get(role, endpoint(a), status=200 if permitted else 403)
     if permitted:
         assert own['workspace'] is None and own['goals'] == []
-    h.get(role, endpoint(b), status=403 if role in {'staff', 'credentialer', 'operator'} else 200)
+    h.get(role, endpoint(b), status=200 if permitted and role != 'staff' else 403)
 
 
 @pytest.mark.parametrize('role', ROLE_NAMES)
