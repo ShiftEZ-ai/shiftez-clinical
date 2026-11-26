@@ -33,6 +33,24 @@ def source_fingerprint(db, actor, workspace, command):
     return token
 
 
+def assignment_stamp(db, workspace, shift_id):
+    from apps.api.snapshots import _baseline_hint
+    from .read_projections import input_stamp
+
+    if workspace.base_publication_id:
+        return None
+    department = db.get(m.Department, workspace.department_id)
+    departments = select(m.Department.id).where(m.Department.organisation_id == department.organisation_id)
+    event = m.Event
+    # Projected protected events can expire without a write, including across quota windows.
+    if db.scalar(select(event.id).where(event.department_id.in_(departments), event.cancelled.is_(False),
+            event.repeat['anchor'].as_string().is_not(None),
+            event.occurrence_data['type']['blocks_duties'].as_boolean().is_(True)).limit(1)) is not None:
+        return None
+    return s.ASSIGNMENT_STAMP_PREFIX + snapshot_hash([workspace.id, shift_id, _baseline_hint(db, workspace),
+                                                     input_stamp(db, workspace)])
+
+
 def command_key(command):
     return snapshot_hash([command.kind, command.target_id, command.expected_revision, command.payload])
 
@@ -250,6 +268,12 @@ def assert_precondition(db, actor, command):
                 'The rota or scheduling inputs changed after preview. Calculate it again.', 409)
         return
     if command.expected_fingerprint is None:
+        return
+    if command.expected_fingerprint.startswith(s.ASSIGNMENT_STAMP_PREFIX):
+        require(command.kind == 'shift.update', 'UNSUPPORTED_PRECONDITION', 'Use an assignment stamp to edit a session')
+        workspace = scoped(db, m.Workspace, workspace_id(command), actor)
+        require(assignment_stamp(db, workspace, command.payload.get('shift_id')) == command.expected_fingerprint,
+                'STALE_PREVIEW', 'The rota or scheduling inputs changed. Check who can work the session again.', 409)
         return
     if command.kind in PREVIEW_KINDS:
         workspace = scoped(db, m.Workspace, workspace_id(command), actor)

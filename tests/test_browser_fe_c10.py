@@ -87,7 +87,7 @@ def test_home_review_of_a_rule_change_opens_its_proposal(browser, live_server, h
     context, page = sign_in(browser, live_server, 'approver', DESKTOP)
     try:
         navigate(page, 'home')
-        page.locator('li[data-need="rules"]').get_by_role('button', name='Review', exact=True).click()
+        page.locator('li[data-need="rules"]').get_by_role('button', name='Review, Rule change,').click()
         expect(page).to_have_url(re.compile(r'#rules/hours_per_period'))
         waiting = page.locator('.rc-waiting')
         expect(waiting.get_by_role('button', name='Review and approve', exact=True)).to_be_in_viewport()
