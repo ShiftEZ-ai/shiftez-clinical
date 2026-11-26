@@ -375,6 +375,7 @@ def test_every_bulk_kind_reads_the_shared_permission_map(kind, monkeypatch):
     assert COMMAND_PERMISSIONS[kind] == permission
     monkeypatch.setitem(s.PERMISSIONS, permission, ("auditor",))
     monkeypatch.setitem(s.PERMISSIONS, "access.system_roles", ())
+    monkeypatch.setitem(s.PERMISSIONS, "access.installation_admin", ())
     assert command_roles(s.Command(kind=kind)) == ["auditor"]
 
 
@@ -393,7 +394,7 @@ def test_withdrawal_and_system_role_authority_keep_their_current_permission_cont
     assert command_roles(s.Command(kind="request.decide", payload={"decision": "withdraw"})) == ["staff"]
     monkeypatch.setitem(s.PERMISSIONS, "access.system_roles", ("coordinator",))
     for kind in ("role.grant", "role.revoke", "role.restore"):
-        assert command_roles(s.Command(kind=kind)) == ["admin", "coordinator"]
+        assert command_roles(s.Command(kind=kind)) == ["admin", "coordinator", *s.PERMISSIONS["access.installation_admin"]]
 
 
 @pytest.mark.parametrize("bulk", [False, True])
@@ -515,7 +516,7 @@ def test_job_receipt_without_kind_uses_the_current_permission_map(monkeypatch):
 
 
 def test_every_registered_command_keeps_its_head_roles_except_the_decided_exception():
-    """Whole-registry before/after (maintenance): one decided difference only (Master, 10 Nov: membership.withdraw)."""
+    """Whole-registry before/after: permit only the declared role changes."""
     registered = _dispatcher_registry()
     added = {'membership.restore': s.PERMISSIONS['membership.withdraw'],
              'eligibility.restore': s.PERMISSIONS['eligibility.withdraw'],
@@ -524,5 +525,12 @@ def test_every_registered_command_keeps_its_head_roles_except_the_decided_except
              'rotation.restore': s.PERMISSIONS['rotation.remove']}
     expected = HEAD_ROLES | added
     assert registered == set(expected), sorted(registered ^ set(expected))
+    role_changes = {**DELIBERATE_ROLE_CHANGES,
+                    'branding.update': s.PERMISSIONS['branding.configure'],
+                    'branding.undo': s.PERMISSIONS['branding.configure'],
+                    **dict.fromkeys(('role.grant', 'role.revoke', 'role.restore'), ('admin', *s.SYSTEM_ROLES, s.INSTALLATION_ADMIN_ROLE))}
+    previous_roles = set(s.ROLE_NAMES) - {s.INSTALLATION_ADMIN_ROLE}
     for kind, head_roles in expected.items():
-        assert tuple(command_roles(s.Command(kind=kind))) == DELIBERATE_ROLE_CHANGES.get(kind, head_roles), kind
+        if set(head_roles) == previous_roles:
+            head_roles = (*head_roles, s.INSTALLATION_ADMIN_ROLE)
+        assert tuple(command_roles(s.Command(kind=kind))) == role_changes.get(kind, head_roles), kind

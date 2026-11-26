@@ -143,7 +143,7 @@ def test_boot_catalogues_hydrate_identical_full_records_and_keep_separate_etags(
 def test_boot_and_hydrated_catalogues_keep_permissions(h, role):
     if role == 'programme_lead':
         identity(h, role, [role])
-    permitted = role not in {'staff', 'operator'}
+    permitted = role not in {'staff', 'operator', 'installation_admin'}
     for path in ('/api/catalogues?boot=true', '/api/catalogues?known='):
         result = h.get(role, path, status=200 if permitted else 403)
         if permitted:

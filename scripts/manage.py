@@ -25,7 +25,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import AccountInvite, Decision, PERMISSIONS, TypeDefinition
+from packages.contracts.schemas import AccountInvite, Decision, INSTALLATION_ADMIN_ROLE, PERMISSIONS, TypeDefinition
 from migrations import safety
 from migrations.source_safety import assigned, preflight_analyzer
 from migrations.sql_safety import CURRENT_SCHEMA, duplicate_precheck_tokens
@@ -388,7 +388,7 @@ def main():
         ZoneInfo(args.timezone)
         try:
             invite = AccountInvite(username=args.username, email=args.email, display_name=args.display_name,
-                                   roles=["admin"], reason=args.reason)
+                                   roles=["admin", INSTALLATION_ADMIN_ROLE], reason=args.reason)
             settings = replace(Settings.from_env(), database_url=args.database_url)
             if not settings.identity_users_file:
                 parser.error("Institution bootstrap requires a managed sign-in users file")
@@ -443,6 +443,8 @@ def main():
                 raise RuntimeError("Demo bootstrap is prohibited in production")
             with transaction(engine, write=True) as db:
                 values = demo_data(db, empty=args.empty)
+                db.add(m.RoleBinding(identity_id=values["identities"]["admin"], department_id=values["department_id"],
+                                     role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
             directory = ROOT / ".run"
             directory.mkdir(exist_ok=True)
             path = directory / "demo-credentials.json"

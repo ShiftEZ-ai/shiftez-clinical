@@ -29,6 +29,8 @@ ALL_ROLES = list(s.ROLE_NAMES)
 NON_SERIALIZED_COMMANDS = frozenset({"department_content.seen"})
 COMMAND_PERMISSIONS = {
     "department.create": "department.create",
+    "branding.update": "branding.configure",
+    "branding.undo": "branding.configure",
     **{kind: kind for kind in s.BULK_ITEM_KINDS},
     **dict.fromkeys(('workspace.archive', 'workspace.restore', 'workspace.delete_draft'), 'workspace.archive'),
     **dict.fromkeys(('score.settings', 'score.settings.rollback'), 'planning.configure'),
@@ -99,7 +101,7 @@ def command_roles(command):
             permission = "request.withdraw"
         roles = list(s.PERMISSIONS[permission])
         if kind.startswith("role."):
-            roles += s.PERMISSIONS["access.system_roles"]
+            roles += (*s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
         return list(dict.fromkeys(roles))
     for prefix, canonical in (("catalogue.", "catalogue.update"), ("eligibility.", "eligibility.create"),
                               ("grant.", "grant.create"), ("role.", "role.grant")):
@@ -124,7 +126,7 @@ def command_roles(command):
         return ['approver']
     if kind == "account.end_other_sessions":
         return ALL_ROLES
-    if kind in {'branding.update', 'branding.undo', 'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
+    if kind in {'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
         return ['admin']
     if kind.startswith("planner_view."):
         return sorted(planner_tools.PLANNER_ROLES)
@@ -700,7 +702,10 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
     """Single and nested receipts keep the command's current sensitive-object authority checks."""
     if kind in {'branding.update', 'branding.undo'}:
         from .services import branding
-        branding.require_editor(db, actor)
+        branding.require_editor(actor)
+    if kind in {'role.grant', 'role.restore', 'role.revoke'}:
+        from .services.access import require_role_change
+        require_role_change(db, actor, result['record']['role'], grant=kind != 'role.revoke')
     if kind == 'timeline.rotation':
         from .services import timeline_commands
         timeline_commands.authorize_result(db, actor, result)
@@ -1214,7 +1219,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
-            if (command.kind in {'account.invite', 'rule.propose'}
+            if (command.kind in {'account.invite', 'role.grant', 'rule.propose'}
                     or command.kind == 'availability.record' and result['record'].get('self_approved')):
                 target_id = result['record']['id']
             elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):

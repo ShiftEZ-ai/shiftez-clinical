@@ -15,7 +15,7 @@ from apps.worker.main import claim_job, prepare_deferred_generation
 from packages.contracts.schemas import DepartmentSettingsInput, GenerationOptions
 from packages.domain.solver_rules import generation_manifest
 from scripts.manage import alembic_config, migrate
-from .migration_support import current_seed_columns, historical_seed
+from .migration_support import current_seed_columns, historical_seed, without_installation_admin_backfill
 
 
 def settings(h, defaults=None):
@@ -93,10 +93,19 @@ def test_default_adoption_migration_adds_audit_without_rewriting_settings(tmp_pa
             departments.append(row)
         db.flush()
         before = {row.id: (row.revision, copy.deepcopy(row.generation_defaults)) for row in departments}
+        bindings = db.execute(select(m.RoleBinding.__table__).order_by(m.RoleBinding.id)).all()
+
+    def snapshot(db):
+        return {table.name: db.execute(select(table).order_by(table.c.id)).all()
+                for table in (m.AuditEvent.__table__, m.RoleBinding.__table__)}
+
     migrate(url)
     with transaction(engine) as db:
         assert {row.id: (row.revision, row.generation_defaults) for row in db.scalars(select(m.Department))} == before
-        events = list(db.scalars(select(m.AuditEvent)))
+        upgraded = snapshot(db)
+        retained = without_installation_admin_backfill(upgraded)
+        assert retained['role_bindings'] == bindings
+        events = retained['audit_events']
         assert len(events) == 1 and events[0].department_id == seed['department_id']
         assert events[0].action == 'department.generation_default'
         assert events[0].detail == {'migration_revision': '0061_keep_assignments_default',
@@ -107,7 +116,7 @@ def test_default_adoption_migration_adds_audit_without_rewriting_settings(tmp_pa
         assert not db.scalar(select(m.RoleBinding).where(m.RoleBinding.identity_id == actor.id))
     migrate(url)
     with transaction(engine) as db:
-        assert len(list(db.scalars(select(m.AuditEvent)))) == 1
+        assert snapshot(db) == upgraded
     engine.dispose()
 
 
