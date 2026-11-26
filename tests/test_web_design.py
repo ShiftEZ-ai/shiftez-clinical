@@ -30,6 +30,22 @@ def test_rota_status_takes_its_tone_from_the_one_palette():
     assert 'factLine(' in strip and 'review-step' not in strip
 
 
+def test_month_cell_pills_keep_a_24px_pitch():
+    """WCAG 2.2 SC 2.5.8 spacing exception: Month draws its pills at --pill-h-compact (under 24 px), so they stack at the
+    cell's one pill gap and every pitch is at least 24 px; no screen rule gives a day cell a narrower gap of its own.
+    Paper (the export) has no pointer targets, so the Month export keeps its denser gap and its fit-page scale."""
+    css = (SRC.parent / 'public/assets/app.css').read_text(encoding='utf-8')
+    tokens = {k: int(v) for k, v in re.findall(r'--(pill-h-compact|pill-gap):(\d+)px', css)}
+    assert tokens['pill-h-compact'] + tokens['pill-gap'] >= 24, tokens
+    gaps = []
+    for selector, body in re.findall(r'([^{}]*)\{([^{}]*)\}', css):
+        parts = [p.strip() for p in selector.split('*/')[-1].split(',')]
+        gap = re.search(r'(?:^|;)gap:([^;]+)', body)
+        if gap and any(re.search(r'\.wk-cell(?:[.:][\w-]+)*$', p) and not p.startswith('.export-body ') for p in parts):
+            gaps.append((selector.split('*/')[-1].strip(), gap.group(1).strip()))
+    assert gaps == [('.wk-cell', 'var(--pill-gap)')], gaps
+
+
 def test_the_phone_touch_block_covers_checkboxes_radios_and_the_legend_more():
     """DESIGN.md touch targets (WCAG 2.2 SC 2.5.5): the one phone block gives a checkbox's or radio's label row 44 px, a
     row selection box a 44 px native label, and the legend one 44 px line (tests/test_browser_a11y.py measures them)."""
