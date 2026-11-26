@@ -863,7 +863,8 @@ def requests_etag(db, actor, representation):
     # outbox payload; its revision changes when the worker freezes that payload.
     stamp.append(tuple(db.execute(select(func.count(), func.sum(m.Outbox.revision), func.max(m.Outbox.created_at))
         .where(m.Outbox.department_id == actor.department_id, m.Outbox.event_key.like('swap:%'))).one()))
-    return revision_etag("requests", actor.department_id, actor.identity_id, actor.person_id,
+    # Expire durable projections built before swap refusal privacy was applied.
+    return revision_etag("requests-v2", actor.department_id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), representation, stamp)
 
 
@@ -1641,8 +1642,8 @@ def _history(db, actor, source, row, item):
         return who.get(identity, "")
     if source == "swap":  # a swap records its own events, the offer first; a reopened swap continues the thread of the one before
         from . import swaps
-        return [{"action": "swap." + e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": e.reason}
-                for e in swaps.events_for(db, actor, row, thread=True)]
+        return [{"action": "swap." + event["action"], "at": event["created_at"], "actor": by(event["actor_id"]),
+                 "reason": event["reason"]} for event in swaps.events_for(db, actor, row, thread=True)]
     events = [{"action": "created", "at": json_value(row.created_at),
                "actor": by(item.get("created_by", item.get("proposed_by"))), "reason": ""}]
     targets = [row.id, *([item["record_id"]] if item.get("record_id") else [])]

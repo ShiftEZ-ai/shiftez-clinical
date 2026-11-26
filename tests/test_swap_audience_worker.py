@@ -165,6 +165,31 @@ def test_zero_audience_finishes_pending_state_without_inventing_members(h):
     assert h.get("staff_three", "/api/requests/all")["total"] == 0
 
 
+def test_no_recipients_refusal_and_worker_notice_share_the_audience_reason(h):
+    pid, first, _, _ = source_pair(h, third=True)
+    row = h.command('staff', 'swap.offer', payload(pid, first, 'give'))['swap']
+    on_leave, protected = h.seed['people'][1:]
+    h.command('coordinator', 'availability.record', {'person_id': on_leave, 'kind': 'recorded_leave',
+        'start': '2026-10-04T08:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00',
+        'private_reason': 'Synthetic leave note'})
+    h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'},
+             {'person_id': protected})
+    audience_ready(h)
+    reason = 'Colleagues are not free at that time.'
+    detail = h.get('staff', '/api/swaps/' + row['id'])
+    assert detail['swap']['delivery_status'] == 'no_recipients'
+    assert detail['swap']['no_eligible_recipients_reason'] == reason
+    inbox = h.get('staff', '/api/notifications?kind=swap')['notifications']
+    notice, = [item for item in inbox if item['title'] == 'Nobody eligible can take this duty']
+    assert notice['message'] == reason
+
+    transition(h, row, 'withdraw')
+    refusal = h.command('staff', 'swap.offer', payload(pid, first, 'give'), status=422)['error']
+    assert refusal['code'] == 'SWAP_NO_RECIPIENTS'
+    assert refusal['message'].endswith(reason)
+    assert refusal['details']['no_eligible_recipients_reason'] == refusal['message']
+
+
 def test_failed_audience_job_clears_pending_without_notifying_or_exposing_error_text(both, monkeypatch):
     h = both
     pid, first, _, _ = source_pair(h, third=True)
