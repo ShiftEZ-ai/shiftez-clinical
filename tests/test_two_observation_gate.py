@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -230,9 +231,62 @@ class TwoObservationGateTests(unittest.TestCase):
                 maker.evaluate(self.current, self.current, runs, **output)
             self.assertEqual(json.loads(artifact.read_text()), report)
 
+    def test_pr_merge_base_uses_target_history_and_exact_event_head(self):
+        import trusted_ci
+
+        def git(*args, **kwargs):
+            return subprocess.check_output(["git", "-C", str(self.folder),
+                                            "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                            *args], **kwargs)
+
+        git("init", "-q")
+        tree = git("mktree", input=b"").decode().strip()
+
+        def revision(name, *parents):
+            args = [arg for parent in parents for arg in ("-p", parent)]
+            return git("commit-tree", tree, *args, "-m", name).decode().strip()
+
+        event_base = revision("Event base")
+        base = revision("Generated merge base", event_base)
+        tip = revision("Current target tip", base)
+        head = revision("PR head", event_base)
+        candidate = revision("Generated merge", base, head)
+        different_head = revision("Different head merge", base, event_base)
+        unrelated = revision("Unrelated history")
+        git("update-ref", "refs/remotes/origin/main", tip)
+        output = self.folder / "output"
+
+        def payload(sha):
+            return {"pull_request": {"base": {"ref": "main", "sha": sha}, "head": {"sha": head}},
+                    "repository": {"default_branch": "main"}}
+
+        policy = trusted_ci.policy
+        with patch.object(policy, "git", side_effect=git), \
+             patch.object(policy, "event", return_value=payload(event_base)), \
+             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": candidate,
+                                     "GITHUB_OUTPUT": str(output), "TRUSTED_BOOTSTRAP": "false"}):
+            git("update-ref", "HEAD", candidate)
+            policy.ci_context()
+            self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()),
+                             {"base_sha": base, "census_base_sha": base, "release": "false"})
+            with self.assertRaisesRegex(ValueError, "match the event merge commit"):
+                policy.pr_test_base(payload(event_base), different_head)
+            with self.assertRaisesRegex(ValueError, "does not contain the event base"):
+                policy.pr_test_base(payload(unrelated), candidate)
+            with patch.dict(os.environ, {"GITHUB_SHA": different_head}), \
+                 self.assertRaisesRegex(ValueError, "event head second"):
+                policy.pr_test_base(payload(event_base), different_head)
+            git("update-ref", "refs/remotes/origin/main", revision("Diverged target", event_base))
+            with self.assertRaisesRegex(ValueError, "not on the target branch"):
+                policy.pr_test_base(payload(event_base), candidate)
+
     def test_plan_and_reader_use_event_replica_counts(self):
         import trusted_ci
+        from tests import test_cpu_budget
+
         owner = "tests/test_quick_owner.py"
+        timing_violation = "tests/test_unmarked_timing.py"
+        timing_guard = "tests/test_cpu_budget.py"
         owned = "apps/api/quick_fixture.py"
         shared = "apps/api/models.py"
         shared_owner = "tests/test_shared_owner.py"
@@ -245,7 +299,8 @@ class TwoObservationGateTests(unittest.TestCase):
         unrelated = {"tests/test_other.py", "tests/test_browser_other.py", indirect_owner}
         guarded_tests = {fixture, "tests/test_product_helper.py", "tests/test_runner_hook.py",
                          "tests/test_existing_hook.py", "tests/test_legacy_encoding.py"}
-        files = trusted_ci.PR_SMOKE | {owner, shared_owner} | browser_owners | unrelated | guarded_tests
+        files = (trusted_ci.PR_SMOKE | {owner, shared_owner, timing_violation, timing_guard}
+                 | browser_owners | unrelated | guarded_tests)
         weights = {path: 120 + index for index, path in enumerate(sorted(files))}
         durations = {"suites": {suite: {"files": weights} for suite in ("unit", "browser")}}
         settings_path = ROOT / "ci/bootstrap-settings.json"
@@ -257,6 +312,9 @@ class TwoObservationGateTests(unittest.TestCase):
         sources = dict.fromkeys(files, "def test_a(): pass\n")
         sources.update(dict.fromkeys(browser_owners, "from apps.api.models import value\n"))
         sources.update({owner: "from apps.api.quick_fixture import value\n", owned: "value = 1\n",
+                        timing_violation: "from time import perf_counter\n"
+                                          "def test_sample():\n"
+                                          "    assert perf_counter() - perf_counter() < 1\n",
                         shared: "value = 1\n", shared_owner: "from apps.api.models import value\n",
                         "apps/api/consumer.py": "from apps.api.models import value\n",
                         indirect_owner: "from apps.api.consumer import value\n",
@@ -273,7 +331,12 @@ class TwoObservationGateTests(unittest.TestCase):
             added = "tests/test_new_product_case.py"
             with patch.object(trusted_ci, "TRUSTED", self.folder):
                 self.assertEqual(trusted_ci.affected_files({shared, added}, files | {added}),
-                                 trusted_ci.PR_SMOKE | {shared_owner, added} | browser_owners)
+                                 trusted_ci.PR_SMOKE | {shared_owner, added, timing_guard} | browser_owners)
+                self.assertIsNone(trusted_ci.affected_files({added}, (files | {added}) - {timing_guard}))
+            with patch.object(test_cpu_budget, "__file__", str(self.folder / timing_guard)):
+                modules = test_cpu_budget.parsed_test_modules.__wrapped__()
+            with self.assertRaisesRegex(AssertionError, "test_unmarked_timing.py"):
+                test_cpu_budget.test_unmarked_tests_do_not_assert_timing_budgets(modules)
             full_paths = ("scripts/tool.py", ".github/workflows/ci.yml", "ci/settings.json", "tools/control.py",
                           "requirements/test.lock", "package-lock.json", "package.json", "pyproject.toml",
                           "tests/conftest.py", nested_conftest, fixture, "apps/api/conftest.py",
@@ -284,11 +347,13 @@ class TwoObservationGateTests(unittest.TestCase):
                           unknown, unknown_doc)
             cases = [(path, [], "dev", False, False) for path in full_paths]
             cases += [(owned, [], "dev", False, True), (shared, [], "dev", False, True), (owner, [], "dev", False, True),
+                      (timing_violation, [], "dev", False, True),
                       (owned, ["full-ci"], "dev", False, False), (owned, [], "main", False, False),
                       (owned, [], "dev", True, True), (unknown, [], "dev", True, False), (owner, [], "dev", True, False)]
             events = [("pull_request", *case) for case in cases]
+            events.append(("merge_group", timing_violation, [], "dev", False, False))
             events += [(event, owned, [], "dev", False, False)
-                       for event in ("merge_group", "workflow_dispatch", "push", "schedule")]
+                       for event in ("workflow_dispatch", "push", "schedule")]
             events = [(*case, "dev") for case in events]
             events += [("push", owned, [], "main", False, False, "main"),
                        ("push", owned, [], "main", False, False, "dev")]
@@ -305,12 +370,17 @@ class TwoObservationGateTests(unittest.TestCase):
                 if index == len(events) - 1:
                     # The real selector raises when reading this inventory entry as a file.
                     (self.folder / "tests/test_unreadable.py").mkdir()
-                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": base, "ref": branch},
+                event_base = "d" * 40 if event == "pull_request" and branch == default and path == shared else base
+                payload = {"pull_request": {"head": {"sha": head}, "base": {"sha": event_base, "ref": branch},
                                             "labels": [{"name": label} for label in labels]},
                            "repository": {"default_branch": default}}
                 def event_git(*args):
                     if args[0] == "rev-list":
                         return f"{candidate} {base} {head}".encode()
+                    if args[0] == "merge-base":
+                        self.assertIn(args, [("merge-base", "--is-ancestor", event_base, base),
+                                             ("merge-base", "--is-ancestor", base, "refs/remotes/origin/" + branch)])
+                        return b""
                     self.assertEqual(args[-3:], (base, candidate, "--"))
                     changed = [path, owner] if path == shared else [path]
                     return ("\0".join(changed) + "\0").encode()
@@ -335,7 +405,7 @@ class TwoObservationGateTests(unittest.TestCase):
                                   default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
                                              "GITHUB_REF": "refs/heads/" + branch}), \
-                     patch.object(maker, "at_revision", return_value=self.current), \
+                     patch.object(maker, "at_revision", return_value=self.current) as at_revision, \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
                      patch.object(trusted_ci.subprocess, "check_output", return_value=head), \
@@ -348,14 +418,22 @@ class TwoObservationGateTests(unittest.TestCase):
                     single = event in ("pull_request", "merge_group") or (event == "push" and branch == default)
                     replicas = [1] if single else [1, 2]
                     self.assertEqual(maker.context(base)["replicas"], replicas)
-                    plan = trusted_ci.plan(base, False)
+                    at_revision.reset_mock()
+                    plan = trusted_ci.plan(event_base, False)
                     self.assertEqual(plan["sha"], candidate)
+                    self.assertEqual(plan["base_sha"], base)
+                    self.assertEqual(at_revision.call_args_list[0].args, (base,))
                     self.assertEqual(plan["replicas"], replicas)
                     self.assertEqual(maker.retry_run(plan), single)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
-                        expected = {shared_owner, owner} | browser_owners if path == shared else {owner}
+                        if path == shared:
+                            expected = {shared_owner, owner, timing_guard} | browser_owners
+                        elif path in {owner, timing_violation}:
+                            expected = {path, timing_guard}
+                        else:
+                            expected = {owner}
                         self.assertEqual(actual, trusted_ci.PR_SMOKE | expected)
                         self.assertEqual(trusted_ci.census_files(plan, files), actual)
                     else:
@@ -387,9 +465,14 @@ class TwoObservationGateTests(unittest.TestCase):
 
         config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(config["on"]["schedule"], [{"cron": "0 2 * * *"}])
-        for producer in ("static", "ci-gate"):
-            self.assertIn("${{ needs.checks.outputs.trusted_sha }}",
-                          [step.get("with", {}).get("ref") for step in config["jobs"][producer]["steps"]])
+        planned_sha = "${{ needs.checks.outputs.trusted_sha }}"
+        self.assertIn(planned_sha, [step.get("with", {}).get("ref") for step in config["jobs"]["static"]["steps"]])
+        verdict_steps = config["jobs"]["ci-gate"]["steps"]
+        binding, = (step for step in verdict_steps if step.get("env", {}).get("TRUSTED_SHA") == planned_sha)
+        reader = next(step for step in verdict_steps if "trusted_verdict.py --plan" in step.get("run", ""))
+        self.assertEqual(binding["working-directory"], ".trusted-verdict")
+        self.assertEqual(binding["if"], reader["if"])
+        self.assertLess(verdict_steps.index(binding), verdict_steps.index(reader))
         event = self.folder / "schedule.json"
         event.write_text("{}")
         pin, default_sha = "a" * 40, "b" * 40
@@ -401,6 +484,7 @@ class TwoObservationGateTests(unittest.TestCase):
              patch.object(trusted_ci, "output") as selected:
             trusted_ci.select()
             self.assertEqual(selected.call_args.args[0]["candidate_sha"], pin)
+            self.assertEqual(selected.call_args.args[0]["trusted_sha"], pin)
         with patch.dict(os.environ, nightly), \
              patch.object(trusted_ci.policy, "event", return_value={"repository": {"default_branch": "dev"}}), \
              patch.object(trusted_ci.policy, "git", return_value=pin.encode()):

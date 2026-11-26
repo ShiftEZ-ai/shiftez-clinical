@@ -401,7 +401,8 @@ def background_checks_available(db):
 
 def assignment_reply_available(db, command):
     """Choose execution strategy only; the writer repeats every admission and authority check."""
-    if command.expected_fingerprint:
+    if command.preview_job_id or (command.expected_fingerprint and not (
+            command.kind == 'shift.update' and command.expected_fingerprint.startswith(s.ASSIGNMENT_STAMP_PREFIX))):
         return False
     if command.kind in {'workspace.undo', 'workspace.redo'}:
         workspace = db.get(m.Workspace, command.target_id)
@@ -937,7 +938,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         # overlay inputs cannot be bypassed by the bounded placement check.
         # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
         data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
-                               include_objectives=False, include_manifest=False)
+                               include_objectives=False, include_manifest=False,
+                               edit_sources=known.get('edit_sources'))
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1772,7 +1774,8 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
 
 
 def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None,
-                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None):
+                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None,
+                            edit_sources=None):
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
@@ -1786,7 +1789,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.finding_causes import DRAFT_STAFFING_GAP_CODES, EDIT_NON_REFUSING_CODES
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
     checked, data = evaluated if evaluated is not None else (None, domain_snapshot(
-        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False))
+        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False,
+        edit_sources=edit_sources))
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
@@ -1870,9 +1874,11 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
 def save_shift(db, actor, command, update=False):
     value = (s.ShiftEdit if update else s.ShiftCreate).model_validate(command.payload)
     workspace = draft(db, actor, value.workspace_id, command.expected_revision)
+    stamped_reply = False
     if db.info.get('_assignment_reply'):
         require(assignment_reply_available(db, command), 'STALE_INPUTS',
                 'The session inputs or worker changed; refresh before saving again', 409, {'recoverable': True})
+        stamped_reply = (command.expected_fingerprint or '').startswith(s.ASSIGNMENT_STAMP_PREFIX)
     if not update and 'session_creation' in db.info.get('bulk', {}):
         from .bulk import create_session
         return create_session(db, actor, workspace, value)
@@ -1883,15 +1889,22 @@ def save_shift(db, actor, command, update=False):
     if update:
         require(existing is not None and existing.workspace_id == workspace.id, "NOT_FOUND", "Session not found", 404)
     prior = next((row for row in before['shifts'] if existing and row['id'] == existing.id), {})
+    if stamped_reply:
+        require(bool(prior), 'STALE_INPUTS', 'The session could not be captured; refresh before saving again',
+                409, {'recoverable': True})
+    previous = {p['person_id']: p for p in prior.get('participants', [])}
+    for participant in value.participants:
+        supervisor_id = previous.get(participant.person_id, {}).get('supervisor_person_id')
+        if supervisor_id is not None and 'supervisor_person_id' not in participant.model_fields_set:
+            participant.supervisor_person_id = supervisor_id
     proposed = {**prior, 'id': existing.id if existing else None,
                 **value.model_dump(mode='json', include=set(s.ShiftInput.model_fields))}
-    previous = {p['person_id']: p for p in prior.get('participants', [])}
     for participant, parsed in zip(proposed['participants'], value.participants):
         if 'fixed' not in parsed.model_fields_set:
             participant['fixed'] = previous.get(parsed.person_id, {}).get('fixed', False)
     require_change_authority(db, actor, workspace, before, after={**before, 'shifts': [
         row for row in before['shifts'] if row['id'] != proposed['id']] + [proposed]})
-    inputs = {}
+    inputs = {'edit_sources': {}} if stamped_reply else {}
     # The session editor (a new session, or its impact preview) has no reason field; the fill panel does.
     # Both send expected_fingerprint, so it cannot tell them apart.
     refusal = ('Save the session without this person, then use the planner fill panel to assign them with a reason; the conflict still blocks submission'
@@ -1911,17 +1924,21 @@ def save_shift(db, actor, command, update=False):
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
     preparation = db.info.get('_planning_preparation') or {}
-    if update and preparation.get('kind') == 'shift.update' and not preparation['replay']:
+    if update and (stamped_reply or (preparation.get('kind') == 'shift.update' and not preparation['replay'])):
         # The preimage already has every other own session. Reacquire the edited row after
         # the assignment write and automatic supervisor pairing, in canonical schedule order.
         own = [shift for shift in before['shifts'] if shift['id'] != row.id]
-        own.extend(snapshots.shift_records(db, [row]))
+        captured = snapshots.shift_records(db, [row])
+        require(len(captured) == 1 and captured[0].get('id') == row.id, 'STALE_INPUTS',
+                'The saved session could not be captured; refresh before saving again', 409, {'recoverable': True})
+        own.extend(captured)
         own.sort(key=lambda shift: (aware(shift['start']), shift['id']))
         db.info['_prepared_shift_edit'] = workspace.id, own
     admission = None
     if 'bulk' not in db.info and update:
         admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',
-            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal)
+            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal,
+            edit_sources=inputs.get('edit_sources'))
     reason = value.override_reason.strip() if value.override_reason is not None else None
     result = changed(db, actor, workspace, before, reason or ("Edit session" if update else "Create session"),
                      shared_inputs=inputs.get('shared_inputs'), defer_assignments=update,
@@ -2800,7 +2817,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
-                                    effective_until=effective_until,
+                                    effective_until=effective_until, calendar_lineage=True,
                                     snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
                                     validation=result, fingerprint=fp)
         db.add(publication)
