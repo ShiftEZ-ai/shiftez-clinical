@@ -11,7 +11,7 @@ from apps.api import models as m
 from apps.api.auth import Actor
 from apps.api.db import transaction
 from apps.api.services.person_workload import _limits, _totals, read
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 from packages.domain.quotas import METRIC_VERSION as QUOTA_METRIC_VERSION
 from packages.domain.time import aware, local_midnight
 from tests.governance_support import identity
@@ -32,12 +32,13 @@ def test_workload_read_permissions_follow_existing_fairness_roles(h, role):
     if role not in h.seed['identities']:
         identity(h, role, [role])
     person, other, _ = h.seed['people']
-    expected = 403 if role in {'credentialer', 'operator'} else 200
+    team = role in PERMISSIONS['fairness.read_team']
+    expected = 200 if team or role == 'staff' else 403
     result = h.get(role, endpoint(person), status=expected)
     if expected == 200:
         assert result['person_id'] == person
         assert result['unsupported_metrics'] == ['nights']
-    h.get(role, endpoint(other), status=403 if role in {'staff', 'credentialer', 'operator'} else 200)
+    h.get(role, endpoint(other), status=200 if team else 403)
 
 
 def test_unlinked_staff_and_people_without_department_affiliation_are_denied(h):

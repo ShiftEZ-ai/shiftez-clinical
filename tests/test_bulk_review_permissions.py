@@ -77,8 +77,12 @@ def test_independence_handoff_uses_the_permission_map_instead_of_message_words(h
 def test_future_command_prefixes_keep_the_shared_permission_fallback(monkeypatch, prefix, canonical, payload, permission):
     monkeypatch.setitem(s.PERMISSIONS, permission, ("auditor",))
     monkeypatch.setitem(s.PERMISSIONS, "access.system_roles", ())
-    assert command_roles(s.Command(kind=prefix + ".future_action", payload=payload)) == ["auditor"]
-    assert command_roles(s.Command(kind=canonical, payload=payload)) == ["auditor"]
+    monkeypatch.setitem(s.PERMISSIONS, "access.installation_admin", ())
+    commands = [s.Command(kind=kind, payload=payload) for kind in (prefix + ".future_action", canonical)]
+    assert [command_roles(command) for command in commands] == [["auditor"], ["auditor"]]
+    monkeypatch.setitem(s.PERMISSIONS, "access.installation_admin", ("staff",))
+    expected = ["auditor", "staff"] if prefix == "role" else ["auditor"]
+    assert [command_roles(command) for command in commands] == [expected, expected]
 
 
 @pytest.mark.parametrize("read,scope", [("resolve", "bulk-resolve"), ("rows", "bulk-rows"),

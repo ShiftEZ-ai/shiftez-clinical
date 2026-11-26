@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit operator entry points. No migrations or demo seeding on normal reads."""
 import argparse
+from collections import defaultdict
 from contextlib import suppress
 from dataclasses import replace
 from datetime import date
@@ -17,14 +18,17 @@ from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from pydantic import ValidationError
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import SQLAlchemyError
 from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
                                refuse_test_flags, secret_from_env)
 from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import AccountInvite, Decision, PERMISSIONS, TypeDefinition
+from packages.contracts.schemas import AccountInvite, Decision, INSTALLATION_ADMIN_ROLE, PERMISSIONS, TypeDefinition
 from migrations import safety
+from migrations.source_safety import assigned, preflight_analyzer
+from migrations.sql_safety import CURRENT_SCHEMA, duplicate_precheck_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +44,76 @@ def migrate(url):
     command.upgrade(alembic_config(url), "head")
 
 
+def check_duplicate_prechecks(db, pending, fresh):
+    """DUPLICATE_PRECHECKS contains literal SELECTs that return a row on conflict."""
+    fills = defaultdict(lambda: defaultdict(set))
+
+    def name_key(name):
+        return name.lower() if db.dialect.name == 'sqlite' else name
+
+    def relation_key(table):
+        schema, _, name = name_key(table).rpartition('.')
+        return name, '' if schema == CURRENT_SCHEMA else schema
+
+    def record_fill(table, columns):
+        name, schema = relation_key(table)
+        fills[name][schema].update({None} if columns is None else map(name_key, columns))
+
+    unproved = False
+    for step in pending:
+        indexes = []
+
+        def record_precheck(query, new_table, table, columns):
+            name, schema = relation_key(table)
+            inputs = None if columns is None else set(map(name_key, columns))
+            # Unqualified relations can resolve to an explicitly named schema.
+            affected = any((not schema or not scope or schema == scope)
+                           and (inputs is None or None in writes or not inputs.isdisjoint(writes))
+                           for scope, writes in fills.get(name, {}).items())
+            indexes.append((query, new_table, affected))
+
+        analyzer = preflight_analyzer(step.path, record_fill=record_fill, record_duplicate_precheck=record_precheck)
+        kind = analyzer.run()['class']
+        unproved |= kind == 'destructive'
+        declared = assigned(analyzer.tree, 'DUPLICATE_PRECHECKS')
+        if 'DUPLICATE_PRECHECKS' not in analyzer.globals:
+            declared = ()
+        try:
+            if not isinstance(declared, (list, tuple)) or not all(isinstance(query, str) for query in declared):
+                raise ValueError('DUPLICATE_PRECHECKS must be a literal sequence of queries')
+            # A newly created table is empty only when the revision is proven additive.
+            required, empty = set(), set()
+            affected = False
+            for query, new_table, inputs_changed in indexes:
+                tokens = duplicate_precheck_tokens(query)
+                if new_table and kind == 'additive':
+                    empty.add(tokens)
+                else:
+                    required.add(tokens)
+                    affected |= inputs_changed
+            queries = [(duplicate_precheck_tokens(query), query) for query in declared]
+            if required - {tokens for tokens, _ in queries}:
+                raise ValueError('missing duplicate pre-check matching the unique expression index')
+            if affected:
+                raise ValueError('pending fill may change unique expression index inputs before creation')
+            if required and unproved and not fresh:
+                raise ValueError('unproved pending migration may change unique expression index inputs before creation')
+        except ValueError as exc:
+            raise SystemExit(f'Refusing migration {step.revision}: {exc}') from None
+        if fresh:
+            continue  # There are no retained rows to check on a fresh database.
+        for tokens, query in queries:
+            if tokens in empty and tokens not in required:
+                continue
+            try:
+                with db.exec_driver_sql(query) as result:
+                    duplicate = result.fetchone() is not None
+            except SQLAlchemyError:
+                raise SystemExit(f'Refusing migration {step.revision}: could not run duplicate pre-check') from None
+            if duplicate:
+                raise SystemExit(f'Refusing migration {step.revision}: duplicate rows found by pre-check')
+
+
 def check_migrations(url, confirmed=()):
     """Read-only deploy gate, run before any backup, writer stop or upgrade.
 
@@ -52,10 +126,16 @@ def check_migrations(url, confirmed=()):
     engine = make_engine(url)
     try:
         with engine.connect() as db:
-            current = MigrationContext.configure(db).get_current_heads()
-            fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
+            db.exec_driver_sql('SET TRANSACTION READ ONLY' if db.dialect.name == 'postgresql'
+                               else 'PRAGMA query_only=ON')
+            return _check_pending_migrations(db, script, confirmed)
     finally:
         engine.dispose()
+
+
+def _check_pending_migrations(db, script, confirmed):
+    current = MigrationContext.configure(db).get_current_heads()
+    fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
     if len(current) > 1:
         raise SystemExit(f"Refusing: the database records several migration heads {list(current)}; repair it first")
     base = current[0] if current else None
@@ -79,6 +159,7 @@ def check_migrations(url, confirmed=()):
         raise SystemExit(f"Refusing: {missing} are reviewed DESTRUCTIVE migrations. Confirm a fresh verified backup, read "
                          f"their DESTRUCTIVE_REVIEWED notes, then rerun with --confirm-destructive {','.join(missing)} "
                          f"(deploy: FMUC_CONFIRM_DESTRUCTIVE={','.join(missing)})")
+    check_duplicate_prechecks(db, pending, fresh)
     print(f"Database head: {base or 'empty'}; image head: {script.get_current_head()}; pending: {len(pending)}")
     for r in pending:
         print(f"  {r.revision}  {safety.classification(r.path)}" +
@@ -307,7 +388,7 @@ def main():
         ZoneInfo(args.timezone)
         try:
             invite = AccountInvite(username=args.username, email=args.email, display_name=args.display_name,
-                                   roles=["admin"], reason=args.reason)
+                                   roles=["admin", INSTALLATION_ADMIN_ROLE], reason=args.reason)
             settings = replace(Settings.from_env(), database_url=args.database_url)
             if not settings.identity_users_file:
                 parser.error("Institution bootstrap requires a managed sign-in users file")
@@ -362,6 +443,8 @@ def main():
                 raise RuntimeError("Demo bootstrap is prohibited in production")
             with transaction(engine, write=True) as db:
                 values = demo_data(db, empty=args.empty)
+                db.add(m.RoleBinding(identity_id=values["identities"]["admin"], department_id=values["department_id"],
+                                     role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
             directory = ROOT / ".run"
             directory.mkdir(exist_ok=True)
             path = directory / "demo-credentials.json"

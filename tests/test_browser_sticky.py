@@ -169,6 +169,39 @@ def test_the_grid_keeps_its_scroll_across_a_redraw(browser, live_server, h, view
         context.close()
 
 
+def test_the_grid_keeps_the_latest_scroll_around_a_redraw(browser, live_server, h):
+    """The scroll put back is never older than the last one made: a scroll made while a redraw loads is the one kept,
+    and a size change after a redraw does not undo a scroll made since (the page's own scrolls fire no input event)."""
+    w = busy_draft(h)
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        open_rota(page, w['id'])
+        expect(page.locator('.health-pill.checking')).to_have_count(0, timeout=20000)
+        pick_view(page, 'Week')
+        page.set_viewport_size({'width': 1440, 'height': 600})
+        # Scrolled as a redraw starts (the page drops its loaded mark then), before the redrawn grid is swapped in.
+        page.evaluate("""() => { window.scrolledAt = new Promise(done => new MutationObserver((_, seen) => {
+          const main = document.querySelector('#main'), g = document.querySelector('.planner-main .wk-scroller');
+          if (main.hasAttribute('data-loaded-view')) return;
+          seen.disconnect(); window.scrolledGrid = g;
+          g.scrollTop = Math.floor((g.scrollHeight - g.clientHeight) / 2); done(g.scrollTop);
+        }).observe(document.querySelector('#main'), {attributes: true, attributeFilter: ['data-loaded-view']})); }""")
+        page.get_by_role('searchbox').first.fill('Extended')
+        at = page.evaluate('window.scrolledAt')
+        assert at > 40, 'the grid scrolls itself'
+        page.wait_for_function('() => !window.scrolledGrid.isConnected')
+        page.wait_for_function("at => Math.abs((document.querySelector('.planner-main .wk-scroller')?.scrollTop ?? -9) - at) <= 1", arg=at)
+        # A scroll made after the redraw, then a size change (the window; a panel opening does the same to the grid).
+        moved = page.locator('.planner-main .wk-scroller').evaluate('g => { g.scrollTop = 10; return g.scrollTop; }')
+        page.set_viewport_size({'width': 1300, 'height': 600})
+        top = page.evaluate("""() => new Promise(done => {
+          const frames = n => n ? requestAnimationFrame(() => frames(n - 1)) : done(document.querySelector('.planner-main .wk-scroller').scrollTop);
+          frames(6); })""")
+        assert abs(top - moved) <= 1, 'a size change put an older scroll back'
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('role', ['admin', 'coordinator'])
 def test_no_sticky_block_lets_content_through(browser, live_server, h, role):
     w = busy_draft(h)

@@ -1146,13 +1146,14 @@ def decide(page,label):
     save_dialog(dialog,label)
 
 
-SMOKE_PATHS={"admin":["overview","people","configuration","rules","programmes","governance","inbox","access"],"coordinator":["overview","setup","planner","published","people","rules","availability","programmes","reports","data","governance","swaps","inbox"],"approver":["overview","planner","published","rules","availability","reports","governance","swaps","inbox"],"credentialer":["people","inbox"],"staff":["published","availability","reports","swaps","inbox"],"operator":["operations","audit","inbox"],"auditor":["planner","published","reports","operations","audit"],"programme_lead":["published","people","programmes","fairness","inbox","access"]}
+SMOKE_PATHS={"admin":["overview","people","configuration","rules","programmes","governance","inbox","access"],"coordinator":["overview","setup","planner","published","people","rules","availability","programmes","reports","data","governance","swaps","inbox"],"approver":["overview","planner","published","rules","availability","reports","governance","swaps","inbox"],"credentialer":["people","inbox"],"staff":["published","availability","reports","swaps","inbox"],"operator":["operations","audit","inbox"],"installation_admin":["configuration","access","inbox"],"auditor":["planner","published","reports","operations","audit"],"programme_lead":["published","people","programmes","fairness","inbox","access"]}
 
 
 def test_every_permitted_surface_loads_without_javascript_errors(browser,live_server,h):
     scripts=[]
     assert set(SMOKE_PATHS)==set(ROLE_NAMES)
-    identity(h,'programme_lead',['programme_lead'])
+    for role in ('programme_lead', 'installation_admin'):
+        identity(h, role, [role])
     paths={role:list(surfaces) for role,surfaces in SMOKE_PATHS.items()}
     for role,surfaces in paths.items():
         if role in {'admin','coordinator','approver','credentialer','auditor'}:
