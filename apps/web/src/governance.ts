@@ -208,8 +208,10 @@ export function reviewPanel(ctx:Context,data:WorkspaceData):HTMLElement{
   const named=!(progress.steps.length===1&&String(progress.route.name).replace(/\s*\(built-in\)$/,'')===progress.steps[0].label);
   // The route's mode changes what happens, so it stays a fact when it is not the routine one.
   const mode=progress.route.mode&&progress.route.mode!=='routine'?String(progress.route.mode).replace(/^./,(c:string)=>c.toUpperCase())+' review':'';
+  // A step approved under a self-approval permission reads Self-approved in place of its name ("Independent approval"
+  // for the built-in step): one fact, never both.
   const facts=factLine([named?String(progress.route.name):'',mode,progress.steps.length>1?`Step ${progress.steps.indexOf(step)+1} of ${progress.steps.length}`:'',
-    String(step.label||''),`${step.approved_count??0} of ${step.approvals_required??1} approvals`,selfApproved(step)?badge('Self-approved','warn'):'',dueFact(ctx,step)],'review-facts');
+    selfApproved(step)?badge('Self-approved','warn'):String(step.label||''),`${step.approved_count??0} of ${step.approvals_required??1} approvals`,dueFact(ctx,step)],'review-facts');
   // Out of date, not cancelled: every decision stays recorded; the coordinator's reopen, check and resubmit renews it.
   const help=helpButton('About this review',[progress.stale_inputs?'Rules, people or availability changed after it was submitted, so it can’t be approved. Decisions stay recorded. The coordinator reopens it, checks it and submits it again.':'',
     'Changes after submitting always need a new approval.'].filter(Boolean).join(' '),'review-help');
@@ -219,7 +221,7 @@ export function reviewPanel(ctx:Context,data:WorkspaceData):HTMLElement{
   if(progress.steps.length===1)return el('div',{class:'panel review-strip'},head('div'),rules||'');
   return el('details',{class:'panel review-strip',open:!!progress.pending_step},head('summary'),rules||'',
     table(['Step','Reviewed by','Approvals','Deadline','State'],progress.steps.map((step:Row)=>[
-      step.label,roleLabel(String(step.role)),`${step.approved_count} of ${step.approvals_required}${selfApproved(step)?' · self-approved':''}`,step.due_at?dateUnits([formatDate(step.due_at,zone(ctx)),formatTime(step.due_at,zone(ctx))]):'After previous step',
+      step.label,roleLabel(String(step.role)),`${step.approved_count} of ${step.approvals_required}${selfApproved(step)?' · Self-approved':''}`,step.due_at?dateUnits([formatDate(step.due_at,zone(ctx)),formatTime(step.due_at,zone(ctx))]):'After previous step',
       step.complete?'Complete':step.escalated?`Escalated to ${step.escalation_role}`:progress.pending_step?.key===step.key?(progress.stale_inputs?'On hold · needs resubmitting':statusLabel('submitted')):'Not yet open'])));
 }
 
