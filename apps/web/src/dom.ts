@@ -1957,8 +1957,11 @@ export function select(label: string, choices: Choice[], value = '', required = 
   if(required&&!value&&!choices.some(c=>c.value===''))input.append(el('option',{value:'',disabled:true,hidden:true,selected:true},'Choose…'));
   const groups=new Map<string,HTMLElement>();
   for(const c of choices){
-    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{})},c.label);
-    if(!c.group){input.append(option);continue;}
+    // A group with a configured place (a person's rank) is carried on the option, never a section: one flat list.
+    const placed=c.group&&c.groupOrder!==undefined;
+    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{}),
+      ...(placed?{'data-group':c.group!,'data-group-order':String(c.groupOrder)}:{})},c.label);
+    if(!c.group||placed){input.append(option);continue;}
     if(!groups.has(c.group)){const g=el('optgroup',{label:c.group});groups.set(c.group,g);input.append(g);}
     groups.get(c.group)!.append(option);
   }
@@ -2004,6 +2007,9 @@ export function check(label: string, checked=false, hint=''): Field {
 }
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
+  /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a
+   *  single choice lists such rows flat in their own order with the group beside each; a multiple choice sections
+   *  them in this order (picker.ts). */groupOrder?:number;
   /** Chip colour in a multiple-choice field, by kind (`.rp`): person, group (rank, programme…), place (clinic, duty
    *  type), all (grey, the default), or a tag's duty-<hue>. */tone?:string;
   /** An icon before the label (a relative value's clock). */glyph?:IconName;

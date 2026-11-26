@@ -624,4 +624,10 @@ def test_one_collator_orders_every_list_and_choices_by_name():
     other = [f'{p.name}:{line_of(text, m.start())}' for p, text in every for m in re.finditer(r'label[.]localeCompare', text)]
     assert not other, other
     forms = (SRC / 'forms.ts').read_text(encoding='utf-8')
-    assert '.sort((a,b)=>collator.compare(a.group,b.group)||byLabel(a,b));' in forms  # peopleChoices: rank, then name
+    # peopleChoices is the one place the order of people is set: by name, each with its rank and that rank's place in
+    # the department's rank order (the categories catalogue as served). The one picker draws a single choice flat and a
+    # multiple choice in rank sections (picker.ts), so no caller sorts the list again.
+    people = _body(forms, 'export function peopleChoices(')
+    assert '}).sort(byLabel);' in people and "ranks=all(ctx,'categories')" in people and 'groupOrder:at' in people
+    again = [f'{p.name}:{line_of(text, m.start())}' for p, text in every for m in re.finditer(r'peopleChoices\([^)]*\)\)?[.]sort', text)]
+    assert not again, again

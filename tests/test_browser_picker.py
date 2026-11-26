@@ -327,3 +327,137 @@ def test_the_invite_profile_picker_lists_people_by_name_whatever_order_they_were
         assert listed(page.locator('.picker')) == expected
     finally:
         context.close()
+
+
+RANKS = ('Synthetic rank B', 'Synthetic rank A')  # the department's rank order: B first, the reverse of their names
+SECTIONS = """p => [...p.querySelectorAll('.picker-group')].map(h => [h.querySelector('span:not(.picker-count)').textContent,
+  [...h.nextElementSibling.querySelectorAll('.picker-label')].map(l => l.textContent)])"""
+NO_SHEET = re.compile(r'^(?!.*\bsheet\b)')
+
+
+def ranked_people(h):
+    """Ten people added out of name order: every third holds no rank, the other even ones rank B, the other odd ones
+    rank A. Returns the numbers in each section, in name order."""
+    ranks = [h.configure('categories', {'name': name, 'starts_on': '2020-01-01', 'sort_order': at})['record'] for at, name in enumerate(RANKS, 1)]
+    for n in (7, 10, 2, 9, 1, 4, 8, 3, 6, 5):
+        person = h.configure('people', {'display_name': f'Synthetic person {n}'})['record']['id']
+        if n % 3:
+            h.command('coordinator', 'membership.create', {'person_id': person, 'category_id': ranks[n % 2]['id'], 'starts_on': '2020-01-01'})
+    return {RANKS[0]: [2, 4, 8, 10], RANKS[1]: [1, 5, 7], 'No rank': [3, 6, 9]}
+
+
+def rank_chips(picker):
+    return picker.locator('.picker-chip').evaluate_all('chips => chips.map(c => c.firstChild.textContent)')
+
+
+def in_rank_order(names):
+    """The two ranks in the department's order, not their names' order, and No rank after every rank."""
+    return [n for n in names if n in (*RANKS, 'No rank')] == [*RANKS, 'No rank'] and names[-1] == 'No rank'
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_a_single_choice_of_a_person_is_one_list_by_name_with_the_rank_on_the_row(browser, live_server, h, width):
+    """One list A to Z across ranks, no rank headings, each person's rank beside their name; the rank chips follow the
+    department's rank order and narrow the list; the arrow keys walk the rows in the order shown."""
+    ranked = ranked_people(h)
+    rank_of = {f'Synthetic person {n}': rank for rank, numbers in ranked.items() for n in numbers}
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
+    try:
+        navigate(page, 'requests')
+        page.get_by_role('button', name='New request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='New request')
+        dialog.get_by_role('radio', name=re.compile('^Other request')).check()
+        person = dialog.get_by_label('Person', exact=True)
+        expect(person.locator('optgroup')).to_have_count(0)
+        person.click()
+        picker = page.locator('.picker')
+        assert listed(picker) == [f'Synthetic person {n}' for n in range(1, 11)]
+        expect(picker).to_have_class(re.compile(r'\bsheet\b') if width == 390 else NO_SHEET)
+        expect(picker.locator('.picker-group')).to_have_count(0)
+        rows = picker.locator('.picker-row').evaluate_all(
+            "rows => rows.map(r => [r.querySelector('.picker-label').textContent, r.querySelector('.picker-hint')?.textContent || ''])")
+        assert {name: hint.split(' · ')[0] for name, hint in rows if name in rank_of} == rank_of
+        assert in_rank_order(rank_chips(picker)), rank_chips(picker)
+
+        combo = picker.get_by_role('combobox')
+        ids = picker.get_by_role('option').evaluate_all('rows => rows.map(r => r.id)')
+        combo.press('Control+Home')
+        assert combo.get_attribute('aria-activedescendant') == ids[0]
+        combo.press('ArrowDown')
+        combo.press('ArrowDown')
+        assert combo.get_attribute('aria-activedescendant') == ids[2]
+
+        picker.locator('.picker-chip').filter(has_text=RANKS[0]).click()
+        assert listed(picker) == [f'Synthetic person {n}' for n in ranked[RANKS[0]]]
+        expect(picker.locator('.picker-group')).to_have_count(0)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_a_multiple_choice_of_people_keeps_rank_sections_in_the_department_rank_order(browser, live_server, h, width):
+    """Rank sections and rank chips in the department's rank order, No rank last, people A to Z inside a section; the
+    arrow keys reach a section's "All in" option and then its first person, and Enter on it chooses the whole rank."""
+    ranked = ranked_people(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
+    try:
+        navigate(page, 'requests')
+        page.get_by_role('button', name='New request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='New request')
+        dialog.get_by_role('radio', name=re.compile('^Leave or absence')).check()
+        dialog.get_by_role('button', name=re.compile('^People:')).click()
+        picker = page.locator('.picker')
+        expect(picker.get_by_role('listbox')).to_have_attribute('aria-multiselectable', 'true')
+        expect(picker).to_have_class(re.compile(r'\bsheet\b') if width == 390 else NO_SHEET)
+        sections = [(name, people) for name, people in picker.evaluate(SECTIONS) if name not in ('Chosen', 'Recent')]
+        assert in_rank_order([name for name, _ in sections]), sections
+        for name, people in sections:
+            if name in ranked:
+                assert [p for p in people if p.startswith('Synthetic person')] == [f'Synthetic person {n}' for n in ranked[name]], sections
+        assert in_rank_order(rank_chips(picker)), rank_chips(picker)
+
+        combo = picker.get_by_role('combobox')
+        target = picker.get_by_role('option', name=f'All in {RANKS[0]}', exact=True).get_attribute('id')
+        for _ in range(40):
+            if combo.get_attribute('aria-activedescendant') == target:
+                break
+            combo.press('ArrowDown')
+        assert combo.get_attribute('aria-activedescendant') == target
+        combo.press('ArrowDown')  # the rank's first person by name follows its "All in" option
+        expect(page.locator('#' + combo.get_attribute('aria-activedescendant'))).to_have_attribute('aria-label', f'Synthetic person {ranked[RANKS[0]][0]}')
+        combo.press('ArrowUp')
+        combo.press('Enter')
+        for n in ranked[RANKS[0]]:
+            expect(picker.get_by_role('option', name=f'Synthetic person {n}', exact=True)).to_have_attribute('aria-selected', 'true')
+        expect(picker.get_by_role('option', name=f'Synthetic person {ranked[RANKS[1]][0]}', exact=True)).to_have_attribute('aria-selected', 'false')
+    finally:
+        context.close()
+
+
+def test_a_recent_pick_leads_a_single_choice_of_people_without_rank_headings(browser, live_server, h):
+    """A single choice of people with a recent pick has two headings, Recent and Others, never a rank; the rank stays
+    on the row, and the chips follow the ranks' configured places."""
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'people')
+        page.evaluate("""async () => {
+          const {select} = await window.importBundle('dom.js');
+          const people = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({value: 'p' + n, label: `Fictional person ${n}`, group: n % 2 ? 'Fictional rank A' : 'Fictional rank B', groupOrder: n % 2}));
+          const field = select('Fictional person', people);
+          const host = document.createElement('section'); host.id = 'picker-fixture'; host.className = 'panel';
+          host.append(field.wrap); document.querySelector('#main').prepend(host); }""")
+        person = page.locator('#picker-fixture').get_by_label('Fictional person', exact=True)
+        expect(person.locator('optgroup')).to_have_count(0)
+        person.click()
+        picker = page.locator('.picker')
+        picker.get_by_role('option', name=re.compile('^Fictional person 4')).click()
+        expect(person).to_have_value('p4')
+        person.click()
+        expect(picker).to_be_visible()
+        heads = picker.locator('.picker-group').evaluate_all("heads => heads.map(h => h.querySelector('span:not(.picker-count)').textContent)")
+        assert heads == ['Recent', 'Others'], heads
+        expect(picker.locator('.picker-row').first.locator('.picker-label')).to_have_text('Fictional person 4')
+        expect(picker.locator('.picker-row').first.locator('.picker-hint')).to_have_text('Fictional rank B')
+        assert rank_chips(picker) == ['Fictional rank B', 'Fictional rank A']
+    finally:
+        context.close()
