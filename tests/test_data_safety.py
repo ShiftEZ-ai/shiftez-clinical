@@ -1191,8 +1191,10 @@ def test_give_swap_database_guards_retain_consent_and_evidence(request, backend,
         assert saved.kind == 'give' and saved.status == 'accepted' and saved.second_assignment_id is None
 
 
-def assert_only_scoring_defaults_and_installation_admin_added(before, after, columns):
-    """Retain every original column and row and verify the two migration backfills."""
+def assert_only_scoring_defaults_and_installation_admin_added(before, after, columns, scoring_defaults=True):
+    """Retain every original column and row and verify the two migration backfills.
+
+    `scoring_defaults` is False when the upgrade starts after the scoring-defaults backfill: nothing else is added."""
     from apps.api.services.scoring_defaults import SOURCE, line_id
     from .migration_support import without_installation_admin_backfill
 
@@ -1208,7 +1210,7 @@ def assert_only_scoring_defaults_and_installation_admin_added(before, after, col
     assert not {table: rows for table, rows in additions.items()
                 if rows and table not in {'identities', 'policies', 'definition_history'}}
     departments = {dict(zip(columns['departments'], row))['id'] for row in before['departments']}
-    if not departments:
+    if not departments or not scoring_defaults:
         assert not any(additions.values())
         return
     [actor] = additions['identities']
@@ -1908,7 +1910,11 @@ def test_integration_migration_preserves_existing_rows(tmp_path, previous):
     command.upgrade(cfg, 'head')
     command.upgrade(cfg, 'head')  # A repeated deploy has no additional work.
     with closing(sqlite3.connect(path)) as db:
-        assert_only_scoring_defaults_and_installation_admin_added(before, snapshot(db), columns)
+        # The department exists only from this test's seed, so the scoring defaults reach it only when the
+        # upgrade still has their backfill ahead of it.
+        pending = {r.revision for r in scripts.iterate_revisions(head, previous)}
+        assert_only_scoring_defaults_and_installation_admin_added(
+            before, snapshot(db), columns, scoring_defaults='0109_fair_share_dials' in pending)
         assert db.execute('SELECT count(*) FROM policy_seed_lines').fetchone() == (0,)
         assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [(head,)]
         assert db.execute('SELECT count(*) FROM integration_credentials').fetchone() == (0,)
