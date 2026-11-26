@@ -235,7 +235,7 @@ def historical_weekly_limit(h, *, on=True):
     return policy, inherited['id']
 
 
-def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
+def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h, monkeypatch):
     from .test_rule_catalogue_api import approve, propose
     from .test_rule_templates import activate, propose as propose_legacy
 
@@ -246,6 +246,12 @@ def test_captured_catalogue_retains_folded_lines_and_ended_legacy_rules(h):
         line(numbers={'max': {'value': 2}}),
     ], on=False)['record'])
     draft = h.workspace('Historical rules source')
+
+    def unexpected_capture_error():
+        return AssertionError('Expected this captured rule set to be readable')
+
+    # Expose the original cause if this valid capture reaches the controlled error path.
+    monkeypatch.setattr(rule_catalogue, '_captured_rules_problem', unexpected_capture_error)
     query = f'day=2030-01-01&workspace_id={draft["id"]}'
     primary = next(entry['rule'] for entry in h.get('coordinator', f'/api/rules/catalogue?{query}')['entries']
                    if entry['id'] == 'duties_per_week')
