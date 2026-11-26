@@ -1981,6 +1981,7 @@ export type FillOptionsResult = {
   "replace_refusal"?: string | null;
   "slot": Record<string, unknown>;
   "source_fingerprint": string;
+  "assignment_stamp"?: string | null;
   "evaluated_at": string;
   "candidates": Array<Record<string, unknown>>;
   "basis": string;

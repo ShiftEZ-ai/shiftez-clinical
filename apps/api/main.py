@@ -2513,14 +2513,17 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules-explained", response_model=s.DepartmentRulesExplainedResponse)
     def department_rules_explained(request: Request, group_by: Literal['question'] = 'question',
-                                   at: s.date | None = Query(None)):
+                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None),
+                                   baseline_id: s.ID | None = Query(None)):
         """Explain department rules for a date without inventing a rota status."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_permission(actor, 'rules.read')
+            require(baseline_id is None or workspace_id is not None, 'TARGET_REQUIRED', 'Choose a draft', 422)
             from .services import rule_catalogue
             day = at or rule_catalogue.independence.today(db, actor.department_id)
-            return rule_catalogue.department_rules_explained(db, actor, day)
+            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id,
+                                                           baseline_id=baseline_id)
 
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
@@ -3113,7 +3116,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules/catalogue")
     def rule_catalogue_page(request: Request, response: Response, version: int = Query(1, ge=1, le=2), include_hidden: bool = False,
-                            day: s.date | None = None):
+                            day: s.date | None = None, workspace_id: s.ID | None = Query(None)):
         """The rule catalogue: every entry, its rule in force, the version waiting for approval (with its line diff),
         each line's reach today and its overlaps."""
         from .services import rule_catalogue
@@ -3122,6 +3125,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
             actual_day = day or rule_catalogue.independence.today(db, actor.department_id)
+            if workspace_id is not None:
+                return rule_catalogue.catalogue(db, actor, version, include_hidden, actual_day, workspace_id=workspace_id)
             stamp = rule_catalogue.catalogue_stamp(db, actor)
             tag = rule_catalogue.catalogue_etag(actor, version, include_hidden, actual_day, stamp)
             cached = conditional_response(request, tag)
