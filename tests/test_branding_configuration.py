@@ -14,6 +14,7 @@ from apps.api.db import transaction
 from apps.api.services import branding
 from packages.contracts import schemas as s
 from packages.web_assets import asset_url
+from .clock_support import freeze_clock
 
 
 def test_application_permission_streams_and_stops_at_the_first_unowned_department(monkeypatch):
@@ -129,7 +130,9 @@ def test_two_simultaneous_updates_have_one_winner(h):
 
 @pytest.mark.parametrize('grant', ['missing', 'revoked', 'expired', 'future', 'current'])
 @pytest.mark.usefixtures('branding_editor')
-def test_all_application_departments_require_current_admin_even_across_organisations(h, grant):
+def test_all_application_departments_require_current_admin_even_across_organisations(h, grant, monkeypatch):
+    # The signed-in department is already on October 4, while the other grant's department is on October 3.
+    freeze_clock(monkeypatch, datetime(2026, 10, 3, 22, tzinfo=timezone.utc))
     client = h.client('admin')
     actor_id = h.get('admin', '/api/me')['identity_id']
     original = h.command('admin', 'branding.update', names(), revision=1, key='branding-scope-replay')
@@ -147,7 +150,8 @@ def test_all_application_departments_require_current_admin_even_across_organisat
             today = m.now().date()
             db.add(m.RoleBinding(department_id=dept.id, identity_id=actor_id, role=s.INSTALLATION_ADMIN_ROLE,
                 starts_on=today + timedelta(days=1) if grant == 'future' else today - timedelta(days=2),
-                ends_on=today if grant == 'expired' else None, revoked=grant == 'revoked'))
+                ends_on={'expired': today, 'current': today + timedelta(days=1)}.get(grant),
+                revoked=grant == 'revoked'))
     allowed = grant == 'current'
     assert h.get('admin', '/api/admin/branding')['can_edit'] is allowed
     h.get('admin', '/api/admin/branding/history', status=200 if allowed else 403)

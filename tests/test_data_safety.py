@@ -938,9 +938,15 @@ def test_give_swap_upgrade_preserves_every_legacy_value_and_defaults_exchange(le
             elif name == 'swap_requests_delete_guard':
                 assert after[name][1] == sql
     manage.migrate(url)
+    from .migration_support import without_installation_admin_backfill
+
     with sqlite3.connect(path) as db:
-        for table, (columns, rows) in before.items():
-            assert db.execute(f'SELECT {columns} FROM "{table}" ORDER BY rowid').fetchall() == rows, table
+        current, column_names = {}, {}
+        for table, (columns, _) in before.items():
+            cursor = db.execute(f'SELECT {columns} FROM "{table}" ORDER BY rowid')
+            current[table] = cursor.fetchall()
+            column_names[table] = [item[0] for item in cursor.description]
+        assert without_installation_admin_backfill(current, column_names) == {table: rows for table, (_, rows) in before.items()}
         assert db.execute('SELECT version_num FROM alembic_version').fetchone() == (supported_revision(),)
 
 

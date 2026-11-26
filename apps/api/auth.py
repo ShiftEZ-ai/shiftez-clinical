@@ -9,7 +9,8 @@ import secrets
 from threading import BoundedSemaphore
 from zoneinfo import ZoneInfo
 from argon2.exceptions import VerificationError, InvalidHashError
-from sqlalchemy import and_, delete, inspect, or_, select, text, update
+from sqlalchemy import and_, delete, inspect, null, or_, select, text, update
+from sqlalchemy.orm import aliased
 from .models import (Account, AuditEvent, AuthLoginEvent, Department, Identity, Organisation, RateLimit, RoleBinding,
                      Session, now)
 from .errors import Problem, require
@@ -92,15 +93,23 @@ def _live(binding, today):
     return not binding.revoked and binding.starts_on <= today and (binding.ends_on is None or today < binding.ends_on)
 
 
-def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=(), permanent=False):
-    """Check installation-wide grants on the local day of each binding's department."""
-    query = select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
+def _installation_admin_grants():
+    return select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
         Department, Department.id == RoleBinding.department_id).join(
         Organisation, Organisation.id == Department.organisation_id).join(
         Identity, Identity.id == RoleBinding.identity_id).outerjoin(
         Account, Account.identity_id == Identity.id).where(
         RoleBinding.role == INSTALLATION_ADMIN_ROLE, RoleBinding.revoked.is_(False), Identity.disabled.is_(False),
         or_(Account.id.is_(None), Account.accepted_at.is_not(None)))
+
+
+def _live_installation_grant(binding, timezone, moment):
+    return _live(binding, moment.astimezone(ZoneInfo(timezone)).date())
+
+
+def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=(), permanent=False):
+    """Check installation-wide grants on the local day of each binding's department."""
+    query = _installation_admin_grants()
     if identity_id is not None:
         query = query.where(RoleBinding.identity_id == identity_id)
     if excluding_binding_id is not None:
@@ -111,7 +120,12 @@ def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, e
         query = query.where(RoleBinding.ends_on.is_(None))
     moment = now()
     with db.execute(query.execution_options(stream_results=True)) as rows:
-        return any(_live(row, moment.astimezone(ZoneInfo(row.timezone)).date()) for row in rows)
+        return any(_live_installation_grant(row, row.timezone, moment) for row in rows)
+
+
+def _department_grants(department_id, identity_id=None):
+    query = select(RoleBinding).where(RoleBinding.department_id == department_id)
+    return query if identity_id is None else query.where(RoleBinding.identity_id == identity_id)
 
 
 def role_bindings(db, department_id, identity_id=None):
@@ -119,9 +133,7 @@ def role_bindings(db, department_id, identity_id=None):
     # READ COMMITTED readers must still see a revocation committed after authentication.
     memo = db.info.get('_request_authority')
     key = (RoleBinding, department_id, identity_id)
-    query = select(RoleBinding).where(RoleBinding.department_id == department_id)
-    if identity_id is not None:
-        query = query.where(RoleBinding.identity_id == identity_id)
+    query = _department_grants(department_id, identity_id)
     if memo is None or not db.autoflush or db.new or db.dirty or db.deleted:
         return list(db.scalars(query))
     if key not in memo:
@@ -141,6 +153,26 @@ def held_roles(db, identity_id: str, department_id: str, *, day=None, bindings=N
 def current_roles(db, identity_id: str, department_id: str) -> frozenset[str]:
     """Granted roles plus an administrator's department powers."""
     return _effective(held_roles(db, identity_id, department_id))
+
+
+def _session_roles(db, identity_id, department_id, moment):
+    # Both reads use the identity index and share one database snapshot.
+    department = _department_grants(department_id, identity_id).add_columns(null().label('timezone'))
+    installation = _installation_admin_grants().where(RoleBinding.identity_id == identity_id).with_only_columns(
+        RoleBinding, Organisation.timezone)
+    grants = department.union_all(installation).subquery()
+    rows = db.execute(select(aliased(RoleBinding, grants), grants.c.timezone)).all()
+    bindings = tuple(binding for binding, zone in rows if zone is None)
+    memo = db.info.get('_request_authority')
+    if memo is not None and db.autoflush and not (db.new or db.dirty or db.deleted):
+        memo[RoleBinding, department_id, identity_id] = bindings
+    roles = held_roles(db, identity_id, department_id, bindings=bindings)
+    if not roles:
+        return roles
+    roles -= {INSTALLATION_ADMIN_ROLE}
+    if any(_live_installation_grant(binding, zone, moment) for binding, zone in rows if zone is not None):
+        roles |= {INSTALLATION_ADMIN_ROLE}
+    return _effective(roles)
 
 
 def department_roles(db, department_id: str, effective: bool = True, *, day=None, bindings=None) -> dict[str, frozenset[str]]:
@@ -177,11 +209,7 @@ def authenticate(db, token: str | None, csrf: str | None = None, write: bool = F
     if write:
         require(bool(csrf) and secrets.compare_digest(session.csrf_hash, digest(csrf)),
                 "CSRF_FAILED", "Refresh your session before saving", 403)
-    roles = current_roles(db, identity.id, session.department_id)
-    if roles:
-        roles -= {INSTALLATION_ADMIN_ROLE}
-        if has_installation_admin(db, identity.id):
-            roles |= {INSTALLATION_ADMIN_ROLE}
+    roles = _session_roles(db, identity.id, session.department_id, moment)
     require(bool(roles), "FORBIDDEN", "No active access binding for this department", 403)
     actor = Actor(identity.id, department.id, department.organisation_id, identity.display_name,
                   roles, identity.person_id, session.id)

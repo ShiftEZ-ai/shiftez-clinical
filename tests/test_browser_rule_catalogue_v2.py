@@ -310,7 +310,9 @@ def test_role_permissions_on_catalogue_and_person_facts(browser, live_server, h,
                 expect(panel.locator('input:not([readonly]):not([disabled]):not([type=hidden]), textarea:not([readonly]):not([disabled]), select:not([disabled])')).to_have_count(0)
             panel.get_by_role('button', name='Close panel', exact=True).click()
         if role == 'installation_admin':
-            navigate(page, 'people')
+            main = page.locator('#main')
+            main.evaluate("node => {node.removeAttribute('data-loaded-view'); location.hash='people';}")
+            expect(main).to_have_attribute('data-loaded-view', 'restricted')
             expect(page.get_by_text('Restricted page', exact=True)).to_be_visible()
             assert not errors
             return

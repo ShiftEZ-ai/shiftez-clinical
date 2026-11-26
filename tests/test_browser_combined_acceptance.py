@@ -269,7 +269,12 @@ def test_operator_can_edit_branding_when_department_admin_cannot(browser, live_s
     assert h.get('operator', '/api/admin/branding')['can_edit']
     context, page = sign_in(browser, live_server, 'approver')
     try:
-        navigate(page, 'configuration/branding')
+        navigate(page, 'access/people')
+        main = page.locator('#main')
+        expect(main.get_by_role('columnheader', name='Person', exact=True)).to_be_visible()
+        for label in ('Signs in with', 'Last sign-in'):
+            expect(main.get_by_role('columnheader', name=label, exact=True)).to_have_count(0)
+        navigate(page, 'configuration/name-and-logo')
         panel = page.locator('.brand-settings')
         panel.get_by_role('button', name='Edit', exact=True).click()
         dialog = page.get_by_role('dialog', name='Name and logo', exact=True)
