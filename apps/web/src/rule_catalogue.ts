@@ -22,9 +22,9 @@ import {highlightRule} from './planner_rules.js';
 import {tagRef,membersOf} from './tags.js';
 import {ruleConditionFields,safetyRule,catalogueEntryOf,type Context} from './forms.js';
 import {rulesDatabase,ruleTreeViews} from './rules_tree.js';
-import {departmentRules,forgetDepartmentRules} from './rules_explained.js';
+import {departmentRules,forgetDepartmentRules,type CapturedRulesSource} from './rules_explained.js';
 import {conversions,readsSimplify} from './rule_simplify.js';
-import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,ruleSentence,type NumberPart} from './rule_view.js';
+import {rangeParts,numbersEl,partsText,levelBadge,levelWords,setAdvisoryWeights,lineNumbers,lineSessions,ruleSentence,type NumberPart} from './rule_view.js';
 import {ruleReview} from './rule_review.js';
 import {RULE_FAMILIES,RULE_CATALOGUE,RULE_CATALOGUE_V2,MAX_SCORE_INPUT,NEVER_OVERRIDDEN,type Conditions,type Condition,type RuleCatalogueEntry,type RuleLine,type WorkloadPeriod,type RuleLineValidity,type RuleLineReplacement,type RuleAttentionCounts} from './generated.js';
 import type {Row} from './types.js';
@@ -48,7 +48,9 @@ export type Fix={kind:string;recommended:boolean;numbers?:string[];ops:{line_id:
 export type Issue={id:string;kind:string;rule_id:string;catalogue_id:string;lines:number[];line_ids:string[];people:number|null;facts:Row;fixes:Fix[];
   /** Who acknowledged it for everyone, while its lines stay as they are (rule.acknowledge). */
   fingerprint:string;acknowledged:{by:string;by_id:string;at:string;note:string}|null};
+type RulesSourceOption={workspace_id:string|null;label:string;captured_at:string|null;changed:number|null};
 export type Catalogue={families:{id:string;name:string}[];entries:Entry[];day:string;attention:Issue[];catalogue_version?:number;
+  source_options?:RulesSourceOption[];source?:CapturedRulesSource;captured_other_rules?:Row[];
   /** Unique rules and lines with an unacknowledged issue (rule_catalogue.attention_counts), hidden lines included. */attention_counts?:RuleAttentionCounts};
 /** A line with the rule it belongs to (the rule page). */
 export type LineRow={entry:Entry;line:RuleLine;n:number};
@@ -59,6 +61,8 @@ export type Options={parts:string[];openTag:(tag:Row)=>void;navigate:(view:strin
   /** Shared full rule detail, including source and history. */openRule?:(rule:Row)=>void;
   /** One row of a rule: a catalogue rule's line, or an older rule's person row. */openLine?:(ruleId:string,at:{lineId?:string;personId?:string})=>void;
   /** "In <draft>": how the rule in force fares in a draft being planned (app.ts draftHealth). */inDraft?:(rule:Row)=>HTMLElement;
+  source?:{workspace:string};
+  frame?:()=>void;
   /** The Rules list's catalogue read, started at boot (readRulesAhead): taken by the first draw instead of asking again. */ahead?:Promise<Catalogue>|null};
 
 export const WAITING='Waiting for approval',ENDS_SOON=`Ends within ${LINE_ENDING_DAYS} days`,CURRENT='Current or later';
@@ -242,7 +246,7 @@ export function treeText(tree:Conditions|null|undefined,names:Namer,none:string,
     :(c.op==='none'?'except ':i&&isDateCondition(c)?'on ':'')+c.values.slice(0,max).map(v=>valueText(names,c.field,v)).join(c.op==='all'?' + ':', ')+(c.values.length>max?' '+moreWords(c.values.length-max):'')+entriesWords(c)).join(tree.match==='any'?' or ':' · ');
 }
 /** A who or where as pills, one per value, on one line: the first `shown` and "+N" opening the numbered list. */
-export function pills(ctx:Context,tree:Conditions|null|undefined,names:Namer,none:string,openTag:(tag:Row)=>void,label:string,shown=2,key?:RuleViewKey):HTMLElement{
+export function pills(ctx:Context,tree:Conditions|null|undefined,names:Namer,none:string,openTag:((tag:Row)=>void)|undefined,label:string,shown=2,key?:RuleViewKey):HTMLElement{
   // A rank pill names itself; a person, group or clinic pill's hue is in the view's key.
   const plain=(text:string,kind:string,dot='')=>{const p=el('span',{class:`rp ${kind}`,title:text,...(kind.startsWith('duty-')?{'data-lg-self':''}:{})},dot?el('span',{class:'lg-swatch '+dot,'aria-hidden':'true'}):'',bidi(text));if(/\bexcept\b/.test(kind))ruleMark(p,'not');return key&&(HUED.has(kind)||kind.startsWith('duty-'))?key.mark(p,HUED.has(kind)?kind:'rank'):p;};
   if(!tree?.conditions?.length)return plain(none,'all');
@@ -295,9 +299,9 @@ function sideCounts(lines:readonly RuleLine[],side:'who'|'where',names:Namer,non
 }
 /** A rule row's one count line: "41 lines · 40 in force · who: everyone, 4 ranks, 30 people · where: all clinics,
  *  3 clinics"; "in force" only when it differs (the rule on). Counts the lines the list shows. */
-export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:boolean):string{
+export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:boolean,at=(line:RuleLine)=>effectiveOf(line,day)):string{
   if(!lines.length)return 'no lines';
-  const inForce=lines.filter(l=>effectiveOf(l,day)==='active').length;
+  const inForce=lines.filter(l=>at(l)==='active').length;
   return [plural(lines.length,'line'),...(on&&inForce!==lines.length?[`${inForce} in force`]:[]),`who: ${sideCounts(lines,'who',names,'everyone')}`,`where: ${sideCounts(lines,'where',names,'all clinics')}`].join(' · ');
 }
 /** A rule's strength, said once on its row: its one level when every number shares it, else Mandatory and Advisory. */
@@ -306,6 +310,12 @@ export function ruleCounts(lines:readonly RuleLine[],names:Namer,day:string,on:b
 export function ruleLevels(e:RuleCatalogueEntry,lines:readonly RuleLine[]):string[]{
   const all=[...new Set(lines.flatMap((l:LineNumbers)=>Object.entries(l.numbers||{}).map(([k,n])=>l.mandatory_reasons?.[k]?'mandatory':n?.level??fallbackLevel(e,k))))].filter(v=>v!=='off');
   return all.length<=1?all:[...new Set(all.map(v=>v==='mandatory'?'mandatory':'advisory'))];
+}
+/** Captures show the stored strength, including blank values that inherit from broader lines. */
+export function capturedRuleLevels(lines:readonly LineNumbers[]):(string|null)[]{
+  return [...new Set(lines.flatMap(line=>Object.entries(line.numbers)
+    .filter(([key,number])=>key==='apply'||number?.value!=null)
+    .map(([key,number])=>displayedStrength(line,key,number?.level).level)))];
 }
 /** The days a line holds on: none set (or an empty list) is every day, as the server reads it. */
 const daysOf=(l:Pick<RuleLine,'weekdays'>)=>l.weekdays?.length?l.weekdays:[0,1,2,3,4,5,6];
@@ -337,11 +347,11 @@ export const whenWords=(e:RuleCatalogueEntry,l:RuleLine,rule:Settings={})=>{cons
 const dayBefore=(iso:string)=>new Date(Date.parse(iso+'T12:00:00Z')-86400000).toISOString().slice(0,10);
 const addDays=(iso:string,n:number)=>new Date(Date.parse(iso+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 /** When a line holds: "Always", "1 Sep → 30 Nov" (the end shown is the last day included), "From 1 Sep", "Until 30 Nov". */
-function validParts(l:RuleLine):string[]{
+function validParts(l:Pick<RuleLine,'starts_on'|'ends_on'>):string[]{
   const a=l.starts_on&&formatDate(l.starts_on),b=l.ends_on&&formatDate(dayBefore(l.ends_on));
   return a&&b?[a,`→ ${b}`]:a?[`From ${a}`]:b?[`Until ${b}`]:['Always'];
 }
-export const validText=(l:RuleLine):string=>validParts(l).join(' ');
+export const validText=(l:Pick<RuleLine,'starts_on'|'ends_on'>):string=>validParts(l).join(' ');
 /** Wrap between complete dates when a column is wrapped, never between a day, month and year. */
 export const validNode=(l:RuleLine):HTMLElement=>dateUnits(validParts(l),'rule-valid');
 /** The rule page's Valid cell: as validNode, and "From" / "Until" may also wrap before their date (a narrow column). */
@@ -357,8 +367,8 @@ export function effectiveOf(l:RuleLine,day:string):RuleLineValidity['effective']
   return l.ends_on&&l.ends_on<=day?'ended':l.starts_on&&l.starts_on>day?'future':'active';
 }
 /** The Valid filter's values a line has today. */
-export function validFacets(l:RuleLine,today:string):string[]{
-  const out=[l.ends_on?'Has an end date':'No end date'],at=effectiveOf(l,today);
+export function validFacets(l:RuleLine,today:string,at=effectiveOf(l,today)):string[]{
+  const out=[l.ends_on?'Has an end date':'No end date'];
   if(at==='ended')out.push('Ended');
   else{out.push(CURRENT);if(l.ends_on&&l.ends_on<=addDays(today,LINE_ENDING_DAYS+1))out.push(ENDS_SOON);}
   if(at==='future')out.push('Starts later');
@@ -455,8 +465,9 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
     if(d){settle(d.entry);learn(linesOf(d.entry),d.entry.line_specificity);learnValidity(d.entry,d.day);if(d.entry.proposed)learn(d.entry.proposed.definition.rule.lines||[],d.entry.proposed.line_specificity);
       rulePage(ctx,target,{families:RULE_FAMILIES.map(([id,name])=>({id,name})),entries:[d.entry],day:d.day,attention:[],catalogue_version:2},d.entry,o,canEdit,redraw,{check:d.check,reach:d.reach,period:forWeek&&week?week.name:'today'});return;}
   }
-  const data=await (o.ahead||ask<Catalogue>(catalogueUrl(version)));
-  for(const e of data.entries){settle(e);learn(linesOf(e),e.line_specificity);learnValidity(e,data.day);if(e.proposed)learn(e.proposed.definition.rule.lines||[],e.proposed.line_specificity);}
+  const learnLive=(data:Catalogue)=>{for(const e of data.entries){settle(e);learn(linesOf(e),e.line_specificity);learnValidity(e,data.day);if(e.proposed)learn(e.proposed.definition.rule.lines||[],e.proposed.line_specificity);}};
+  let data=await (o.ahead||ask<Catalogue>(catalogueUrl(version)));
+  learnLive(data);
   const entry=o.parts[0]&&data.entries.find(e=>e.id===o.parts[0]);
   if(entry){rulePage(ctx,target,data,entry,o,canEdit,redraw);return;}
   if(o.parts[0]){target.append(note('This rule is not available. Choose one from Rules.','warning'));return;}
@@ -465,17 +476,62 @@ export async function ruleCataloguePage(ctx:Context,target:HTMLElement,o:Options
   // maintenance: Retry asks the server again itself, once (readAfresh: never a held read), and redraws the list in place. It
   // never goes through the app's refresh, which joins a refresh already on its way and so could send nothing at all.
   let drawSerial=0;
-  const draw=async()=>{
+  const source=o.source||{workspace:''};
+  const sourceLabel=(option:RulesSourceOption)=>option.workspace_id
+    ? `${option.label}, as captured${option.captured_at?' '+formatDate(option.captured_at.slice(0,10)):''}` : 'Live rules';
+  const chooseSource=(id:string)=>{if(id!==source.workspace){source.workspace=id;retry(!id);}};
+  const sourceControl=()=>{
+    const sources=data.source_options||[];
+    if(sources.length<2)return source.workspace?button('Live rules',()=>chooseSource(''),'secondary'):'';
+    const selected=sources.find(option=>(option.workspace_id||'')===source.workspace)||sources[0];
+    const pick:HTMLButtonElement=opens(button(sourceLabel(selected),()=>openPicker(pick,pick.parentElement!,{
+      label:'Rules',multiple:false,selected:new Set([source.workspace]),
+      choices:sources.map(option=>({value:option.workspace_id||'',label:sourceLabel(option),
+        hint:option.changed?`${option.changed} changed since`:''})),
+      onPick:chooseSource,
+    }),'secondary'),'dialog');
+    pick.append(icon('chevronDown'));
+    return pick;
+  };
+  const retry=(reloadLive=false)=>{
+    readAfresh();
+    void draw(reloadLive).catch(err=>{if(!sessionChanged(err))reportError(err);});
+  };
+  const draw=async(reloadLive=false)=>{
     const serial=++drawSerial;
+    const workspace=source.workspace;
+    let current=data;
+    if(workspace||reloadLive){
+      target.replaceChildren(sectionHead('Rules',''),skeleton('lines','Loading rules…'));
+      o.frame?.();
+      const path=catalogueUrl(version);
+      try{
+        current=await (workspace?get<Catalogue>(`${path}${path.includes('?')?'&':'?'}workspace_id=${encodeURIComponent(workspace)}`):ask<Catalogue>(path));
+      }catch(err){
+        if(sessionChanged(err))throw err;
+        if(serial===drawSerial){
+          target.replaceChildren(sectionHead('Rules',''),sourceControl(),
+            readFailed(workspace?'captured rules':'live rules',err,()=>retry(reloadLive)));
+          o.frame?.();
+        }
+        return;
+      }
+      if(serial!==drawSerial)return;
+      if(!workspace){data=current;learnLive(data);}
+    }
     let failed:unknown=null;
-    const byQuestion=await departmentRules(data.day).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
+    const byQuestion=await departmentRules(current.day,get,current.source).catch(err=>{if(sessionChanged(err))throw err;failed=err;return null;});
     if(serial!==drawSerial)return;
-    target.replaceChildren();rulesDatabase(ctx,target,data,o,canEdit,redraw,byQuestion);
+    const selected=data.source_options?.find(option=>option.workspace_id===workspace);
+    target.replaceChildren();
+    rulesDatabase(ctx,target,current,o,canEdit&&!workspace,redraw,byQuestion,sourceControl,
+      selected&&sourceLabel({...selected,captured_at:current.source?.captured_at??selected.captured_at}));
+    o.frame?.();
     // A refusal (403) is the role's, not a fault: the list by family is the whole answer, with nothing to retry (B128).
     if(!failed||refused(failed))return;
     // The shared failure note: the error's own words and reference, Retry, and Report this problem remain visible.
     const n=readFailed('the rules’ questions',failed,
-      ()=>{forgetDepartmentRules(data.day);readAfresh();void draw().catch(err=>{if(!sessionChanged(err))reportError(err);});},undefined,'The list is grouped by family.');
+      ()=>{if(!workspace)forgetDepartmentRules(current.day);retry();},undefined,'The list is grouped by family.');
     target.querySelector(':scope>.rt')?.before(n);
   };
   await draw();
@@ -1251,11 +1307,15 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
     const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
     let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
-    const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
+    // A reader who cannot edit gets the strength as a fact (text), never a disabled menu button.
+    const chip=editable?el('button',{type:'button',class:'rc-strength',...popup('menu')}):el('span',{class:'rc-strength'});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
-      chip.textContent=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv);chip.setAttribute("aria-label",`${label}: ${what}`);chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
-    chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
+      const text=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv),name=`${label}: ${what}`;
+      if(editable){chip.textContent=text;chip.setAttribute("aria-label",name);}
+      else chip.replaceChildren(el('span',{'aria-hidden':'true'},text),el('span',{class:'sr-only'},name));
+      chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
+    if(editable)chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
@@ -1688,7 +1748,7 @@ export function changeList(e:RuleCatalogueEntry,before:RuleLine[],after:RuleLine
  *  numbers, days, valid; a changed cell says what it was), the unchanged lines only on demand, the check's warnings as
  *  separate items, who proposed it and the decision. What changed is the server's diff (`proposed.diff`, by line id). */
 /** A waiting proposal's effect on the rule's switch ("Turns the rule on"), or '': said by the note and the panel title. */
-const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':''):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
+const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':'Rule stays off'):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
 function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,openTag:(tag:Row)=>void,review:()=>void,key?:RuleViewKey){
   const p=e.proposed!,rule=p.definition.rule,now=(rule.lines||[]) as RuleLine[],before=linesOf(e),mine=p.created_by===ctx.me.identity_id;
   const canDecide=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
@@ -1747,8 +1807,9 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
   const focus:Change[]=diff?.added?[...(diff.added||[]).flatMap(id=>byId.has(id)?[{kind:'added' as const,line:byId.get(id)!}]:[]),
     ...(diff.changed||[]).flatMap(id=>byId.has(id)?[{kind:'changed' as const,line:byId.get(id)!}]:[])]:lineChanges(linesOf(e),now).filter(c=>c.kind!=='removed');
   const one=focus.length===1?focus[0]:null,whom=one?countWords(one.line.who,names,'everyone'):'';
-  const turns=switchWords(e,p.definition.rule.on!==false);
-  const title=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}${turns?` · ${turns.toLowerCase()}`:''}`:`Change to ${e.name}`;
+  const on=p.definition.rule.on!==false,turns=switchWords(e,on);
+  const change=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}`:`Change to ${e.name}`;
+  const title=turns?`${change} · ${turns.toLowerCase()}`:change;
   const when=p.created_at?`${formatDate(String(p.created_at),zone)} ${formatTime(String(p.created_at),zone)}`:'';
   const canApprove=ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),canCheck=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR);
   // Checks started here, with when: shown as checking at once, before the server has queued them.
@@ -1779,7 +1840,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
-          d.close();notify(`${e.name}: the change is active.`);await refresh();};
+          d.close();notify(`${e.name}: ${on?'the change is active.':'the rule is off.'}`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
@@ -2260,23 +2321,60 @@ export const mayReviewOlder=(ctx:Context)=>ctx.permits(CAPABILITY.COORDINATOR,CA
  *  under a self-approval permission (mayDecide). */
 export const reviewOlder=(ctx:Context,p:Row,refresh:()=>Promise<void>)=>ruleReview(p,mayReviewOlder(ctx),ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',p.created_by===ctx.me.identity_id),
   refresh,recordName(ctx),ctx.me.organisation.timezone,false,[],labelOf(p),'',ctx);
+function otherDepartmentRules(rows:Row[],effect:(rule:Row)=>string,levels:(rule:Row)=>(string|null)[],open?:(rule:Row)=>void,
+    effectCell:(rule:Row)=>Child=effect){
+  if(!rows.length)return null;
+  return compact(button(`Other department rules (${rows.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
+    build:({body})=>body.append(...(open?[el('p',{class:'muted'},'These approved department rules also apply during their valid dates.')]:[]),
+      dataTable<Row>({id:'other-department-rules',noun:['rule','rules'],rows,rowId:p=>p.id,pageSize:25,
+        searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:open,
+        defaults:{wrap:['name','effect']},
+        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>open?button(labelOf(p),()=>open(p),'link-button'):
+          p.definition.rule.on===false?el('span',{},labelOf(p),' ',badge('Off','neutral')):labelOf(p)},
+          {key:'effect',label:'Effect',text:effect,cell:effectCell},
+          {key:'level',label:'Level',text:p=>levels(p).map(levelWords).join(', '),
+            cell:p=>el('span',{},...levels(p).map(level=>levelBadge(level,p.severity_reason)))},
+          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on||''} ${p.ends_on?dayBefore(p.ends_on):''}`,
+            cell:p=>dateUnits(p.starts_on?[formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')]:
+              [p.ends_on?'Until '+formatDate(dayBefore(p.ends_on)):'Ongoing'])}]}).root)}),
+    'secondary'),'layers');
+}
+export function capturedRulesContext(ctx:Context,data:Catalogue){
+  const name=recordName(ctx),names=namer(ctx);
+  const effect=(p:Row)=>ruleSentence(p.definition.rule,p.definition,name);
+  const entryOf=(rule:Row)=>(rule.catalogue_version===2?RULE_CATALOGUE_V2:RULE_CATALOGUE).find(e=>e.id===rule.id);
+  const levels=(p:Row):(string|null)[]=>{
+    const rule=p.definition.rule;
+    if(rule.kind!=='catalogue')return [p.effective_severity??p.definition.severity];
+    return capturedRuleLevels(rule.lines);
+  };
+  const lines=(p:Row):string[]=>{
+    const definition=p.definition,rule=definition.rule;
+    if(rule.kind==='catalogue'){
+      const entry=entryOf(rule);
+      return entry?(rule.lines as RuleLine[]).map(l=>lineWords(entry,l,names,Infinity,rule.settings)):[];
+    }
+    return (definition.per_person||[]).map((l:Row)=>[
+      l.person_id?name('people',l.person_id):'',l.programme_id?name('programmes',l.programme_id):'',
+      ...(l.category_ids||[]).map((id:string)=>name('categories',id)),
+      lineNumbers(rule,l),lineSessions(l,name),
+      daysText({weekdays:l.weekdays,start_time:l.start_time,end_time:l.end_time}),
+      validText({starts_on:l.starts_on,ends_on:l.ends_on}),
+    ].filter(Boolean).join(' · '));
+  };
+  return otherDepartmentRules(data.captured_other_rules||[],effect,levels,undefined,p=>{
+    const rows=lines(p),summary=effect(p);
+    return rows.length?el('details',{},el('summary',{},summary||plural(rows.length,'line')),el('ol',{},...rows.map(text=>el('li',{},text)))):summary;
+  });
+}
 /** Pending proposals stay actionable; additional approved rules stay in their on-demand context. */
 export function otherRulesContext(ctx:Context,kept:Row[],o:Options,refresh:()=>Promise<void>):HTMLElement|null{
   const pending=olderPending(ctx);
   if(!kept.length&&!pending.length)return null;
   const name=recordName(ctx);
   // A labelled button, not a second "?" beside the page's own: these rules apply too (an old department's are all here).
-  const context=kept.length?compact(button(`Other department rules (${kept.length})`,()=>dockPanel({key:'other-department-rules',title:'Other department rules',width:640,
-    build:({body})=>body.append(el('p',{class:'muted'},'These approved department rules also apply during their valid dates.'),
-      dataTable<Row>({id:'other-department-rules',noun:['rule','rules'],rows:kept,rowId:p=>p.id,pageSize:25,
-        searchLabel:'Search other department rules',searchPlaceholder:'Name or effect',onOpen:p=>o.openRule?.(p),
-        // A 640 px panel: long names and effects wrap rather than clip.
-        defaults:{wrap:['name','effect']},
-        columns:[{key:'name',label:'Rule',text:labelOf,cell:p=>button(labelOf(p),()=>o.openRule?.(p),'link-button')},
-          {key:'effect',label:'Effect',text:p=>ruleSentence(p.definition.rule,p.definition,name),cell:p=>ruleSentence(p.definition.rule,p.definition,name)},
-          {key:'level',label:'Level',text:p=>p.effective_severity??p.definition.severity,cell:p=>levelBadge(p.effective_severity??p.definition.severity,p.severity_reason)},
-          {key:'dates',label:'Valid dates',text:p=>`${p.starts_on} ${p.ends_on?dayBefore(p.ends_on):''}`,cell:p=>dateUnits([formatDate(p.starts_on),'– '+(p.ends_on?formatDate(dayBefore(p.ends_on)):'Ongoing')])}]}).root)}),
-    'secondary'),'layers'):null;
+  const context=otherDepartmentRules(kept,p=>ruleSentence(p.definition.rule,p.definition,name),
+    p=>[p.effective_severity??p.definition.severity],o.openRule);
   if(!pending.length)return context;
   const canCheck=mayReviewOlder(ctx),canDecide=ctx.permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN);
   const changed=async()=>{closeDock();await refresh();};

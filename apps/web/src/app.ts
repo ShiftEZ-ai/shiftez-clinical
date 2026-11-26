@@ -1462,6 +1462,7 @@ let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
+const rulesSource={workspace:''};
 // A live change names its scopes: the next refresh reads only what they can change. undefined: none owed; null: everything.
 let refreshScopes:Set<LiveScope>|null|undefined;
 // The changes behind refreshScopes (their ids, e.g. which rota), for kept answers per record (api.ts forgetReads).
@@ -1685,6 +1686,7 @@ async function renderPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
+  if(changedPage||view!=='rules'||routeParts.length)rulesSource.workspace='';
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
@@ -1781,7 +1783,8 @@ async function renderPage(live=false){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead,
+        source:rulesSource,frame:()=>{if(t.isConnected){liftHeader(t);liftFooterStatus(t);closeOrphanPopover();}}});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
