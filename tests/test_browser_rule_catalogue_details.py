@@ -127,6 +127,32 @@ def test_undoing_a_new_version_says_the_previous_version_applies_again(browser, 
     assert entry(h, 'duties_per_week')['rule']['definition']['rule'].get('on') is not False
 
 
+def test_review_warns_before_approving_reduced_safety_protection(browser, live_server, h):
+    from .test_rule_catalogue_api import approve, line as rule_line, propose
+
+    flag(h)
+    key = 'rest_between_duties'
+    old = rule_line(numbers={'min': {'value': 11, 'level': 'mandatory'}})
+    current = approve(h, propose(h, key, [old])['record'])
+    propose(h, key, [{**old, 'numbers': {'min': {'value': 9, 'level': 'mandatory'}}}],
+            policy_id=current['id'], revision=current['revision'])
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, f'rules/{key}')
+        page.locator('.rc-waiting').get_by_role('button', name='Review and approve').click()
+        panel = page.get_by_role('region', name=re.compile(r'Change (to|a line)'))
+        warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
+        expect(panel.get_by_text(warning, exact=True)).to_be_visible()
+        activate = panel.get_by_role('button', name='Approve and activate', exact=True)
+        expect(activate).to_have_accessible_description(warning)
+        expect(activate).to_be_enabled()
+        activate.click()
+        expect(panel).to_have_count(0)
+    finally:
+        context.close()
+    assert entry(h, key)['rule']['definition']['rule']['lines'][0]['numbers']['min']['value'] == 9
+
+
 def test_rule_numbers_say_one_weekend_and_two_weekends(browser, live_server, h):
     """U-26: a unit word agrees with its number (rule_view.ts limitPill, the legacy list's numbers)."""
     context, page = sign_in(browser, live_server, 'coordinator')

@@ -202,6 +202,8 @@ def test_who_may_lead_cannot_name_a_tag(h):
 
 def test_migration_copies_people_tags_into_tag_records(tmp_path):
     """Data safety: 0054 adds two tables and copies each person's tags; people.tags keeps every value."""
+    from .migration_support import add_historical_admin
+
     from alembic import command
     from scripts.manage import alembic_config, migrate
     url = 'sqlite:///' + str(tmp_path / 'before.db')
@@ -223,6 +225,7 @@ def test_migration_copies_people_tags_into_tag_records(tmp_path):
         for p in ('a', 'b'):  # c holds no rank: their tags go to both departments
             c.execute(text("INSERT INTO memberships (id, revision, created_at, department_id, person_id, category_id, starts_on) "
                            "VALUES (:id, 1, '2026-01-01', :d, :p, :c, '2020-01-01')"), {'id': str(uuid.uuid4()), 'd': ids['d1'], 'p': ids[p], 'c': ids['cat']})
+        add_historical_admin(c, ids['d1'])
         before = c.execute(text('SELECT id, tags FROM people ORDER BY id')).fetchall()
     engine.dispose()
     migrate(url)

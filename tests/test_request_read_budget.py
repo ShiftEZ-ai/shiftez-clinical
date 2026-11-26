@@ -8,7 +8,7 @@ from sqlalchemy import event, select
 from apps.api import db as database, main, models as m
 from apps.api.db import transaction
 from apps.api.services import availability, read_projections, workspace_access
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_NAMES
 from .clock_support import freeze_clock
 from .governance_support import identity
 from .test_planning_groups_drafts import private
@@ -138,7 +138,7 @@ def test_home_and_requests_keep_role_response_bytes(request, backend, monkeypatc
         for role, client in clients.items():
             for path in ('/api/home', '/api/requests/all'):
                 response = client.get(path)
-                assert response.status_code == (403 if path.endswith('/all') and role in {'credentialer', 'operator'} else 200)
+                assert response.status_code == (403 if path.endswith('/all') and role in {'credentialer', 'operator', INSTALLATION_ADMIN_ROLE} else 200)
                 result[role, path] = response.content, response.headers.get('etag')
         return result
 
