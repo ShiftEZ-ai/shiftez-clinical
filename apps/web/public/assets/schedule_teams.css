@@ -9,7 +9,7 @@
    first in weight 600, the trainees' one indent (--team-indent) in. Layout "tree" joins the trainees with one straight
    1 px guide (--control-line, 3:1; neutral, so not a coloured side bar); "box" draws a hairline outline instead. A
    problem is the issue marker in the supervisor's slot; no dashed outlines, no words in a dense view. */
-.team-box{display:flex;flex-direction:column;gap:var(--pill-gap);min-width:0;max-width:100%;color:var(--ink);text-align:start;container-type:inline-size}
+.team-box{display:flex;flex-direction:column;gap:var(--pill-gap);min-width:0;max-width:100%;color:var(--ink);text-align:start}
 .tm-row{display:flex;align-items:center;gap:var(--pill-gap);min-width:0}
 .tm-row>.pchip,.tm-row>.tm-person,.tm-row>.person-link{flex:1 1 auto;min-width:0}
 .tm-row.tm-sup:empty{display:none}
@@ -21,13 +21,6 @@
 .team-box.box>.tm-kids{padding-inline-start:var(--team-indent)}
 .tm-more{align-self:flex-start;flex:0 0 auto}
 .tm-person{display:flex;align-items:center;gap:var(--pill-gap);min-width:0}
-/* The rank: muted, before the name (the rank catalogue's short code; a long one ends in …, whole in the tip). */
-.p-rank{flex:none;font-family:var(--mono);font-size:10px;font-weight:400;color:var(--muted);max-width:6ch;overflow:hidden;text-overflow:ellipsis}
-/* A narrow team (a phone's Week cell, the grid beside an open panel): the name takes the pill; the rank stays in the
-   group's accessible name and the person's hover card. */
-@container (max-width:7.5rem){.team-box .p-rank{display:none}}
-/* Larger contexts (session panel, agenda, Home, person card): the same pill; a rank shown by its name has room. */
-.team-box.card:not(.wk-cell *) .p-rank{max-width:16ch}
 /* Session panel People: each member's rich row (link, code, facts) sits inside the pill row. */
 .team-box .wk-person{flex:1;border:0;padding:4px 2px;font-weight:inherit;min-width:0}
 .wk-cell>.team-box{flex:none}
