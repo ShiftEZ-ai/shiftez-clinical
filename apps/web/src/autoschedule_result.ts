@@ -30,6 +30,11 @@ import type {Row} from './types.js';
 export type GenerationOutcome={status:'OPTIMAL'|'FEASIBLE'|'INFEASIBLE'|'UNKNOWN';candidate:'valid'|'with_gaps'|'none';strict_status:'INFEASIBLE'|null;optimality_proven:boolean};
 export interface RunFacts{scoreDelta:number|null;before:FixSummary|null;after:FixSummary|null;beforeCauses:FixCause[];afterCauses:FixCause[];changesByCause:Row[];
   conflict:Row|null;currency:string;reconciliation:Row|null;outcome:GenerationOutcome|null;keptAbsence?:Row;/** The server's words when the run's Fix list was not prepared. */fixListMissing:string}
+export function outsideGroupLine(job:Row):HTMLElement|string{
+  const count=job.planning_context?.outside_group_count;
+  return count>0?el('p',{class:'muted auto-excluded'},plural(count,'person','people')+' left out because they are outside this group.'):'';
+}
+
 export function runFacts(job:Row):RunFacts{
   const r:Row=job.result||{},s:Row=r.summary||{};
   type Listed={summary?:FixSummary;causes?:FixCause[]};

@@ -444,7 +444,7 @@ def reports(tmp_path, *, replicas=(1, 2), red_suites=("unit", "browser"), unit_n
 
 @pytest.fixture(scope="module")
 def historical_verdict_sources():
-    paths = (".github/scripts/trusted_verdict.py", ".github/scripts/known_skips.py", "ci/make_known_failures.py",
+    paths = (".github/scripts/trusted_verdict.py", ".github/scripts/trusted_ci.py", ".github/scripts/known_skips.py", "ci/make_known_failures.py",
              "ci/known-skips.json", "ci/root-run-evidence.json", "ci/frozen-baseline-failures.json",
              "ci/hosted-env-exceptions.json", "ci/removed-tests.json", ".github/scripts/working_policy.py")
     return {path: historical_git("show", "HEAD:" + path) for path in paths}
@@ -459,7 +459,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
             base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False,
             browser_shards=1, merge_group_shards=None, default="dev", replicas=None, missing_browser=False,
-            plan_base=None):
+            plan_base=None, event_base=None):
         sources = historical_verdict_sources
         folder = tmp_path / label
         base, head = "a" * 40, "c" * 40
@@ -529,6 +529,8 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             ("rev-parse", base + "^{tree}"): TREE.encode(),
             ("rev-parse", root_evidence["sha"] + "^{tree}"): root_evidence["tree"].encode(),
             ("rev-list", "--parents", "-n", "1", candidate): f"{candidate} {base} {head}".encode(),
+            ("merge-base", "--is-ancestor", event_base or base, base): b"",
+            ("merge-base", "--is-ancestor", base, "refs/remotes/origin/" + branch): b"",
             ("rev-list", "--max-parents=0", candidate): root_evidence["base_sha"].encode(),
             ("merge-base", root_evidence["base_sha"], root_evidence["sha"]): root_evidence["base_sha"].encode(),
         }
@@ -546,7 +548,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             return git_answers[args]
 
         data = {"before": base,
-                "pull_request": {"base": {"ref": branch, "sha": base}, "head": {"sha": head}},
+                "pull_request": {"base": {"ref": branch, "sha": event_base or base}, "head": {"sha": head}},
                 "merge_group": {"base_ref": "refs/heads/" + branch, "base_sha": base},
                 "repository": {"full_name": "fixture/project", "default_branch": default}}
         step_summary = folder / "step-summary.md"
@@ -560,10 +562,12 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             patch.setattr(sys, "path", sys.path.copy())
             if old:
                 skips = ".github/scripts/known_skips.py"
+                planner = ".github/scripts/trusted_ci.py"
                 verifier = ".github/scripts/trusted_verdict.py"
                 maker = "ci/make_known_failures.py"
                 reader = historical_module(maker, sources[maker])
                 patch.setitem(sys.modules, "known_skips", historical_module(skips, sources[skips]))
+                patch.setitem(sys.modules, "trusted_ci", historical_module(planner, sources[planner]))
                 target = historical_module(verifier, sources[verifier])
             else:
                 reader, target = ratchet, trusted
@@ -645,6 +649,15 @@ def test_release_verdict_requires_its_base_and_all_shard_evidence(trusted_result
     assert error == "Evidence is not bound to the independently resolved candidate/target" and verdict is None
     (error, verdict), _ = trusted_result("incomplete", **options, missing_browser=True)
     assert "Missing or unexpected shard artifacts: browser-1-1" in error and verdict is None
+
+
+def test_pr_verdict_binds_evidence_to_verified_base_with_stale_event(trusted_result):
+    event_base = "e" * 40
+    options = {"branch": "main", "default": "main", "outcome": "passed", "event_base": event_base}
+    (error, verdict), _ = trusted_result("verified-base", **options)
+    assert error is None and verdict["passed"] is True
+    (error, verdict), _ = trusted_result("event-base", **options, plan_base=event_base)
+    assert error == "Evidence is not bound to the independently resolved candidate/target" and verdict is None
 
 
 @pytest.mark.parametrize("event", ["push", "merge_group"])

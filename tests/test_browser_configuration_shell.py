@@ -85,7 +85,7 @@ def test_setup_guide_steps_use_the_same_purpose_and_no_hero_line(browser, live_s
         guide = page.locator('.config-pane[data-kind="setup"]')
         expect(guide.locator('.setup-hero p')).to_have_count(0)  # ring and title only
         expect(guide.locator('.setup-step').filter(has_text=kinds['locations']['purpose'])).to_have_count(1)
-        expect(guide.locator('.setup-step').filter(has_text='What staff see first on Home.')).to_have_count(1)
+        expect(guide.locator('.setup-step').get_by_text('Shown under Notices on Home.', exact=True)).to_have_count(1)
         expect(guide).not_to_contain_text('on the overview')
     finally:
         context.close()

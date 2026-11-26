@@ -3,7 +3,9 @@ import re
 
 MAX_BATCH = 1000
 CURRENT_SCHEMA = '__migration_current_schema__'
-EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'guard_targets', 'current_schema')
+SQLITE_PUBLICATION_GUARD = 'publications_calendar_lineage_guard'
+EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'guard_targets',
+                    'current_schema', 'nullable_added_columns')
 _IDENT = re.compile(r'[A-Za-z_][A-Za-z_0-9$]*\Z|"(?:[^"]|"")+"\Z')
 _NUMBER = re.compile(r'\d+(?:\.\d+)?\Z')
 _TYPES = {'VARCHAR', 'CHAR', 'TEXT', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'BOOLEAN', 'BOOL',
@@ -48,6 +50,8 @@ def _forget_function(tokens, schema):
         name, _ = _name(tail)
         for key in ('append_functions', 'guard_functions'):
             schema.get(key, {}).pop(name, None)
+        if name and name.rsplit('.', 1)[-1] in {'rota_publication_guard', 'to_jsonb'}:
+            schema.pop('retained_publication_guard', None)
 
 
 def _tokens(sql):
@@ -637,15 +641,51 @@ def _guard_routine(tokens, schema):
     return True
 
 
-def _new_table_guard(tokens, schema):
+def _before_trigger(tokens):
     if tokens[:2] != ['CREATE', 'TRIGGER']:
-        return False
+        return None
     name, tail = _name(tokens[2:])
     if not name or tail[:1] != ['BEFORE'] or 'ON' not in tail:
-        return False
+        return None
     on = tail.index('ON')
     events, tail = tail[1:on], tail[on + 1:]
     table, tail = _name(tail)
+    return (name, table, events, tail) if table else None
+
+
+def _abort_body(body):
+    return (len(body) == 9 and body[:5] == ['SELECT', 'RAISE', '(', 'ABORT', ',']
+            and body[5].startswith("'") and body[6:] == [')', ';', 'END'])
+
+
+def sqlite_nullable_update_guard(sql):
+    """Return the table and column for the SQLite publication refusal shape."""
+    # SQLite and Alembic must see the same SQL the shared lexer proves.
+    if '/*' in sql or '--' in sql or ':' in sql or re.search(r'[^\t\n\r -~]', sql):
+        return None
+    try:
+        tokens = _tokens(sql)
+    except ValueError:
+        return None
+    if tokens[-1:] == [';']:
+        tokens.pop()
+    prefix = ['CREATE', 'TRIGGER', SQLITE_PUBLICATION_GUARD.upper(), 'BEFORE', 'UPDATE', 'OF']
+    if tokens[:len(prefix)] != prefix or len(tokens) <= len(prefix):
+        return None
+    column, *tail = tokens[len(prefix):]
+    if column != 'CALENDAR_LINEAGE' and not (column.startswith('"') and _IDENT.fullmatch(column)):
+        return None
+    when = ['ON', 'PUBLICATIONS', 'WHEN', 'NEW', '.', column, 'IS', 'NOT',
+            'OLD', '.', column, 'BEGIN']
+    if tail[:len(when)] == when and _abort_body(tail[len(when):]):
+        return 'publications', _identifier(column)
+    return None
+
+
+def _new_table_guard(tokens, schema):
+    if not (trigger := _before_trigger(tokens)):
+        return False
+    _, table, events, tail = trigger
     table = _guard_table(table, schema)
     if not table:
         return False
@@ -666,9 +706,7 @@ def _new_table_guard(tokens, schema):
     if when and (when[:4] != ['WHEN', 'NOT', 'EXISTS', '('] or when[-1:] != [')']
                  or ';' in when or not _read_expression(when[1:])):
         return False
-    body = tail[begin + 1:]
-    if (len(body) != 9 or body[:5] != ['SELECT', 'RAISE', '(', 'ABORT', ',']
-            or not body[5].startswith("'") or body[6:] != [')', ';', 'END']):
+    if not _abort_body(tail[begin + 1:]):
         return False
     schema.setdefault('guard_targets', set()).add((table, events[0], _guard_predicate(when[1:], schema)))
     return True
@@ -798,6 +836,16 @@ def analyze_sql(sql, *, schema=None):
             _parts(tokens, ',')  # Reject malformed or injected parenthesis boundaries.
             proof = schema if schema is not None else {}
             _forget_function(tokens, proof)
+            if 'retained_publication_guard' in proof and tokens[:2] == ['CREATE', 'TRIGGER']:
+                name_at = 5 if tokens[2:5] == ['IF', 'NOT', 'EXISTS'] else 2
+                name, _ = _name(tokens[name_at:])
+                if not name or name.rsplit('.', 1)[-1].lower() == SQLITE_PUBLICATION_GUARD:
+                    proof.pop('retained_publication_guard')
+            if 'retained_publication_guard' in proof and tokens[:2] in (['ALTER', 'TABLE'], ['CREATE', 'TABLE']):
+                relation = tokens[5:] if tokens[2:5] == ['IF', 'NOT', 'EXISTS'] else tokens[2:]
+                table, _ = _name(relation)
+                if table and table.rsplit('.', 1)[-1].lower() == 'publications':
+                    proof.pop('retained_publication_guard')
             if (_additive_routine(tokens) or _grant(tokens) or _schema_statement(tokens)
                     or (tokens[:1] == ['SELECT'] and _read_expression(tokens))):
                 continue
