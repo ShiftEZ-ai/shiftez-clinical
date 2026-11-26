@@ -513,8 +513,8 @@ def test_old_routes_land_on_the_schedule_with_the_right_view(browser, live_serve
 @pytest.mark.parametrize('role', ROLE_NAMES)
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_every_role_opens_the_schedule_on_desktop_and_phone_in_light_and_dark(browser, live_server, h, role, scheme):
-    if role == 'programme_lead':
-        identity(h, 'programme_lead', ['programme_lead'])
+    if role not in h.seed['identities']:
+        identity(h, role, [role])
     _, d = october(h)
     for viewport in ({'width': 1440, 'height': 1000}, {'width': 390, 'height': 844}):
         context, page = sign_in(browser, live_server, role, viewport)
@@ -522,7 +522,7 @@ def test_every_role_opens_the_schedule_on_desktop_and_phone_in_light_and_dark(br
         try:
             page.emulate_media(color_scheme=scheme)
             nav = page.locator('#department-nav [data-route=schedule]')
-            if role in ('credentialer', 'operator'):
+            if role in ('credentialer', 'operator', 'installation_admin'):
                 expect(nav).to_have_count(0)
                 page.evaluate("() => {location.hash = 'schedule'}")
                 expect(page.get_by_role('heading', name='Restricted page')).to_be_visible()

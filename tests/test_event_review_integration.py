@@ -5,7 +5,7 @@ from sqlalchemy import insert
 from apps.api import models as m
 from apps.api.db import transaction
 from tests.outbox_support import process_one_after_undo as process_one
-from packages.contracts.schemas import ROLE_NAMES
+from packages.contracts.schemas import PERMISSIONS, ROLE_NAMES
 from packages.domain.time import aware
 from .governance_support import identity
 from .test_event_delivery import notes, own_receipt, scheduled
@@ -23,7 +23,7 @@ def test_event_tag_choices_expose_only_editor_picker_names(request, backend, rol
         audience={'roles': ['coordinator']}, format='online', place='', url='https://example.test/private-meeting')
     if role not in h.seed['identities']:
         identity(h, role, [role])
-    if role in {'staff', 'operator'}:
+    if role not in PERMISSIONS['catalogue.read']:
         for path in ('/api/catalogues', '/api/catalogues?boot=true', '/api/catalogues?known='):
             assert h.get(role, path, status=403)['error']['code'] == 'FORBIDDEN'
         return

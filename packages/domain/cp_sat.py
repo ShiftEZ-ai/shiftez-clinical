@@ -478,6 +478,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         and p['definition']['rule'].get('aim', 'equal_share') in {'equal_share', 'max_min'}
         and p['definition'].get('strength') != 'off'
         for p in data['policies'])
+    mode_balance = []
+    if not feasibility_only and options.scoring.weights.preferences > 0:
+        mode_balance = [p for p in data['policies']
+                        if p['definition']['rule']['kind'] == 'allocation_preference'
+                        and p['definition']['rule'].get('balance_by') == 'service_mode'
+                        and p['definition'].get('strength') != 'off']
     data['_candidate_evidence_cache'] = {}
     data['_candidate_evidence_policy_source'] = data['policies']
     data['_policy_name_static'] = {}
@@ -606,10 +612,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     staffing_targets = [] if relative_fair_share else None
     staffing_choices = []
     capped = False
-    cross_duty_demand = relative_fair_share and any(
+    cross_duty_demand = (relative_fair_share or bool(mode_balance)) and any(
         rule['kind'] == 'team_lead_requirement'
         or rule['kind'] == 'block_quota' and rule['comparison'] != 'maximum'
-        or rule['kind'] == 'balance_goal' and rule.get('aim') in {'target', 'min_per_pair'}
+        or (options.scoring.weights.fairness > 0 and rule['kind'] == 'balance_goal'
+            and rule.get('aim') in {'target', 'min_per_pair'})
         for rule in (p['definition']['rule'] for p in data['policies']))
     coverage_floor_rows = []
     diagnostic_domains = {}
@@ -1211,7 +1218,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             continue
         repair_targets = {}
         supervision = definition.get('supervision')
-        mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if relative_fair_share else []
+        mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if relative_fair_share or mode_balance else []
         whole_duty = bool(mutable_people) and all(presence(sid, pid) == [(start, end)] for pid in mutable_people)
         can_cap = (whole_duty and not cross_duty_demand and not supervision and not definition.get('lead')
                    and not is_open_extra_cover(definition) and all(not r['capabilities'] for r in definition['requirements']))
@@ -1553,12 +1560,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                     stage='mandatory_cover')
                 if local_maximums:
                     model.add(sum(lead_terms[sid, pid] for pid in present) <= min(local_maximums)).with_name('duty:' + sid)
-        if can_cap and maximum_places > places_to_fill:
+        # Service-mode balance can improve by adding work to a filled duty. Only cap
+        # ordinary duties to which that preference applies, with no new staffing tier.
+        if can_cap and maximum_places > places_to_fill and (relative_fair_share or any(
+                policy_applies(data, policy, pid, shift, start, end) for policy in mode_balance for pid in mutable_people)):
             # A mutable whole duty fills all its staffed intervals. Cover needed in
             # any interval may require a place even if another is already staffed.
             model.add(sum(choices[sid, pid] for pid in mutable_people) <= places_to_fill).with_name('duty:' + sid)
             capped = True
-        elif not can_cap and (not whole_duty or maximum_places > places_to_fill):
+        elif relative_fair_share and not can_cap and (not whole_duty or maximum_places > places_to_fill):
             staffing_choices.extend(choices[sid, pid] for pid in mutable_people)
 
     control.check()

@@ -197,7 +197,9 @@ def test_rule_exceptions_instead_of_is_absent_for_ambiguous_cases(browser, live_
         if case == 'mixed_safety':
             apply_line = item.locator(f'li[data-line="{lines[1]["id"]}"]')
             expect(apply_line.locator('.rt-ln-num')).to_contain_text('No duties')
-            expect(apply_line.locator('[aria-label="Safety line: can only be made stricter"]')).to_have_count(1)
+            expect(apply_line.get_by_role('img', name='Safety line. Rota adjustments may only tighten protection. '
+                                         'Reducing mandatory department protection needs independent approval.',
+                                         exact=True)).to_have_count(1)
         if case == 'not_in_force':
             future_line = item.locator(f'li[data-line="{lines[1]["id"]}"]')
             muted = future_line.locator('.rt-ln-flags > .muted')

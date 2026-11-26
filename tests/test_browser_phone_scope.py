@@ -92,8 +92,8 @@ def test_phone_navigation_lists_only_phone_views(browser, live_server, h, role, 
 def test_every_role_lands_on_a_usable_home_on_a_phone(browser, live_server, h, role):
     """H-04 / N-04: no account lands on "Best on a desktop" (whose Back to Home looped onto itself): Home is always the
     phone Home, the menu lists it, and nothing offers Home while on Home."""
-    if role == 'programme_lead':
-        identity(h, 'programme_lead', ['programme_lead'])
+    if role not in h.seed['identities']:
+        identity(h, role, [role])
     context, page = phone(browser, live_server, role, 'dark')
     try:
         expect_loaded(page, 'home')

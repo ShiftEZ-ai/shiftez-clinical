@@ -570,7 +570,7 @@ def create_app(settings: Settings | None = None, engine=None):
             enforce(engine, 'commands', [session_identity(engine, request.cookies.get(cookie_name))],
                     settings.rate_commands_per_minute, 60, 'Too many changes; wait a minute and try again')
             with transaction(engine) as db:
-                branding.require_editor(db, actor_for(request, db, write=True))
+                branding.require_editor(actor_for(request, db, write=True))
 
         await run_in_threadpool(authorize)
         content = await request.body()
@@ -3296,13 +3296,20 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             return adjustment_effect(db, actor_for(request, db, write=True), workspace_id, value)
 
-    @app.get('/api/policies/{policy_id}/review')
-    def policy_review(policy_id: s.ID, request: Request):
+    def _policy_review(policy_id, request, *, decision=None):
         from .services.rule_effects import review
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
-            return review(db, actor, policy_id)
+            return review(db, actor, policy_id, decision=decision)
+
+    @app.get('/api/policies/{policy_id}/review')
+    def policy_review(policy_id: s.ID, request: Request):
+        return _policy_review(policy_id, request)
+
+    @app.post('/api/policies/{policy_id}/review')
+    def policy_replacement_review(policy_id: s.ID, value: s.PolicyActivationDecision, request: Request):
+        return _policy_review(policy_id, request, decision=value)
 
     @app.post('/api/policies/{policy_id}/relax')
     def policy_relax(policy_id: s.ID, value: s.RuleRelaxInput, request: Request):
@@ -3913,12 +3920,19 @@ def create_app(settings: Settings | None = None, engine=None):
     def access_list(request: Request):
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            require_role(actor, "admin", *s.PERMISSIONS["access.system_roles"])
-            bindings = list(db.scalars(select(m.RoleBinding).join(m.Identity).where(
-                m.RoleBinding.department_id == actor.department_id, m.Identity.issuer != SWAP_AUTOMATION_ISSUER)))
+            require_role(actor, "admin", *s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
+            full_access = actor.permits("admin", *s.PERMISSIONS["access.system_roles"])
+            query = select(m.RoleBinding).join(m.Identity).where(
+                m.RoleBinding.department_id == actor.department_id, m.Identity.issuer != SWAP_AUTOMATION_ISSUER)
+            if not full_access:
+                query = query.where(m.RoleBinding.role == s.INSTALLATION_ADMIN_ROLE)
+            bindings = list(db.scalars(query))
             # Include sign-ins without bindings so authorized role managers can select them.
             from .services.access import sign_in_identities
             identities = list(db.scalars(select(m.Identity).where(sign_in_identities(actor, settings))))
+            if not full_access:
+                return {"bindings": [record(r) for r in bindings], "identities": [
+                    {"id": i.id, "display_name": i.display_name, "disabled": i.disabled} for i in identities]}
             from .services import accounts
             from .identity_store import store_for
             return {"bindings": [record(r) for r in bindings], "identities": [record(i, exclude=("password_hash",)) for i in identities],
