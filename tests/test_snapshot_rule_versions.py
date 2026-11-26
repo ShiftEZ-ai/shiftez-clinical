@@ -7,6 +7,8 @@ import pytest
 from sqlalchemy import insert, select
 
 from apps.api import models as m, snapshots
+from apps.api.auth import Actor
+from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, capture_issued_sources, catalogue_source_reader
 from apps.api.db import transaction
 from apps.api.services import read_projections, rule_catalogue
 from packages.domain.score import schedule_score
@@ -115,10 +117,26 @@ def test_published_rule_pin_and_read_parity(h, monkeypatch):
     # Legacy publications can be read from workspace-less catalogue/bulk inputs.
     with monkeypatch.context() as legacy:
         legacy.setattr(snapshots, "_verified_baseline", lambda db, workspace: (None, None))
-        with transaction(h.app.state.engine) as db:
-            shared = snapshots.snapshot_inputs(db, db.get(m.Organisation, h.seed["organisation_id"]))
-            assert rule["id"] not in {row["id"] for row in shared["policies"]}
-            legacy_issued = snapshots.domain_snapshot(db, db.get(m.Workspace, wid), shared_inputs=shared)
+        engine = h.app.state.engine
+        organisation = h.seed["organisation_id"]
+        actor = Actor(h.seed["identities"]["admin"], h.seed["department_id"], organisation,
+                      "Synthetic operator", frozenset({"admin", "coordinator"}), None, "synthetic")
+        with transaction(engine, write=True) as db:
+            row = db.get(m.Workspace, wid)
+            issued_sources = capture_issued_sources(db, organisation, [row])
+            trial = db.begin_nested()
+            try:
+                shared = snapshots.snapshot_inputs(db, db.get(m.Organisation, organisation))
+                assert rule["id"] not in {policy["id"] for policy in shared["policies"]}
+                legacy_issued = snapshots.domain_snapshot(db, row, shared_inputs=shared)
+                captured = capture_catalogue_sources(db, organisation, [row], captured_at=m.now(),
+                                                     issued_sources=issued_sources, before_baselines={})
+            finally:
+                trial.rollback()
+        with catalogue_source_reader(engine, captured, actor) as (db, _):
+            shared = snapshots.snapshot_inputs(db, db.get(m.Organisation, organisation))
+            replayed = snapshots.domain_snapshot(db, db.get(m.Workspace, wid), shared_inputs=shared)
+            assert replayed["policies"] == legacy_issued["policies"]
     expected = next(row for row in issued["policies"] if row["id"] == rule["id"])
     for data in (bounded, legacy_issued):
         assert next(row for row in data["policies"] if row["id"] == rule["id"]) == expected

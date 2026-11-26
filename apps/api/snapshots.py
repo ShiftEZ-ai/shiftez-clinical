@@ -678,6 +678,9 @@ def _policy_lineage_ids(db, policies, bindings):
     return select(reachable.c.id)
 
 
+POLICY_ORDER = (m.Policy.seq, m.Policy.id)
+
+
 def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False, department_ids=(), bindings=()):
     """Resolve this publication's pins even when it receives workspace-less shared inputs."""
     P, H = m.Policy, m.DefinitionHistory
@@ -707,7 +710,7 @@ def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False, departme
         where = or_(active, lineage)
     query = select(versions.c.policy_id, versions.c.snapshot).where(where)
     if policies is None:
-        return [version for _, version in db.execute(query.join(P, P.id == versions.c.policy_id).order_by(P.seq))]
+        return [version for _, version in db.execute(query.join(P, P.id == versions.c.policy_id).order_by(*POLICY_ORDER))]
     then = {ident: version for ident, version in db.execute(query)}
     return [then[policy['id']] for policy in policies if policy['id'] in then]
 
@@ -1039,7 +1042,8 @@ def _snapshot_inputs(db, org):
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
     acquired = records_many(db, sources, exclude={'people': ('pager',)},
-        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id)})
+        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id),
+                  'policies': POLICY_ORDER})
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
