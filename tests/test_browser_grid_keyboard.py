@@ -82,6 +82,41 @@ def test_tab_enters_the_schedule_grid_at_a_cell_and_a_grip_keeps_its_focus(brows
         context.close()
 
 
+def test_tab_reveals_a_covered_people_grid_stop(browser, live_server, h):
+    """WCAG 2.4.11: Tab returns to the same duty and reveals it beside the resized sticky name column."""
+    from .test_browser_schedule import october, show
+
+    _, draft = october(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': 900, 'height': 900})
+    try:
+        page.emulate_media(reduced_motion='reduce')
+        show(page, f"schedule/people/2026-10-14?edit={draft['id']}&range=month")
+        grid = page.get_by_role('grid', name='Duties by person and day', exact=True)
+        stop = grid.locator('[data-day="2026-10-14"] button.pg-chip')
+        expect(stop).to_be_visible()
+        expect(grid.locator('[tabindex="0"]')).to_have_count(1)
+        stop.focus()
+        expect(stop).to_have_attribute('tabindex', '0')
+        page.locator('.planner-toolbar').get_by_role('button').last.focus()
+        covered = stop.evaluate("""chip => {
+          const grid = chip.closest('.people-grid');
+          grid.style.setProperty('--sched-head', '320px');
+          grid.style.setProperty('--sched-date', '56px');
+          const scroller = grid.parentElement;
+          const name = grid.querySelector('.pg-head>.pg-name');
+          scroller.scrollLeft += chip.getBoundingClientRect().right - name.getBoundingClientRect().right + 8;
+          return chip.getBoundingClientRect().right < name.getBoundingClientRect().right;
+        }""")
+        assert covered
+        tab_into(page, grid)
+        expect(stop).to_be_focused()
+        clear = stop.evaluate("""chip => chip.getBoundingClientRect().left >=
+          chip.closest('.people-grid').querySelector('.pg-head>.pg-name').getBoundingClientRect().right - 1""")
+        assert clear
+    finally:
+        context.close()
+
+
 def test_schedule_names_its_places_published_panel_list_table_and_new_range(browser, live_server, h):
     """maintenance: a Week name says the place; the published session panel is a named region; a step of the period
     navigator says the new range politely; the List table has a caption."""
