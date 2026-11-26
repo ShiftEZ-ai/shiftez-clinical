@@ -1387,8 +1387,8 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor, today)['people']
-            aliases = imported_aliases(db, actor)
+            current = current_people(db, actor, today, people={row['id']: row for row in out})['people']
+            aliases = imported_aliases(db, actor, current)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
@@ -1645,7 +1645,8 @@ def create_app(settings: Settings | None = None, engine=None):
                 m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
+            current = current_people(db, actor, day,
+                people={r.id: {'active': True, 'title': r.title} for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}
@@ -1702,12 +1703,11 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get('/api/people/summary', response_model=s.PeopleCounts)
     def people_summary(request: Request):
-        from .services.people import current_people
+        from .services.people import current_people_counts
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_role(actor, 'admin', 'coordinator', 'approver', 'credentialer', 'auditor', 'programme_lead')
-            result = current_people(db, actor)
-            return {key: result[key] for key in ('active_people', 'people_without_current_rank')}
+            return current_people_counts(db, actor)
 
     @app.get('/api/catalogues/categories/duplicate-codes')
     def rank_duplicate_codes(request: Request):
@@ -2516,14 +2516,17 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules-explained", response_model=s.DepartmentRulesExplainedResponse)
     def department_rules_explained(request: Request, group_by: Literal['question'] = 'question',
-                                   at: s.date | None = Query(None)):
+                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None),
+                                   baseline_id: s.ID | None = Query(None)):
         """Explain department rules for a date without inventing a rota status."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_permission(actor, 'rules.read')
+            require(baseline_id is None or workspace_id is not None, 'TARGET_REQUIRED', 'Choose a draft', 422)
             from .services import rule_catalogue
             day = at or rule_catalogue.independence.today(db, actor.department_id)
-            return rule_catalogue.department_rules_explained(db, actor, day)
+            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id,
+                                                           baseline_id=baseline_id)
 
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
@@ -3116,7 +3119,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules/catalogue")
     def rule_catalogue_page(request: Request, response: Response, version: int = Query(1, ge=1, le=2), include_hidden: bool = False,
-                            day: s.date | None = None):
+                            day: s.date | None = None, workspace_id: s.ID | None = Query(None)):
         """The rule catalogue: every entry, its rule in force, the version waiting for approval (with its line diff),
         each line's reach today and its overlaps."""
         from .services import rule_catalogue
@@ -3125,6 +3128,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
             actual_day = day or rule_catalogue.independence.today(db, actor.department_id)
+            if workspace_id is not None:
+                return rule_catalogue.catalogue(db, actor, version, include_hidden, actual_day, workspace_id=workspace_id)
             stamp = rule_catalogue.catalogue_stamp(db, actor)
             tag = rule_catalogue.catalogue_etag(actor, version, include_hidden, actual_day, stamp)
             cached = conditional_response(request, tag)

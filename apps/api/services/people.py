@@ -13,21 +13,33 @@ def active_people_on(day):
     return func.coalesce(person_active_on(m.Person.active, m.Person.inactive_from, day), False)
 
 
-def imported_aliases(db, actor):
+def period_records(db, department_id, first, last):
+    return {name: [record(r) for r in db.scalars(select(cls).where(cls.department_id == department_id,
+                cls.starts_on < last, cls.ends_on.is_(None) | (cls.ends_on > first)))]
+            for name, cls in {'memberships': m.Membership, 'eligibilities': m.Eligibility,
+                              'grants': m.CapabilityGrant, 'rotations': m.Rotation,
+                              'programme_memberships': m.ProgrammeMembership}.items()}
+
+
+def imported_aliases(db, actor, person_ids=None):
     aliases = {}
-    for mapping in db.scalars(select(m.SourceMapping).where(m.SourceMapping.department_id == actor.department_id,
-            m.SourceMapping.target_kind == 'people', m.SourceMapping.source_key.startswith('alias:'))):
+    mapping_table = m.SourceMapping
+    query = select(mapping_table).where(mapping_table.department_id == actor.department_id,
+        mapping_table.target_kind == 'people', mapping_table.source_key.startswith('alias:'))
+    if person_ids is not None:
+        query = query.where(mapping_table.target_id.in_(person_ids))
+    for mapping in db.scalars(query):
         aliases.setdefault(mapping.target_id, set()).add(mapping.source_key.removeprefix('alias:'))
     return aliases
 
 
-def current_people(db, actor, day=None, *, person_ids=None):
+def current_people(db, actor, day, *, person_ids=(), people=None):
     org = db.get(m.Organisation, actor.organisation_id)
-    day = day or m.now().astimezone(ZoneInfo(org.timezone)).date()
-    data = {'organisation': {'timezone': org.timezone},
-            'people': {p.id: record(p) for p in db.scalars(select(m.Person).where(
-                m.Person.organisation_id == actor.organisation_id,
-                *([m.Person.id.in_(person_ids)] if person_ids is not None else [])))}}
+    if people is None:
+        people = {p.id: record(p) for p in db.scalars(select(m.Person).where(
+            m.Person.organisation_id == actor.organisation_id,
+            m.Person.id.in_(person_ids)))}
+    data = {'organisation': {'timezone': org.timezone}, 'people': people}
     for name, cls in (('categories', m.Category), ('programmes', m.Programme),
                       ('rotation_types', m.RotationType), ('cohorts', m.Cohort)):
         from .training import catalogue_scope
@@ -35,37 +47,30 @@ def current_people(db, actor, day=None, *, person_ids=None):
             catalogue_scope(db, actor, name, cls)))}
     for name, cls in (('memberships', m.Membership), ('programme_memberships', m.ProgrammeMembership), ('rotations', m.Rotation)):
         data[name] = [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id,
-            *( [cls.person_id.in_(person_ids)] if person_ids is not None else []),
+            cls.person_id.in_(people),
             cls.starts_on <= day, cls.ends_on.is_(None) | (cls.ends_on > day),
             catalogue_scope(db, actor, name, cls)))]
     return project_people(data, day)
 
 
 def current_people_counts(db, actor, day=None):
-    """Return the two summary counts without materialising every dated people fact.
-
-    The rota summary only needs active people and those without an effective category.
-    Keep the same date and active predicates as ``current_people`` while letting the
-    database count the bounded department-scale rows.
-    """
+    """Count active organisation people and those without an effective rank here."""
     day = day or m.now().astimezone(ZoneInfo(db.get(m.Organisation, actor.organisation_id).timezone)).date()
-    active_on_day = active_people_on(day)
-    active = select(func.count(m.Person.id)).where(
-        m.Person.organisation_id == actor.organisation_id, active_on_day)
-    ranked = select(func.count(func.distinct(m.Membership.person_id))).join(
-        m.Person, m.Person.id == m.Membership.person_id).join(
-        m.Category, m.Category.id == m.Membership.category_id).where(
-            m.Membership.department_id == actor.department_id,
-            m.Category.department_id == actor.department_id,
-            m.Person.organisation_id == actor.organisation_id, active_on_day,
-            m.Membership.starts_on <= day,
-            m.Membership.ends_on.is_(None) | (m.Membership.ends_on > day),
-            m.Category.active.is_(True), m.Category.starts_on <= day,
-            m.Category.ends_on.is_(None) | (m.Category.ends_on > day))
-    active_count = db.scalar(active) or 0
-    ranked_count = db.scalar(ranked) or 0
-    return {"active_people": active_count,
-            "people_without_current_rank": max(0, active_count - ranked_count)}
+    membership, category = m.Membership, m.Category
+    has_rank = select(membership.id).join(category, category.id == membership.category_id).where(
+        membership.person_id == m.Person.id,
+        membership.department_id == actor.department_id,
+        membership.withdrawn.is_(False),
+        membership.starts_on <= day,
+        membership.ends_on.is_(None) | (membership.ends_on > day),
+        category.department_id == actor.department_id,
+        category.active.is_(True),
+        category.starts_on <= day,
+        category.ends_on.is_(None) | (category.ends_on > day),
+    ).exists()
+    active, unranked = db.execute(select(func.count(), func.count().filter(~has_rank))
+        .select_from(m.Person).where(m.Person.organisation_id == actor.organisation_id, active_people_on(day))).one()
+    return {"active_people": active, "people_without_current_rank": unranked}
 
 
 from .contacts import LEGACY_FIELDS as CONTACT_FIELDS

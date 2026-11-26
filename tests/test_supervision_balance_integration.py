@@ -66,8 +66,9 @@ def paired_department(h, *, groups=1, sessions=8):
         data['shifts'].append(shift)
     data['focus_ids'] = [s['id'] for s in data['shifts']]
     data.pop('generation_session_ids', None)
-    for location in data['locations'].values():
+    for ident, location in data['locations'].items():
         location['capacity'] = groups * 5
+        data['place_capacity']['limits'][ident] = groups * 5
     data['generation_options'] = {'mode': 'fill_gaps', 'shortlist_width': 0}
     goal = {'id': stable_id('goal'), 'name': 'Supervision fair share', 'revision': 1,
         'department_id': data['workspace']['department_id'], 'status': 'active', 'active': True,

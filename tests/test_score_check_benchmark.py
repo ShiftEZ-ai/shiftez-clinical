@@ -90,6 +90,45 @@ def test_auto_requires_current_source_revision_and_import_origin(h):
     assert error.value.code == 'WORKFLOW_STATE'
 
 
+def test_common_capacity_compares_demand_and_retains_issued_membership(h):
+    workspace = h.shift(h.workspace())['workspace']
+    source = h.snapshot(workspace)
+    own, = source['shifts']
+    place = own['location_id']
+    legacy = {key: value for key, value in source.items() if key != 'place_capacity'}
+    assert benchmark._common_inputs(source) == benchmark._common_inputs(legacy)
+
+    issued = {**own, 'id': 'issued-duty', 'workspace_id': 'issued-rota'}
+    other_issued = {**issued, 'id': 'other-issued-duty'}
+    source['shifts'].extend([issued, other_issued])
+    capacity = source['place_capacity']
+    for duty in (issued, other_issued):
+        capacity['duties'][duty['id']] = {'location_id': place, 'resources': [place, 'issued-parent']}
+    capacity['limits']['issued-parent'] = 2
+    expected = benchmark._common_inputs(source)
+
+    clone = copy.deepcopy(source)
+    clone['shifts'][0]['id'] = 'cloned-duty'
+    clone['focus_ids'] = ['cloned-duty']
+    clone_capacity = clone['place_capacity']
+    clone_capacity['duties']['cloned-duty'] = clone_capacity['duties'].pop(own['id'])
+    assert benchmark._common_inputs(clone) == expected
+
+    duplicate = copy.deepcopy(clone)
+    duplicate['shifts'].append({**duplicate['shifts'][0], 'id': 'duplicate-duty'})
+    duplicate['focus_ids'].append('duplicate-duty')
+    assert benchmark._common_inputs(duplicate) != expected
+
+    clone_capacity['duties']['cloned-duty']['resources'].append('issued-parent')
+    assert benchmark._common_inputs(clone) != expected
+    clone_capacity['duties']['cloned-duty']['resources'].pop()
+    clone_capacity['duties'][issued['id']]['resources'].remove('issued-parent')
+    assert benchmark._common_inputs(clone) != expected
+    clone_capacity['duties'][issued['id']]['resources'].append('issued-parent')
+    clone_capacity['limits']['issued-parent'] = 1
+    assert benchmark._common_inputs(clone) != expected
+
+
 def test_identical_n_drafts_share_every_score_component_and_persist_snapshot(h):
     source = imported(h)
     source = h.shift(source, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
