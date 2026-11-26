@@ -292,7 +292,7 @@ function assignmentCard(ctx:Context,title:string,a:Row|null){
 /** Keyed by the contract's SWAP_KINDS, so a new kind fails the build here. */
 export const SWAP_KIND_WORDS:Record<typeof SWAP_KINDS[number],string>={exchange:'Exchange',give:'Give away'};
 /** `allowed_kinds`: the kinds the department allows now (sent by newer servers, maintenance); else the department record says. */
-export type SwapOptions={assignments:Row[];recipients:Row[];assignments_partial:boolean;recipients_partial:boolean;allowed_kinds?:string[]};
+export type SwapOptions={assignments:Row[];recipients:Row[];assignments_partial:boolean;recipients_partial:boolean;allowed_kinds?:string[];no_eligible_recipients_reason?:string|null};
 /** Your own future published duties and the colleagues you may offer one to. */
 export const swapOptions=()=>get<SwapOptions>('/api/swaps/options');
 /** maintenance: for one duty, each colleague with `eligible` and a plain `message`; for a swap, the return duties likewise. */
@@ -324,7 +324,9 @@ export function offerFields(ctx:Context,form:HTMLElement,options:SwapOptions,cho
   // SW-03/SW-25: the same for a give-away or an open offer (it goes to every eligible colleague): when nobody can take the
   // duty, Send is off and says why, so an offer is never sent to nobody.
   // SW3-C-06: the check has its own states, said apart: checking, could not check (Retry), nobody, or (hidden) some.
-  const NOBODY='Nobody eligible can take this duty. Ask your coordinator instead, or choose another duty.';
+  // #1360: the server says why, from the same check that found nobody (`no_eligible_recipients_reason`).
+  let why='';
+  const nobody=()=>`Nobody eligible can take this duty.${why?' '+why:''} Ask your coordinator instead, or choose another duty.`;
   const whoCan=el('div',{id:'swap-check','aria-live':'polite'});whoCan.hidden=true;
   let eligible:number|null=null,checking=false;
   const sendButton=()=>form.closest('dialog')?.querySelector<HTMLButtonElement>('button[type=submit]');
@@ -347,11 +349,11 @@ export function offerFields(ctx:Context,form:HTMLElement,options:SwapOptions,cho
     recipient.input.replaceChildren(...ok.map(x=>el('option',{value:x.id},x.display_name||x.id)));blank();
     // A colleague chosen while the list was read stays chosen when they can take the duty.
     if(ok.some(x=>x.id===chosen))recipient.input.value=chosen;
-    checking=false;eligible=ok.length;show(...(ok.length?[]:[note(NOBODY,'info')]));recipient.input.disabled=!ok.length||kind.input.value!=='exchange';paintSend();};
+    checking=false;eligible=ok.length;why=r.no_eligible_recipients_reason||'';show(...(ok.length?[]:[note(nobody(),'info')]));recipient.input.disabled=!ok.length||kind.input.value!=='exchange';paintSend();};
   duty.wrap.classList.add('span-2');  // the duty's full label (time and clinic) has the form's width
   // A colleague is named only for an exchange; an open offer or a give-away goes to every eligible colleague.
   const syncKind=()=>{const named=kind.input.value==='exchange';recipient.wrap.hidden=!named;recipient.input.disabled=!named||checking||eligible===0;
-    // Only the label's words change: its required mark stays.
+    // Only the label's words change: its (optional) cue stays.
     const words=[...reason.wrap.querySelector('label')?.childNodes||[]].find(n=>n.nodeType===Node.TEXT_NODE);if(words)words.textContent=named?'Message to them':'Message to colleagues';
     const tip=reason.wrap.querySelector('.hint');if(tip)tip.textContent=`${named?'Your colleague':'Colleagues'} and the reviewers see it: leave out private medical or personal details.`;
     if(!expires.wrap.querySelector('.hint'))hint(expires,'');
@@ -367,14 +369,14 @@ export function offerFields(ctx:Context,form:HTMLElement,options:SwapOptions,cho
     expires.input.max=toLocal(new Date(Math.min(Date.now()+days*86400000,start)).toISOString(),zone(ctx));};
   duty.input.addEventListener('change',updateExpiry);updateExpiry();
   duty.input.addEventListener('change',()=>void eligibleFor());void eligibleFor();
-  const reason=reasonField('Message to them');
+  const reason=area('Message to them','',3);reason.input.maxLength=500;  // optional (#1360)
   // Guidance sits on the fields it is about, as hints (not a standing warning).
   hint(reason,'Your colleague and the reviewers see it: leave out private medical or personal details.');
   syncKind();
   form.append(...(kinds.length>1?[kind.wrap]:[]),duty.wrap,recipient.wrap,whoCan,expires.wrap,reason.wrap);
   if(options.assignments_partial||options.recipients_partial)form.append(note('The list of duties or colleagues is partial. Not all are shown.','warning'));
   return async()=>{const a=options.assignments.find(a=>a.assignment_id===duty.input.value);if(!a)throw new Error('Choose your own future published duty.');
-    if(checking)throw new Error('Still checking who can take this duty.');if(eligible===0)throw new Error(NOBODY);
+    if(checking)throw new Error('Still checking who can take this duty.');if(eligible===0)throw new Error(nobody());
     const k=kind.input.value;
     await command('swap.offer',{kind:k==='give'?'give':'exchange',publication_id:a.publication_id,assignment_id:a.assignment_id,recipient_person_id:k==='exchange'?recipient.input.value:null,
       expires_at:await instant(expires.input.value),reason:reason.input.value});await ctx.refresh();
@@ -387,7 +389,7 @@ function counterofferForm(ctx:Context,row:Row,options:Row[]){
     // F11 (maintenance): a return duty that cannot work says why, in plain words, and cannot be chosen.
     const duty=select('Your duty in return',available.map(a=>({value:a.assignment_id,label:a.eligible===false&&a.message?`${assignmentLabel(ctx,a)} — ${a.message}`:assignmentLabel(ctx,a),...(a.eligible===false?{disabled:true}:{})})));
     if(available.some(a=>a.eligible!==false))duty.input.value=available.find(a=>a.eligible!==false)!.assignment_id;
-    const reason=reasonField('Message to them');
+    const reason=area('Message to them','',3);reason.input.maxLength=500;  // optional (#1360)
     form.append(assignmentCard(ctx,'You would receive',row.offered_assignment),duty.wrap,reason.wrap);
     if(!available.length)form.append(note('You have no selectable future duty in this publication with the requested expiry. Withdraw this invitation and arrange a new one.','warning'));
     return async()=>{if(!duty.input.value)throw new Error('Choose an eligible duty or withdraw the invitation.');
@@ -438,7 +440,7 @@ export function swapActions(ctx:Context,row:Row):{buttons:HTMLElement[];menu:Row
   if(recipient&&give)out.push(button(TERMS.acceptDuty,()=>confirmAction(TERMS.acceptDuty,
     `You would take ${assignmentLabel(ctx,row.offered_assignment)} and give nothing in return. ${row.proposer_name} confirms next, then a coordinator updates the rota.`,async reason=>{
       await command('swap.accept',{reason},row.id,row.revision);notify('Accepted. They confirm next, then a coordinator updates the rota.');await ctx.refresh();
-    },TERMS.acceptDuty),'secondary small'));
+    },TERMS.acceptDuty,undefined,true,false,'Reason',true),'secondary small'));  // #1360: an optional note, stored as typed
   if(recipient&&!give)out.push(button(TERMS.offerInReturn,async()=>{
     // The offered duty in full (participation, overtime) and your own duties to choose from.
     const [full,options]=await Promise.all([get<{swap:Row}>('/api/swaps/'+row.id),swapChoices({swap_id:row.id}).catch(()=>swapOptions())]);counterofferForm(ctx,full.swap,options.assignments);},'secondary small'));
@@ -448,7 +450,7 @@ export function swapActions(ctx:Context,row:Row):{buttons:HTMLElement[];menu:Row
       notify(done?.effective_status==='reviewing'?'Swap confirmed. The rota change was prepared and sent for independent approval.'
         :done?.prepare_refusal?`Swap confirmed. It could not be prepared automatically (${done.prepare_refusal.message}); a coordinator prepares it.`:'Swap confirmed. A coordinator prepares the rota change next.');
       await ctx.refresh();
-    },'Confirm swap'),'secondary small'));
+    },'Confirm swap',undefined,true,false,'Reason',true),'secondary small'));  // #1360: an optional note, stored as typed
   if(permitted(ctx,CAPABILITY.COORDINATOR)&&state==='accepted')out.push(button('Prepare amendment',()=>prepareForm(ctx,row),'secondary small'));
   if(permitted(ctx,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)&&row.workspace_id)out.push(button('Open rota',()=>{ctx.setWorkspace(row.workspace_id);ctx.navigate('schedule');},'secondary small'));
   const menu:RowAction[]=[];

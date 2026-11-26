@@ -5779,7 +5779,7 @@ export type SwapBlockingFinding = {
 };
 
 export type SwapCounterofferInput = {
-  "reason": string;
+  "reason"?: string;
   "assignment_id": string;
 };
 
@@ -5795,7 +5795,7 @@ export type SwapOfferInput = {
   "assignment_id": string;
   "recipient_person_id"?: string | null;
   "expires_at": string;
-  "reason": string;
+  "reason"?: string;
 };
 
 export type SwapPrepareInput = {

@@ -27348,8 +27348,8 @@
         "type": "string"
       },
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       }
@@ -27357,8 +27357,7 @@
     "required": [
       "publication_id",
       "assignment_id",
-      "expires_at",
-      "reason"
+      "expires_at"
     ],
     "title": "SwapOfferInput",
     "type": "object"
@@ -27367,8 +27366,8 @@
     "additionalProperties": false,
     "properties": {
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       },
@@ -27379,7 +27378,6 @@
       }
     },
     "required": [
-      "reason",
       "assignment_id"
     ],
     "title": "SwapCounterofferInput",
