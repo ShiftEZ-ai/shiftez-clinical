@@ -57,7 +57,9 @@ reused everywhere:
 
 ## Must-follow coding rules
 Definition of done:
-- Every finding is an issue first, one per root cause. Every PR names its issue on a line of its own: "Closes #n",
+- Every finding is an issue first, one per root cause. A review's non-blocking findings share one follow-up issue,
+  one checklist line each; a finding gets its own issue when it is High or Blocker or another lead owns it.
+  Every PR names its issue on a line of its own: "Closes #n",
   or "Refs #n" for a partial fix. "Part of #n" and "Fixes #n" are refused.
 - Tests at every layer the change touches, by DELIVERY.md § Test policy; no skipped or retried tests.
 - A fixed bug in rule resolution, rule checking or auto-scheduling that a small rota reproduces adds or extends a
