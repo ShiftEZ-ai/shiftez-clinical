@@ -78,6 +78,25 @@ def masked_reason(event):
     return case((absence_audit_mask(event), literal('')), else_=event.reason)
 
 
+def mask_balance_details(db, actor, events):
+    """Apply request balance visibility to the audit projection without changing stored events."""
+    from .availability import readable_request_balance_ids
+
+    marked = []
+    for event in events:
+        detail = event.get('detail') or {}
+        if 'leave_balance_overdrawn' in detail or 'balance_confirmation' in (detail.get('payload_fields') or ()):
+            marked.append((event, event.get('target_id') if event['action'] == 'request.decide' else None))
+    visible = readable_request_balance_ids(db, actor, {target for _, target in marked if target})
+    for event, target in marked:
+        if target not in visible:
+            detail = dict(event['detail'])
+            detail.pop('leave_balance_overdrawn', None)
+            if 'balance_confirmation' in (detail.get('payload_fields') or ()):
+                detail['payload_fields'] = [key for key in detail['payload_fields'] if key != 'balance_confirmation']
+            event['detail'] = detail
+
+
 def folded(db, query, zone, limit, cursor=None):
     """Find consecutive islands in SQL, then hydrate only one representative per returned run."""
     e = m.AuditEvent
