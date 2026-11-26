@@ -546,7 +546,9 @@ def test_joint_witness_at_department_scale_is_measured_without_sql(h):
     data['services'] = {sid:{**service,'id':sid} for sid in services}
     data['eligibilities'] = [{**eligibility,'id':str(uuid4()),'person_id':pid,'service_id':sid} for pid,sid in zip(people,services)]
     template = data['shifts'][0]
-    data['locations'][template['location_id']]['capacity'] = len(people)
+    place = template['location_id']
+    data['locations'][place]['capacity'] = len(people)
+    data['place_capacity']['limits'][place] = len(people)
     data['shifts'] = [{**deepcopy(template),'id':str(uuid4()),'service_ids':[services[i % len(people)]],
         'start':(aware(template['start']) + timedelta(days=i//17)).isoformat(),
         'end':(aware(template['end']) + timedelta(days=i//17)).isoformat()} for i in range(500)]

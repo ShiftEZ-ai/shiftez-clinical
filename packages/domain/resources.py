@@ -144,7 +144,8 @@ def evaluate_resources(data, definitions, shifts, focus, add, ancestor_ids, vali
                 if service.get("calendar_id"):
                     check_calendar(data, service["calendar_id"], start, end, sid, add, {"service_id": service_id})
             for location_id in ancestor_ids(data, shift["location_id"]):
-                location = data["locations"][location_id]
+                # A scoped issued duty can retain capacity evidence without an ordinary place row.
+                location = data["locations"].get(location_id, {})
                 if location.get("calendar_id"):
                     check_calendar(data, location["calendar_id"], start, end, sid, add, {"location_id": location_id})
         for demand, a, requested_end, b in resource_intervals(shift, definitions[sid]):
