@@ -1255,7 +1255,7 @@ def session_limits_database(request, tmp_path):
 def test_installation_admin_migration_is_independent_of_runtime_code():
     import ast
 
-    path = safety.VERSIONS / '0153_installation_admin.py'
+    path = safety.VERSIONS / '0155_installation_admin.py'
     tree = ast.parse(path.read_text(encoding='utf-8'))
     imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
     imports.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
@@ -1274,8 +1274,8 @@ def test_installation_admin_migration_preserves_rows_and_seeds_once(session_limi
 
     url = session_limits_database
     cfg = manage.alembic_config(url)
-    revision = '0153_installation_admin'
-    command.upgrade(cfg, '0152_feasibility_results')
+    revision = '0155_installation_admin'
+    command.upgrade(cfg, '0154_request_undo_note')
     engine = make_engine(url)
     binding = m.RoleBinding.__table__
     try:
@@ -1335,8 +1335,8 @@ def test_installation_admin_upgrade_waits_for_pending_admin_to_accept(session_li
 
     url = session_limits_database
     cfg = manage.alembic_config(url)
-    previous = '0152_feasibility_results'
-    revision = '0153_installation_admin'
+    previous = '0154_request_undo_note'
+    revision = '0155_installation_admin'
     command.upgrade(cfg, previous)
     engine = make_engine(url)
     try:

@@ -42,11 +42,15 @@ def image_url(ident):
 def public(db):
     row = db.get(m.ApplicationBranding, SINGLETON)
     value = settings(db)
+    urls = {}
+    for kind in ('emblem', 'wordmark'):
+        key = kind + '_url'
+        default = s.BRANDING_DEFAULTS[key]
+        image_id = value[kind + '_image_id']
+        urls[key] = image_url(image_id) if image_id else default and asset_url(default)
     return s.BrandingPublic(**{key: value[key] for key in (
         'short_name', 'app_name', 'institution_name', 'emblem_alt', 'wordmark_alt')},
-        **{key + '_url': image_url(value[key + '_image_id']) if value[key + '_image_id']
-           else asset_url(s.BRANDING_DEFAULTS[key + '_url']) for key in ('emblem', 'wordmark')},
-        revision=row.revision if row else 1).model_dump(mode='json')
+        **urls, revision=row.revision if row else 1).model_dump(mode='json')
 
 
 def status(db, actor):

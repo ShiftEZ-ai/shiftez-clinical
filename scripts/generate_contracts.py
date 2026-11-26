@@ -22,7 +22,7 @@ CLASSES = [s.DisplaySettingsRestore, s.PersonPropertiesInput, s.ContactTypeInput
            s.RulesExplainedResponse, s.DepartmentRulesExplainedResponse, s.ExplainedRule, s.RuleExplainedSentence,
             s.SchedulingFactInput, s.FactDecisionInput, s.SchedulingFactApproval, s.CatalogueConversionDecision, s.CatalogueProofPreview, s.CatalogueUpdating, s.JobErrorDetail,
            s.PersonFairness, s.PersonScore, s.PersonWorkload, s.PersonRotations, s.PersonAvailability, s.PersonAccounts, s.PersonSessions, s.PersonAuthActivity,
-           s.PublishedWishOutcome, s.RequestDecisionAccess, s.RequestManyDecision, s.RequestUndo, s.OvertimeAvailabilityInput, s.NotificationRead, s.WishEffect, s.DraftWishOutcome, s.FeedbackCreate, s.FeedbackCreated, s.FeedbackRow,
+           s.PublishedWishOutcome, s.RequestDecisionAccess, s.RequestManyDecision, s.RequestUndo, s.RequestEditUndo, s.OvertimeAvailabilityInput, s.NotificationRead, s.WishEffect, s.DraftWishOutcome, s.FeedbackCreate, s.FeedbackCreated, s.FeedbackRow,
            s.FeedbackList, s.FeedbackUpdate, s.FeedbackUndo, s.FeedbackExport, s.FeedbackExportResult, s.WhyResult,
            s.DateSetInput, s.DateSetRecord, s.DateSetMarker, s.ResolvedDateSetEntry, s.DateSetDeleteInput, s.DateSetEntryWriteInput,
            s.DateSetEntryDeleteInput, s.DateSetAdjustmentInput, s.DateSetImportInput, s.DateSetCopyInput,
@@ -43,6 +43,7 @@ CLASSES += [s.ConditionResolution, s.ConditionDateMatch, s.ConditionDateParseRes
 CLASSES += [s.ConditionResolveBatchInput, s.ConditionResolveBatchResult, s.TimeResolveBatchInput, s.TimeResolveBatchResult]
 CLASSES += [s.FairnessExposure]
 CLASSES += [s.FixListDelta]
+CLASSES += [s.AccountOnboardingRow, s.AccountOnboarding, s.AccountOnboardingApply]
 CLASSES += [s.ObservedRuleEffect, s.CatalogueWorkspaceImpact]
 CLASSES += [s.NotificationList, s.NotificationReadResult, s.NotificationUnack, s.AuditPage]
 CLASSES += [s.PublishedOperationalSummary, s.PublishedOperationalAttention, s.FairnessMetricTotal]
@@ -228,6 +229,7 @@ def render():
     content += "export const FEEDBACK_STATUSES = " + json.dumps(list(s.FEEDBACK_STATUSES)) + " as const;\n"
     content += "export const FEEDBACK_LIMITS = " + json.dumps(s.FEEDBACK_LIMITS) + " as const;\n"
     content += "export const SWAP_LIMITS = " + json.dumps(s.SWAP_LIMITS) + " as const;\n"
+    content += "export const ACCOUNT_ONBOARDING_LIMITS = " + json.dumps(s.ACCOUNT_ONBOARDING_LIMITS) + " as const;\n"
     content += "export const MONITOR_LIMITS = " + json.dumps(s.MONITOR_LIMITS) + " as const;\n"
     content += "export const MAX_COUNT_BUCKETS = " + str(s.MAX_COUNT_BUCKETS) + ";\n"
     content += "export const CONTENT_PAGE_SIZE = " + str(s.CONTENT_PAGE_SIZE) + ";\n"

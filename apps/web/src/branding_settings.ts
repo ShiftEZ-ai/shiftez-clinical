@@ -14,8 +14,8 @@ type Logo='emblem'|'wordmark';
 const LOGOS:[Logo,string][]=[['emblem','Emblem'],['wordmark','Wordmark']];
 
 /** A logo as it will look: natural proportions, on the light and the dark theme (the wordmark keeps its white plate). */
-const preview=(kind:Logo,url:string,alt:string)=>el('div',{class:`brand-preview brand-preview-${kind}`,'data-private':''},
-  ...['light','dark'].map(theme=>el('span',{class:`brand-preview-tile ${theme}`},el('img',{src:url,alt:theme==='light'?alt:'',class:kind==='wordmark'?'brand-plate':''}))));
+const preview=(kind:Logo,url:string,alt:string)=>url?el('div',{class:`brand-preview brand-preview-${kind}`,'data-private':''},
+  ...['light','dark'].map(theme=>el('span',{class:`brand-preview-tile ${theme}`},el('img',{src:url,alt:theme==='light'?alt:'',class:kind==='wordmark'?'brand-plate':''})))):null;
 
 /** The installed app's look (BrandingInput: colours, icon background and fills): sent with every save, so a change to
  *  the name or a logo never puts it back to its defaults. */
@@ -72,7 +72,9 @@ export function brandingPanel():HTMLElement{
       status.can_undo?withIcon(button('Undo last change',()=>undo(status),'ghost'),'undo'):'']:[];
     box.replaceChildren(sectionHead('Name and logo','',...actions),
       el('dl',{class:'brand-facts'},el('dt',{},'App name'),el('dd',{},b.app_name),el('dt',{},'Short name'),el('dd',{},b.short_name),el('dt',{},'Institution'),el('dd',{},b.institution_name)),
-      el('div',{class:'brand-logos'},...LOGOS.map(([k,label])=>el('figure',{},preview(k,b[`${k}_url` as const],b[`${k}_alt` as const]),el('figcaption',{},label)))),
+      el('div',{class:'brand-logos'},...LOGOS.map(([k,label])=>{
+        const image=preview(k,b[`${k}_url`],b[`${k}_alt`]);
+        return image?el('figure',{},image,el('figcaption',{},label)):null;})),
       installed(status,(fields,what)=>look(status,fields,what)),
       status.can_edit?'':note(`Ask an ${roleLabel(INSTALLATION_ADMIN_ROLE)} to change the name and logo`));};
   const saved=(result:BrandingStatus)=>{if(box.isConnected)draw(result);};
@@ -108,7 +110,8 @@ export function brandingPanel():HTMLElement{
       // so the shared field-error UI (dom.ts watchErrors) clears or updates its message, aria-invalid and description.
       const settled=()=>file.input.dispatchEvent(new Event('input',{bubbles:true}));
       const reset=button('Use default',()=>{choice=null;file.input.value='';file.input.setCustomValidity('');show(BRANDING_DEFAULTS[`${kind}_url` as const]);settled();},'ghost small');
-      const show=(url:string)=>{shown.replaceChildren(preview(kind,url,alt.input.value));reset.hidden=url===BRANDING_DEFAULTS[`${kind}_url` as const];};
+      const show=(url:string)=>{const image=preview(kind,url,alt.input.value);
+        shown.replaceChildren(...(image?[image]:[]));reset.hidden=url===BRANDING_DEFAULTS[`${kind}_url` as const];};
       // A chosen file is the field's value only once it is read and checked: until then (and when refused) the field is
       // invalid, so Save cannot go ahead without the logo asked for. A file chosen later supersedes an earlier one.
       file.input.addEventListener('change',()=>{const f=file.input.files?.[0];choice=undefined;file.input.setCustomValidity('');

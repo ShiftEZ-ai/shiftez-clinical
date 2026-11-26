@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0153_installation_admin"
-down_revision = "0152_feasibility_results"
+revision = "0155_installation_admin"
+down_revision = "0154_request_undo_note"
 branch_labels = depends_on = None
 SAFETY_CLASS = "destructive"
 DESTRUCTIVE_REVIEWED = (

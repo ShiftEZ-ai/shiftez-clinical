@@ -58,6 +58,14 @@ def _clean(h, w):
 
 
 def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server, h):
+    _check_stopped_run_without_fix_list(browser, cp_server, h, has_changes=True)
+
+
+def test_stopped_run_with_no_changes_shows_one_outcome_when_fix_list_is_missing(browser, cp_server, h):
+    _check_stopped_run_without_fix_list(browser, cp_server, h, has_changes=False)
+
+
+def _check_stopped_run_without_fix_list(browser, cp_server, h, *, has_changes):
     assigned, extra = h.seed['people'][:2]
     w, (shift_id,) = rota(h, [(5, 8, [assigned])], name='Stop during a rota check')
     engine = h.app.state.engine
@@ -95,7 +103,8 @@ def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server
             'summary': {'required_places': 1, 'filled_places': 1,
                         'score_saved': {'score': 80, 'score_completed': False}},
             'additions': [{'shift_id': shift_id, 'participant': {
-                'person_id': extra, 'start': shift['start'], 'end': shift['end']}}], 'removals': [],
+                'person_id': extra, 'start': shift['start'], 'end': shift['end']}}] if has_changes else [],
+            'removals': [],
         }
         result.update(generation_fix_lists(claim['input'], result))
         assert result['fix_list_before']['summary']['must'] == result['fix_list_after']['summary']['must'] == 0
@@ -110,6 +119,9 @@ def test_stopped_run_finishes_while_the_rota_check_is_running(browser, cp_server
         sentence = review.get_by_text(FIX_LIST_WORDS['generation_fallback'], exact=True)
         expect(sentence).to_be_visible()
         expect(sentence).to_have_count(1)
+        expect(review.locator('.auto-outcome')).to_contain_text(FIX_LIST_WORDS['generation_fallback'])
+        expect(review).to_contain_text('Run auto-schedule again')
+        expect(review).not_to_contain_text('Nothing to change')
         expect(review).not_to_contain_text(re.compile('Nothing must be fixed', re.IGNORECASE))
         stats = review.get_by_role('group', name='Result')
         expect(stats.get_by_text('Score now', exact=True)).to_be_visible()

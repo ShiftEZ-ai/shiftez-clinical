@@ -38,7 +38,7 @@ def without_installation_admin_backfill(snapshot, columns=None):
     bindings = rows('role_bindings')
     events = rows('audit_events')
     grant, = [value for _, value in bindings if value['role'] == INSTALLATION_ADMIN_ROLE]
-    event, = [value for _, value in events if value['correlation_id'] == '0153_installation_admin']
+    event, = [value for _, value in events if value['correlation_id'] == '0155_installation_admin']
     assert grant['ends_on'] is None and not grant['revoked']
     assert event['action'] == 'role.grant' and event['target_id'] == grant['id']
     assert (event['actor_id'], event['department_id']) == (grant['identity_id'], grant['department_id'])

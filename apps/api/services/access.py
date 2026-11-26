@@ -6,7 +6,6 @@ from apps.api.errors import require
 from apps.api.serialization import record, generation_defaults_record
 from .common import scoped, expected, history, range_overlaps, bump_inputs
 from .bulk_settings import limits as bulk_limits
-from .events import invalidate_audience_inputs
 
 
 SWAP_AUTOMATION_ISSUER = "fmuc:swap-automation"
@@ -350,6 +349,11 @@ def access_command(db, actor, command, settings):
                 continue
             require(not range_overlaps(old.starts_on, old.ends_on, value.starts_on, value.ends_on),
                     "DUPLICATE_ROLE", "An overlapping access binding already exists", 409)
+        if value.role in s.EXPLICIT_ROLES:
+            from .accounts import lock_link_account, open_links
+            lock_link_account(db, identity.id)
+            for link in open_links(db, identity.id):
+                link.revoked_at, link.revision = m.now(), link.revision + 1
         if restoring:
             row.revoked = False
             row.revision += 1
@@ -357,12 +361,7 @@ def access_command(db, actor, command, settings):
             row = m.RoleBinding(department_id=actor.department_id, **value.model_dump(exclude={"reason"}))
             db.add(row)
             db.flush()
-        if value.role in s.EXPLICIT_ROLES:
-            from .accounts import open_links
-            for link in open_links(db, identity.id):
-                link.revoked_at, link.revision = m.now(), link.revision + 1
         history(db, actor, "access", row, value.reason)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row)}
     if command.kind == "role.revoke":
         value = s.Decision.model_validate(command.payload)
@@ -384,7 +383,6 @@ def access_command(db, actor, command, settings):
         from .auth_configuration import protect_break_glass
         protect_break_glass(db, settings)
         history(db, actor, "access", row, value.reason)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row)}
     if command.kind in {"identity.disable", "identity.enable"}:
         s.Decision.model_validate(command.payload)  # the reason is kept in the audit log
@@ -395,6 +393,8 @@ def access_command(db, actor, command, settings):
                     "Keep at least one admin: give someone else the Admin role first", 409)
         expected(row, command.expected_revision)
         require(row.disabled == enable, "IDENTITY_STATE", "Sign-in is already " + ("enabled" if enable else "disabled"), 409)
+        from .accounts import lock_link_account
+        account = lock_link_account(db, row.id)
         if not enable:
             keep_developer(db, {row.id})
             keep_installation_admin(db, identity_ids={row.id})
@@ -404,7 +404,6 @@ def access_command(db, actor, command, settings):
             from .auth_configuration import protect_break_glass
             protect_break_glass(db, settings)
         # A managed account follows in the sign-in service (an invitation not yet accepted stays disabled there).
-        account = db.scalar(select(m.Account).where(m.Account.identity_id == row.id))
         from apps.api.identity_store import store_for
         users = store_for(settings)
         require(not (db.info.get("bulk") and account and users and (not enable or account.accepted_at)),
@@ -416,6 +415,5 @@ def access_command(db, actor, command, settings):
             except IdentityStoreError as exc:
                 # Disabling always succeeds here: the app already refuses this identity on every request.
                 require(not enable, "SIGN_IN_SERVICE_UNAVAILABLE", str(exc), 503)
-        invalidate_audience_inputs(db, actor)
         return {"record": record(row, exclude=("password_hash",))}
     require(False, "UNKNOWN_COMMAND", "Unknown access command")

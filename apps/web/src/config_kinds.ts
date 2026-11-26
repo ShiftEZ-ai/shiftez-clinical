@@ -34,7 +34,7 @@ export const CONFIG_KINDS:Record<string,ConfigKind>={
   sign_in:{label:'Sign-in',address:'sign-in',group:'Department',settings:true},
   ai_provider:{label:'AI provider',address:'ai-provider',group:'Department',settings:true},
   branding:{label:'Name and logo',address:'name-and-logo',group:'Department',settings:true},
-  department_content:{label:TERMS.announcements,singular:'announcement',address:'announcements',group:'Department',purpose:'What staff see first on Home.'},
+  department_content:{label:TERMS.announcements,singular:'announcement',address:'announcements',group:'Department',purpose:'Shown under Notices on Home.'},
   event_types:{label:'Event types',singular:'event type',address:'event-types',group:'Department',colour:'own',purpose:'Kinds of department event, such as teaching or meetings: their usual time, who they are for and whether they take people off duties.'},
   // Programmes (their own page) and people share the same words.
   programmes:{label:'Programmes',singular:'programme',purpose:'Training programmes (e.g. Family Medicine residency). Members, cohorts and rotations hang off a programme.'},
