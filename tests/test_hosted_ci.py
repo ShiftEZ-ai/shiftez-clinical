@@ -118,6 +118,41 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     assert not (tmp_path / "push-retry.xml").exists()
 
 
+def test_browser_retry_enables_tracing_for_failed_nodes(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    path = "tests/test_browser_example.py"
+    failed_node = path + "::test_red"
+    calls = []
+
+    def execution(command, *, env):
+        focused = failed_node in command
+        calls.append((focused, env["PW_TRACE_MODE"]))
+        report = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml=")))
+        case = ET.Element("testcase", classname="tests.test_browser_example", name="test_red")
+        if not focused:
+            ET.SubElement(case, "failure")
+        ET.ElementTree(case).write(report)
+        Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--hosted-deselected-output="))).write_text("[]", encoding="utf-8")
+        return int(not focused)
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setenv("PW_TRACE_MODE", "off")
+    monkeypatch.setattr(trusted_ci.subprocess, "call", execution)
+    monkeypatch.setattr(trusted_ci.hardening, "load", lambda: {"canaries": False, "node_census": False})
+    evidence = trusted_ci.invocation_receipt(
+        [path], "browser", tmp_path / "junit.xml", [], "4", None, candidate={"replicas": [1]},
+    )
+
+    assert evidence["exit_code"] == 1 and evidence["retry"]["exit_code"] == 0
+    assert calls == [(False, "off"), (True, "on")]
+    assert os.environ["PW_TRACE_MODE"] == "off"
+
+
 @pytest.mark.parametrize("replicas,smoke,retry_expected,branch,event,retired,default", [
     pytest.param([1], False, True, "dev", "pull_request", False, "dev", id="replicas0-False-True"),
     pytest.param([1], True, False, "dev", "pull_request", False, "dev", id="replicas1-True-False"),
@@ -144,8 +179,8 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
                  "suites": {"unit": {"shards": [{"files": [path]}]}}}
     calls = []
 
-    def invocation(targets, suite, report, extra, workers, base_targets, *, partial):
-        calls.append((targets, workers))
+    def invocation(targets, suite, report, extra, workers, base_targets, *, partial, trace=False):
+        calls.append((targets, workers, trace))
         nodes = [red, listed, quarantined, new_flake] if targets == [path] else targets
         cases = ET.Element("testsuite")
         for node in nodes:
@@ -199,7 +234,7 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
     assert receipt["reports"][0]["exit_code"] == 1
     assert ("retry" in receipt["reports"][0]) == retry_expected
     retried = [new_flake, quarantined, red] if retired and not release else [new_flake, red]
-    assert calls == [([path], "4")] + ([(retried, "0")] if retry_expected else [])
+    assert calls == [([path], "4", False)] + ([(retried, "0", False)] if retry_expected else [])
     assert (tmp_path / ".run/reports/junit-retry.xml").exists() == retry_expected
 
 
