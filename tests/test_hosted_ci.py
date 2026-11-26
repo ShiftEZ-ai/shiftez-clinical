@@ -34,6 +34,70 @@ def test_invalid_plan_is_refused(files, count):
         hosted_ci.balance(files, {"a": 1}, count)
 
 
+def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
+    import trusted_ci
+
+    base, head, tree = "a" * 40, "b" * 40, "c" * 40
+    inventory = ["tests/test_example.py"]
+    candidate = {"sha": head, "tree": tree, "base_sha": base,
+                 "inventory_sha256": hosted_ci.digest(inventory)}
+    artifact = tmp_path / "shard-plan.json"
+    artifact.write_text(json.dumps(candidate), encoding="utf-8")
+    monkeypatch.setenv("CI_CHECKS_PLAN", str(artifact))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.delenv("TRUSTED_BOOTSTRAP", raising=False)
+    monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: f"{head}\n{tree}")
+    event = {"repository": {"default_branch": "main"}, "pull_request": {"base": {"ref": "main"}}}
+    monkeypatch.setattr(trusted_ci.policy, "event", lambda: event)
+    monkeypatch.setattr(trusted_ci, "test_inventory", lambda: inventory)
+    verified = []
+
+    def resolve_parent(data, sha):
+        verified.append((data, sha))
+        return base
+
+    monkeypatch.setattr(trusted_ci.policy, "pr_test_base", resolve_parent)
+    rebuilt = object()
+    monkeypatch.setattr(trusted_ci, "plan", lambda base, measurement: rebuilt)
+
+    seal = hosted_ci.digest(candidate)
+    run = trusted_ci.runner_plan
+    assert run(base, False, "browser", 1, seal) == candidate
+    assert verified == [(event, head)]
+    assert run(base, False, "unit", 1, seal) is rebuilt
+    assert run(base, True, "browser", 1, seal) is rebuilt
+    with monkeypatch.context() as context:
+        context.setattr(trusted_ci.policy, "pr_test_base", lambda data, sha: "d" * 40)
+        with pytest.raises(ValueError, match="verified target parent"):
+            run(base, False, "browser", 1, seal)
+
+    with pytest.raises(ValueError, match="plan identity"):
+        run(base, False, "browser", 1, "0" * 64)
+    for field in ("sha", "tree", "base_sha", "inventory_sha256"):
+        stale = dict(candidate, **{field: "x"})
+        artifact.write_text(json.dumps(stale), encoding="utf-8")
+        with pytest.raises(ValueError, match="Checks plan differs"):
+            run(base, False, "browser", 1, hosted_ci.digest(stale))
+    artifact.unlink()
+    with pytest.raises(FileNotFoundError):
+        run(base, False, "browser", 1, seal)
+
+    with monkeypatch.context() as context:
+        context.setenv("TRUSTED_BOOTSTRAP", "true")
+        assert run(base, False, "browser", 1, seal) is rebuilt
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    assert run(base, False, "browser", 1, seal) is rebuilt
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    with monkeypatch.context() as context:
+        context.setattr(trusted_ci.policy, "event", lambda: {
+            "repository": {"default_branch": "dev"}, "pull_request": {"base": {"ref": "preview"}},
+        })
+        assert run(base, False, "browser", 1, seal) is rebuilt
+    monkeypatch.delenv("CI_CHECKS_PLAN")
+    assert run(base, False, "browser", 1, seal) is rebuilt
+
+
 @pytest.mark.parametrize("state", ["failure", "cancelled", "skipped", "", "unknown"])
 def test_aggregate_refuses_every_non_success(state):
     needs = {name: {"result": "success"} for name in ("checks", "unit", "browser")}
