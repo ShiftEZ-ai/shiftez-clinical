@@ -159,8 +159,12 @@ def test_writes_continue_during_hash_and_stale_credentials_never_issue_sessions(
         finally:
             resume.set()
         response = pending.result(timeout=15)
-    assert response.status_code == 401, response.text
-    assert failure_counts(login_store, settings) == [1, 1]
+    if change == 'roles':
+        assert response.status_code == 403 and response.json()['error']['code'] == 'UNPROVISIONED_IDENTITY', response.text
+        assert failure_counts(login_store, settings) == [0, 0]
+    else:
+        assert response.status_code == 401, response.text
+        assert failure_counts(login_store, settings) == [1, 1]
     with transaction(login_store.app.state.engine) as db:
         assert not list(db.scalars(select(m.Session).where(m.Session.identity_id == identity_id)))
 

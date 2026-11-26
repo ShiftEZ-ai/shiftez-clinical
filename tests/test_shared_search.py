@@ -146,7 +146,7 @@ def test_search_options_do_not_change_legacy_serialization_or_allow_bad_inputs()
 def test_scope_metadata_contains_only_registered_reference_kinds_and_readable_text():
     for collection, meta in search.registry().items():
         assert set(meta['reference_kinds']) <= set(s.SEARCH_ENTITY_KINDS)
-        assert not {'private_reason', 'password_hash', 'payload', 'subject'} & set(meta['text_fields'])
+        assert not {'private_reason', 'private_undo_note', 'password_hash', 'payload', 'subject'} & set(meta['text_fields'])
     assert 'people' in search.registry()['programmes']['reference_kinds']
 
 

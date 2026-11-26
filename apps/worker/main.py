@@ -133,6 +133,15 @@ def describe(db, event, publication, identity, *, wishes=None, rota_label=None):
         return "Rule proposal or decision", "Open Rules to review the current version."
     if event.kind == "bulk_review":
         return "Bulk changes need an independent reviewer", "Open Bulk editor to review the pending changes."
+    if event.kind == "generation_finished":
+        title = {
+            'complete': 'Auto-schedule result ready',
+            'partial': 'Auto-schedule finished with gaps',
+            'needs_more_time': 'Auto-schedule needs more time',
+            'infeasible': 'Auto-schedule found conflicting requirements',
+            'failed': 'Auto-schedule could not finish',
+        }[event.payload['outcome']]
+        return title, 'Open Auto-schedule to review the run.'
     if event.kind == "feedback":
         status = event.payload["status"]
         message = f"Your report {event.payload['feedback_id']} is {status.replace('_', ' ')}"
@@ -300,6 +309,20 @@ def recipients_of(db, event, publication, roles, identities=None):
                 or aware(row.expires_at) <= m.now()):
             return set()
         return reviewers(db, row)
+    if event.kind == "generation_finished":
+        from apps.api.services.workspace_access import access_record
+        job = db.get(m.Job, event.payload['job_id'], options=[defer(m.Job.input_snapshot), defer(m.Job.result)])
+        if (job is None or job.kind != 'generation' or job.department_id != event.department_id
+                or job.workspace_id != event.payload['workspace_id'] or 'coordinator' not in roles.get(job.requested_by, ())):
+            return set()
+        identity = db.get(m.Identity, job.requested_by)
+        workspace = db.get(m.Workspace, job.workspace_id)
+        if identity is None or identity.disabled or workspace is None:
+            return set()
+        access = access_record(db, workspace)
+        if (access['visibility'] == 'private' or access['purpose'] == 'sandbox') and workspace.created_by != identity.id:
+            return set()
+        return {identity.id}
     if event.kind == "feedback":
         identity_id = event.payload.get("reporter_identity_id")
         identity = db.get(m.Identity, identity_id) if identity_id in roles else None
@@ -468,6 +491,16 @@ def planner_actor_for(db, claim):
                  current_roles(db, identity.id, department.id), identity.person_id, 'worker')
 
 
+def queue_generation_outcome(db, job):
+    if job.kind != 'generation' or job.status not in {'succeeded', 'failed'} or job.error_code == 'ACCESS_REVOKED':
+        return
+    from apps.api.serialization import job_outcome
+    outcome = job_outcome(job.status, job.result)
+    if outcome != 'cancelled':
+        db.add(m.Outbox(department_id=job.department_id, kind='generation_finished', event_key=f'generation-finished:{job.id}',
+                        payload={'job_id': job.id, 'workspace_id': job.workspace_id, 'outcome': outcome}))
+
+
 def resume_days(db, claim=None):
     if claim and 'resume_days' in claim:
         return claim['resume_days']
@@ -620,6 +653,7 @@ def claim_job(db, *, recovering_worker=None):
             if not generation_resume_available(db, old, days=resume_days(db), error=old.error_code):
                 clear_generation_resume(db, job_id=old.id)
             old.revision += 1
+            queue_generation_outcome(db, old)
             continue
         controls = old.search_control or {}
         has_hint = checkpoint.get('has_solution', bool(checkpoint.get('hint')))
@@ -655,6 +689,7 @@ def claim_job(db, *, recovering_worker=None):
             elif old.result and has_generation_checkpoint(old):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
+        queue_generation_outcome(db, old)
     queued = select(m.Job).where(enabled, m.Job.status == "queued")
     # shortcut: one solve at a time for the pilot server; add bounded slots when measured demand requires them.
     heavy = ["generation", "feasibility", "catalogue_proof", "swap_audience", "merge_preview", "merge_apply", "fill_options"]
@@ -672,6 +707,7 @@ def claim_job(db, *, recovering_worker=None):
         if not generation_resume_available(db, job, days=resume_days(db), error=job.error_code):
             clear_generation_resume(db, job_id=job.id)
         job.revision += 1
+        queue_generation_outcome(db, job)
         return None
     identity = db.get(m.Identity, job.requested_by)
     if identity.disabled or not may_run(db, identity, job):
@@ -905,6 +941,7 @@ def finish_job(db, claim, result, error, *, progress=None, error_detail=None, fe
         progress = _preserve_generation_stage(job.progress, progress)
     job.progress = job_progress_record(progress if progress is not None else job.progress)
     job.revision += 1
+    queue_generation_outcome(db, job)
     live.signal(db, live.job_topic(job.department_id, job.id), scope="jobs", id=job.id)
     if job.kind == 'swap_audience':
         live.signal(db, job.department_id, scope="swaps")
