@@ -1,7 +1,7 @@
 from sqlalchemy import and_, or_, select
 from packages.contracts import schemas as s
 from apps.api import models as m
-from apps.api.auth import _live, require_role, person_access
+from apps.api.auth import _live, current_roles, has_installation_admin, require_role, person_access
 from apps.api.errors import require
 from apps.api.serialization import record, generation_defaults_record
 from .common import scoped, expected, history, range_overlaps, bump_inputs
@@ -61,6 +61,15 @@ def keep_developer(db, identity_ids, department_id=None):
         if live_role_holder(db, binding, local_today(db, binding.department_id)):
             require(other_role_holders(db, binding.department_id, identity_ids, binding.role), "LAST_DEVELOPER",
                     "Keep at least one Developer: give someone else the Developer role first", 409)
+
+
+def keep_installation_admin(db, *, binding_id=None, identity_ids=()):
+    """The command writer serializes this check and its revoke or disable across departments."""
+    if db.info.get("bulk"):
+        db.flush()
+    require(has_installation_admin(db, excluding_binding_id=binding_id, excluding_identities=identity_ids, permanent=True)
+            or not has_installation_admin(db, permanent=True), "LAST_INSTALLATION_ADMIN",
+            f"Give someone else the {s.ROLE_LABELS[s.INSTALLATION_ADMIN_ROLE]} role before removing this access", 409)
 
 
 def organisation_identities(actor):
@@ -275,10 +284,24 @@ def department_settings(db, actor, command, settings):
 
 
 def require_role_change(db, actor, role, *, grant=False):
-    if role not in s.EXPLICIT_ROLES:
-        require_role(actor, "admin")
+    permission = s.ROLE_GRANT_PERMISSIONS[role]
+    allowed = s.PERMISSIONS[permission]
+    if permission == "access.installation_admin":
+        require_role(actor, *allowed)
+        if db is not None and db.info.get("bulk"):
+            # Bulk commands defer flushing; read revocations already made by this batch.
+            db.flush()
+            identity = db.get(m.Identity, actor.identity_id)
+            held = current_roles(db, actor.identity_id, actor.department_id) - {role}
+            installation_admin = role in allowed and actor.permits(role) and has_installation_admin(db, actor.identity_id)
+            require(identity is not None and not identity.disabled and
+                    (installation_admin or bool(held.intersection(allowed, actor.roles))), "INSTALLATION_ADMIN_REQUIRED",
+                    f"Ask an {s.ROLE_LABELS[role]} to change this role", 403)
         return
-    if actor.permits(*s.PERMISSIONS["access.system_roles"]):
+    if permission == "role.grant":
+        require_role(actor, *allowed)
+        return
+    if actor.permits(*allowed):
         return
     action = "grant" if grant else "revoke"
     require(False, "SYSTEM_ROLE_" + action.upper(),
@@ -349,6 +372,8 @@ def access_command(db, actor, command, settings):
         if row.role == "admin":
             require(other_admins(db, actor.department_id, row.identity_id), "LAST_ADMIN",
                     "Keep at least one admin: give someone else the Admin role first", 409)
+        if row.role == s.INSTALLATION_ADMIN_ROLE:
+            keep_installation_admin(db, binding_id=row.id)
         if row.role in s.SYSTEM_ROLES:
             from .independence import today as local_today
             if live_role_holder(db, row, local_today(db, actor.department_id)):
@@ -372,6 +397,7 @@ def access_command(db, actor, command, settings):
         account = lock_link_account(db, row.id)
         if not enable:
             keep_developer(db, {row.id})
+            keep_installation_admin(db, identity_ids={row.id})
         row.disabled = not enable
         row.revision += 1
         if not enable:

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.api.db import make_engine
 from scripts.manage import alembic_config
+from .migration_support import add_historical_admin
 
 
 def test_m2_upgrade_preserves_m1_evidence_and_requires_exactly_one_receipt_source(tmp_path):
@@ -26,6 +27,7 @@ def test_m2_upgrade_preserves_m1_evidence_and_requires_exactly_one_receipt_sourc
             name='Existing department', generation_defaults={}))
         db.execute(before.tables['identities'].insert().values(**common, id='reader', issuer='synthetic',
             subject='reader', display_name='Synthetic reader', disabled=False))
+        add_historical_admin(db, 'dept', 'reader')
         db.execute(before.tables['identities'].insert().values(**common, id='other-reader', issuer='synthetic',
             subject='other-reader', display_name='Other synthetic reader', disabled=False))
         db.execute(before.tables['department_content'].insert().values(**common, id='notice', department_id='dept',

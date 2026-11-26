@@ -166,7 +166,7 @@ def test_person_rotations_keep_scoped_trainee_and_mentor_history(request, databa
     path = "/api/people/{}/rotations?start=2024-09-01&end=2024-10-16"
     expected = sorted([old, tied], key=lambda row: (row["starts_on"], row["id"]))
     for role in s.ROLE_NAMES:
-        if role == "operator":
+        if role != "staff" and role not in s.PERMISSIONS["catalogue.read"]:
             h.get(role, path.format(trainee), status=403)
             continue
         assert h.get(role, path.format(trainee)) == {"rotations": [old]}
@@ -1372,6 +1372,8 @@ def test_programme_owner_keeps_authority_for_normal_deactivation_and_undo(h, rea
 
 
 def test_programme_ownership_migration_preserves_existing_records(tmp_path):
+    from .migration_support import add_historical_admin
+
     import uuid
     from datetime import date, datetime, timezone
     from alembic import command
@@ -1393,6 +1395,7 @@ def test_programme_ownership_migration_preserves_existing_records(tmp_path):
         db.execute(metadata.tables["departments"].insert().values(**base, id=dept, organisation_id=org, name="Legacy department"))
         db.execute(metadata.tables["programmes"].insert().values(**base, id=programme, department_id=dept, name="Legacy programme",
                    description="", starts_on=date(2026, 1, 1), active=True))
+        add_historical_admin(db, dept)
         before = dict(db.execute(text("SELECT * FROM programmes")).mappings().one())
     engine.dispose()
     command.upgrade(config, "head")

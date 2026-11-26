@@ -210,8 +210,7 @@ def _browser_boundary(stage, completed=None):
 @pytest.fixture
 def browser(chromium,request):
     """One Chromium per worker session; every test still gets fresh contexts, and any it leaves open are closed.
-    PW_TRACE_DIR=<folder>: every context records a Playwright trace (DOM snapshots, network, console); a failed test keeps
-    its traces there with a screenshot of each open page (`playwright show-trace <zip>`), a passing test keeps none."""
+    PW_TRACE_DIR and PW_SCREENSHOT_DIR hold trace archives and failure screenshots."""
     folder=os.getenv("PW_TRACE_DIR")
     def disconnected(_):
         _browser_boundary("browser_disconnected")
@@ -285,10 +284,16 @@ def pending_request_url(url):
 class Traced:
     """The worker's Browser with pending-request evidence and optional traces. Evidence is saved before context.close
     aborts requests, when an exception is propagating (a test's `finally: context.close()`) or a test's setup/call failed;
-    otherwise discarded
-    unwritten. DOM snapshots without the screencast: ~10% slower instead of ~30% (measured on 22 browser tests)."""
+    otherwise discarded unwritten. Focused retry traces are also saved when the test passes."""
     def __init__(self,browser,folder,test,node):
-        self._browser,self.folder,self.test,self.node,self.open=browser,folder,test,node,{}
+        self._browser,self.test,self.node,self.open=browser,test,node,{}
+        trace_mode = os.getenv("PW_TRACE_MODE")
+        self.trace_folder = folder if trace_mode != "off" else None
+        self.keep_traces = trace_mode == "on"
+        screenshot_folder = os.getenv("PW_SCREENSHOT_DIR")
+        self.screenshot_folder = Path(screenshot_folder) if screenshot_folder else None
+        if self.screenshot_folder is None and folder is not None:
+            self.screenshot_folder = folder.parent / ((folder.name or "trace") + "-screenshots")
 
     def __getattr__(self,name):
         return getattr(self._browser,name)
@@ -301,7 +306,8 @@ class Traced:
         for event in ("requestfinished","requestfailed"):
             context.on(event,lambda request:pending.pop(request,None))
         context.on("close",lambda _:(_browser_boundary("context_closed"),self.finish(context,keep=False)))
-        if self.folder:context.tracing.start(snapshots=True,sources=False)
+        if self.trace_folder:
+            context.tracing.start(snapshots=True,sources=False)
         close=context.close
         def close_keeping_trace(*args,**kwargs):
             failed=any(getattr(self.node,"rep_"+when,None) and getattr(self.node,"rep_"+when).failed for when in ("setup","call"))
@@ -340,17 +346,28 @@ class Traced:
         except Exception as exc:  # diagnostics must not hide the test failure or prevent trace capture
             print(f"Pending requests not saved: {exc!r}")
         pending.clear()
-        if not self.folder:return
-        name=f"{self.test}-{uuid.uuid4().hex[:6]}"
+        if not self.trace_folder and not (keep and self.screenshot_folder):
+            return
+        name = f"{self.test}-{uuid.uuid4().hex[:6]}"
+        if self.trace_folder:
+            try:
+                # Save the trace first so a stuck screenshot cannot hold it up.
+                if keep or self.keep_traces:
+                    self.trace_folder.mkdir(parents=True, exist_ok=True)
+                    context.tracing.stop(path=str(self.trace_folder / f"{name}.zip"))
+                else:
+                    context.tracing.stop()
+            except Exception as exc:  # a crashed browser must not hide the test's own failure
+                print(f"Trace not saved: {type(exc).__name__}")
+        if not (keep and self.screenshot_folder):
+            return
         try:
-            if not keep:return context.tracing.stop()
-            self.folder.mkdir(parents=True,exist_ok=True)
-            # The trace first: a page too busy to screenshot (fonts_ready, About timeouts) used to lose it as well.
-            context.tracing.stop(path=str(self.folder/f"{name}.zip"))
-        except Exception as exc:  # a crashed browser must not hide the test's own failure
-            print(f"Trace not saved: {type(exc).__name__}")
+            self.screenshot_folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            print(f"Screenshot directory not created: {type(exc).__name__}")
+            return
         for n,page in enumerate(context.pages):
-            try:page.screenshot(path=str(self.folder/f"{name}-page{n+1}.png"),full_page=True,timeout=5000)
+            try:page.screenshot(path=str(self.screenshot_folder/f"{name}-page{n+1}.png"),full_page=True,timeout=5000)
             except Exception as exc:print(f"Screenshot not saved: {type(exc).__name__}")
 
 
@@ -1129,13 +1146,14 @@ def decide(page,label):
     save_dialog(dialog,label)
 
 
-SMOKE_PATHS={"admin":["overview","people","configuration","rules","programmes","governance","inbox","access"],"coordinator":["overview","setup","planner","published","people","rules","availability","programmes","reports","data","governance","swaps","inbox"],"approver":["overview","planner","published","rules","availability","reports","governance","swaps","inbox"],"credentialer":["people","inbox"],"staff":["published","availability","reports","swaps","inbox"],"operator":["operations","audit","inbox"],"auditor":["planner","published","reports","operations","audit"],"programme_lead":["published","people","programmes","fairness","inbox","access"]}
+SMOKE_PATHS={"admin":["overview","people","configuration","rules","programmes","governance","inbox","access"],"coordinator":["overview","setup","planner","published","people","rules","availability","programmes","reports","data","governance","swaps","inbox"],"approver":["overview","planner","published","rules","availability","reports","governance","swaps","inbox"],"credentialer":["people","inbox"],"staff":["published","availability","reports","swaps","inbox"],"operator":["operations","audit","inbox"],"installation_admin":["configuration","access","inbox"],"auditor":["planner","published","reports","operations","audit"],"programme_lead":["published","people","programmes","fairness","inbox","access"]}
 
 
 def test_every_permitted_surface_loads_without_javascript_errors(browser,live_server,h):
     scripts=[]
     assert set(SMOKE_PATHS)==set(ROLE_NAMES)
-    identity(h,'programme_lead',['programme_lead'])
+    for role in ('programme_lead', 'installation_admin'):
+        identity(h, role, [role])
     paths={role:list(surfaces) for role,surfaces in SMOKE_PATHS.items()}
     for role,surfaces in paths.items():
         if role in {'admin','coordinator','approver','credentialer','auditor'}:

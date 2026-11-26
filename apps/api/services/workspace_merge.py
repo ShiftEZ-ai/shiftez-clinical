@@ -117,7 +117,9 @@ def checked(db, data, content, bundles, choices, binding, *, for_apply=False):
         # A merge that changes only participants can reuse the target's complete receipt.
         # Session definitions, dates, adjustments and rule/input changes keep the full fallback.
         from .planning import assignment_validation_scope
-        partial = assignment_validation_scope(value, {'workspace': data['workspace'], 'shifts': content['shifts']}, before)
+        partial = assignment_validation_scope(value, {
+            'workspace': data['workspace'], 'shifts': content['shifts'], 'input_manifest': data['input_manifest'],
+        }, before)
         after = evaluate({**value, **({'_partial': partial} if partial is not None else {})}, session_parts=for_apply)
         # Preview consumes findings only; the saved canonical check also owns its full score.
         if for_apply:
