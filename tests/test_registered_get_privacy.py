@@ -1,5 +1,6 @@
 """Read-route authorization and payload boundaries on the registered application."""
 from contextlib import closing
+from datetime import date
 import json
 
 from fastapi.testclient import TestClient
@@ -11,8 +12,10 @@ from apps.api import main, models as m
 from apps.api.db import transaction
 from apps.api.services.leave_types import seed as seed_leave_types
 from packages.contracts import schemas as s
+from .conftest import TEST_PASSWORD
 from .governance_support import identity
-from .test_organisation_isolation import create_sibling_department
+from .test_organisation_isolation import OTHER, create_sibling_department
+from .test_organisation_isolation import tenants  # noqa: F401 (the populated tenant harness)
 from .test_postgres_roles import runtime  # noqa: F401 (the production-shaped role harness)
 from .test_staff_wishes import wish
 
@@ -346,3 +349,82 @@ def test_read_families_respect_role_and_department(scope_data):
         [payload] = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
         assert payload['department_id'] == h.seed['department_id'] and role in payload['roles']
         assert sibling['id'] not in response.text and OTHER_NOTE not in response.text
+
+
+def saved_view_default(db, department_id, owner_id, scope, label):
+    view = m.TableView(department_id=department_id, owner_id=owner_id, table_key='people',
+                       name=f'synthetic {label} view', definition={}, scope=scope)
+    db.add(view)
+    db.flush()
+    db.add(m.TableViewDefault(department_id=department_id, table_key=view.table_key, view_id=view.id,
+                              owner_id=owner_id if scope == 'personal' else None))
+    return view.id
+
+
+def inbox_item(db, department_id, recipient_id, label):
+    outbox = m.Outbox(department_id=department_id, event_key=m.uid(), kind='request', payload={})
+    db.add(outbox)
+    db.flush()
+    item = m.Notification(outbox_id=outbox.id, identity_id=recipient_id,
+                          title=f'synthetic {label} inbox item', message='synthetic inbox message')
+    db.add(item)
+    db.flush()
+    return item.id, item.title
+
+
+@pytest.mark.timeout(90)
+def test_saved_views_and_inbox_respect_account_and_tenant_scope(tenants):
+    h, owner, other, sibling = tenants
+    staff = h.client('staff')
+    local_id = h.seed['department_id']
+    accounts = h.seed['identities']
+    staff_id, coordinator_id = accounts['staff'], accounts['coordinator']
+    departments = (
+        ('local', local_id, staff_id, coordinator_id),
+        ('sibling', sibling['id'], staff_id, accounts['admin']),
+        ('separate', other['department_id'], accounts[OTHER + 'staff'], accounts[OTHER + 'coordinator']),
+    )
+    with transaction(owner, write=True) as db:
+        # Reuse the same account across departments so an account-only filter cannot pass.
+        db.add(m.RoleBinding(identity_id=staff_id, department_id=sibling['id'], role='staff',
+                             starts_on=date(2020, 1, 1)))
+        local_binding = db.scalars(select(m.RoleBinding).where(m.RoleBinding.identity_id == staff_id,
+                                                               m.RoleBinding.department_id == local_id)).one().id
+        expected = {}
+        for label, department_id, recipient_id, planner_id in departments:
+            personal = saved_view_default(db, department_id, recipient_id, 'personal', label + ' personal')
+            shared = saved_view_default(db, department_id, planner_id, 'department', label + ' shared')
+            expected[label] = personal, shared, inbox_item(db, department_id, recipient_id, label)
+        peer_view = saved_view_default(db, local_id, coordinator_id, 'personal', 'peer personal')
+        _, local_shared, _ = expected['local']
+        expected['peer'] = peer_view, local_shared, inbox_item(db, local_id, coordinator_id, 'peer')
+
+    views_path, inbox_path = '/api/table-views?table=people', '/api/notifications'
+    with TestClient(h.app, base_url=h.settings.public_origin) as sibling_staff:
+        login = sibling_staff.post('/auth/login', headers={'origin': h.settings.public_origin},
+                                   json={'username': 'staff', 'password': TEST_PASSWORD, 'department_id': sibling['id']})
+        assert login.status_code == 200, login.text
+
+        for label, client in (('local', staff), ('sibling', sibling_staff),
+                              ('separate', h.client(OTHER + 'staff')), ('peer', h.client('coordinator'))):
+            personal, shared, item = expected[label]
+            views = client.get(views_path)
+            assert views.status_code == 200, label
+            value = views.json()
+            assert {row['id']: row['scope'] for row in value['views']} == {
+                personal: 'personal', shared: 'department'}, label
+            assert value['defaults'] == {
+                'personal_set': True, 'personal_view_id': personal,
+                'department_set': True, 'department_view_id': shared,
+            }, label
+
+            inbox = client.get(inbox_path)
+            assert inbox.status_code == 200, label
+            value = inbox.json()
+            assert [(row['id'], row['title']) for row in value['notifications']] == [item], label
+            assert (value['total'], value['unread_total']) == (1, 1), label
+
+        with transaction(owner, write=True) as db:
+            db.get(m.RoleBinding, local_binding).revoked = True
+        for path in (views_path, inbox_path):
+            refused(staff.get(path), 403, 'FORBIDDEN', 'No active access binding for this department', case=path)

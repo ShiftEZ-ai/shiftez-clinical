@@ -191,6 +191,8 @@ HEAD_ROLES = {
     'pwa.provider.resume': ('operator',),
     'pwa.system.update': ('operator',),
     'request.create': ('staff', 'coordinator'),
+    'request.edit': ('staff', 'coordinator'),
+    'request.undo_edit': ('staff', 'coordinator'),
     'request.decide': ('approver', 'coordinator', 'programme_lead'),
     'request.decide_many': ('approver', 'coordinator', 'programme_lead'),
     'request.link_rota': ('coordinator',),
