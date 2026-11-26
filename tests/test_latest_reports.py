@@ -328,10 +328,17 @@ def test_ci_downloads_checks_artifacts_and_selects_reports_before_verdict():
     downloads = {step["with"]["pattern"]: step for step in steps if "pattern" in step.get("with", {})}
     assert downloads["ci-test-*"]["with"]["merge-multiple"] == "false"
     run_verdict = "steps.producers.outputs.run_verdict == 'true'"
-    assert downloads["ci-test-*"]["if"] == f"{run_verdict} && steps.reports.outputs.mixed_attempts == 'true'"
-    assert downloads["ci-test-${{ github.run_attempt }}-*"]["if"] == f"{run_verdict} && steps.reports.outputs.mixed_attempts != 'true'"
-    detect = next(step["run"] for step in steps if step.get("id") == "reports")
-    assert "test -f .trusted-verdict/.github/scripts/latest_reports.py" in detect
-    verdict = next(step["run"] for step in steps if "trusted_verdict.py" in step.get("run", ""))
-    assert verdict.index("Plan seal differs") < verdict.index("python3 -I .trusted-verdict/.github/scripts/latest_reports.py")
-    assert verdict.index("--plan .candidate-evidence/plan/shard-plan.json") < verdict.index("trusted_verdict.py")
+    ordinary = f"{run_verdict} && needs.checks.outputs.queue_run == ''"
+    assert downloads["ci-test-*"]["if"] == f"{ordinary} && steps.reports.outputs.mixed_attempts == 'true'"
+    assert downloads["ci-test-${{ github.run_attempt }}-*"]["if"] == f"{ordinary} && steps.reports.outputs.mixed_attempts != 'true'"
+    detect = next(step for step in steps if step.get("id") == "reports")
+    assert "test -f .trusted-verdict/.github/scripts/latest_reports.py" in detect["run"]
+    seal = next(step for step in steps if "Plan seal differs" in step.get("run", ""))
+    verdict = next(step for step in steps if "trusted_verdict.py" in step.get("run", ""))
+    reuse = next(step for step in steps if step.get("name") == "Verify reused merge-group reports")
+    assert seal["if"] == run_verdict
+    assert steps.index(seal) < steps.index(detect) < steps.index(verdict)
+    assert steps.index(seal) < steps.index(reuse)
+    verdict_run = verdict["run"]
+    assert verdict_run.index("python3 -I .trusted-verdict/.github/scripts/latest_reports.py") < verdict_run.index("trusted_verdict.py")
+    assert verdict_run.index("--plan .candidate-evidence/plan/shard-plan.json") < verdict_run.index("trusted_verdict.py")

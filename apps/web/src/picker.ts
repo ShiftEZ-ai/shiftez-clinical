@@ -6,6 +6,9 @@
  *   matches marked. Lists longer than 7 (LONG_LIST) also lead with recent picks (unless `recent: false`) and offer
  *   group chips. `meta` adds trailing content to a row (a load bar beside its words).
  * - Groups with sticky headers and counts; while searching, one ranked list with the group shown beside each row.
+ * - People (`Choice.groupOrder`: the group is a rank with a place in the department's rank order): a single choice is
+ *   one list in the caller's order, A to Z by name, with the rank beside each row and no rank headers; a multiple
+ *   choice keeps rank sections, in that order. The chips follow that order in both.
  * - Multiple choice stays open, offers "Select all N shown" (the filtered rows only) and "Clear", and lists what
  *   was already chosen first (fixed while open, so rows never jump under the pointer).
  * - Keyboard (WAI-ARIA combobox/listbox): arrows move the highlight only, Enter picks, Page keys jump 10, Esc clears
@@ -74,6 +77,14 @@ const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCas
 
 type Item = {c: Choice; index: number; label: string; extra: string};
 
+/** Rows whose group has a configured place (`groupOrder`: a person's rank), put in that order among their own places
+ *  in the list; every other row stays where its list put it (Relative values first, tags last). */
+function inGroupOrder(items: Item[]): Item[] {
+  const placed = items.filter(it => it.c.groupOrder !== undefined).sort((a, b) => a.c.groupOrder! - b.c.groupOrder!);
+  let next = 0;
+  return items.map(it => it.c.groupOrder === undefined ? it : placed[next++]);
+}
+
 function rank(item: Item, words: string[], whole: string): number {
   if (!words.every(w => item.label.includes(w) || item.extra.includes(w))) return -1;
   if (item.label === whole) return 0;
@@ -112,7 +123,8 @@ export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerCo
   const told = distinct(cfg.choices);
   if (told !== cfg.choices) cfg.choices.splice(0, cfg.choices.length, ...told);
   const id = `picker-${++sequence}`;
-  const itemsOf = () => cfg.choices.map((c, index) => ({c, index, label: fold(c.label), extra: fold([c.group, c.hint, c.keywords].filter(Boolean).join(' '))}));
+  // A multiple choice sections people by rank in the department's rank order; a single choice keeps the list's own order.
+  const itemsOf = () => { const all = cfg.choices.map((c, index) => ({c, index, label: fold(c.label), extra: fold([c.group, c.hint, c.keywords].filter(Boolean).join(' '))})); return cfg.multiple ? inGroupOrder(all) : all; };
   let items: Item[] = itemsOf();
   // A short list (LONG_LIST or fewer) keeps its own order with no sections: the tick shows what is chosen (X-37).
   const short = cfg.choices.length <= LONG_LIST && !cfg.creatable;
@@ -121,7 +133,7 @@ export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerCo
   // Recent picks lead longer lists (when not searching); anything already chosen is shown under Chosen instead.
   const recent = new Set(cfg.recent !== false && cfg.choices.length > LONG_LIST ? recentOf(recentKey).filter(v => cfg.choices.some(c => c.value === v) && !firstChosen.has(v)) : []);
   // Group chips narrow a longer list to one or more groups (for example a rank), then search and select within them.
-  const groupNames = [...new Set(cfg.choices.map(c => c.group).filter(Boolean) as string[])];
+  const groupNames = [...new Set(inGroupOrder(items).map(it => it.c.group).filter(Boolean) as string[])];
   const onlyGroups = new Set<string>();
   const chips = el('div', {class: 'picker-chips', role: 'group', 'aria-label': 'Show only'});
   const long = items.length > LONG_LIST || !!cfg.creatable;
@@ -238,7 +250,9 @@ export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerCo
       section = el('div', {role: 'group', 'aria-labelledby': head.id});
       list.append(head, section);
     };
-    const sectionOf = (it: Item) => firstChosen.has(it.c.value) ? 'Chosen' : recent.has(it.c.value) && !onlyGroups.size ? 'Recent' : it.c.group || 'Others';
+    // A single choice never sections a group with a configured place (a person's rank): the row says it instead.
+    const onRow = (it: Item) => !cfg.multiple && it.c.groupOrder !== undefined;
+    const sectionOf = (it: Item) => firstChosen.has(it.c.value) ? 'Chosen' : recent.has(it.c.value) && !onlyGroups.size ? 'Recent' : (!onRow(it) && it.c.group) || 'Others';
     // A short list keeps the groups its values have (Relative values, a rank) but no Chosen / Recent sections.
     // One section alone ("Others · 26" and nothing else) is no grouping: its header is left out (F-R8).
     const grouped = !words.length && drawn.some(it => it.c.group || firstChosen.has(it.c.value) || recent.has(it.c.value)) && new Set(drawn.map(sectionOf)).size > 1;
@@ -248,7 +262,7 @@ export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerCo
         if (name !== group) { group = name; startGroup(name, shown.filter(s => sectionOf(s) === name)); }
       }
       // SW3-D-11: a row names its group only when the list mixes groups (one group said under every row is noise).
-      const row = rowFor(it, words, !grouped && groupNames.length > 1); rows.push(row); section.append(row);
+      const row = rowFor(it, words, groupNames.length > 1 && (!grouped || onRow(it))); rows.push(row); section.append(row);
     }
     const typedText = q && cfg.creatable && !items.some(it => it.label === whole) ? q : '';
     if (typedText) {
@@ -371,7 +385,9 @@ export function openPicker(anchor: HTMLElement, host: HTMLElement, cfg: PickerCo
 function choicesOf(select: HTMLSelectElement): Choice[] {
   const out: Choice[] = [];
   for (const node of select.children) {
-    const add = (o: HTMLOptionElement, group?: string, off = false) => { if (!o.hidden) out.push({value: o.value, label: o.textContent || o.value, group, hint: o.dataset.hint, divider: o.dataset.divider !== undefined, disabled: o.disabled || off}); };
+    // A flat option carries its group and that group's place itself (dom.ts select: a person's rank).
+    const add = (o: HTMLOptionElement, group?: string, off = false) => { if (!o.hidden) out.push({value: o.value, label: o.textContent || o.value, group: group ?? o.dataset.group,
+      ...(o.dataset.groupOrder === undefined ? {} : {groupOrder: Number(o.dataset.groupOrder)}), hint: o.dataset.hint, divider: o.dataset.divider !== undefined, disabled: o.disabled || off}); };
     if (node instanceof HTMLOptionElement) add(node);
     else if (node instanceof HTMLOptGroupElement) for (const o of node.children) add(o as HTMLOptionElement, node.label, node.disabled);
   }

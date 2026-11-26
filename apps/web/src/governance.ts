@@ -1,5 +1,6 @@
 import {statusLabel,el,field,area,select,check,button,note,badge,empty,sectionHead,table,formDialog,showDialog,confirmAction,notify,dateUnits,formatDate,formatTime,toLocal,roleLabel,statusBadge,footerStatus,plural,formatDay,armed,type Tone,hasAccess,capabilityForRole,CAPABILITY,roleForCapability,icon,helpButton,factLine,PAGE_WHY} from './dom.js';
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {failedNote} from './dom.js';  // a failed check: refused (403) or an error with Retry (maintenance)
 import {working} from './loading.js';
 import {dateRange,lastDayIncluded} from './date_picker.js';
@@ -318,7 +319,7 @@ export function offerFields(ctx:Context,form:HTMLElement,options:SwapOptions,cho
   const kind=select('Kind of offer',kinds,kinds[0].value);
   const duty=select('Your duty to swap',options.assignments.map(a=>({value:a.assignment_id,label:assignmentLabel(ctx,a)})),
     options.assignments.some(a=>a.assignment_id===chosen)?chosen:'');
-  const recipient=select('Swap with',options.recipients.map(r=>({value:r.id,label:r.display_name||r.id})));
+  const recipient=select('Swap with',options.recipients.map(r=>({value:r.id,label:r.display_name||r.id})).sort(byLabel));
   // The colleague is always chosen by the person, even when only one is possible (LIVE-51).
   const blank=()=>{if(!recipient.input.querySelector('option[value=""]'))recipient.input.prepend(el('option',{value:'',disabled:true,hidden:true},'Choose…'));recipient.input.value='';};
   blank();

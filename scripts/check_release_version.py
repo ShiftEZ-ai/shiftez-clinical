@@ -14,7 +14,8 @@ def git(*args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    # Every successful invocation must check a tag and commit.
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("tag")
     parser.add_argument("commit")
     args = parser.parse_args()

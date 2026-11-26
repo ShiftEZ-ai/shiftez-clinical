@@ -2168,7 +2168,8 @@ export function newLinePicker(ctx:Context,e:RuleCatalogueEntry,anchor:HTMLElemen
   // "Can work at" names people by the clinics they may work at: said so, so it is never taken for the clinic itself.
   // A new line names what is in use: inactive programmes, ranks, people… are not offered (lines already naming them stay).
   const inactive=(field:string,id:string)=>{const kind=RULE_FIELDS.find(x=>x.key===field)?.kind;return !!kind&&(ctx.catalogues[kind]||[]).some(r=>r.id===id&&r.active===false);};
-  const choices=ruleConditionFields(ctx).flatMap(f=>f.choices.filter(c=>!inactive(f.key,c.value)).map(c=>({...c,value:f.key+'|'+c.value,group:c.group==='Tags'?'Tags':f.label,
+  // The section here is the field (Person, Rank…), so a person's rank and its place are not carried: one list by name under Person.
+  const choices=ruleConditionFields(ctx).flatMap(f=>f.choices.filter(c=>!inactive(f.key,c.value)).map(c=>({...c,value:f.key+'|'+c.value,group:c.group==='Tags'?'Tags':f.label,groupOrder:undefined,
     label:f.key==='eligible_service_ids'?'Can work at '+c.label:c.label})));
   openPicker(anchor,anchor.parentElement!,{label:'New line',choices,multiple:false,selected:new Set(),onPick:value=>{
     const [key,id]=value.split('|'),tree:Conditions={match:'all',conditions:[{field:key as Condition['field'],op:'any',values:[id]}]};
