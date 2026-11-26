@@ -121,7 +121,7 @@ def test_department_month_with_repeating_wishes_and_thousands_of_shape_breaches(
     def check_objectives(model, tiers):
         assert sum(len(flags) for flags in breaches.values()) > 4000
         assert len({pid for _, pid in breaches}) >= 149  # The one external rotation has no available duties.
-        assert [name for name, _, _ in tiers] == ['coverage', 'desired_coverage', 'staffing', 'weighted']
+        assert [name for name, _, _ in tiers] == ['coverage', 'desired_coverage', 'weighted']
         for _, terms, _ in tiers:
             assert terms
             model.minimize(sum(terms))

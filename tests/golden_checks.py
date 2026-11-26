@@ -224,6 +224,9 @@ def check_allocation_cover(data, ids, spec):
     overfilled_score = schedule_score(overfilled, evaluate(overfilled))['components']['preferences']['value']
     assert (overfilled_score > original_score) == expected['pressure']['overfilled_preference_score_is_higher']
 
+    supervision = expected['staffing_with_supervision']
+    # Let the solver move the supervisor while the trainee's required pairing stays fixed.
+    rebalance = {**data, 'generation_options': {**data['generation_options'], 'mode': 'rebalance'}}
     seeds = expected['seed_robustness']['seeds']
     for seed in seeds:
         result = solve(data, seed)
@@ -231,7 +234,15 @@ def check_allocation_cover(data, ids, spec):
         draft = feasible(data, result)
         for duty, people in expected['staffing'].items():
             assert [p['person_id'] for p in shift(draft, ids[duty])['participants']] == [ids[p] for p in people]
-    return {'assertions': {'staffing', 'pressure', 'seed_robustness'}, 'bindings': {'balance': len(expected['staffing'])}}
+        draft = feasible(rebalance, solve(rebalance, seed))
+        for duty, people in expected['staffing'].items():
+            assert len(shift(draft, ids[duty])['participants']) == len(people)
+        supervised = {p['person_id']: p for p in shift(draft, ids[supervision['duty']])['participants']}
+        trainee, supervisor = ids[supervision['trainee']], ids[supervision['supervisor']]
+        assert supervised.keys() == {trainee, supervisor}
+        assert supervised[trainee]['supervisor_person_id'] == supervisor
+    return {'assertions': {'staffing', 'pressure', 'seed_robustness', 'staffing_with_supervision'},
+            'bindings': {'balance': len(expected['staffing'])}}
 
 
 def check_scenario(data, ids, spec):
