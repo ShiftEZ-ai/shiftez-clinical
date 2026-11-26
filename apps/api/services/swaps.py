@@ -678,7 +678,7 @@ def audience_states(db, rows):
     return {payload["swap_id"]: {"audience_pending": bool(payload.get("audience_pending")),
                                  "audience_failed": bool(payload.get("audience_failed")),
                                  "audience_count": payload.get("audience_count"),
-                                 'no_eligible_recipients_reason': payload.get('no_eligible_recipients_reason'),
+                                 'no_eligible_recipients_reason': stored_audience_reason(payload.get('no_eligible_recipients_reason')),
                                  "no_eligible_recipients": payload.get("audience_count") == 0 and not payload.get("audience_pending") and not payload.get("audience_failed")}
             for payload in db.scalars(select(m.Outbox.payload).where(m.Outbox.event_key.in_(keys)))} if keys else {}
 

@@ -190,6 +190,24 @@ def test_no_recipients_refusal_and_worker_notice_share_the_audience_reason(h):
     assert refusal['details']['no_eligible_recipients_reason'] == refusal['message']
 
 
+def test_stored_audience_reason_from_before_the_allowlist_reads_neutral_everywhere(h):
+    pid, first, _, _ = source_pair(h)
+    row = h.command('staff', 'swap.offer', payload(pid, first, 'exchange'))['swap']
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Identity, h.seed['identities']['staff_two']).disabled = True
+    audience_ready(h)
+    # Offers still open at deploy stored the validator's own sentence after the title.
+    with transaction(h.app.state.engine, write=True) as db:
+        notice = db.scalar(select(m.Outbox).where(m.Outbox.event_key == f"swap:{row['id']}:1:offered"))
+        notice.payload = {**notice.payload, 'no_eligible_recipients_reason':
+                          'Nobody eligible can take this duty. The person taking this duty has recorded leave at that time.'}
+    reason = swaps.UNKNOWN_AUDIENCE_REASON
+    assert h.get('staff', '/api/requests/all?id=' + row['id'])['item']['no_eligible_recipients_reason'] == reason
+    home, = [item for item in h.get('staff', '/api/home')['my_requests'] if item['id'] == row['id']]
+    assert home['no_eligible_recipients_reason'] == reason
+    assert h.get('staff', '/api/swaps/' + row['id'])['swap']['no_eligible_recipients_reason'] == reason
+
+
 def test_failed_audience_job_clears_pending_without_notifying_or_exposing_error_text(both, monkeypatch):
     h = both
     pid, first, _, _ = source_pair(h, third=True)
