@@ -1,7 +1,8 @@
 # Delivery
 
-Follows engineering standard v1.22. Owned by the Delivery Lead. Engineering rules are in AGENTS.md and the design
-contract is in DESIGN.md.
+Follows engineering standard v1.22. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
+frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
 ## Branching and merging
 - One trunk, `main`, with temporary release branches. The repository rulesets and workflows protect `main` and
@@ -41,8 +42,9 @@ contract is in DESIGN.md.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff against the target base can reach, proven by hiding a
-  change on purpose. Merge groups and release-branch pushes run the full unit and browser suites. A queue
-  push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
+  change on purpose. The protected affected-unit pilot verifies a qualifying unit fixture change and its node coverage
+  without the static or browser jobs. Merge groups and release-branch pushes run the full unit and browser suites.
+  A queue push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
   full test coverage and protected CI controls. A push without that proof runs both suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
   reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
@@ -138,7 +140,7 @@ contract is in DESIGN.md.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
-- Before every final tag (not an `-rc.N`), sweep the whole product: every page for every role (`ROLE_NAMES`),
+- Before every final release tag, the QA Lead sweeps every page for every role (`ROLE_NAMES`),
   desktop 1440 and phone 390, light and dark, the states in § Test policy and the critical journeys, looking at the
   screenshots. Fix the real blockers it finds first.
 - Engine/compiler, validator, greedy, score and fairness version constants are bumped once per release, in release

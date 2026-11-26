@@ -56,6 +56,7 @@ jobs:
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
       queue_run: ${{ steps.queue.outputs.run }}
+      quota_scope: ${{ steps.affected-scope.outputs.scope }}
       artifact_attempt: ${{ github.run_attempt }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
       unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
@@ -151,13 +152,37 @@ jobs:
     - name: Resolve target policy
       id: context
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" context --measurement "${{ steps.select.outputs.measurement }}"
+    - name: Resolve the protected affected unit scope
+      id: affected-scope
+      if: >-
+        github.event_name == 'pull_request' && steps.bootstrap.outputs.bootstrap == 'false'
+        && steps.select.outputs.trusted_sha == github.event.pull_request.base.sha
+      run: |
+        if test -f "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py"; then
+          python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py" scope
+        fi
+    - name: Use the trusted pinned Python for affected privacy checks
+      if: steps.affected-scope.outputs.scope == 'quota-unit-expectation'
+      env:
+        POLICY_PYTHON: ${{ steps.policy-python.outputs.python }}
+      run: dirname "$POLICY_PYTHON" >> "$GITHUB_PATH"
+    - name: Check text and workflow privacy for the affected unit scope
+      if: steps.affected-scope.outputs.scope == 'quota-unit-expectation'
+      env:
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: |
+        python3 -I "$GITHUB_WORKSPACE/.trusted-controls/scripts/privacy_check.py" "$PR_BASE" HEAD --event "$GITHUB_EVENT_PATH"
+        python3 -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
+        git diff --check "$PR_BASE" HEAD
     - name: Plan unit and browser shards by committed duration
       id: plan
+      if: steps.affected-scope.outputs.scope == ''
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
         MEASUREMENT: ${{ steps.select.outputs.measurement }}
       run: python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" plan --base-sha "$BASE_SHA" --measurement "$MEASUREMENT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: steps.affected-scope.outputs.scope == ''
       with:
         name: ci-plan-${{ github.run_attempt }}
         path: candidate/.run/reports/shard-plan.json
@@ -177,6 +202,7 @@ jobs:
       run: python3 -I "$GITHUB_WORKSPACE/.trusted-controls/tests/test_readme_empty.py"
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       id: dependency-cache
+      if: steps.affected-scope.outputs.scope == ''
       with:
         path: |-
           ${{ runner.temp }}/public-ci-wheels
@@ -186,10 +212,12 @@ jobs:
           ${{ runner.temp }}/public-ci-playwright
         key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
     - name: Install the committed runtime pins
+      if: steps.affected-scope.outputs.scope == ''
       run: |
         python3 .github/scripts/hosted_ci.py runtime --tool python
         python3 .github/scripts/hosted_ci.py runtime --tool node
     - name: Prepare the hash-locked wheel downloads
+      if: steps.affected-scope.outputs.scope == ''
       env:
         CACHE_HIT: ${{ steps.dependency-cache.outputs.cache-hit }}
       run: |
@@ -206,12 +234,14 @@ jobs:
           printf 'npm_config_prefer_offline=true\nnpm_config_cache=%s/public-ci-npm\n' "$RUNNER_TEMP"
         } >> "$GITHUB_ENV"
     - name: Install hash-locked dependencies
+      if: steps.affected-scope.outputs.scope == ''
       run: |
         python3 -m venv "$RUNNER_TEMP/public-ci-venv"
         "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock" -r requirements/hosted-lint.lock
         echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
     - name: Prepare the locked Chromium bundle
+      if: steps.affected-scope.outputs.scope == ''
       env:
         PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/public-ci-playwright
       run: python -m playwright install --no-shell chromium
@@ -226,6 +256,7 @@ jobs:
           ${{ runner.temp }}/public-ci-playwright
         key: public-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('candidate/requirements/*.lock', 'candidate/requirements/ci-runtimes.json', 'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}
     - name: Download browser system packages
+      if: steps.affected-scope.outputs.scope == ''
       run: |
         apt_work=$(mktemp -d "$RUNNER_TEMP/ci-apt.XXXXXX")
         chmod 755 "$apt_work" # The APT download sandbox must be able to reach the lists and archives.
@@ -302,28 +333,34 @@ jobs:
         debs=("$apt_work/archives/"*.deb)
         if [ "${#debs[@]}" -gt 0 ]; then cp -- "${debs[@]}" "$apt_bundle/"; fi
     - name: Archive the shared downloads
+      if: steps.affected-scope.outputs.scope == ''
       run: |
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-dependencies.tar" runtime-archives public-ci-wheels public-ci-npm/_cacache
         tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/ci-browser.tar" public-ci-playwright public-ci-apt
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: steps.affected-scope.outputs.scope == ''
       with:
         name: ci-dependencies-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-dependencies.tar
         if-no-files-found: error
         retention-days: 1
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: steps.affected-scope.outputs.scope == ''
       with:
         name: ci-browser-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-browser.tar
         if-no-files-found: error
         retention-days: 1
     - name: Reject environment and status destination URLs
+      if: steps.affected-scope.outputs.scope == ''
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/workflow_privacy.py" .github/workflows
     - name: Build web assets and compiled client modules
+      if: steps.affected-scope.outputs.scope == ''
       run: |
         python scripts/build_web.py
         python scripts/compiled_client.py stamp
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: steps.affected-scope.outputs.scope == ''
       with:
         name: ci-web-${{ github.run_attempt }}
         path: candidate/apps/web/dist/
@@ -335,6 +372,7 @@ jobs:
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
       && needs.checks.outputs.queue_run == ''
+      && needs.checks.outputs.quota_scope == ''
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 8 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 10 }}
@@ -362,6 +400,7 @@ jobs:
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
       && needs.checks.outputs.queue_run == ''
+      && needs.checks.outputs.quota_scope == ''
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name == 'schedule' && 10 || (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 256 || 8 }}
@@ -413,6 +452,7 @@ jobs:
       shell: python
       env:
         NEEDS_JSON: ${{ toJSON(needs) }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
       run: |
         import json
         import os
@@ -423,12 +463,18 @@ jobs:
             raise SystemExit("CI producer inventory changed")
         budget = needs.pop("nightly-budget")
         results = {job: row["result"] for job, row in needs.items()}
+        checks = needs["checks"].get("outputs", {})
+        queue_run = checks.get("queue_run", "")
+        scope = checks.get("quota_scope", "")
+        if queue_run and scope:
+            raise SystemExit("Queue reuse and affected unit scope are mutually exclusive")
 
         if os.environ["GITHUB_EVENT_NAME"] == "schedule":
             if budget["result"] != "success":
                 raise SystemExit("Nightly capacity check did not succeed")
             admitted = budget.get("outputs", {}).get("admitted")
-            if admitted == "false" and all(result == "skipped" for result in results.values()):
+            if (admitted == "false" and not (queue_run or scope)
+                    and all(result == "skipped" for result in results.values())):
                 message = "Nightly suites deferred by the capacity check. See Nightly capacity for the recorded reason."
                 print(message)
                 with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
@@ -441,7 +487,16 @@ jobs:
         elif budget["result"] != "success":
             raise SystemExit("Nightly capacity check failed or was cancelled")
 
-        queue_run = needs["checks"].get("outputs", {}).get("queue_run")
+        if scope:
+            expected = {"checks": "success", "static": "skipped", "unit": "skipped", "browser": "skipped"}
+            if (os.environ["GITHUB_EVENT_NAME"] != "pull_request" or scope != "quota-unit-expectation"
+                    or budget["result"] != "skipped" or results != expected
+                    or not os.environ["PR_BASE"] or checks.get("trusted_sha") != os.environ["PR_BASE"]):
+                raise SystemExit(f"Unexpected affected unit producer results: {results}")
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+                print("run_affected_unit=true", file=output)
+            raise SystemExit(0)
+
         if queue_run:
             if (os.environ["GITHUB_EVENT_NAME"] != "push" or os.getenv("GITHUB_REF") != "refs/heads/main"
                     or results != {"checks": "success", "static": "success", "unit": "skipped", "browser": "skipped"}):
@@ -452,15 +507,84 @@ jobs:
             print("NEEDS_JSON=" + json.dumps(needs), file=env)
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             print("run_verdict=true", file=output)
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      if: steps.producers.outputs.run_verdict == 'true'
+    - name: Load protected verdict history
+      if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.bootstrap != 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ needs.checks.outputs.trusted_sha }}
+        ref: refs/heads/${{ github.event.repository.default_branch }}
         path: .trusted-verdict
         fetch-depth: 0
         persist-credentials: false
         submodules: false
         lfs: false
+    - name: Load initial verdict controls from the exact pull request head
+      if: steps.producers.outputs.run_verdict == 'true' && github.event_name == 'pull_request' && needs.checks.outputs.bootstrap == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        path: .trusted-verdict
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Bind the verdict controls to the exact commit used for planning
+      if: steps.producers.outputs.run_verdict == 'true'
+      working-directory: .trusted-verdict
+      env:
+        TRUSTED_SHA: ${{ needs.checks.outputs.trusted_sha }}
+      run: |
+        if [[ "$TRUSTED_BOOTSTRAP" != true ]]; then
+          if ! [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git --no-replace-objects merge-base --is-ancestor "$TRUSTED_SHA" HEAD; then
+            echo "The planned verdict controls are outside protected history"
+            exit 1
+          fi
+          git --no-replace-objects checkout --detach "$TRUSTED_SHA"
+        fi
+        test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
+      with:
+        ref: ${{ github.event.pull_request.base.sha }}
+        path: .trusted-controls
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: github.event_name == 'pull_request' && steps.producers.outputs.run_affected_unit == 'true'
+      with:
+        ref: ${{ github.sha }}
+        path: candidate
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Install the trusted pinned Python for the affected unit test
+      if: steps.producers.outputs.run_affected_unit == 'true'
+      working-directory: .trusted-controls
+      run: python3 .github/scripts/hosted_ci.py runtime --tool python
+    - name: Install hash-locked dependencies for the affected unit test
+      if: steps.producers.outputs.run_affected_unit == 'true'
+      working-directory: .trusted-controls
+      run: |
+        python3 -m venv "$RUNNER_TEMP/affected-unit-venv"
+        export PATH="$RUNNER_TEMP/affected-unit-venv/bin:$PATH"
+        python -m pip install --require-hashes --only-binary=:all: \
+          -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock
+        echo "$RUNNER_TEMP/affected-unit-venv/bin" >> "$GITHUB_PATH"
+    - name: Verify the protected scope and run the affected unit test
+      if: steps.producers.outputs.run_affected_unit == 'true'
+      working-directory: candidate
+      run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py" test
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always() && steps.producers.outputs.run_affected_unit == 'true'
+      with:
+        name: ci-affected-unit-${{ github.run_attempt }}
+        path: candidate/.run/reports/
+        include-hidden-files: true
+        if-no-files-found: warn
+        retention-days: 7
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: steps.producers.outputs.run_verdict == 'true'
       with:
@@ -545,6 +669,7 @@ jobs:
     needs: checks
     if: >-
       always() && !cancelled() && needs.checks.result == 'success'
+      && needs.checks.outputs.quota_scope == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
