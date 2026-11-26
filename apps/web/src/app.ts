@@ -2188,22 +2188,29 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   autoCheckKey=key;autoChecking=true;checkStarted=existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now();checkStop=null;checkCancelled='';checkUnstarted='';
   checkSync=!existing&&!workersKnown()&&!serverChecking(w.validation);  // runCheck's own choice, known before the footer draws
   // Show the result without disturbing someone mid-task: wait while a dialog is open or a field has focus.
-  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;// Working in a session panel counts too: a redraw would rebuild it under the person.
-    // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
-    // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
-    // grid and the panel never wait on it (QA cycle 3 maintenance).
-    // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
-    // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
-    if(checkBusy()){setTimeout(()=>settle(job),1500);return;}
+  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;
+    // The result is taken in as it lands (its job is this page's own from now: onPulse skips its pulse); only the redraw
+    // waits for someone mid-task.
     // A complete-check delta replaces the held validation in place. This is the
     // same authority boundary as an edit delta; missing/stale/partial deltas
     // fall back to the authoritative workspace read.
     const patched=job&&applyCheckDelta(scheduleCache.drafts.get(w.id),job);
-    if(patched){scheduleCache.drafts.set(w.id,patched);if(job?.id)checkSettled.set(String(job.id),Date.now());void redraw();void loadNavBadges(true,['workspace.validate']);return;}
+    if(job?.id)checkSettled.set(String(job.id),Date.now());
     // The check changed only this rota's results: read the rota and its row again (a refresh after a job command would
     // redraw them from memory, leaving "Needs a check" up), never the account and lists.
-    if(job?.id)checkSettled.set(String(job.id),Date.now());
-    readAfresh();forgetSchedule();void redraw();void loadNavBadges(true,['workspace.validate']);};  // never join a read begun before the check landed
+    if(patched)scheduleCache.drafts.set(w.id,patched);else{readAfresh();forgetSchedule();}  // never join a read begun before the check landed
+    // A draw begun since it landed (the person's own view change) read the checked rota and shows it: no second one.
+    const landed=renderSerial;
+    const show=()=>{if(view!=='schedule'||workspaceId!==w.id||renderSerial!==landed&&!redrawOwed)return;
+      // Working in a session panel counts too: a redraw would rebuild it under the person.
+      // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
+      // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
+      // grid and the panel never wait on it (QA cycle 3 maintenance).
+      // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
+      // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
+      if(checkBusy()){setTimeout(show,1500);return;}
+      void redraw();};
+    show();void loadNavBadges(true,['workspace.validate']);};
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
