@@ -54,11 +54,24 @@ def test_local_run_selects_the_test_in_a_small_diff(tmp_path, monkeypatch):
     assert changed in run_pytest.call_args.args[0]
 
 
-def test_diagnostic_selection_accepts_a_public_test_node():
+def test_diagnostic_selection_accepts_a_public_test_node(monkeypatch):
     node = "tests/test_affected_failures.py::test_selection_without_failure_reports_is_unchanged"
-    plan = selector.diagnostic_ci(json.dumps({"unit": [node]}), "0" * 40, env={"GITHUB_WORKFLOW_REF": "workflow"})
+    sha = "0" * 40
+    ref = "refs/heads/main"
+    env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": "example/project",
+           "GITHUB_SHA": sha, "GITHUB_WORKFLOW_SHA": sha, "GITHUB_REF": ref,
+           "GITHUB_WORKFLOW_REF": f"example/project/.github/workflows/ci.yml@{ref}"}
+    monkeypatch.setattr(selector.subprocess, "check_output", Mock(return_value=sha + "\n"))
+    plan = selector.diagnostic_ci(json.dumps({"unit": [node]}), sha, env=env)
     assert plan["unit_tests"] == node
     assert json.loads(plan["browser_matrix"]) == []
+
+
+def test_workflow_edits_select_the_report_verdict_contract():
+    changed = [".github/workflows/ci.yml"]
+    test_file = "tests/test_latest_reports.py"
+    assert test_file in selector.direct_test_owners(changed, set(selector.test_files()))
+    assert test_file in selector.pr_select(changed)[0]["unit"]
 
 
 def test_missing_origin_dev_falls_back_to_local_dev(tmp_path, monkeypatch):

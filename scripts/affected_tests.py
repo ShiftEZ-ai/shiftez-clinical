@@ -370,7 +370,7 @@ BROWSER_DRIVEN_API = ("apps/api/services/", "apps/api/commands.py", "apps/api/sn
 
 
 def direct_test_owners(changed, candidate_tests):
-    """Resolve each path through direct imports and file references in protected tests."""
+    """Resolve paths through protected imports, file reads and shared API fixtures."""
     reverse, texts, _ = graph(ROOT)
     files = {test: texts[test] for test in test_files()}
     selected = set()
@@ -378,6 +378,9 @@ def direct_test_owners(changed, candidate_tests):
         owners = reverse.get(path, set()) & files.keys()
         owners |= doc_tests([path], files)
         owners |= {test for test, text in files.items() if mentions(path, test, text, names=False)}
+        if path.startswith(BROWSER_DRIVEN_API):
+            # HTTP tests reach services through the app and its fixtures without importing them.
+            owners |= closure(reverse, [path]) & files.keys()
         if path in SHARED_WEB_SOURCES | WEB_ENTRY_SOURCES or path.startswith(BROWSER_DRIVEN_API):
             # Every page uses these modules, so a name match cannot find their browser consumers.
             owners |= {test for test in files if suite(test) == "browser"}
@@ -545,8 +548,9 @@ def select_with_reason(changed, *, pr=False):
         code = True
         if pr and (path.startswith(('.github/', 'scripts/ci_'))
                    or path in ('scripts/affected_tests.py', 'tests/quarantine.json')):
-            for test in files:
-                if Path(test).name.startswith(('test_ci_', 'test_hosted_ci', 'test_affected', 'test_retry_quarantine')):
+            for test, text in files.items():
+                if (Path(test).name.startswith(('test_ci_', 'test_hosted_ci', 'test_affected', 'test_retry_quarantine'))
+                        or mentions(path, test, text, names=False)):
                     add(test)
             continue
         if path.startswith("apps/web/"):
