@@ -307,9 +307,9 @@ def test_after_setting_a_password_sign_in_offers_the_new_account(users_file, bro
 
 
 def test_invite_shows_roles_it_cannot_give_and_needs_a_reason(users_file, browser, live_server, h):
-    """maintenance: every role of the contract is listed; Auditor and Developer are disabled for an admin, with why.
+    """maintenance: every role is listed and a department admin sees why explicit roles are disabled.
     maintenance: an invitation grants roles, so it takes a reason; without one nothing is sent."""
-    from packages.contracts.schemas import ROLE_LABELS, ROLE_NAMES
+    from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE, ROLE_LABELS, ROLE_NAMES
     context, page = sign_in(browser, live_server, "admin")
     sent = []
     page.on("request", lambda r: sent.append(r) if r.method == "POST" and "account.invite" in (r.post_data or "") else None)
@@ -326,6 +326,10 @@ def test_invite_shows_roles_it_cannot_give_and_needs_a_reason(users_file, browse
             if role in ("auditor", "operator"):
                 expect(box).to_have_attribute("aria-disabled", "true")
                 expect(box).to_have_accessible_description("Only a Developer can grant this")
+            elif role == INSTALLATION_ADMIN_ROLE:
+                expect(box).to_have_attribute("aria-disabled", "true")
+                expect(box).to_have_accessible_description(
+                    f"Only an {ROLE_LABELS[role]} or {ROLE_LABELS['operator']} can grant this")
             else:
                 expect(box).not_to_have_attribute("aria-disabled", "true")
         expect(roles.get_by_text("Only a Developer can grant this", exact=True)).to_have_count(2)  # said in words, not only greyed

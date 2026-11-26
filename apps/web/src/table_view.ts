@@ -18,6 +18,7 @@ import {openPicker} from './picker.js';
 import {timelineSettings,timelineWindow,plusMonths,type Layer,type Zoom} from './timeline.js';
 import type {TimelineViewSettings} from './generated.js';
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {collator} from './dom.js';  // the one collator for every list's sort and value order
 import {groupToggle as sharedGroupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
 import {segmented} from './dom.js';  // the one segmented choice (UX › controls S6)
 import {panelSearch} from './dom.js';  // the one search box: Esc clears first (UX › controls S9)
@@ -265,8 +266,6 @@ function serverTree<T>(n:Node,columns:Column<T>[]):Node|null{
 }
 const leafCount=(n:Node|null|undefined):number=>!n?0:isGroup(n)?n.conditions.reduce((a,x)=>a+leafCount(x),0):1;
 const sameValues=(a:string[]=[],b:string[]=[])=>a.length===b.length&&[...a].sort().join('\n')===[...b].sort().join('\n');
-/** One collator for every list's sort and value order (numbers in text compare as numbers: "Room 2" before "Room 10"). */
-const collator=new Intl.Collator(undefined,{numeric:true});
 /** Rows above which a list searched in the browser waits for a pause in typing before it draws. */
 const LONG_SEARCH=200;
 const SEARCH_KINDS=new Set<string>(Object.values(TABLE_CONDITION_DEFINITIONS).flatMap(t=>Object.values(t).map(c=>(c as {kind:string}).kind)).filter(k=>ownKind(k).length));

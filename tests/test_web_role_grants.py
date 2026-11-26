@@ -57,7 +57,7 @@ def test_an_admin_is_told_who_gives_auditor_and_developer(refusals):
 def test_access_page_lists_every_role_through_the_shared_rule():
     app = (SRC / 'app.ts').read_text(encoding='utf-8')
     grants = (SRC / 'role_grants.ts').read_text(encoding='utf-8')
-    assert "from './generated.js'" in grants and 'EXPLICIT_ROLES' in grants and 'PERMISSIONS[' in grants
+    assert "from './generated.js'" in grants and 'ROLE_GRANT_PERMISSIONS' in grants and 'PERMISSIONS[' in grants
     # No second copy of the rule in the page, and every role picker starts from the contract's ROLE_NAMES.
     assert 'EXPLICIT_ROLES' not in app
     assert "const manages=(r:string)=>!grantRefusal(r,me!.roles);" in app

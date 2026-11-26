@@ -138,6 +138,7 @@ class ImporterV34Tests(unittest.TestCase):
         jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
         full = {'checks', 'static', 'unit', 'browser', 'ci-gate'}
         cases = (
+            ('queue landing', 'push', 'refs/heads/dev', True, {}, full - {'unit', 'browser'}),
             ('pull request', 'pull_request', 'refs/pull/1/merge', True, {}, full),
             ('merge group', 'merge_group', 'refs/heads/queue', True, {}, full),
             ('preview push', 'push', 'refs/heads/preview', True, {}, full),
@@ -155,6 +156,9 @@ class ImporterV34Tests(unittest.TestCase):
         for default, (label, event, ref, admitted, overrides, expected) in (
                 (default, case) for default in ('dev', 'main') for case in cases):
             ref = ref.replace('refs/heads/dev', 'refs/heads/' + default)
+            queue_run = label == 'queue landing' and default == 'main'
+            if label == 'queue landing' and not queue_run:
+                expected = full
             with self.subTest(case=label, default=default):
                 results, ancestors = {}, {}
 
@@ -184,6 +188,7 @@ class ImporterV34Tests(unittest.TestCase):
                         "needs['nightly-budget'].result == 'success'": results.get('nightly-budget') == 'success',
                         "needs['nightly-budget'].outputs.admitted == 'true'": admitted,
                         "needs.checks.result == 'success'": results.get('checks') == 'success',
+                        "needs.checks.outputs.queue_run == ''": not queue_run,
                         "needs.checks.outputs.quota_scope == ''": label != 'qualified affected unit',
                     }
                     for expression, value in values.items():
@@ -264,8 +269,15 @@ class ImporterV34Tests(unittest.TestCase):
         for following in after_check:
             if following not in affected_steps:
                 self.assertIn(fallback, following['if'])
+        by_name = {following.get('name'): following for following in gate['steps']}
+        reuse = by_name['Verify reused merge-group reports']
+        self.assertIn("needs.checks.outputs.queue_run != ''", reuse['if'])
+        self.assertIn('queue_reuse.py .candidate-evidence/plan/shard-plan.json --require-run', reuse['run'])
+        self.assertEqual(reuse['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertIn("needs.checks.outputs.queue_run == ''", by_name['Trusted source/node/canary/allowance verdict']['if'])
         success = dict.fromkeys(producers, 'success')
         skipped = dict.fromkeys(producers, 'skipped')
+        reuse_results = dict(success, unit='skipped', browser='skipped')
         affected_results = dict(skipped, checks='success')
         scope = 'quota-unit-expectation'
         pr_base = 'a' * 40
@@ -296,19 +308,41 @@ class ImporterV34Tests(unittest.TestCase):
             ('pull_request', 'skipped', None, dict(affected_results, checks='failure'), False, False, scope, False),
             ('pull_request', 'skipped', None, dict(affected_results, unit='cancelled'), False, False, scope, False),
         )
-        for event, budget, admitted, results, verdict, deferred, *pilot in cases:
+        reuse_cases = (
+            ('12:1', 'refs/heads/main', 'push', 'skipped', None, reuse_results, True, False),
+            ('12:1', 'refs/heads/release/v1.2.3', 'push', 'skipped', None, reuse_results, False, False),
+            ('12:1', 'refs/heads/main', 'push', 'skipped', None, dict(reuse_results, static='skipped'), False, False),
+            ('12:1', 'refs/heads/main', 'push', 'skipped', None, dict(reuse_results, browser='cancelled'), False, False),
+            ('', 'refs/heads/main', 'push', 'skipped', None, reuse_results, False, False),
+            ('12:1', 'refs/heads/main', 'pull_request', 'skipped', None, reuse_results, False, False),
+            ('12:1', 'refs/heads/main', 'merge_group', 'skipped', None, reuse_results, False, False),
+        )
+        invalid_selection_cases = (
+            ('12:1', 'refs/heads/main', 'push', 'skipped', None, affected_results, False, False, scope, False),
+            ('12:1', 'refs/heads/main', 'pull_request', 'skipped', None, affected_results, False, False, scope, False),
+            ('12:1', 'refs/heads/main', 'schedule', 'success', 'false', skipped, False, False, scope, False),
+            ('12:1', 'refs/heads/main', 'schedule', 'success', 'false', skipped, False, False),
+            ('', 'refs/heads/main', 'schedule', 'success', 'false', skipped, False, False, scope, False),
+        )
+        all_cases = [('', 'refs/heads/main', *case) for case in cases] + list(reuse_cases + invalid_selection_cases)
+        for queue_run, ref, event, budget, admitted, results, verdict, deferred, *pilot in all_cases:
             declared_scope, pilot_runs, *trusted = pilot or ('', False)
-            with self.subTest(event=event, budget=budget, admitted=admitted, results=results), \
+            with self.subTest(event=event, budget=budget, admitted=admitted, results=results,
+                              queue_run=queue_run, ref=ref, scope=declared_scope, trusted=trusted), \
                  tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as directory:
                 needs = {job: {'result': result} for job, result in results.items()}
+                if queue_run:
+                    needs['checks'].setdefault('outputs', {})['queue_run'] = queue_run
                 if declared_scope:
-                    needs['checks']['outputs'] = {'quota_scope': declared_scope, 'trusted_sha': trusted[0] if trusted else pr_base}
+                    needs['checks'].setdefault('outputs', {}).update(
+                        quota_scope=declared_scope, trusted_sha=trusted[0] if trusted else pr_base)
                 budget_outputs = {} if admitted is None else {'admitted': admitted}
                 all_needs = dict(needs, **{'nightly-budget': {'result': budget, 'outputs': budget_outputs}})
                 env, output, summary = (Path(directory) / name for name in ('env', 'output', 'summary'))
                 result = subprocess.run(
                     [sys.executable, '-I', '-c', step['run']],
-                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'NEEDS_JSON': json.dumps(all_needs), 'PR_BASE': pr_base,
+                    env={**os.environ, 'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref, 'PR_BASE': pr_base,
+                         'NEEDS_JSON': json.dumps(all_needs),
                          'GITHUB_ENV': str(env), 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)},
                     capture_output=True, text=True, timeout=10,
                 )
@@ -323,6 +357,23 @@ class ImporterV34Tests(unittest.TestCase):
                     self.assertEqual(output.read_text().splitlines(), ['run_affected_unit=true'])
                 if deferred:
                     self.assertIn('Nightly suites deferred', summary.read_text())
+
+    def test_shard_workflow_keeps_browser_diagnostics_separate(self):
+        workflow = HELPERS.parent / "workflows/ci-tests.yml"
+        job = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]["tests"]
+        env = job["env"]
+        self.assertEqual(env["PW_TRACE_MODE"], "off")
+        self.assertNotEqual(env["PW_TRACE_DIR"], env["PW_SCREENSHOT_DIR"])
+        uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 2)
+        for upload in uploads:
+            paths = upload["with"]["path"].splitlines()
+            for key in ("PW_TRACE_DIR", "PW_SCREENSHOT_DIR"):
+                self.assertIn(f"candidate/{env[key]}/", paths)
+        checkout = next(step for step in job["steps"] if step.get("with", {}).get("path") == ".trusted-controls")
+        self.assertEqual(checkout["with"]["ref"], "${{ inputs.trusted_sha }}")
+        run = next(step["run"] for step in job["steps"] if step.get("name") == "Run the exact planned shard once")
+        self.assertIn('python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run', run)
 
     def test_pipeline_keeps_default_limits_until_measurement(self):
         # Lower limits require new measured runs in ci/hosted-durations.json.

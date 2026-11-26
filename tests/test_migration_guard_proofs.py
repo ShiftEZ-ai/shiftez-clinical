@@ -5,7 +5,7 @@ from textwrap import indent
 import pytest
 
 from migrations import safety
-from migrations.source_safety import analyze_sources
+from migrations.source_safety import analyze_sources, preflight_analyzer
 from migrations.sql_safety import analyze_sql, schema_template
 
 from .test_migration_classes import APPEND, APPEND_TABLE, migration
@@ -270,6 +270,18 @@ def test_retained_publication_guard_protects_new_nullable_column(publication_his
     assert safety.analyze(path)['class'] == 'additive'
     assert safety.declaration_errors(path) == []
     assert not safety.needs_confirmation(path)
+
+
+def test_preflight_retains_proven_calendar_lineage_guard():
+    path = safety.VERSIONS / '0153_calendar_lineage.py'
+    events = []
+
+    def record(*event):
+        events.append(event)
+
+    analyzer = preflight_analyzer(path, record_fill=record, record_duplicate_precheck=record)
+    assert analyzer.run()['class'] == 'additive'
+    assert events == []
 
 
 @pytest.mark.parametrize(('old', 'new'), [

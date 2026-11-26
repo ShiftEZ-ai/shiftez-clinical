@@ -97,6 +97,7 @@ def test_create_requires_exact_acknowledgement_and_audits_every_conflict_without
     before = state(h)
     refused = save(h, value, status=409)['error']
     assert refused['code'] == 'SERIES_OVERLAP_ACKNOWLEDGEMENT'
+    assert refused['details'] == checked
     assert len(refused['details']['conflicts']) == 5 and state(h) == before
     result = save(h, value, token=checked['conflict_token'])
     assert result['overlap_conflicts'] == result['conflicts']

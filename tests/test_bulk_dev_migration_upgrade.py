@@ -10,7 +10,7 @@ from apps.api import models as m
 from apps.api.db import make_engine, transaction
 from migrations import safety
 from scripts.manage import alembic_config, check_migrations
-from .migration_support import historical_seed
+from .migration_support import historical_seed, without_installation_admin_backfill
 from .test_email_migration import migration_url  # noqa: F401
 
 
@@ -78,11 +78,13 @@ def test_bulk_upgrade_from_dev_head_preserves_settings_and_evidence(migration_ur
         after = MetaData()
         after.reflect(engine)
         with engine.connect() as db:
+            current = without_installation_admin_backfill({
+                name: list(db.execute(select(after.tables[name]).order_by(*after.tables[name].primary_key.columns)).mappings())
+                for name in saved})
             for name, rows in saved.items():
                 if name == 'definition_history':
                     rows = [{**row, 'snapshot': {'kind': 'recorded_leave'}} for row in rows]
-                actual = list(db.execute(select(after.tables[name]).order_by(*after.tables[name].primary_key.columns)).mappings())
-                assert [{key: row[key] for key in before.tables[name].c.keys()} for row in actual] == rows, name
+                assert [{key: row[key] for key in before.tables[name].c.keys()} for row in current[name]] == rows, name
             assert db.scalar(text('SELECT version_num FROM alembic_version')) == head
             assert db.scalar(text('SELECT count(*) FROM bulk_staged')) == 0
             assert db.scalar(text('SELECT bulk_settings FROM departments WHERE id = :id'), {'id': department}) in ({}, '{}')
