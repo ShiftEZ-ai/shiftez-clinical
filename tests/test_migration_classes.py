@@ -11,13 +11,13 @@ from migrations import safety
 from scripts import manage
 
 
-def migration(tmp_path, body, declared='additive', *, reviewed=True, prefix=''):
-    path = tmp_path / '9999_classes.py'
+def migration(tmp_path, body, declared='additive', *, reviewed=True, prefix='', revision='9999_classes', down_revision=None):
+    path = tmp_path / f'{revision}.py'
     declaration = f'SAFETY_CLASS = {declared!r}\n' if declared is not None else ''
     review = ('DESTRUCTIVE_REVIEWED = "Synthetic reviewed operation; restore the verified pre-deploy backup if needed."\n'
               if reviewed else '')
-    path.write_text('from alembic import op\nimport sqlalchemy as sa\nrevision = "9999_classes"\n'
-                    'down_revision = None\n' + declaration + review + prefix + '\ndef upgrade():\n' +
+    path.write_text(f'from alembic import op\nimport sqlalchemy as sa\nrevision = "{revision}"\n'
+                    f'down_revision = {down_revision!r}\n' + declaration + review + prefix + '\ndef upgrade():\n' +
                     indent(dedent(body).strip(), '    ') + '\n', encoding='utf-8')
     return path
 
@@ -366,3 +366,195 @@ def test_null_primary_key_comparison_does_not_prove_a_bounded_fill(tmp_path):
     body = TABLE.replace('primary_key=True', 'primary_key=True, nullable=True')
     body += "op.execute(notes.update().where(notes.c.key == None, notes.c.fact.is_(None)).values(fact='known'))"
     assert safety.analyze(migration(tmp_path, body, 'destructive'))['class'] == 'destructive'
+
+@pytest.mark.parametrize('mode', ['clear', 'duplicate', 'missing', 'wrong', 'write', 'query-error', 'fresh'])
+def test_manage_checks_migration_duplicates_read_only(tmp_path, monkeypatch, mode):
+    sql = ('CREATE UNIQUE INDEX uq_label ON items (scope, lower(trim(label))) '
+           'WHERE active IS TRUE')
+    check = ('SELECT 1 FROM items WHERE (active IS TRUE) AND (scope) IS NOT NULL '
+             'AND (lower(trim(label))) IS NOT NULL GROUP BY scope, lower(trim(label)) HAVING count(*) > 1')
+    declared = {
+        'missing': (),
+        'wrong': ('SELECT 1 FROM items WHERE FALSE',),
+        'write': (check, 'DELETE FROM items'),
+        'query-error': (check, 'SELECT 1 FROM missing_table'),
+    }.get(mode, (check,))
+    path = migration(tmp_path, f'op.execute({sql!r})', prefix=f'DUPLICATE_PRECHECKS = {declared!r}\n')
+    pending = SimpleNamespace(revision='9999_classes', path=path)
+    script = SimpleNamespace(iterate_revisions=lambda *args: [pending],
+                             get_current_head=lambda: pending.revision)
+    monkeypatch.setattr(manage.ScriptDirectory, 'from_config', lambda config: script)
+    db_path = tmp_path / 'precheck.db'
+    if mode != 'fresh':
+        with closing(sqlite3.connect(db_path)) as db, db:
+            db.executescript('CREATE TABLE alembic_version (version_num TEXT); '
+                             "INSERT INTO alembic_version VALUES ('earlier'); "
+                             'CREATE TABLE items (scope INT, label TEXT, active BOOLEAN)')
+            rows = [(1, ' Ab ', True), (2, 'ab', True), (1, 'ab', False),
+                    (1, None, True), (1, None, True), (None, 'ab', True), (None, 'ab', True)]
+            if mode == 'duplicate':
+                rows.append((1, 'aB', True))
+            db.executemany('INSERT INTO items VALUES (?, ?, ?)', rows)
+
+    url = 'sqlite:///' + str(db_path)
+    failures = {'duplicate': 'duplicate rows', 'missing': 'missing duplicate pre-check',
+                'wrong': 'missing duplicate pre-check', 'write': 'must be a read-only SELECT',
+                'query-error': 'could not run duplicate pre-check'}
+    if mode in failures:
+        with pytest.raises(SystemExit, match=failures[mode]):
+            manage.check_migrations(url)
+    else:
+        assert manage.check_migrations(url) == [pending.revision]
+    if mode != 'fresh':
+        with closing(sqlite3.connect(db_path)) as db:
+            assert db.execute('SELECT scope, label, active FROM items').fetchall() == rows
+            assert not db.execute('SELECT name FROM sqlite_master WHERE type = \'index\'').fetchall()
+
+
+def pending_for_preflight(monkeypatch, *paths):
+    pending = [SimpleNamespace(revision=safety.revision(path), path=path) for path in reversed(paths)]
+    script = SimpleNamespace(iterate_revisions=lambda *args: pending,
+                             get_current_head=lambda: pending[0].revision)
+    monkeypatch.setattr(manage.ScriptDirectory, 'from_config', lambda config: script)
+    return pending[0].revision
+
+
+def test_manage_requires_duplicate_precheck_after_ancestor_dependent_fill(tmp_path, monkeypatch):
+    prior = tmp_path / 'earlier.py'
+    prior.write_text('from alembic import op\nimport sqlalchemy as sa\nrevision = "earlier"\n'
+                     'down_revision = None\n\ndef upgrade():\n'
+                     '    op.create_table("items", sa.Column("id", sa.Integer(), primary_key=True), '
+                     'sa.Column("label", sa.Text()), sa.Column("marker", sa.Text()))\n', encoding='utf-8')
+    sql = ("UPDATE items SET marker = 'filled' WHERE id = 1 AND marker IS NULL; "
+           "CREATE UNIQUE INDEX uq_label ON items (lower(trim(label)))")
+    path = migration(tmp_path, f'op.execute({sql!r})', declared='fill_only')
+    path.write_text(path.read_text(encoding='utf-8').replace('down_revision = None', 'down_revision = "earlier"'),
+                    encoding='utf-8')
+    assert safety.classification(path) == 'fill_only'
+    pending_for_preflight(monkeypatch, path)
+    db_path = tmp_path / 'precheck.db'
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executescript("CREATE TABLE alembic_version (version_num TEXT); "
+                         "INSERT INTO alembic_version VALUES ('earlier'); "
+                         "CREATE TABLE items (id INT PRIMARY KEY, label TEXT, marker TEXT); "
+                         "INSERT INTO items (id, label) VALUES (1, ' Ab '), (2, 'ab')")
+
+    with pytest.raises(SystemExit, match='missing duplicate pre-check'):
+        manage.check_migrations('sqlite:///' + str(db_path))
+    with closing(sqlite3.connect(db_path)) as db:
+        assert db.execute('SELECT marker FROM items ORDER BY id').fetchall() == [(None,), (None,)]
+
+
+@pytest.mark.parametrize(('mode', 'split'), [
+    ('key', False), ('key', True), ('predicate', True), ('sqlalchemy', True),
+    ('marker', False), ('marker', True), ('unproved', True),
+])
+def test_manage_refuses_prechecks_that_pending_fills_can_invalidate(tmp_path, monkeypatch, mode, split):
+    migration(tmp_path, 'op.create_table("items", sa.Column("id", sa.Integer(), primary_key=True), '
+              'sa.Column("label", sa.Text()), sa.Column("active", sa.Boolean()), sa.Column("marker", sa.Text()))',
+              revision='earlier')
+    column, value = {'predicate': ('active', 'TRUE'), 'marker': ('marker', "'filled'")}.get(mode, ('label', "'A'"))
+    fill = f'UPDATE items SET {column} = {value} WHERE id = 1'
+    if mode != 'unproved':
+        fill += f' AND {column} IS NULL'
+    write = f'op.execute({fill!r})'
+    if mode == 'sqlalchemy':
+        write = ("items = sa.table('items', sa.column('id'), sa.column('label'))\n"
+                 "op.get_bind().execute(items.update().where(items.c.id == 1, items.c.label.is_(None)).values(label='A'))")
+    predicate = ' WHERE "active" IS TRUE' if mode == 'predicate' else ''
+    index = f'CREATE UNIQUE INDEX uq_label ON items (lower(label)){predicate}'
+    inputs = '("active" IS TRUE) AND ' if predicate else ''
+    check = f'SELECT 1 FROM items WHERE {inputs}(lower(label)) IS NOT NULL GROUP BY lower(label) HAVING count(*) > 1'
+    prefix = f'DUPLICATE_PRECHECKS = {(check,)!r}\n'
+
+    if split:
+        kind = 'destructive' if mode == 'unproved' else 'fill_only'
+        fill_path = migration(tmp_path, write, kind, revision='fill', down_revision='earlier')
+        assert safety.classification(fill_path) == kind
+        index_path = migration(tmp_path, f'op.execute({index!r})', prefix=prefix, down_revision='fill')
+        pending_for_preflight(monkeypatch, fill_path, index_path)
+    else:
+        sql = f'{fill}; {index}'
+        path = migration(tmp_path, f'op.execute({sql!r})', 'fill_only',
+                         prefix=prefix, down_revision='earlier')
+        assert safety.classification(path) == 'fill_only'
+        pending_for_preflight(monkeypatch, path)
+
+    db_path = tmp_path / 'precheck.db'
+    rows = [(1, 'A' if predicate else None, None, None), (2, 'a', True, None)]
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executescript("CREATE TABLE alembic_version (version_num TEXT); INSERT INTO alembic_version VALUES ('earlier'); "
+                         'CREATE TABLE items (id INT PRIMARY KEY, label TEXT, active BOOLEAN, marker TEXT)')
+        db.executemany('INSERT INTO items VALUES (?, ?, ?, ?)', rows)
+        assert db.execute(check).fetchone() is None
+
+    url = 'sqlite:///' + str(db_path)
+    if mode == 'marker':
+        assert manage.check_migrations(url) == (['fill'] if split else []) + ['9999_classes']
+    else:
+        source = 'unproved pending migration' if mode == 'unproved' else 'pending fill'
+        with pytest.raises(SystemExit, match=source + ' may change unique expression index inputs before creation'):
+            manage.check_migrations(url, confirmed=('fill',))
+    with closing(sqlite3.connect(db_path)) as db:
+        assert db.execute('SELECT * FROM items ORDER BY id').fetchall() == rows
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'uq_label'").fetchall()
+        db.execute(fill)
+        assert (db.execute(check).fetchone() is None) == (mode == 'marker')
+        db.rollback()
+
+
+@pytest.mark.parametrize('mode', ['sql', 'alembic', 'declared', 'conditional', 'populated'])
+def test_manage_exempts_only_proven_empty_new_index_tables(tmp_path, monkeypatch, mode):
+    table = ('CREATE TABLE IF NOT EXISTS items (id INT PRIMARY KEY, label TEXT)' if mode == 'conditional'
+             else 'CREATE TABLE items (id INT PRIMARY KEY, label TEXT)')
+    body = ('op.create_table("items", sa.Column("id", sa.Integer(), primary_key=True), '
+            'sa.Column("label", sa.Text()))' if mode in {'alembic', 'populated'} else f'op.execute({table!r})')
+    if mode == 'populated':
+        body += '\nop.execute("INSERT INTO items (id, label) VALUES (1, \'a\'), (2, \'A\') ON CONFLICT DO NOTHING")'
+    body += '\nop.execute("CREATE UNIQUE INDEX uq_label ON items (lower(label))")'
+    check = 'SELECT 1 FROM items WHERE (lower(label)) IS NOT NULL GROUP BY lower(label) HAVING count(*) > 1'
+    prefix = f'DUPLICATE_PRECHECKS = {(check,)!r}\n' if mode == 'declared' else ''
+    path = migration(tmp_path, body, declared='fill_only' if mode == 'populated' else 'additive', prefix=prefix)
+    revision = pending_for_preflight(monkeypatch, path)
+    db_path = tmp_path / 'precheck.db'
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executescript("CREATE TABLE alembic_version (version_num TEXT); "
+                         "INSERT INTO alembic_version VALUES ('earlier'); "
+                         "CREATE TABLE retained (id INT)")
+
+    url = 'sqlite:///' + str(db_path)
+    if mode in {'conditional', 'populated'}:
+        with pytest.raises(SystemExit, match='missing duplicate pre-check'):
+            manage.check_migrations(url)
+    else:
+        assert manage.check_migrations(url) == [revision]
+        with closing(sqlite3.connect(db_path)) as db:
+            tables = db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").fetchall()
+            assert tables == [('alembic_version',), ('retained',)]
+
+
+def test_manage_runs_qualified_duplicate_precheck(tmp_path, monkeypatch, postgres_worker_url):
+    from uuid import uuid4
+    from .conftest import postgres_database
+
+    key = "pg_catalog.lower(pg_catalog.btrim(label, '-'))"
+    sql = f'CREATE UNIQUE INDEX uq_label ON items ({key})'
+    query = f'SELECT 1 FROM items WHERE ({key}) IS NOT NULL GROUP BY {key} HAVING count(*) > 1'
+    path = migration(tmp_path, f'op.execute({sql!r})', prefix=f'DUPLICATE_PRECHECKS = {(query,)!r}\n')
+    revision = pending_for_preflight(monkeypatch, path)
+
+    with postgres_database(postgres_worker_url, 'rota_test_' + uuid4().hex) as url:
+        engine = manage.make_engine(url)
+        try:
+            with engine.begin() as db:
+                db.exec_driver_sql('CREATE TABLE alembic_version (version_num TEXT)')
+                db.exec_driver_sql("INSERT INTO alembic_version VALUES ('earlier')")
+                db.exec_driver_sql('CREATE TABLE items (label TEXT)')
+                db.exec_driver_sql("INSERT INTO items VALUES ('-Ab-'), ('cd'), (NULL), (NULL)")
+            assert manage.check_migrations(url) == [revision]
+            with engine.begin() as db:
+                db.exec_driver_sql("INSERT INTO items VALUES ('ab')")
+            with pytest.raises(SystemExit, match='duplicate rows'):
+                manage.check_migrations(url)
+        finally:
+            engine.dispose()

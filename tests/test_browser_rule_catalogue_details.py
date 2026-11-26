@@ -116,11 +116,11 @@ def test_undoing_a_new_version_says_the_previous_version_applies_again(browser, 
         navigate(page, 'rules/duties_per_week')
         page.locator('.rc-waiting').get_by_role('button', name='Review and approve').click()
         # B5 (f1d80dcc4): an independent approver decides in the docked panel, named after the change; no reason (maintenance).
-        panel = page.get_by_role('region', name='Change to Duties per week', exact=True)
+        panel = page.get_by_role('region', name='Change to Duties per week · turns the rule off', exact=True)
         panel.get_by_role('button', name='Approve and activate', exact=True).click()
         expect(panel).to_have_count(0)
-        # The panel's own message carries the activation's Undo (takeUndo): "Duties per week: the change is active."
-        page.locator('#toast-tray .toast', has_text='Duties per week: the change is active.').get_by_role('button', name='Undo', exact=True).click()
+        # The approval says the rule is off and offers Undo.
+        page.locator('#toast-tray .toast', has_text='Duties per week: the rule is off.').get_by_role('button', name='Undo', exact=True).click()
         expect(page.locator('#toast-tray .toast', has_text='Activation undone: the previous version applies again.')).to_be_visible()
     finally:
         context.close()

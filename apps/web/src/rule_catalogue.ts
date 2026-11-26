@@ -1307,11 +1307,15 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
     const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
     let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
-    const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
+    // A reader who cannot edit gets the strength as a fact (text), never a disabled menu button.
+    const chip=editable?el('button',{type:'button',class:'rc-strength',...popup('menu')}):el('span',{class:'rc-strength'});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
-      chip.textContent=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv);chip.setAttribute("aria-label",`${label}: ${what}`);chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
-    chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
+      const text=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv),name=`${label}: ${what}`;
+      if(editable){chip.textContent=text;chip.setAttribute("aria-label",name);}
+      else chip.replaceChildren(el('span',{'aria-hidden':'true'},text),el('span',{class:'sr-only'},name));
+      chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
+    if(editable)chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
@@ -1744,7 +1748,7 @@ export function changeList(e:RuleCatalogueEntry,before:RuleLine[],after:RuleLine
  *  numbers, days, valid; a changed cell says what it was), the unchanged lines only on demand, the check's warnings as
  *  separate items, who proposed it and the decision. What changed is the server's diff (`proposed.diff`, by line id). */
 /** A waiting proposal's effect on the rule's switch ("Turns the rule on"), or '': said by the note and the panel title. */
-const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':''):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
+const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':'Rule stays off'):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
 function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,openTag:(tag:Row)=>void,review:()=>void,key?:RuleViewKey){
   const p=e.proposed!,rule=p.definition.rule,now=(rule.lines||[]) as RuleLine[],before=linesOf(e),mine=p.created_by===ctx.me.identity_id;
   const canDecide=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
@@ -1803,8 +1807,9 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
   const focus:Change[]=diff?.added?[...(diff.added||[]).flatMap(id=>byId.has(id)?[{kind:'added' as const,line:byId.get(id)!}]:[]),
     ...(diff.changed||[]).flatMap(id=>byId.has(id)?[{kind:'changed' as const,line:byId.get(id)!}]:[])]:lineChanges(linesOf(e),now).filter(c=>c.kind!=='removed');
   const one=focus.length===1?focus[0]:null,whom=one?countWords(one.line.who,names,'everyone'):'';
-  const turns=switchWords(e,p.definition.rule.on!==false);
-  const title=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}${turns?` · ${turns.toLowerCase()}`:''}`:`Change to ${e.name}`;
+  const on=p.definition.rule.on!==false,turns=switchWords(e,on);
+  const change=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}`:`Change to ${e.name}`;
+  const title=turns?`${change} · ${turns.toLowerCase()}`:change;
   const when=p.created_at?`${formatDate(String(p.created_at),zone)} ${formatTime(String(p.created_at),zone)}`:'';
   const canApprove=ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),canCheck=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR);
   // Checks started here, with when: shown as checking at once, before the server has queued them.
@@ -1835,7 +1840,7 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
-          d.close();notify(`${e.name}: the change is active.`);await refresh();};
+          d.close();notify(`${e.name}: ${on?'the change is active.':'the rule is off.'}`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
