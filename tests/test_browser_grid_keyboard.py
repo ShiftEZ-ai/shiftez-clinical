@@ -82,6 +82,34 @@ def test_tab_enters_the_schedule_grid_at_a_cell_and_a_grip_keeps_its_focus(brows
         context.close()
 
 
+@pytest.mark.parametrize('width,head', [(390, 180), (900, 320)])
+def test_a_focused_people_chip_lands_beside_a_resized_name_column(browser, live_server, h, width, head):
+    """WCAG 2.4.11 Focus Not Obscured: a chip focused while it sits under the sticky name column scrolls out beside it,
+    at the width the view resized the column to (CSS Scroll Snap 1, scroll-margin applies to scrolling into view)."""
+    from .test_browser_schedule import october, show
+    _, d = october(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
+    try:
+        page.emulate_media(reduced_motion='reduce')
+        show(page, f"schedule/people/2026-10-14?edit={d['id']}")
+        people = page.get_by_role('grid', name='Duties by person and day', exact=True)
+        expect(people.locator('button.pg-chip').first).to_be_visible()
+        # The width a resize writes (planner_week.ts scheduleWidths), then the leftmost chip is put under the column.
+        under, beside, edge = people.evaluate("""(g, head) => {
+          g.style.setProperty('--sched-head', head + 'px');
+          const s = g.parentElement, left = n => n.getBoundingClientRect().left;
+          const chip = [...g.querySelectorAll('button.pg-chip')].sort((a, b) => left(a) - left(b))[0];
+          s.scrollLeft += left(chip) - left(s);
+          const under = left(chip);
+          chip.focus();
+          return [under, left(chip), g.querySelector('.pg-head>.pg-name').getBoundingClientRect().right];
+        }""", head)
+        assert under < edge - 1, (under, edge)  # it started under the column
+        assert beside >= edge - 1, (beside, edge)
+    finally:
+        context.close()
+
+
 def test_schedule_names_its_places_published_panel_list_table_and_new_range(browser, live_server, h):
     """maintenance: a Week name says the place; the published session panel is a named region; a step of the period
     navigator says the new range politely; the List table has a caption."""
