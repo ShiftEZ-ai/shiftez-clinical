@@ -33,7 +33,8 @@ def read_department(scale_harness):
                     for i in range(50)]
         db.add_all([*extra, programme, rotation_type, *services])
         db.flush()
-        ids = [*h.seed['people'], *(p.id for p in extra)]
+        seeded_people = h.seed['people']
+        ids = [*seeded_people, *(p.id for p in extra)]
         cohort = m.Cohort(department_id=actor.department_id, programme_id=programme.id, name='Synthetic cohort',
                           starts_on=date(2020, 1, 1), ends_on=date(2028, 1, 1))
         db.add(cohort)
@@ -45,9 +46,11 @@ def read_department(scale_harness):
                 span = dict(department_id=actor.department_id, person_id=pid,
                             starts_on=date(year, 1, 1), ends_on=date(year + 1, 1, 1))
                 additions.extend([m.Membership(**span, category_id=h.seed['category']),
-                    m.ProgrammeMembership(**span, programme_id=programme.id),
-                    m.Eligibility(**span, service_id=services[i % len(services)].id),
-                    m.CapabilityGrant(**span, capability_id=capability.id, granted_by=actor.identity_id, evidence='Synthetic')])
+                    m.ProgrammeMembership(**span, programme_id=programme.id)])
+                # The seed already supplies current eligibilities and grants for its people.
+                if year != FIRST.year or pid not in seeded_people:
+                    additions.extend([m.Eligibility(**span, service_id=services[i % len(services)].id),
+                        m.CapabilityGrant(**span, capability_id=capability.id, granted_by=actor.identity_id, evidence='Synthetic')])
                 for month in range(1, 13):
                     additions.append(m.Rotation(**{**span, 'starts_on': date(year, month, 1),
                         'ends_on': date(year + month // 12, month % 12 + 1, 1)},
@@ -112,15 +115,20 @@ def test_dated_readers_exclude_five_year_history_and_touching_boundaries(dated_r
     assert all(row['current_rotation_type_ids'] and row['current_programme_ids'] for row in current['people'].values())
 
 
+@pytest.fixture
+def coordinator_read_client(read_department, monkeypatch):
+    h, _, _, _ = read_department
+    monkeypatch.setattr(m, 'clock_now', lambda: datetime(2026, 10, 2, 12, tzinfo=timezone.utc))
+    return h.client('coordinator')
+
+
 @pytest.mark.parametrize('path,person_rows', [
     ('/api/catalogues?include=people', True),
     ('/api/directory', False),
     ('/api/people/summary', False),
 ])
-def test_people_reads_use_one_person_query(read_department, monkeypatch, path, person_rows):
+def test_people_reads_use_one_person_query(read_department, coordinator_read_client, path, person_rows):
     h, _, ids, _ = read_department
-    client = h.client('coordinator')
-    monkeypatch.setattr(m, 'clock_now', lambda: datetime(2026, 10, 2, 12, tzinfo=timezone.utc))
     statements, loaded = [], []
 
     def sql(_conn, _cursor, statement, _parameters, _context, _many):
@@ -135,7 +143,7 @@ def test_people_reads_use_one_person_query(read_department, monkeypatch, path, p
     event.listen(Session, 'loaded_as_persistent', row)
     try:
         label = path.rsplit('/', 1)[-1].split('?')[0]
-        response, _ = measure(h, label, lambda: client.get(path))
+        response, _ = measure(h, label, lambda: coordinator_read_client.get(path))
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', sql)
         event.remove(Session, 'loaded_as_persistent', row)
@@ -147,9 +155,8 @@ def test_people_reads_use_one_person_query(read_department, monkeypatch, path, p
     assert (len(statements), len(loaded)) == (1, len(ids) if person_rows else 0)
 
 
-def test_rule_reach_reads_only_period_facts_and_live_rules(read_department):
+def test_rule_reach_reads_only_period_facts_and_live_rules(read_department, coordinator_read_client):
     h, actor, ids, _ = read_department
-    client = h.client('coordinator')
     rule = {'rule': {'kind': 'max_hours', 'hours': 48}, 'scope': {}, 'severity': 'mandatory'}
     with transaction(h.app.state.engine, write=True) as db:
         active = m.Policy(department_id=actor.department_id, kind='max_hours', name='Synthetic current rule',
@@ -177,7 +184,7 @@ def test_rule_reach_reads_only_period_facts_and_live_rules(read_department):
     event.listen(h.app.state.engine, 'before_cursor_execute', sql)
     event.listen(Session, 'loaded_as_persistent', row)
     try:
-        response, _ = measure(h, 'rule reach', lambda: client.get(f'/api/policies/reach?day={FIRST.isoformat()}'))
+        response, _ = measure(h, 'rule reach', lambda: coordinator_read_client.get(f'/api/policies/reach?day={FIRST.isoformat()}'))
     finally:
         event.remove(h.app.state.engine, 'before_cursor_execute', sql)
         event.remove(Session, 'loaded_as_persistent', row)

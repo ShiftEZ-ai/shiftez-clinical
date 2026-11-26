@@ -780,7 +780,8 @@ def require_context_receipts(db, actor, pending, decisions, *, source_records=No
                 'RULE_CHECK_FAILED', 'Resolve the configuration or check failure before activation', 409)
         require(not (compare_problems and result.get('comparison_complete') is not True
                      and any(s.safety_rule(p.definition) for p in policies)), 'RULE_CHECK_UNRESOLVED',
-                'Safety rules require a complete effect check; uncertainty cannot be acknowledged', 409)
+                'Safety rules require a complete effect check; uncertainty cannot be acknowledged',
+                409, {'workspace_id': workspace.id, 'check_job_id': job.id})
         no_new = no_new_problems(result)
         resolved = no_new if compare_problems else result.get('full_feasibility_established')
         findings = result.get('new_or_worse_findings') or []
