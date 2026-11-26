@@ -1,6 +1,6 @@
 {
   "id": "A-WEEKLY-LIMIT-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Weekly maximum with an inherited minimum",
   "intent": "A more specific weekly maximum replaces only the broad maximum.",
   "pressure": "Two fixed duties use the individual maximum. The shared minimum still requires one duty for the other person.",
@@ -164,8 +164,8 @@
       "kind": "workspace.create",
       "payload": {
         "name": "A-WEEKLY-LIMIT-01 Weekly workload",
-        "starts_on": "2027-01-04",
-        "ends_on": "2027-01-07"
+        "starts_on": "2027-03-01",
+        "ends_on": "2027-03-04"
       }
     },
     {
@@ -188,8 +188,8 @@
                 }
               ]
             },
-            "starts_on": "2027-01-04",
-            "ends_on": "2027-01-07",
+            "starts_on": "2027-03-01",
+            "ends_on": "2027-03-04",
             "settings": {
               "block_quota": {
                 "window_alignment": "calendar_week"
@@ -218,8 +218,13 @@
                 }
               ]
             },
-            "starts_on": "2027-01-04",
-            "ends_on": "2027-01-07",
+            "starts_on": "2027-03-01",
+            "ends_on": "2027-03-04",
+            "settings": {
+              "max_duties": {
+                "window": "week"
+              }
+            },
             "numbers": {
               "max": {
                 "value": 2,
@@ -243,13 +248,13 @@
         "service_ids": [
           "$service"
         ],
-        "start": "2027-01-04T08:00:00+03:00",
-        "end": "2027-01-04T12:00:00+03:00",
+        "start": "2027-03-01T08:00:00+03:00",
+        "end": "2027-03-01T12:00:00+03:00",
         "participants": [
           {
             "person_id": "$p0",
-            "start": "2027-01-04T08:00:00+03:00",
-            "end": "2027-01-04T12:00:00+03:00",
+            "start": "2027-03-01T08:00:00+03:00",
+            "end": "2027-03-01T12:00:00+03:00",
             "fixed": true
           }
         ]
@@ -267,13 +272,13 @@
         "service_ids": [
           "$service"
         ],
-        "start": "2027-01-05T08:00:00+03:00",
-        "end": "2027-01-05T12:00:00+03:00",
+        "start": "2027-03-02T08:00:00+03:00",
+        "end": "2027-03-02T12:00:00+03:00",
         "participants": [
           {
             "person_id": "$p0",
-            "start": "2027-01-05T08:00:00+03:00",
-            "end": "2027-01-05T12:00:00+03:00",
+            "start": "2027-03-02T08:00:00+03:00",
+            "end": "2027-03-02T12:00:00+03:00",
             "fixed": true
           }
         ]
@@ -291,8 +296,8 @@
         "service_ids": [
           "$service"
         ],
-        "start": "2027-01-06T08:00:00+03:00",
-        "end": "2027-01-06T12:00:00+03:00",
+        "start": "2027-03-03T08:00:00+03:00",
+        "end": "2027-03-03T12:00:00+03:00",
         "participants": []
       }
     },

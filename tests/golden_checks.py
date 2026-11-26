@@ -13,7 +13,7 @@ from packages.domain.validation import evaluate, finding_observations
 from tests.scheduler_departments import apply, _id
 
 
-def solve(data, seed):
+def solve(data, seed, *, feasibility_only=False):
     """Vary both input order and the actual CP-SAT seed, with one worker."""
     data = copy.deepcopy(data)
     rng = Random(seed)
@@ -31,7 +31,7 @@ def solve(data, seed):
 
     # Test-only injection: the production API does not expose a random-seed setting.
     with patch('packages.domain.cp_sat.cp_model.CpSolver', seeded_solver):
-        return generate(data, 5, workers=1)
+        return generate(data, 5, workers=1, feasibility_only=feasibility_only)
 
 
 def shift(data, id_):
@@ -252,7 +252,7 @@ def check_weekly_limit(data, ids, spec):
     place(broken, sid, [first])
     findings = {(row['code'], row['person_id']) for row in finding_observations(evaluate(broken))
                 if row.get('rule_id') == rid}
-    assert findings == {(expected['validator']['limit'], first), (expected['validator']['missing'], second)}
+    assert findings == {(expected['validator']['limit'], first), (expected['validator']['missing'], second)}, findings
     missing_minimum = copy.deepcopy(data)
     for session in (ids['s0'], ids['s1']):
         place(missing_minimum, session, [second])
@@ -269,7 +269,9 @@ def check_weekly_limit(data, ids, spec):
         candidate = feasible(data, solve(data, seed))
         assignment = [[p['person_id'] for p in shift(candidate, session)['participants']] for session in sessions]
         assert assignment == [[ids[key]] for key in expected['assignment']]
-        assert solve(broad_only, seed)['status'] == expected['counterfactual']['without_person_line']
+        # A strict probe must enforce the broad cap even against fixed duties.
+        contrary = solve(broad_only, seed, feasibility_only=True)
+        assert contrary['status'] == expected['counterfactual']['without_person_line'], contrary
         bound.update((session, first) for session in sessions if first in {
             p['person_id'] for p in shift(candidate, session)['participants']})
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
