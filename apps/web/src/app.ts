@@ -2098,15 +2098,19 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
     if(checkJob?.id===job.id)checkJob=null;checkSync=true;sayCheck();checkWake(job.id);
     sayCancel();  // the server cannot stop this one
     await command('workspace.validate',{reason:'Automatic rota check',automatic:true},job.w.id,job.w.revision);
-  })().catch(e=>{checkGone=job.id;checkUnstarted=job.key;checkWake(job.id);throw e;});
+  })().catch(e=>{checkGone=job.id;checkWake(job.id);throw e;});
   done.catch(()=>{});  // read by the job's wait (waitCheck)
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
-const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=checkGone===id?null:
+    await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
   if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
-  if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
+  if(checkGone!==id)return last;
+  // A whole-rota read can change the key while the same queued job still owns the failed take-over.
+  if(checkOwn?.id===id)await checkOwn.done.catch(e=>{if(autoCheckKey===key)checkUnstarted=key;throw e;});
+  return null;};
 const stopJob=(id:string)=>command('job.cancel',{reason:'Cancelled the rota check'},id).catch(e=>{if(!sessionChanged(e))reportError(e);});
 const cancelCheck=()=>{checkCancelled=autoCheckKey;autoChecking=false;if(checkJob?.key===autoCheckKey)void stopJob(checkJob.id);void redraw();};
 const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
