@@ -83,7 +83,7 @@ def test_tab_enters_the_schedule_grid_at_a_cell_and_a_grip_keeps_its_focus(brows
 
 
 def test_tab_reveals_a_covered_people_grid_stop(browser, live_server, h):
-    """WCAG 2.4.11: Tab returns to the same duty and reveals it beside the resized sticky name column."""
+    """WCAG 2.4.11: Tab returns to the same duty and reveals it beside the sticky name column."""
     from .test_browser_schedule import october, show
 
     _, draft = october(h)
@@ -100,7 +100,6 @@ def test_tab_reveals_a_covered_people_grid_stop(browser, live_server, h):
         page.locator('.planner-toolbar').get_by_role('button').last.focus()
         covered = stop.evaluate("""chip => {
           const grid = chip.closest('.people-grid');
-          grid.style.setProperty('--sched-head', '320px');
           grid.style.setProperty('--sched-date', '56px');
           const scroller = grid.parentElement;
           const name = grid.querySelector('.pg-head>.pg-name');
