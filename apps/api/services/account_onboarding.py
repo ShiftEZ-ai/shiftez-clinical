@@ -149,9 +149,11 @@ def apply(engine, settings, token, csrf, value, correlation_id):
         try:
             result = execute(engine, settings, token, csrf, key, command, correlation_id, invite_guard=guard)
         except Problem as error:
-            if error.status not in {409, 503}:
+            # A later failure must not discard issued links. Lost authority still refuses the whole response.
+            if error.status not in {409, 503} and (not invitations or error.status in {401, 403}):
                 raise
-            ledger[person_id] = {"status": "conflict" if error.status == 409 else "stopped", "code": error.code}
+            code = error.code if error.status < 500 or error.status == 503 else "ONBOARDING_STOPPED"
+            ledger[person_id] = {"status": "conflict" if error.status == 409 else "stopped", "code": code}
             break
         if result.get("status") == "already_linked":
             ledger[person_id] = result

@@ -11,7 +11,7 @@ from playwright.sync_api import expect
 
 from .conftest import TEST_PASSWORD
 from .governance_support import identity
-from .test_browser import browser, live_server, new_context, open_app, open_config, route_fetch, sign_in, expect_loaded  # noqa: F401
+from .test_browser import browser, live_server, new_context, open_app, open_config, route_fetch, sign_in, sign_in_with_form, fill_sign_in, expect_loaded  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -280,6 +280,91 @@ def test_not_you_change_ends_the_local_countdown(browser, live_server):
         page.clock.run_for(2000)  # the old countdown no longer touches the form
         expect(submit).to_be_enabled()
         expect(form.locator("#login-error .notice")).to_have_count(0)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("viewport,scheme", VIEWPORTS, ids=IDS)
+def test_a_refused_password_for_the_remembered_account_names_it(browser, live_server, viewport, scheme):
+    """After Sign out the device offers the last account: its password field is described by that account, and a
+    refused password names the account it was tried for, with "Use another account" in the message itself."""
+    context = new_context(browser, viewport, color_scheme=scheme)
+    context.add_init_script("localStorage.setItem('rota.account', JSON.stringify({identity: 'x', name: 'Quartz Example', username: 'coordinator'}))")
+    context.route("**/auth/login", lambda route: route.fulfill(status=401, content_type="application/json", body=json.dumps(
+        {"error": {"code": "INVALID_LOGIN", "message": "Unable to sign in with these credentials", "details": None}})))
+    try:
+        page = open_app(context, live_server)
+        form = page.locator(".login-form")
+        password = form.get_by_label("Password", exact=True)
+        expect(page.get_by_text("Continue where you left off.", exact=True)).to_have_count(0)  # the card says who
+        form.get_by_role("button", name="Continue", exact=True).click()
+        expect(password).to_be_focused()
+        expect(password).to_have_accessible_description(re.compile("Quartz Example"))
+        password.fill("not-this-account")
+        form.get_by_role("button", name="Sign in", exact=True).click()
+        error = form.locator("#login-error .notice")
+        expect(error).to_contain_text("Unable to sign in as Quartz Example with this password.")
+        expect(password).to_be_focused()
+        expect(password).to_have_attribute("aria-describedby", "login-account-who login-error")
+        # Directly under the Password field, like other field errors.
+        assert page.evaluate("document.querySelector('#login-error').previousElementSibling.contains(document.querySelector('#current-password'))")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        error.get_by_role("button", name="Use another account", exact=True).click()
+        expect(page.locator(".login-account")).to_have_count(0)
+        expect(form.locator("#login-error .notice")).to_have_count(0)
+        expect(form.get_by_role("button", name="Use another account", exact=True)).to_have_count(0)
+        username = form.get_by_label("Username or email", exact=True)
+        expect(username).to_be_focused()
+        expect(username).to_have_value("")
+        expect(password).to_be_hidden()
+        expect(password).not_to_have_attribute("aria-describedby", "login-account-who")
+    finally:
+        context.close()
+
+
+def test_a_refused_password_for_a_typed_account_keeps_the_server_words(browser, live_server):
+    """Only the remembered account is named: a name typed into the form keeps the server's own refusal."""
+    context = new_context(browser)
+    context.route("**/auth/login", lambda route: route.fulfill(status=401, content_type="application/json", body=json.dumps(
+        {"error": {"code": "INVALID_LOGIN", "message": "Unable to sign in with these credentials", "details": None}})))
+    try:
+        page = open_app(context, live_server)
+        form = page.locator(".login-form")
+        form.get_by_label("Username or email", exact=True).fill("staff")
+        form.get_by_role("button", name="Continue", exact=True).click()
+        form.get_by_label("Password", exact=True).fill("not-this-account")
+        form.get_by_role("button", name="Sign in", exact=True).click()
+        expect(form.locator("#login-error .notice")).to_have_text("Unable to sign in with these credentials")
+        expect(form.locator("#login-error").get_by_role("button", name="Use another account")).to_have_count(0)
+    finally:
+        context.close()
+
+
+def test_after_sign_out_another_accounts_password_names_the_remembered_one(browser, live_server):
+    """The reported path, end to end with the real server: one account signs in and out, another person types their
+    own password on the card the device offers, the refusal names the card's account, and "Use another account" in it
+    signs the other person in."""
+    context, page = sign_in_with_form(browser, live_server, "staff")
+    try:
+        menu = page.get_by_role("button", name=re.compile(r"^Account menu, "))
+        name = menu.get_attribute("aria-label").removeprefix("Account menu, ")
+        assert name
+        menu.click()
+        page.get_by_role("menuitem", name="Sign out", exact=True).click()
+        form = page.locator(".login-form")
+        expect(page.locator(".login-account")).to_contain_text(name)
+        expect(form.get_by_label("Username or email", exact=True)).to_be_hidden()
+        form.get_by_role("button", name="Continue", exact=True).click()
+        form.get_by_label("Password", exact=True).fill("not-this-account")
+        with page.expect_response("**/auth/login") as refused:
+            form.get_by_role("button", name="Sign in", exact=True).click()
+        assert refused.value.status == 401
+        error = form.locator("#login-error .notice")
+        expect(error).to_contain_text(f"Unable to sign in as {name} with this password.")
+        error.get_by_role("button", name="Use another account", exact=True).click()
+        fill_sign_in(page, "coordinator")
+        expect(menu).to_be_visible(timeout=20000)
+        expect(menu).not_to_have_accessible_name(f"Account menu, {name}")
     finally:
         context.close()
 

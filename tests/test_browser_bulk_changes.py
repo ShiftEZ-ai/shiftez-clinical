@@ -815,6 +815,37 @@ def leave_rows(h):
     return h.client('coordinator').post('/api/bulk/rows', json={'selection': {'collection': 'availability'}, 'limit': 500}).json()['rows']
 
 
+def test_bulk_record_leave_keeps_whole_days_on_tab(browser, live_server, h):
+    person_id = h.seed['people'][0]
+    people = h.get('admin', '/api/catalogues?include=people')['people']
+    person = next(row for row in people if row['id'] == person_id)
+    context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
+    try:
+        navigate(page, 'people')
+        page.locator('#main tr', has_text=person['display_name']).locator('.bulk-check').check()
+        bar(page).get_by_role('button', name='Change…').click()
+        row = change_row(page, 'Record leave')
+        start, end = (row.get_by_label(label, exact=True) for label in ('From', 'Until'))
+        start.fill('31/02/2027')
+        start.press('Tab')
+        expect(start).to_have_value('31/02/2027')
+        assert start.evaluate('(input) => input.validationMessage').startswith('Enter a date')
+        for field in (start, end):
+            field.fill('10/03/2027')
+            field.press('Tab')
+            expect(field).to_have_value('Wed 10 Mar 2027')
+        expect(row.get_by_label('From time', exact=True)).to_have_attribute('placeholder', 'All day')
+        row.get_by_label('Private note', exact=True).fill('Recorded for the whole day')
+        submit(page)
+        expect(page.locator('.toast').filter(has_text='1 person changed')).to_be_visible()
+        made = [r for r in leave_rows(h) if r['person_id'] == person_id]
+        assert len(made) == 1
+        assert made[0]['start'].startswith('2027-03-09T21:00')
+        assert made[0]['end'].startswith('2027-03-10T21:00')
+    finally:
+        context.close()
+
+
 def test_leave_dates_and_record_leave_take_a_date_and_a_time(browser, live_server, h):
     """Review #7: date-and-time fields in Change… are the shared field (a date and its own time): Record leave and
     moving a leave's start both complete with the date and the time entered separately."""

@@ -2,12 +2,15 @@
 import json
 import logging
 from datetime import date
+from dataclasses import replace
 
 import pytest
 from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.errors import Problem
+from apps.api.services import account_onboarding
 from .test_accounts import PASSWORD, anonymous, users_file, with_users_file
 
 
@@ -45,6 +48,40 @@ def payload(rows):
 def reviewed(h, value):
     review = post(h, PREVIEW, value).json()
     return {**value, "expected_fingerprint": review["expected_fingerprint"]}, review
+
+
+@pytest.mark.parametrize('failure_status', [409, 422, 503, 403])
+def test_batch_interruption_keeps_issued_links_only_with_authority(h, tmp_path, monkeypatch, failure_status):
+    h = with_users_file(h, tmp_path)
+    rows = people(h, 3)
+    first, second, third = (row['person_id'] for row in rows)
+    value, _ = reviewed(h, payload(rows))
+    execute = account_onboarding.execute
+
+    def stop_after_first(engine, settings, token, csrf, key, command, correlation_id, *, invite_guard):
+        if command.payload['person_id'] == second:
+            if failure_status != 403:
+                raise Problem(failure_status, 'SYNTHETIC_ONBOARDING_STOP', 'Synthetic write refusal')
+            original_guard = invite_guard
+            invite_guard = lambda db, current: original_guard(db, replace(current, department_id=m.uid()))
+        return execute(engine, settings, token, csrf, key, command, correlation_id, invite_guard=invite_guard)
+
+    monkeypatch.setattr(account_onboarding, 'execute', stop_after_first)
+    response = post(h, APPLY, value, status=403 if failure_status == 403 else 200)
+    result = response.json()
+    if failure_status == 403:
+        assert result['error']['code'] == 'ONBOARDING_SCOPE_CHANGED'
+        assert 'invitations' not in result
+    else:
+        assert response.headers['cache-control'] == 'private, no-store'
+        assert [item['person_id'] for item in result['invitations']] == [first]
+        assert result['ledger'][first]['status'] == 'created'
+        assert result['ledger'][second]['status'] == ('conflict' if failure_status == 409 else 'stopped')
+        assert result['ledger'][second]['code'] == 'SYNTHETIC_ONBOARDING_STOP'
+        assert result['ledger'][third]['status'] == 'ready'
+    with transaction(h.app.state.engine) as db:
+        linked = db.scalars(select(m.Identity.person_id).where(m.Identity.person_id.in_((first, second, third))))
+        assert list(linked) == [first]
 
 
 def test_batch_preview_invite_resume_and_reissue(h, tmp_path, caplog):

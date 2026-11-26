@@ -114,8 +114,8 @@ def test_theme_failure_keeps_system_styling_and_keyboard_recovery(browser, live_
 def test_running_bundle_owns_branding_and_unversioned_assets_fail_loudly(browser, live_server):
     context = browser.new_context()
     page = context.new_page()
-    paths = []
-    page.on('request', lambda r: paths.append(r.url.removeprefix(live_server)))
+    requests = []
+    page.on('request', lambda r: requests.append((r.url.removeprefix(live_server), r.resource_type)))
     try:
         page.goto(live_server)
         expect(page.get_by_role('heading', name='Sign in', exact=True)).to_be_visible()
@@ -125,12 +125,16 @@ def test_running_bundle_owns_branding_and_unversioned_assets_fail_loudly(browser
             const base=new URL('.',document.querySelector('script[type="module"]').src);
             return {same:(await window.importBundle('api.js'))===(await import(new URL('api.js',base).href)),
                 emblem:brand().emblem_url,expected:BRANDING_DEFAULTS.emblem_url,publicEmblem:publicBrand.emblem_url,
-                wordmark:BRANDING_DEFAULTS.wordmark_url,
+                wordmark:BRANDING_DEFAULTS.wordmark_url,publicWordmark:publicBrand.wordmark_url,bundle:base.pathname,
                 icons:await (async()=>{const link=document.querySelector('link[rel=manifest]').href;
                   return (await (await fetch(link)).json()).icons.map(i=>new URL(i.src,link).pathname);})()};
         }''')
         assert result['same'] and result['emblem'] == result['expected'] == result['publicEmblem']
-        expect(page.locator('img.brand-wordmark').first).to_have_attribute('src', result['wordmark'])
+        assert result['wordmark'] == result['publicWordmark'] == ''
+        expect(page.locator('img.brand-wordmark')).to_have_count(0)
+        paths = [path for path, _ in requests]
+        assert result['bundle'] not in paths and result['bundle'].rstrip('/') not in paths
+        assert (result['bundle'] + 'brand.js', 'image') not in requests
         assert not [p for p in paths if p.startswith('/assets/') and not re.match(r'/assets/[0-9a-f]{64}/', p)]
         assert {p for p in paths if p.endswith('/brand/emblem.png')} == {result['emblem']}
         for name in ('app.js', 'api.js', 'brand/emblem.png', 'print.css', 'sw.js'):
@@ -162,5 +166,54 @@ def test_service_worker_starts_the_whole_versioned_shell_offline(browser, live_s
         assert not errors, errors
         kept = page.evaluate('''async () => (await (await caches.open((await caches.keys())[0])).keys()).map(r=>new URL(r.url).pathname)''')
         assert kept and all(p == '/' or re.match(r'/assets/[0-9a-f]{64}/', p) for p in kept)
+    finally:
+        context.close()
+
+
+def test_first_visit_downloads_the_bundle_into_the_worker_once(browser, live_server):
+    """An install that fails on one file is retried from scratch by the next page load (Service Workers, Install step
+    12); the retry fetches only that file, and later pages install nothing. Context routing sees the worker's own
+    requests and turns off the HTTP cache, so every count is a network fetch."""
+    context = browser.new_context(service_workers='allow')
+    page = context.new_page()
+    fetched, failed = {}, []
+
+    def worker_requests(route):
+        request = route.request
+        if request.service_worker:
+            path = request.url.removeprefix(live_server)
+            fetched[path] = fetched.get(path, 0) + 1
+            if path.endswith('/print.css') and not failed:  # a file the page itself never loads
+                failed.append(path)
+                return route.fulfill(status=503, body='busy')
+        route.continue_()
+
+    try:
+        context.route('**/*', worker_requests)
+        with context.expect_event('request', lambda r: bool(r.service_worker) and r.url.endswith('/print.css')):
+            page.goto(live_server)
+        # Wait for the failed install to end. wait_for_function takes a returned promise as truthy and does not poll,
+        # and a page reloaded while the install still runs gets that dying registration back from register().
+        state = page.evaluate('''async () => {
+            const registration = await navigator.serviceWorker.getRegistration();
+            if(!registration)return 'redundant';
+            const worker = registration.installing;
+            if(!worker)return 'not installing';
+            if(worker.state==='installing')await new Promise(ok=>worker.addEventListener('statechange',ok,{once:true}));
+            return worker.state;
+        }''')
+        assert failed and state == 'redundant', (state, fetched)
+        first = dict(fetched)
+        page.reload()
+        page.evaluate('''async () => {
+            await navigator.serviceWorker.ready;
+            if(!navigator.serviceWorker.controller)await new Promise(ok=>navigator.serviceWorker.addEventListener('controllerchange',ok,{once:true}));
+        }''')
+        again = {p: fetched[p] - n for p, n in first.items() if fetched[p] > n and p != '/sw.js'}
+        assert again == {failed[0]: 1}, again
+        installed = dict(fetched)
+        page.reload()
+        expect(page.get_by_role('heading', name='Sign in', exact=True)).to_be_visible()
+        assert not [p for p, n in fetched.items() if p.startswith('/assets/') and n > installed.get(p, 0)], fetched
     finally:
         context.close()

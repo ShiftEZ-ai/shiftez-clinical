@@ -750,6 +750,34 @@ def event():
     return data
 
 
+def require_ancestor(ancestor, descendant, message):
+    try:
+        git("merge-base", "--is-ancestor", ancestor, descendant)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        raise ValueError(message) from None
+
+
+def pr_test_base(data, candidate):
+    pr = data["pull_request"]
+    event_base = commit(pr["base"]["sha"])
+    if os.getenv("TRUSTED_BOOTSTRAP") == "true":
+        return event_base
+    head = commit(pr["head"]["sha"])
+    if candidate != commit(os.environ["GITHUB_SHA"]):
+        raise ValueError("PR candidate must match the event merge commit")
+    parents = git("rev-list", "--parents", "-n", "1", candidate).decode().split()
+    if len(parents) != 3 or parents[0] != candidate or parents[2] != head:
+        raise ValueError("PR candidate must have two parents with the event head second")
+    base = commit(parents[1])
+    require_ancestor(event_base, base, "PR merge base does not contain the event base")
+    # The full-history checkouts fetch every target branch into refs/remotes/origin.
+    target = "refs/remotes/origin/" + pr["base"]["ref"]
+    require_ancestor(base, target, "PR merge base is not on the target branch")
+    return base
+
+
 def fetch(ref, expected=None, *, allow_missing=False):
     try:
         git("fetch", "--no-tags", "origin", ref)
@@ -920,7 +948,8 @@ def ci_context():
     default = default_branch(data)
     kind = os.environ["GITHUB_EVENT_NAME"]
     if kind == "pull_request":
-        branch, base = data["pull_request"]["base"]["ref"], commit(data["pull_request"]["base"]["sha"])
+        branch = data["pull_request"]["base"]["ref"]
+        base = pr_test_base(data, git("rev-parse", "HEAD").decode().strip())
     elif kind == "merge_group":
         branch = data["merge_group"]["base_ref"].removeprefix("refs/heads/")
         base = commit(data["merge_group"]["base_sha"])
