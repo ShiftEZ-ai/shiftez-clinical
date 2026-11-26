@@ -81,7 +81,7 @@ def test_capacity_membership_edits_keep_the_scoped_check(change):
     data['shifts'][-1]['location_id'] = second_room
     data['focus_ids'] = [row['id'] for row in data['shifts']]
     data['place_capacity'] = validation.place_capacity_inputs(data, data['shifts'])
-    data['input_manifest'] = manifest(data)
+    data['input_manifest'] = before_manifest = manifest(data)
     data['fingerprint'] = data['input_manifest']['token']
     previous = validation.evaluate(data, session_parts=True)
     previous.update(input_manifest=planning._check_manifest(data['input_manifest']),
@@ -101,7 +101,9 @@ def test_capacity_membership_edits_keep_the_scoped_check(change):
     data['workspace']['content_revision'] += 1
     data['input_manifest'] = manifest(data)
     data['fingerprint'] = data['input_manifest']['token']
-    assert data['input_manifest']['own_place_capacity'] != previous['input_manifest']['own_place_capacity']
+    capacity_source = 'place_capacity:own_duties'
+    assert (data['input_manifest']['sources'][capacity_source]['hash']
+            != before_manifest['sources'][capacity_source]['hash'])
     assert (data['input_manifest']['components']['mandatory_inputs']
             == previous['input_manifest']['components']['mandatory_inputs'])
 

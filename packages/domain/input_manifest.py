@@ -224,8 +224,6 @@ def manifest(data, *, content_revision=None, include_sources=True):
             'dirty_hint': dirty_hint,
             'sources': sources, 'selection': {'workspace_id': period['id'], 'start': lo.isoformat(), 'end': hi.isoformat(),
                                             'department_ids': sorted(departments), 'person_ids': sorted(people)}}
-    if own_capacity:
-        base['own_place_capacity'] = components['content']['place_capacity:own_duties']
     return bind_generation_admission(base, data)
 
 

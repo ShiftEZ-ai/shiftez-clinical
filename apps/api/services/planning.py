@@ -243,10 +243,7 @@ def archive(db, actor, command):
 
 
 def _check_manifest(manifest):
-    value = {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
-    if 'own_place_capacity' in manifest:
-        value['own_place_capacity'] = manifest['own_place_capacity']
-    return value
+    return {key: manifest[key] for key in ('format', 'token', 'components', 'dirty_hint')}
 
 
 def revalidate(db, workspace, own=None, *, data_out=None, external_snapshot=None, shared_inputs=None, store=True, include_internal=False,
@@ -598,9 +595,20 @@ def assignment_validation_scope(data, before, previous):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
     prior_manifest = previous.get('input_manifest') or {}
+    # Saved checks keep only aggregate hashes. Bind the full before sources to the saved token.
+    before_manifest = before.get('input_manifest') or prior_manifest
     current_manifest = data['input_manifest']
     old_components = prior_manifest.get('components') or {}
-    if (prior_manifest.get('own_place_capacity') != current_manifest.get('own_place_capacity')
+    before_sources = before_manifest.get('sources')
+    current_sources = current_manifest.get('sources')
+    if (before_manifest.get('token') != prior_manifest.get('token')
+            or (before_manifest.get('token') and not before_sources)
+            or (current_manifest.get('token') and not current_sources)):
+        return None
+    capacity_source = 'place_capacity:own_duties'
+    before_capacity = (before_sources or {}).get(capacity_source, {}).get('hash')
+    current_capacity = (current_sources or {}).get(capacity_source, {}).get('hash')
+    if (before_capacity != current_capacity
             or any(old_components.get(key) != current_manifest['components'][key]
                    for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
