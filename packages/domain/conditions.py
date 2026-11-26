@@ -260,7 +260,7 @@ OUTRANKED = 'outranked_by'
 INHERITED_LEVEL = 'inherited_level'
 COUNT_BUCKET = 'count_bucket'
 INTERNAL = frozenset({OVERRIDDEN, OWN_LINE, OUTRANKED, INHERITED_LEVEL, COUNT_BUCKET})
-DATED_PERSON_FIELDS = (PERSON_FIELDS - {'roles', 'person_ids', 'tags'}) | INTERNAL
+DATED_PERSON_FIELDS = (PERSON_FIELDS - {'person_ids', 'tags'}) | INTERNAL
 SCOPE_CONTEXT_BUDGET = 65536
 
 
@@ -832,6 +832,9 @@ def rule_holds(data, person_id, shift, a, b, *, rotation_at=None):
             return None
         if field == 'person_ids':
             return {person_id}
+        if field == 'roles':
+            return {row['role'] for row in data.get('generation_role_bindings', {}).get(person_id, ())
+                    if valid_dates(row, a, b, zone)}
         if field == OWN_LINE:
             return {o['id'] for o in selector_policies(data, values, person_id=person_id) if valid_dates(o, a, b, zone)}
         if field == OUTRANKED:
@@ -1293,8 +1296,11 @@ def _condition_points(data, tree, person_id, a, b):
     if not tree:
         return points
     cache = data.get('_line_index_cache')
-    sources = _source_points(selector_sources(data.get('policies', []), tree, cache),
-                             a, b, data['organisation']['timezone'], cache)
+    zone = data['organisation']['timezone']
+    sources = _source_points(selector_sources(data.get('policies', []), tree, cache), a, b, zone, cache)
+    if person_id is not None and has_session_lines(tree, {'roles'}):
+        roles = data.get('generation_role_bindings', {}).get(person_id, ())
+        sources.update(_source_points(roles, a, b, zone))
     return sorted(set(points) | sources) if sources else points
 
 
