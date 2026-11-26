@@ -134,7 +134,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
 - Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
 - Before tagging, qualify the exact release tree with the full checks and require zero failed or skipped tests.
-- Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
+- The release tag tool runs `scripts/check_release_version.py` for the exact tag and commit.
+  It refuses to create the tag if the check fails.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
