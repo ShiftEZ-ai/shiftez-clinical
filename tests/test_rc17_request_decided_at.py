@@ -14,7 +14,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.services import availability, availability_patterns
 from packages.domain.time import aware
 from scripts.manage import alembic_config
-from .migration_support import historical_seed
+from .migration_support import historical_seed, without_installation_admin_backfill
 from .test_email_migration import migration_url  # noqa: F401
 from .test_overtime_volunteer import offer, offer_rule
 from .test_request_decide_many import decide, pattern_row, request_row
@@ -281,14 +281,15 @@ def test_migration_backfills_matching_audit_only_and_preserves_existing_evidence
                         action=action, actor_id=seed["identities"][decider], reason="Original approval",
                         detail={"receipt_id": receipt, "batch_id": receipt}, correlation_id="retained-correlation"))
             original = {table.name: {row["id"]: dict(row) for row in bind.execute(select(table)).mappings()}
-                        for table in (requests, patterns, events, receipts)}
+                        for table in (requests, patterns, events, receipts, before.tables["role_bindings"])}
         command.upgrade(config, "head")
         after = MetaData()
         after.reflect(engine)
         with engine.connect() as db:
-            for name, old in original.items():
-                columns = list(before.tables[name].c.keys())
-                assert {row["id"]: dict(row) for row in db.execute(select(*(after.tables[name].c[key] for key in columns))).mappings()} == old
+            carried = {name: db.execute(select(*(after.tables[name].c[key] for key in before.tables[name].c.keys())))
+                       .mappings().all() for name in original}
+            retained = without_installation_admin_backfill(carried)
+            assert {name: {row["id"]: dict(row) for row in entries} for name, entries in retained.items()} == original
             rows = {row.id: row.decided_at for row in db.execute(select(after.tables["requests"]))}
             assert aware(rows["decided"]) == AT
             assert rows["waiting"] is None and rows["unknown"] is None

@@ -64,9 +64,8 @@ def test_tag_forms_keep_team_names_actions_and_real_export(browser, live_server,
             expect(member(grid, session['id'], p)).to_have_attribute('aria-label', re.compile(re.escape(name)))
         # Standalone screen pills may ellipsize; their complete name must be recoverable by pointer and keyboard.
         standalone = member(grid, session['id'], people[3])
-        standalone.scroll_into_view_if_needed()
-        expect(standalone).to_be_in_viewport()
         standalone.hover()
+        expect(standalone).to_be_in_viewport()
         expect(page.locator('.hc-head strong')).to_have_text(NAMES[3])
         expect(page.locator('.hc-head strong')).to_be_visible()
         page.mouse.move(0, 0)

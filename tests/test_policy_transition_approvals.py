@@ -136,23 +136,40 @@ def test_one_approval_requires_independence_or_audited_self_approval_for_safety_
     permission = h.command("admin", "self_approval.grant", {"identity_id": row["created_by"],
         "actions": ["rule.activate"], "starts_on": "2026-01-01",
         "reason": "Temporary sole approver coverage"})["permission"]
-    assert transition(h, "coordinator", "policy.retire", row,
-                      payload={"reason": "Routine update"}, status=422)["error"]["code"] == "SELF_APPROVAL_REASON"
-    retired = transition(h, "coordinator", "policy.retire", row)
+    for payload in ({"reason": "Routine update"}, REASON):
+        refused = transition(h, "coordinator", "policy.retire", row, payload=payload, status=403)
+        assert refused["error"]["code"] == "SELF_APPROVAL"
+    events = h.get("auditor", f"/api/audit?target_id={row['id']}")["events"]
+    assert all("self_approved" not in event["detail"] for event in events)
+    with transaction(h.app.state.engine) as db:
+        current = db.get(m.Policy, row["id"])
+        assert (current.status, current.active, current.revision) == ("active", True, row["revision"])
+        assert not list(db.scalars(select(m.Outbox).where(m.Outbox.kind == "self_approval")))
+
+    retired = transition(h, "approver", "policy.retire", row)
     assert "approval" not in retired and retired["record"]["active"] is False
     restored = transition(h, "coordinator", "policy.restore", retired["record"],
                           payload={"reason": "Routine update"}, status=422)
     assert restored["error"]["code"] == "SELF_APPROVAL_REASON"
     restored = transition(h, "coordinator", "policy.restore", retired["record"])
     assert restored["record"]["active"] is True and "approval" not in restored
-    events = h.get("auditor", "/api/audit?target_id=" + row["id"])["events"]
-    self_approved = [event for event in events if event["action"] in {"policy.retire", "policy.restore"}]
-    assert [event["detail"]["self_approved"] for event in self_approved] == [
-        [{"action": "rule.activate", "permission_id": permission["id"]}],
-        [{"action": "rule.activate", "permission_id": permission["id"]}],
-    ]
+
+    preference = transition(h, "approver", "policy.activate", proposal(h, name="Weekly duty preference",
+        definition={"severity": "advisory", "rule": {"kind": "max_duties", "maximum": 5}}))["record"]
+    refused = transition(h, "coordinator", "policy.retire", preference,
+                         payload={"reason": "Routine update"}, status=422)
+    assert refused["error"]["code"] == "SELF_APPROVAL_REASON"
+    retired = transition(h, "coordinator", "policy.retire", preference)
+    assert "approval" not in retired and retired["record"]["active"] is False
+
+    for target, action in ((row, "policy.restore"), (preference, "policy.retire")):
+        [event] = h.get("auditor", f"/api/audit?target_id={target['id']}&self_approved=true")["events"]
+        assert event["action"] == action
+        assert event["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]
     with transaction(h.app.state.engine) as db:
-        assert len(list(db.scalars(select(m.Outbox).where(m.Outbox.kind == "self_approval")))) == 2
+        notices = list(db.scalars(select(m.Outbox.payload).where(m.Outbox.kind == "self_approval")))
+        assert len(notices) == 2
+        assert {notice["target_id"] for notice in notices} == {row["id"], preference["id"]}
 
 
 @pytest.mark.parametrize("count", [1, 2])

@@ -189,6 +189,8 @@ def test_department_isolation_and_successful_changes_are_audited(h, views):
 
 
 def test_scope_migration_preserves_existing_definitions_and_defaults_personal(tmp_path):
+    from .migration_support import add_historical_admin
+
     url = 'sqlite:///' + str(tmp_path / 'previous.db')
     command.upgrade(alembic_config(url), '0068_oidc_logout')
     engine = make_engine(url)
@@ -202,6 +204,7 @@ def test_scope_migration_preserves_existing_definitions_and_defaults_personal(tm
             ('INSERT INTO identities (id, revision, created_at, issuer, subject, display_name, disabled) VALUES (:id,1,CURRENT_TIMESTAMP,\'test\',\'test\',\'Synthetic\',false)', {'id': owner}),
         ]:
             db.execute(text(sql), values)
+        add_historical_admin(db.connection(), dept, owner)
         for table in ('table_views', 'planner_views'):
             db.execute(text(f'INSERT INTO {table} (id, revision, created_at, department_id, owner_id, name, definition'
                             + (', table_key' if table == 'table_views' else '') + ') VALUES (:id,1,CURRENT_TIMESTAMP,:dept,:owner,\'Old\',:definition'

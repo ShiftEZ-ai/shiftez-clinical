@@ -450,7 +450,7 @@ def test_a_menu_item_shows_its_whole_label_and_hint_without_breaking_a_word(brow
         page.wait_for_load_state('load')  # app.css applied (the sign-in page carries it)
         fonts_ready(page)
         problems = page.evaluate(MENU_PROBE, ['Make stricter for this rota',
-                                              'Its lines’ numbers can only be made stricter, through the department rule (approval needed).',
+                                              'It has no number to make stricter here; the department rule changes with approval.',
                                               '3 changes'])
         assert problems == [], problems
     finally:

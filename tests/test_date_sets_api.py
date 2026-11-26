@@ -525,6 +525,8 @@ def test_publication_date_sets_are_frozen_while_operational_snapshot_is_current(
 
 @pytest.mark.parametrize('prior_revision', ['0070_open_ended_attachments', '0076_monitor_events'])
 def test_migration_is_additive_and_preserves_existing_calendar(tmp_path, prior_revision):
+    from .migration_support import add_historical_admin
+
     url = 'sqlite:///' + str(tmp_path / 'date-set-upgrade.db')
     command.upgrade(alembic_config(url), prior_revision)
     engine = make_engine(url)
@@ -535,6 +537,7 @@ def test_migration_is_additive_and_preserves_existing_calendar(tmp_path, prior_r
                         "VALUES ('dept',1,CURRENT_TIMESTAMP,'org','Existing','{}')"))
         db.execute(text("INSERT INTO operating_calendars (id,revision,created_at,department_id,name,description,definition,starts_on,active) "
                         "VALUES ('cal',1,CURRENT_TIMESTAMP,'dept','Existing','Preserved','{\"timezone\":\"Asia/Riyadh\",\"week\":[]}', '2020-01-01',1)"))
+        add_historical_admin(db, 'dept')
         before = tuple(db.execute(text('SELECT * FROM operating_calendars')).one())
     migrate(url)
     with engine.connect() as db:

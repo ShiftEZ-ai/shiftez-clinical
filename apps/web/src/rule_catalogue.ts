@@ -191,7 +191,7 @@ export const specificFirst=(l:RuleLine)=>-tier(l)*2+(l.where?.conditions?.length
  *  NEVER_OVERRIDDEN: restriction / no duties, min_rest, forbidden_transition…), as schemas.safety_rule judges it. */
 export const setsSafety=(e:Pick<RuleCatalogueEntry,'numbers'>,l:Pick<RuleLine,'numbers'>)=>Object.keys(l.numbers||{}).some(k=>(e.numbers[k]||[]).some(slot=>NEVER_OVERRIDDEN.includes(slot.kind)));
 /** The lock a safety line carries wherever its numbers are read (the Rules list and a rule's page). */
-export const safetyLock=()=>ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':'Safety line: can only be made stricter','data-tip':'Safety line: can only be made stricter'},icon('lock')),'safety');
+export const safetyLock=()=>ruleMark(el('span',{class:'rk-lockmark',role:'img','aria-label':TERMS.safetyLineProtection,'data-tip':TERMS.safetyLineProtection},icon('lock')),'safety');
 /** one where's lines read as "a group line with its exceptions", the one layout of the Rules list and a rule's
  *  page. The anchor is the single broadest line (Everyone, else one group line); every other line sits under it, most
  *  specific first. A safety rule (whoWins: every matching line applies, the strictest binds), or lines with no single
@@ -551,7 +551,7 @@ const RULE_MARKS={numbers:[()=>numbersEl([{text:'2 – 5 → 4'}]),'min – max 
   proposed:[()=>{const b=badge('Proposed','warn','lg-mark');b.prepend(icon('clock'));return b;},'a line waiting for approval'],starts_later:[()=>el('span',{class:'muted'},'Starts later'),'not in force yet'],ended:[()=>el('span',{class:'muted'},'Ended'),'no longer in force'],
   no_one:[()=>badge('No one','warn','lg-mark'),'reaches no active person today'],gives_way:[()=>badge('Gives way','warn','lg-mark'),'a more specific line wins for some people'],overlaps:[()=>badge('Overlaps','warn','lg-mark'),'another line covers the same people'],
   overlap_seen:[()=>badge('Overlap seen','ok','lg-mark'),'an overlap marked as intended'],refused:[()=>badge('Refused','err','lg-mark'),'cannot be proposed as it is'],same:[()=>badge('Same line','err','lg-mark'),'repeats another line'],both:[()=>badge('Both apply','warn','lg-mark'),'two lines apply to the same people'],inherits:[()=>badge('Inherits a conflict','err','lg-mark'),'its broader line conflicts'],weaker:[()=>badge('Weaker','warn','lg-mark'),'weaker than another line'],
-  safety:[()=>el('span',{class:'rk-lockmark lg-mark','aria-hidden':'true'},icon('lock')),'safety rule: can only be made stricter'],waiting:[()=>badge(WAITING,'info','lg-mark',{icon:'clock'}),'read only until approved or declined'],attention:[()=>badge('Needs attention',statusTone('attention'),'lg-mark',{icon:'alert'}),'open the issues to fix'],must_fix:[()=>badge('Must fix','err','lg-mark'),'blocks the rule until fixed'],consolidate:[()=>badge('Consolidate','warn','lg-mark'),'could be merged with other lines'],off:[()=>el('span',{class:'lg-off lg-mark','aria-hidden':'true'}),'Off: not in force'],
+  safety:[()=>el('span',{class:'rk-lockmark lg-mark','aria-hidden':'true'},icon('lock')),TERMS.safetyRuleProtection],waiting:[()=>badge(WAITING,'info','lg-mark',{icon:'clock'}),'read only until approved or declined'],attention:[()=>badge('Needs attention',statusTone('attention'),'lg-mark',{icon:'alert'}),'open the issues to fix'],must_fix:[()=>badge('Must fix','err','lg-mark'),'blocks the rule until fixed'],consolidate:[()=>badge('Consolidate','warn','lg-mark'),'could be merged with other lines'],off:[()=>el('span',{class:'lg-off lg-mark','aria-hidden':'true'}),'Off: not in force'],
   instead:[()=>badge('replaces','neutral'),'the line above, for its people'],also:[()=>el('span',{class:'rt-rel rt-also'},'also applies'),'with the line above'],applies:[()=>badge('applies','ok'),'what holds here'],replaced:[()=>el('span',{class:'rt-rel rt-also'},'replaced'),'a more specific line applies']} satisfies Record<string,[()=>HTMLElement,string]>;
 export type RuleMarkKey=keyof typeof RULE_MARKS;
 /** The pill kinds whose hue is a mark ("not …" pills are muted and say it in words; "Everyone" is grey words). */
@@ -1307,11 +1307,15 @@ export function numberFields(e:RuleCatalogueEntry,w:RuleLine,editable:boolean,re
       ...(tier(w)>1||own?.level===null?[{key:INHERIT,label:'Same as the broader line ↰'}]:[])];
     const safety=hardSafetyNumber(e,k,w),taken=broader?.(k);
     let level:string|null=safety?'mandatory':own?own.level??null:taken&&options.some(o=>o.key===taken)?taken:defaultNumberLevel(e,k);
-    const chip=el('button',{type:'button',class:'rc-strength',...popup('menu'),disabled:!editable});
+    // A reader who cannot edit gets the strength as a fact (text), never a disabled menu button.
+    const chip=editable?el('button',{type:'button',class:'rc-strength',...popup('menu')}):el('span',{class:'rc-strength'});
     const paintChip=()=>{const m=level==='mandatory',i=level===null;chip.dataset.level=i?'inherit':m?'mandatory':'advisory';
       const bare=i&&!got,lv=bare?fallbackLevel(e,k):level,what=i&&!bare?'strength from the broader line':lv==='mandatory'?'mandatory':lv==='off'?'off, not applied':`advisory · ${lv}`;
-      chip.textContent=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv);chip.setAttribute("aria-label",`${label}: ${what}`);chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
-    chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
+      const text=i?'↰ '+levelWords(bare?lv:got?.level??null):levelWords(lv),name=`${label}: ${what}`;
+      if(editable){chip.textContent=text;chip.setAttribute("aria-label",name);}
+      else chip.replaceChildren(el('span',{'aria-hidden':'true'},text),el('span',{class:'sr-only'},name));
+      chip.dataset.tip=what[0].toUpperCase()+what.slice(1);};
+    if(editable)chip.addEventListener('click',()=>popover(chip,(panel,close)=>panel.append(...optionMenu(`${label} strength`,options,level??INHERIT,key=>{
       close();level=key===INHERIT?null:key;paintChip();chip.dispatchEvent(new Event('change',{bubbles:true}));chip.focus();})),{label:`${label} strength`}));
     paintChip();
     // Read-only: a strength only beside a number the line has (an empty number has no strength to read).
@@ -1744,7 +1748,7 @@ export function changeList(e:RuleCatalogueEntry,before:RuleLine[],after:RuleLine
  *  numbers, days, valid; a changed cell says what it was), the unchanged lines only on demand, the check's warnings as
  *  separate items, who proposed it and the decision. What changed is the server's diff (`proposed.diff`, by line id). */
 /** A waiting proposal's effect on the rule's switch ("Turns the rule on"), or '': said by the note and the panel title. */
-const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':''):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
+const switchWords=(e:Entry,on:boolean)=>!e.rule?(on?'Turns the rule on':'Rule stays off'):on!==isOn(e)?(on?'Turns the rule on':'Turns the rule off'):'';
 function proposalNote(ctx:Context,e:Entry,names:Namer,refresh:()=>Promise<void>,openTag:(tag:Row)=>void,review:()=>void,key?:RuleViewKey){
   const p=e.proposed!,rule=p.definition.rule,now=(rule.lines||[]) as RuleLine[],before=linesOf(e),mine=p.created_by===ctx.me.identity_id;
   const canDecide=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR,CAPABILITY.ADMIN);
@@ -1803,8 +1807,9 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
   const focus:Change[]=diff?.added?[...(diff.added||[]).flatMap(id=>byId.has(id)?[{kind:'added' as const,line:byId.get(id)!}]:[]),
     ...(diff.changed||[]).flatMap(id=>byId.has(id)?[{kind:'changed' as const,line:byId.get(id)!}]:[])]:lineChanges(linesOf(e),now).filter(c=>c.kind!=='removed');
   const one=focus.length===1?focus[0]:null,whom=one?countWords(one.line.who,names,'everyone'):'';
-  const turns=switchWords(e,p.definition.rule.on!==false);
-  const title=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}${turns?` · ${turns.toLowerCase()}`:''}`:`Change to ${e.name}`;
+  const on=p.definition.rule.on!==false,turns=switchWords(e,on);
+  const change=one?`${one.kind==='added'?'Add':'Change'} a line for ${whom}`:`Change to ${e.name}`;
+  const title=turns?`${change} · ${turns.toLowerCase()}`:change;
   const when=p.created_at?`${formatDate(String(p.created_at),zone)} ${formatTime(String(p.created_at),zone)}`:'';
   const canApprove=ctx.permits(CAPABILITY.APPROVER)&&mayDecide(ctx.me,'rule.activate',mine),canCheck=ctx.permits(CAPABILITY.APPROVER,CAPABILITY.COORDINATOR);
   // Checks started here, with when: shown as checking at once, before the server has queued them.
@@ -1831,11 +1836,14 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
       drawSays({});
       const list=el('ul',{class:'rc-lp-list rc-effect'});
       const waitsWhy='Waits until the effect of this change is known',approveWhy=el('small',{class:'why-unavailable'});
+      const protection=note(TERMS.reducesSafetyProtection,'warning');
+      protection.id='rc-safety-protection-'+String(p.id);protection.hidden=true;
+      const selfApproval=canApprove&&mine?badge('Self-approved','warn'):null;
       const approve=button('Approve and activate',()=>{
         // A press before the effect is known (still loading, or its read failed) says why, never nothing.
         if(!review){notify(waitsWhy,'info');return;}const ack=review.requires_acknowledgement&&understood.input.checked,said=why.input.value.trim();
         const go=async(reason:string|null)=>{const done=busy(approve);try{await approveAndActivate(String(p.id),Number(p.revision),reason||(ack?said:null),rows,!!ack);}finally{await done();}
-          d.close();notify(`${e.name}: the change is active.`);await refresh();};
+          d.close();notify(`${e.name}: ${on?'the change is active.':'the rule is off.'}`);await refresh();};
         // Your own change under a self-approval permission: its use needs your reason and is marked Self-approved (§3).
         if(mine)confirmAction('Approve and activate your own change','Your self-approval permission allows it; it is recorded as self-approved.',go,'Approve and activate');
         else return go(null);},'primary');approve.prepend(icon('check'));
@@ -1887,10 +1895,17 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
           'Approve despite added or worsened problems and incomplete checks':'Approve despite the added or worsened problems'):incompleteLabel;
         why.wrap.hidden=!understood.input.checked;why.input.required=ask&&understood.input.checked;
         const decidable=review.can_decide??effectReady(rows);
+        protection.hidden=!review.weakens_safety;
+        const needsReviewer=mine&&!!review.weakens_safety;
+        if(selfApproval)selfApproval.hidden=needsReviewer;
+        const descriptions=(approve.getAttribute('aria-describedby')||'').split(' ').filter(id=>id&&id!==protection.id);
+        if(!protection.hidden)descriptions.push(protection.id);
+        if(descriptions.length)approve.setAttribute('aria-describedby',descriptions.join(' '));
+        else approve.removeAttribute('aria-describedby');
         const blocker=rows.find(x=>x.activation_blocker);
         const blockedWhy=blocker?.activation_blocker==='RULE_CHECK_UNRESOLVED'?'A safety rule needs a complete check of every draft'
           :blocker&&effectWords(blocker)?.text;
-        disabledWhy(approve,checking()?waitsWhy:!decidable?(blockedWhy||'A draft’s check failed; check it again')
+        disabledWhy(approve,needsReviewer?'Ask a different approver to activate this proposal':checking()?waitsWhy:!decidable?(blockedWhy||'A draft’s check failed; check it again')
           :ask&&!understood.input.checked?'Tick the box above first':ask&&why.input.value.trim().length<3?'Give a reason (3 characters or more)':'',[],approveWhy);};
       // An effect not checked yet is checked now (each overlapping draft once), then read again until every one is known.
       const load=async()=>{if(!d.body.isConnected)return;
@@ -1923,10 +1938,10 @@ export function proposalPanel(ctx:Context,e:Entry,names:Namer,refresh:()=>Promis
             effect.replaceChildren(failedNote(couldntLoad('the effect of this change'),err,first));/* maintenance: never the server's raw words */});};
       const first=()=>{settling=false;hold();ask();};
       d.body.classList.add('rc-lp-body');
-      d.body.append(says,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
+      d.body.append(says,protection,...(p.source?[section('Reason',el('p',{class:'rc-quote'},String(p.source)))]:[]),
         section(el('span',{},'Effect',effectHelp(one?.line||now[0]||{} as RuleLine)),effect),
         // Using a self-approval permission is said before deciding, as it is recorded.
-        el('footer',{class:'rc-lp-foot rc-decide-foot'},decline||'',el('span',{class:'grow'}),canApprove&&mine?badge('Self-approved','warn'):'',canApprove?approveWhy:'',canApprove?approve:''));
+        el('footer',{class:'rc-lp-foot rc-decide-foot'},decline||'',el('span',{class:'grow'}),selfApproval||'',canApprove?approveWhy:'',canApprove?approve:''));
       paint();first();
     }});
   const o2=(id:string)=>{location.hash=`#rules/${e.id}/${id}`;};

@@ -2,6 +2,7 @@
 import re
 import pytest
 from playwright.sync_api import expect
+from packages.contracts.schemas import ROLE_LABELS, ROLE_NAMES
 from .test_browser import browser, live_server, sign_in, navigate  # noqa: F401
 
 pytestmark = pytest.mark.browser
@@ -85,9 +86,11 @@ def test_select_all_shown_escape_in_a_dialog_and_chosen_first(browser, live_serv
         roles = form.locator(".cond-line .pick-button").first
         roles.click()
         picker = form.locator(".picker")
-        expect(picker.get_by_role("option")).to_have_count(8)
+        expect(picker.get_by_role("option")).to_have_count(len(ROLE_NAMES))
+        for role in ROLE_NAMES:
+            expect(picker.get_by_role("option", name=ROLE_LABELS[role], exact=True)).to_be_visible()
         picker.get_by_role("button", name=re.compile(r"^Select all")).click()
-        expect(roles.locator(".pick-chip")).to_have_count(8)  # every chosen role as a chip (then "+N"), never "All (8)"
+        expect(roles.locator(".pick-chip")).to_have_count(len(ROLE_NAMES))  # every chosen role remains a chip
         picker.get_by_role("button", name=re.compile(r"^Clear")).click()
         # Tick two, close with Esc (the dialog stays), reopen: the two are listed first.
         picker.get_by_role("option", name="Staff").check()
@@ -123,7 +126,7 @@ def test_keyboard_reaches_select_all_and_keeps_its_place(browser, live_server, h
         page.keyboard.press("Tab")  # to the action row: "Select all"
         expect(picker.get_by_role("button", name=re.compile(r"^Select all"))).to_be_focused()
         page.keyboard.press("Enter")
-        expect(roles.locator(".pick-chip")).to_have_count(8)  # every chosen role as a chip (then "+N"), never "All (8)"
+        expect(roles.locator(".pick-chip")).to_have_count(len(ROLE_NAMES))  # every chosen role remains a chip
         expect(picker.get_by_role("button", name=re.compile(r"^Clear"))).to_be_focused()  # "Select all" is now done, focus moves on sensibly
         page.keyboard.press("Escape")
         expect(picker).to_have_count(0)
